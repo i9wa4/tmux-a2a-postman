@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -169,10 +170,14 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		// A configured but unresolvable blocking reviewer remains locally blocked
 		// below, without recording or delivering a request that names the raw
 		// configuration value.
-		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
+		inputRequestID, err := generateInputRequestID()
+		if err != nil {
+			return fmt.Errorf("generating command approval input request id: %w", err)
+		}
+		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, inputRequestID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
-		if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
+		if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, inputRequestID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
 			evaluation.Reason = err.Error()
 		}
 	}
@@ -290,20 +295,28 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if err != nil {
 		return err
 	}
-	var commandApproverNode string
+	var thread projection.CommandApprovalThread
 	if ok {
-		if thread, found := state.Threads[opts.threadID]; found {
-			commandApproverNode = thread.CommandApproverNode
+		if projectedThread, found := state.Threads[opts.threadID]; found {
+			thread = projectedThread
 		}
 	}
-	if commandApproverNode == "" || authenticatedCaller != commandApproverNode {
+	authenticatedCallerAddress := nodeaddr.Full(authenticatedCaller, opts.sessionName)
+	if thread.CommandApproverAddress == "" || authenticatedCallerAddress != thread.CommandApproverAddress {
 		return fmt.Errorf("--record-decision refused: caller %q is not the configured command_approver_node for thread %q", authenticatedCaller, opts.threadID)
+	}
+	if thread.InputRequestID == "" || thread.CommandHash == "" {
+		return fmt.Errorf("--record-decision refused: thread %q is missing exact command approval correlation metadata", opts.threadID)
 	}
 
 	payload := journal.CommandApprovalDecisionPayload{
-		Reviewer: authenticatedCaller,
-		Decision: journal.ApprovalDecision(decision),
-		Reason:   opts.reason,
+		Reviewer:         authenticatedCaller,
+		ReviewerAddress:  authenticatedCallerAddress,
+		RequesterAddress: thread.RequesterAddress,
+		Decision:         journal.ApprovalDecision(decision),
+		Reason:           opts.reason,
+		InputRequestID:   thread.InputRequestID,
+		CommandHash:      thread.CommandHash,
 	}
 	if err := appendCommandEvent(opts.sessionDir, opts.contextID, opts.sessionName, journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, payload, opts.threadID, ctx.now()); err != nil {
 		return err
@@ -500,9 +513,14 @@ func evaluationForThread(thread projection.CommandApprovalThread) commandApprova
 	evaluation := commandApprovalEvaluation{Thread: &thread}
 	switch thread.Status {
 	case projection.CommandApprovalStatusApproved:
-		evaluation.Decision = "approved"
-		evaluation.Allowed = true
-		evaluation.Reason = "approval is approved"
+		if thread.HistoricalOnly {
+			evaluation.Decision = "historical_only"
+			evaluation.Reason = "approval is historical audit-only and cannot authorize live execution"
+		} else {
+			evaluation.Decision = "approved"
+			evaluation.Allowed = true
+			evaluation.Reason = "approval is approved"
+		}
 	case projection.CommandApprovalStatusRejected:
 		evaluation.Decision = "rejected"
 		evaluation.Reason = "approval is rejected"
@@ -558,17 +576,20 @@ func blockedCommandApprovalReason(mode string, evaluation commandApprovalEvaluat
 	}
 }
 
-func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
+func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID, inputRequestID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
 	payload := journal.CommandApprovalRequestPayload{
-		Requester:           policy.Requester,
-		Reviewer:            policy.Reviewer,
-		CommandApproverNode: commandApproverNode,
-		Mode:                policy.Mode,
-		Label:               policy.Label,
-		Category:            policy.Category,
-		CommandHash:         commandHash,
-		Reason:              reason,
-		ExpiresAt:           expiresAt,
+		Requester:              policy.Requester,
+		RequesterAddress:       nodeaddr.Full(policy.Requester, sessionName),
+		Reviewer:               policy.Reviewer,
+		CommandApproverNode:    commandApproverNode,
+		CommandApproverAddress: nodeaddr.Full(commandApproverNode, sessionName),
+		Mode:                   policy.Mode,
+		Label:                  policy.Label,
+		Category:               policy.Category,
+		CommandHash:            commandHash,
+		InputRequestID:         inputRequestID,
+		Reason:                 reason,
+		ExpiresAt:              expiresAt,
 	}
 	if storeCommandText {
 		payload.CommandText = commandText

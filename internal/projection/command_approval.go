@@ -20,24 +20,28 @@ const (
 )
 
 type CommandApprovalThread struct {
-	ThreadID  string `json:"thread_id"`
-	Requester string `json:"requester,omitempty"`
-	Reviewer  string `json:"reviewer,omitempty"`
+	ThreadID         string `json:"thread_id"`
+	Requester        string `json:"requester,omitempty"`
+	RequesterAddress string `json:"requester_address,omitempty"`
+	Reviewer         string `json:"reviewer,omitempty"`
 	// CommandApproverNode is the config-resolved, validated command_approver_node captured
 	// at request time (#626). Decision validation MUST compare against this
 	// field, never Reviewer (a requester-influenceable audit label) — see
 	// applyCommandApprovalDecision.
-	CommandApproverNode string                `json:"command_approver_node,omitempty"`
-	Mode                string                `json:"mode,omitempty"`
-	Label               string                `json:"label,omitempty"`
-	Category            string                `json:"category,omitempty"`
-	CommandHash         string                `json:"command_hash,omitempty"`
-	Status              CommandApprovalStatus `json:"status"`
-	Reason              string                `json:"reason,omitempty"`
-	RequestedAt         string                `json:"requested_at,omitempty"`
-	ExpiresAt           string                `json:"expires_at,omitempty"`
-	DecidedAt           string                `json:"decided_at,omitempty"`
-	DecisionMessageID   string                `json:"decision_message_id,omitempty"`
+	CommandApproverNode    string                `json:"command_approver_node,omitempty"`
+	CommandApproverAddress string                `json:"command_approver_address,omitempty"`
+	Mode                   string                `json:"mode,omitempty"`
+	Label                  string                `json:"label,omitempty"`
+	Category               string                `json:"category,omitempty"`
+	CommandHash            string                `json:"command_hash,omitempty"`
+	InputRequestID         string                `json:"input_request_id,omitempty"`
+	Status                 CommandApprovalStatus `json:"status"`
+	Reason                 string                `json:"reason,omitempty"`
+	RequestedAt            string                `json:"requested_at,omitempty"`
+	ExpiresAt              string                `json:"expires_at,omitempty"`
+	DecidedAt              string                `json:"decided_at,omitempty"`
+	DecisionMessageID      string                `json:"decision_message_id,omitempty"`
+	HistoricalOnly         bool                  `json:"historical_only,omitempty"`
 }
 
 type CommandApprovalState struct {
@@ -112,18 +116,21 @@ func applyCommandApprovalRequest(threads map[string]CommandApprovalThread, event
 	}
 
 	threads[event.ThreadID] = CommandApprovalThread{
-		ThreadID:            event.ThreadID,
-		Requester:           payload.Requester,
-		Reviewer:            payload.Reviewer,
-		CommandApproverNode: payload.CommandApproverNode,
-		Mode:                payload.Mode,
-		Label:               payload.Label,
-		Category:            payload.Category,
-		CommandHash:         payload.CommandHash,
-		Status:              CommandApprovalStatusPending,
-		Reason:              payload.Reason,
-		RequestedAt:         event.OccurredAt,
-		ExpiresAt:           payload.ExpiresAt,
+		ThreadID:               event.ThreadID,
+		Requester:              payload.Requester,
+		RequesterAddress:       payload.RequesterAddress,
+		Reviewer:               payload.Reviewer,
+		CommandApproverNode:    payload.CommandApproverNode,
+		CommandApproverAddress: payload.CommandApproverAddress,
+		Mode:                   payload.Mode,
+		Label:                  payload.Label,
+		Category:               payload.Category,
+		CommandHash:            payload.CommandHash,
+		InputRequestID:         payload.InputRequestID,
+		Status:                 CommandApprovalStatusPending,
+		Reason:                 payload.Reason,
+		RequestedAt:            event.OccurredAt,
+		ExpiresAt:              payload.ExpiresAt,
 	}
 	return nil
 }
@@ -161,11 +168,17 @@ func applyCommandApprovalDecision(threads map[string]CommandApprovalThread, even
 	// thread.CommandApproverNode (no valid command_approver_node was configured for this
 	// request) must never be treated as a match; it means this thread was
 	// created without a real reviewer, so no decision on it can be trusted.
-	if thread.CommandApproverNode == "" || payload.Reviewer != thread.CommandApproverNode {
-		thread.Status = CommandApprovalStatusWrongReviewer
-		thread.Reason = payload.Reason
-		thread.DecidedAt = event.OccurredAt
-		threads[event.ThreadID] = thread
+	matchesIdentity, historicalOnly := commandApprovalDecisionMatchesThreadIdentity(thread, payload)
+	if !matchesIdentity {
+		return nil
+	}
+	if thread.InputRequestID != "" && payload.InputRequestID != thread.InputRequestID {
+		return nil
+	}
+	if thread.InputRequestID != "" && thread.CommandHash != "" && payload.CommandHash != thread.CommandHash {
+		return nil
+	}
+	if thread.Status == CommandApprovalStatusApproved || thread.Status == CommandApprovalStatusRejected {
 		return nil
 	}
 
@@ -179,8 +192,20 @@ func applyCommandApprovalDecision(threads map[string]CommandApprovalThread, even
 	}
 	thread.Reason = payload.Reason
 	thread.DecidedAt = event.OccurredAt
+	thread.DecisionMessageID = payload.MessageID
+	thread.HistoricalOnly = historicalOnly
 	threads[event.ThreadID] = thread
 	return nil
+}
+
+func commandApprovalDecisionMatchesThreadIdentity(thread CommandApprovalThread, payload journal.CommandApprovalDecisionPayload) (bool, bool) {
+	if thread.CommandApproverAddress != "" || thread.RequesterAddress != "" || payload.ReviewerAddress != "" || payload.RequesterAddress != "" {
+		return thread.CommandApproverAddress != "" &&
+			thread.RequesterAddress != "" &&
+			payload.ReviewerAddress == thread.CommandApproverAddress &&
+			payload.RequesterAddress == thread.RequesterAddress, false
+	}
+	return thread.CommandApproverNode != "" && payload.Reviewer == thread.CommandApproverNode, true
 }
 
 func commandApprovalExpired(thread CommandApprovalThread, now time.Time) bool {

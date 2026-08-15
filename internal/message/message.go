@@ -235,7 +235,11 @@ type approvalDeliveryEvent struct {
 }
 
 func approvalEventForDelivery(messageID, from, to, content string) (approvalDeliveryEvent, bool) {
-	threadID := mailboxThreadIDFromContent(content)
+	metadata, _ := envelope.ParseMetadata(content)
+	threadID := metadata.ThreadID
+	if threadID == "" {
+		threadID = mailboxThreadIDFromContent(content)
+	}
 	if threadID == "" {
 		return approvalDeliveryEvent{}, false
 	}
@@ -284,10 +288,12 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 		return approvalDeliveryEvent{
 			EventType: journal.CommandApprovalDecidedEventType,
 			Payload: journal.CommandApprovalDecisionPayload{
-				Reviewer:  sender,
-				Decision:  decision,
-				Reason:    reason,
-				MessageID: messageID,
+				Reviewer:       sender,
+				Decision:       decision,
+				Reason:         reason,
+				MessageID:      messageID,
+				InputRequestID: metadata.FillsInputRequestID,
+				CommandHash:    metadata.CommandHash,
 			},
 			ThreadID: threadID,
 		}, true
@@ -297,6 +303,9 @@ func approvalEventForDelivery(messageID, from, to, content string) (approvalDeli
 }
 
 func recordApprovalEvent(sessionDir, sessionName string, event approvalDeliveryEvent, now time.Time) {
+	if event.EventType == journal.CommandApprovalDecidedEventType && commandApprovalDecisionAlreadyApplied(sessionDir, event, now) {
+		return
+	}
 	if err := journal.RecordProcessEventWithOptions(
 		sessionDir,
 		sessionName,
@@ -316,16 +325,102 @@ func recordApprovalEvent(sessionDir, sessionName string, event approvalDeliveryE
 	}
 }
 
+func commandApprovalDecisionAlreadyApplied(sessionDir string, event approvalDeliveryEvent, now time.Time) bool {
+	payload, ok := event.Payload.(journal.CommandApprovalDecisionPayload)
+	if !ok {
+		return false
+	}
+	state, ok, err := projection.ProjectCommandApprovalState(sessionDir, now)
+	if err != nil || !ok {
+		return false
+	}
+	thread, found := state.Threads[event.ThreadID]
+	if !found {
+		return false
+	}
+	if thread.Status != projection.CommandApprovalStatusApproved && thread.Status != projection.CommandApprovalStatusRejected {
+		return false
+	}
+	if thread.CommandApproverAddress == "" || thread.RequesterAddress == "" || payload.ReviewerAddress != thread.CommandApproverAddress || payload.RequesterAddress != thread.RequesterAddress {
+		return false
+	}
+	if thread.InputRequestID != "" && payload.InputRequestID != "" && thread.InputRequestID != payload.InputRequestID {
+		return false
+	}
+	if thread.CommandHash != "" && payload.CommandHash != "" && thread.CommandHash != payload.CommandHash {
+		return false
+	}
+	return true
+}
+
 func recordApprovalEventForDelivery(sourceSessionDir, sourceSessionName, recipientSessionDir, recipientSessionName, messageID, from, to, content string, now time.Time) {
 	event, ok := approvalEventForDelivery(messageID, from, to, content)
 	if !ok {
 		return
+	}
+	if event.EventType == journal.CommandApprovalDecidedEventType {
+		event = withCommandApprovalDecisionAddresses(event, nodeaddr.Full(from, sourceSessionName), nodeaddr.Full(to, recipientSessionName))
+		if !isTrustedCommandApprovalDecision(recipientSessionDir, recipientSessionName, sourceSessionName, messageID, from, to, content, now) {
+			return
+		}
 	}
 
 	recordApprovalEvent(sourceSessionDir, sourceSessionName, event, now)
 	if recipientSessionDir != sourceSessionDir {
 		recordApprovalEvent(recipientSessionDir, recipientSessionName, event, now)
 	}
+}
+
+func withCommandApprovalDecisionAddresses(event approvalDeliveryEvent, reviewerAddress, requesterAddress string) approvalDeliveryEvent {
+	payload, ok := event.Payload.(journal.CommandApprovalDecisionPayload)
+	if !ok {
+		return event
+	}
+	payload.ReviewerAddress = reviewerAddress
+	payload.RequesterAddress = requesterAddress
+	event.Payload = payload
+	return event
+}
+
+// isTrustedCommandApprovalDecision is deliberately narrower than the legacy
+// orchestrator/critic approval hook. It permits pre-denial correlation only
+// for a decision on an existing command-approval request whose resolved
+// approver and requester still match the envelope, and whose exact reply slot
+// is named by fills_input_request_id. Routing remains default-deny.
+func isTrustedCommandApprovalDecision(requesterSessionDir, requesterSessionName, reviewerSessionName, messageID, from, to, content string, now time.Time) bool {
+	event, ok := approvalEventForDelivery(messageID, from, to, content)
+	if !ok || event.EventType != journal.CommandApprovalDecidedEventType {
+		return false
+	}
+	metadata, err := envelope.ParseMetadata(content)
+	if err != nil || metadata.FillsInputRequestID == "" {
+		return false
+	}
+	payload, ok := event.Payload.(journal.CommandApprovalDecisionPayload)
+	if !ok {
+		return false
+	}
+	state, ok, err := projection.ProjectCommandApprovalState(requesterSessionDir, now)
+	if err != nil || !ok {
+		return false
+	}
+	thread, found := state.Threads[event.ThreadID]
+	if !found || thread.CommandHash == "" {
+		return false
+	}
+	if thread.Status == projection.CommandApprovalStatusApproved || thread.Status == projection.CommandApprovalStatusRejected {
+		return false
+	}
+	if thread.InputRequestID == "" || metadata.FillsInputRequestID != thread.InputRequestID || payload.InputRequestID != thread.InputRequestID {
+		return false
+	}
+	if metadata.CommandHash == "" || metadata.CommandHash != thread.CommandHash || payload.CommandHash != thread.CommandHash {
+		return false
+	}
+	return thread.CommandApproverAddress != "" &&
+		thread.RequesterAddress != "" &&
+		thread.CommandApproverAddress == nodeaddr.Full(from, reviewerSessionName) &&
+		thread.RequesterAddress == nodeaddr.Full(to, requesterSessionName)
 }
 
 func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) error {
@@ -770,6 +865,18 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
 	}
 
+	// Authenticate both session endpoints before considering the narrow
+	// command-approval reverse-path exception below. A disabled session never
+	// gains pre-denial journal effects.
+	if info.From != "daemon" && !isSessionEnabled(sourceSessionName) {
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, deliveryDecision{DeadLetterSuffix: dlSuffixSessionDisabled})
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
+	}
+	if info.From != "daemon" && !isSessionEnabled(nodeInfo.SessionName) {
+		dst := deadLetterDecisionDestination(sourceSessionDir, filename, deliveryDecision{DeadLetterSuffix: dlSuffixSessionDisabled})
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
+	}
+
 	// Check routing permissions (DEFAULT DENY)
 	// IMPORTANT: sender="daemon" is always allowed (#172)
 	if info.From != "daemon" {
@@ -794,6 +901,13 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 		policyInput.RoutingChecked = true
 		policyInput.RoutingAllowed = allowed
 		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+			// A command-approval decision is correlated to a trusted request by
+			// thread state and reviewer identity during projection. Record it
+			// before ordinary graph policy dead-letters this nonadjacent reply;
+			// ordinary mail itself remains denied and never reaches the requester.
+			if decision.DeadLetterSuffix == dlSuffixRoutingDenied && isTrustedCommandApprovalDecision(nodeInfo.SessionDir, nodeInfo.SessionName, sourceSessionName, filename, info.From, info.To, messageContent, time.Now()) {
+				recordApprovalEventForDelivery(sourceSessionDir, sourceSessionName, nodeInfo.SessionDir, nodeInfo.SessionName, filename, info.From, info.To, messageContent, time.Now())
+			}
 			// Issue #80: Send warning message back to sender
 			if decision.SendRoutingWarning {
 				writeRoutingDeniedWarning(sourceSessionDir, contextID, info, senderSimpleName, senderFullName, adjacency, cfg)
@@ -937,9 +1051,41 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	return nil
 }
 
+// DeliveryNotificationObservation exposes the real notification constructed
+// after a direct system-message delivery. It is deliberately observation-only:
+// the pane adapter remains on the production path.
+type DeliveryNotificationObservation struct {
+	Target            controlplane.Target
+	Recipient         string
+	Sender            string
+	SourceSessionName string
+	NotificationPath  string
+	Message           string
+}
+
+var deliveryNotificationObserverForTest func(DeliveryNotificationObservation)
+
+// SetDeliveryNotificationObserverForTest observes a notification built by the
+// real direct-delivery path and returns a restoration closure.
+func SetDeliveryNotificationObserverForTest(observer func(DeliveryNotificationObservation)) func() {
+	previous := deliveryNotificationObserverForTest
+	deliveryNotificationObserverForTest = observer
+	return func() { deliveryNotificationObserverForTest = previous }
+}
+
 func sendDeliveryNotification(target controlplane.Target, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, contextID, recipient, sender, sourceSessionName, notificationPath string, livenessMap map[string]bool) {
 	recipientSimpleName := nodeaddr.Simple(recipient)
 	notificationMsg := notification.BuildNotification(cfg, adjacency, knownNodes, contextID, recipient, sender, sourceSessionName, notificationPath, livenessMap)
+	if deliveryNotificationObserverForTest != nil {
+		deliveryNotificationObserverForTest(DeliveryNotificationObservation{
+			Target:            target,
+			Recipient:         recipient,
+			Sender:            sender,
+			SourceSessionName: sourceSessionName,
+			NotificationPath:  notificationPath,
+			Message:           notificationMsg,
+		})
+	}
 	nodeEnterDelay := cfg.GetNodeConfig(recipientSimpleName).EnterDelay
 	enterDelay := time.Duration(cfg.EnterDelay * float64(time.Second))
 	if nodeEnterDelay != 0 {
@@ -964,6 +1110,16 @@ func sendDeliveryNotification(target controlplane.Target, cfg *config.Config, ad
 	log.Printf("postman: notification: attempting pane delivery to %s (pane=%s session=%s msg=%s)\n", recipient, target.Hand.Address, target.SessionName, filepath.Base(notificationPath))
 	deliverNotificationWithRetry(adapter, target, delivery, recipient, knownNodes, filepath.Base(notificationPath))
 }
+
+// SetDeliveryNotificationHookForTest replaces direct-delivery notification
+// emission for a test and returns a restoration closure.
+func SetDeliveryNotificationHookForTest(hook func(controlplane.Target, *config.Config, map[string][]string, map[string]discovery.NodeInfo, string, string, string, string, string, map[string]bool)) func() {
+	previous := sendDeliveryNotificationHook
+	sendDeliveryNotificationHook = hook
+	return func() { sendDeliveryNotificationHook = previous }
+}
+
+var sendDeliveryNotificationHook = sendDeliveryNotification
 
 // deliverNotificationWithRetry attempts adapter.Deliver and, on failure, retries
 // once using a refreshed pane ID from knownNodes when available. Extracted for
@@ -1017,14 +1173,14 @@ func DeliverSystemMessageDirectResultToTarget(filename string, target controlpla
 		QueueFullSuffix: dlSuffixQueueFull,
 	})
 	if err != nil {
-		return controlplane.SystemMessageResult{}, err
+		return result, err
 	}
 	if !result.Delivered {
 		return result, nil
 	}
 
 	notificationPath := target.PostPath(filename)
-	sendDeliveryNotification(target, cfg, adjacency, knownNodes, contextID, target.ActorID, sender, target.SessionName, notificationPath, livenessMap)
+	sendDeliveryNotificationHook(target, cfg, adjacency, knownNodes, contextID, target.ActorID, sender, target.SessionName, notificationPath, livenessMap)
 	log.Printf("📬 postman: delivered %s -> %s\n", filename, target.ActorID)
 	return result, nil
 }

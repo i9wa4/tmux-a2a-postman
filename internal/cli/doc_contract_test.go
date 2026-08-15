@@ -334,6 +334,32 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 	)
 }
 
+func TestCommandApprovalReplyDocsRequireAllCorrelationFields(t *testing.T) {
+	commandApprovalDoc := readRepoFile(t, "docs/command-approvals.md")
+	executeBashHelp := readRepoFile(t, "internal/cli/helptext/execute-bash.txt")
+
+	for path, content := range map[string]string{
+		"docs/command-approvals.md":              commandApprovalDoc,
+		"internal/cli/helptext/execute-bash.txt": executeBashHelp,
+	} {
+		assertContainsAllNormalized(
+			t,
+			content,
+			"APPROVED:",
+			"NOT APPROVED:",
+			"thread_id",
+			"fills_input_request_id",
+			"command_hash",
+		)
+		normalized := normalizeSpace(content)
+		if !strings.Contains(normalized, "exact fills_input_request_id") && !strings.Contains(normalized, "exact `fills_input_request_id`") {
+			t.Fatalf("%s does not require exact fills_input_request_id preservation", path)
+		}
+	}
+	assertContainsNormalized(t, commandApprovalDoc, "keep all three generated correlation fields")
+	assertContainsNormalized(t, executeBashHelp, "preserving the given thread_id, the exact fills_input_request_id, and command_hash")
+}
+
 func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testing.T) {
 	contributing := readRepoFile(t, "CONTRIBUTING.md")
 	assertContainsNormalized(t, contributing, "nix run '.#skill-check'")

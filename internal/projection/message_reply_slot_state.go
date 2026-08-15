@@ -1,7 +1,9 @@
 package projection
 
 import (
+	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
@@ -76,6 +78,8 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	satisfactionExact := make(map[string]InputRequestDetail)
 	satisfactionFallback := make(map[string]InputRequestDetail)
 	infoUnread := make(map[string]InputRequestDetail)
+	commandApprovalThreads := make(map[string]CommandApprovalThread)
+	acceptedCommandApprovalDecisions := make(map[commandApprovalReplySlotKey]bool)
 	sawLease := false
 	sawResolution := false
 	sawCompleteMailboxEvent := false
@@ -91,6 +95,24 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 			continue
 		case "session_resolved":
 			sawResolution = true
+			continue
+		case journal.CommandApprovalRequestedEventType:
+			if err := applyCommandApprovalRequest(commandApprovalThreads, event); err != nil {
+				return MessageInputRequestState{}, false, err
+			}
+			continue
+		case journal.CommandApprovalDecidedEventType:
+			var payload journal.CommandApprovalDecisionPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return MessageInputRequestState{}, false, err
+			}
+			if err := applyCommandApprovalDecision(commandApprovalThreads, event); err != nil {
+				return MessageInputRequestState{}, false, err
+			}
+			thread := commandApprovalThreads[event.ThreadID]
+			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok {
+				acceptedCommandApprovalDecisions[key] = true
+			}
 			continue
 		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionDeadLetteredEventType:
 		default:
@@ -128,6 +150,10 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type, event.EventID)
 				openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
 				projected.InputRequiredCounts[meta.To]++
+				if commandApprovalRequestOpensRequesterWaiting(meta) {
+					openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID)
+					projected.WaitingOnInputCounts[meta.From]++
+				}
 			} else {
 				infoUnread[inputRequestKey(meta.MessageID, meta.To)] = InputRequestDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
 				projected.InfoUnreadCounts[meta.To]++
@@ -141,6 +167,17 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
 			}
 		case MailboxProjectionDeadLetteredEventType:
+			// A correlated reply may be denied by ordinary graph routing after its
+			// authenticated control-plane effect was recorded. Its exact
+			// fills_input_request_id still closes the advertised reply obligation;
+			// dead-lettering is a delivery outcome, not a reason to leave the
+			// requester or reviewer waiting indefinitely.
+			if commandApprovalReplySlotRequiresDecision(meta) && !acceptedCommandApprovalDecisions[commandApprovalReplySlotKeyFromMetadata(meta, sessionName)] {
+				continue
+			}
+			resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
+			resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
+			fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
 			deadLetterRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
 		}
 	}
@@ -152,6 +189,63 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	projected.WaitingOnInput = sortedInputRequestDetails(openOutboundExact, openOutboundFallback)
 	finalizeRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, now, staleAfterSeconds)
 	return projected, true, nil
+}
+
+func commandApprovalReplySlotRequiresDecision(meta envelope.Metadata) bool {
+	return strings.HasPrefix(meta.ThreadID, "command-approval-") && meta.FillsInputRequestID != ""
+}
+
+func commandApprovalRequestOpensRequesterWaiting(meta envelope.Metadata) bool {
+	return strings.HasPrefix(meta.ThreadID, "command-approval-") && meta.InputRequestID != ""
+}
+
+type commandApprovalReplySlotKey struct {
+	MessageID        string
+	ThreadID         string
+	InputRequestID   string
+	CommandHash      string
+	ReviewerAddress  string
+	RequesterAddress string
+}
+
+func acceptedCommandApprovalReplySlotKey(threadID string, thread CommandApprovalThread, payload journal.CommandApprovalDecisionPayload) (commandApprovalReplySlotKey, bool) {
+	if payload.MessageID == "" || thread.DecisionMessageID != payload.MessageID {
+		return commandApprovalReplySlotKey{}, false
+	}
+	if thread.Status != CommandApprovalStatusApproved && thread.Status != CommandApprovalStatusRejected {
+		return commandApprovalReplySlotKey{}, false
+	}
+	if thread.CommandApproverAddress == "" || thread.RequesterAddress == "" {
+		return commandApprovalReplySlotKey{}, false
+	}
+	if payload.ReviewerAddress != thread.CommandApproverAddress || payload.RequesterAddress != thread.RequesterAddress {
+		return commandApprovalReplySlotKey{}, false
+	}
+	if thread.InputRequestID == "" || payload.InputRequestID != thread.InputRequestID {
+		return commandApprovalReplySlotKey{}, false
+	}
+	if thread.CommandHash == "" || payload.CommandHash != thread.CommandHash {
+		return commandApprovalReplySlotKey{}, false
+	}
+	return commandApprovalReplySlotKey{
+		MessageID:        payload.MessageID,
+		ThreadID:         threadID,
+		InputRequestID:   payload.InputRequestID,
+		CommandHash:      payload.CommandHash,
+		ReviewerAddress:  payload.ReviewerAddress,
+		RequesterAddress: payload.RequesterAddress,
+	}, true
+}
+
+func commandApprovalReplySlotKeyFromMetadata(meta envelope.Metadata, sessionName string) commandApprovalReplySlotKey {
+	return commandApprovalReplySlotKey{
+		MessageID:        meta.MessageID,
+		ThreadID:         meta.ThreadID,
+		InputRequestID:   meta.FillsInputRequestID,
+		CommandHash:      meta.CommandHash,
+		ReviewerAddress:  nodeaddr.Full(meta.From, sessionName),
+		RequesterAddress: nodeaddr.Full(meta.To, sessionName),
+	}
 }
 
 func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {

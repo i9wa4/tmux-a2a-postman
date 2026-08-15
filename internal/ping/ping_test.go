@@ -295,17 +295,6 @@ func TestSendPingToNode_DefaultDaemonTemplateShowsDiscoveredContactsBeforeLivene
 }
 
 func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalogs(t *testing.T) {
-	tmpDir := t.TempDir()
-	sessionDir := filepath.Join(tmpDir, "test-session")
-	if err := config.CreateSessionDirs(sessionDir); err != nil {
-		t.Fatalf("CreateSessionDirs: %v", err)
-	}
-
-	nodeInfo := discovery.NodeInfo{
-		PaneID:      "%100",
-		SessionName: "test-session",
-		SessionDir:  sessionDir,
-	}
 	cfg := &config.Config{
 		TmuxTimeout: 5.0,
 		Nodes: map[string]config.NodeConfig{
@@ -320,6 +309,20 @@ func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalo
 	}
 
 	tmpl := "{role_content}"
+	newNodeInfo := func(label string) (string, discovery.NodeInfo) {
+		t.Helper()
+		sessionDir := filepath.Join(t.TempDir(), label)
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs: %v", err)
+		}
+		return sessionDir, discovery.NodeInfo{
+			PaneID:      "%100",
+			SessionName: "test-session",
+			SessionDir:  sessionDir,
+		}
+	}
+
+	sessionDir, nodeInfo := newNodeInfo("normal")
 	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, SendOptions{}); err != nil {
 		t.Fatalf("SendPingToNodeWithOptions normal error = %v", err)
 	}
@@ -331,21 +334,7 @@ func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalo
 		t.Fatalf("normal ping missing ping catalog: %q", normalBody)
 	}
 
-	clearInbox := func() {
-		t.Helper()
-		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
-		entries, err := os.ReadDir(inboxDir)
-		if err != nil {
-			t.Fatalf("ReadDir inbox: %v", err)
-		}
-		for _, entry := range entries {
-			if err := os.Remove(filepath.Join(inboxDir, entry.Name())); err != nil {
-				t.Fatalf("Remove inbox message: %v", err)
-			}
-		}
-	}
-
-	clearInbox()
+	sessionDir, nodeInfo = newNodeInfo("compaction")
 	options := SendOptions{CompactionTriggered: true, Runtime: "claude"}
 	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, options); err != nil {
 		t.Fatalf("SendPingToNodeWithOptions compaction error = %v", err)
@@ -358,7 +347,7 @@ func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalo
 		t.Fatalf("compaction ping missing ping catalog: %q", compactionBody)
 	}
 
-	clearInbox()
+	sessionDir, nodeInfo = newNodeInfo("other-runtime")
 	otherOptions := SendOptions{CompactionTriggered: true, Runtime: "zsh"}
 	if _, err := SendPingToNodeWithOptions(nodeInfo, "ctx-ping", "worker", tmpl, cfg, []string{"worker"}, map[string]bool{}, map[string][]string{}, map[string]discovery.NodeInfo{}, otherOptions); err != nil {
 		t.Fatalf("SendPingToNodeWithOptions other runtime compaction error = %v", err)

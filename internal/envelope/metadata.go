@@ -23,6 +23,7 @@ type Metadata struct {
 	RunID                    string
 	InputRequestID           string
 	FillsInputRequestID      string
+	CommandHash              string
 	InputRequestSetID        string
 	Verdict                  string
 	VerdictOf                string
@@ -257,6 +258,8 @@ func DecodeEnvelopeMetadata(frontmatter, body string) (Metadata, error) {
 				metadata.InputRequestID = value
 			case "fills_input_request_id":
 				metadata.FillsInputRequestID = value
+			case "command_hash":
+				metadata.CommandHash = value
 			case "input_request_set_id":
 				metadata.InputRequestSetID = value
 			case "verdict":

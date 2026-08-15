@@ -35,6 +35,31 @@ func inputRequestContentWithExact(from, to, messageID, replyPolicy, replyTo, inp
 		"---\n\n" + body + "\n"
 }
 
+func commandApprovalInputContent(from, to, messageID, replyPolicy, threadID, inputRequestID, fillsInputRequestID, commandHash, body string) string {
+	inputRequestIDLine := ""
+	if inputRequestID != "" {
+		inputRequestIDLine = "  input_request_id: " + inputRequestID + "\n"
+	}
+	fillsInputRequestIDLine := ""
+	if fillsInputRequestID != "" {
+		fillsInputRequestIDLine = "  fills_input_request_id: " + fillsInputRequestID + "\n"
+	}
+	commandHashLine := ""
+	if commandHash != "" {
+		commandHashLine = "  command_hash: " + commandHash + "\n"
+	}
+	return "---\nparams:\n" +
+		"  from: " + from + "\n" +
+		"  to: " + to + "\n" +
+		"  messageId: " + messageID + "\n" +
+		"  replyPolicy: " + replyPolicy + "\n" +
+		"  thread_id: " + threadID + "\n" +
+		inputRequestIDLine +
+		fillsInputRequestIDLine +
+		commandHashLine +
+		"---\n\n" + body + "\n"
+}
+
 func verdictContent(from, to, messageID, verdict, verdictOf, body string) string {
 	return "---\nparams:\n" +
 		"  from: " + from + "\n" +
@@ -215,6 +240,104 @@ func TestProjectMessageInputRequestState_ProjectDeadLetteredRequestSatisfaction(
 	if worker.LongestOpenAgeSeconds != 3699 {
 		t.Fatalf("worker longest open age = %d, want 3699", worker.LongestOpenAgeSeconds)
 	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalDeadLetterRequiresAcceptedTupleAndOrder(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+
+	threadID := "command-approval-reply-slot"
+	inputRequestID := "ireq_command_approval_tuple"
+	commandHash := "sha256:tuple"
+	requestMessageID := "request.md"
+	request := commandApprovalInputContent("worker", "approver", requestMessageID, "required", threadID, inputRequestID, "", commandHash, "approval requested")
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+		Requester:              "worker",
+		RequesterAddress:       "review:worker",
+		Reviewer:               "orchestrator",
+		CommandApproverNode:    "approver",
+		CommandApproverAddress: "review:approver",
+		Mode:                   "blocking",
+		Label:                  "protected",
+		CommandHash:            commandHash,
+		InputRequestID:         inputRequestID,
+	}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+	}
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, requestMessageID, "worker", "approver", request, now.Add(2*time.Second))
+
+	staleMessageID := "stale-reused.md"
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+		Reviewer:         "approver",
+		ReviewerAddress:  "review:approver",
+		RequesterAddress: "review:worker",
+		Decision:         journal.ApprovalDecisionRejected,
+		Reason:           "wrong stale hash",
+		MessageID:        staleMessageID,
+		InputRequestID:   inputRequestID,
+		CommandHash:      "sha256:stale",
+	}, journal.AppendOptions{ThreadID: threadID}, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(stale decision) error = %v", err)
+	}
+	staleReply := commandApprovalInputContent("approver", "worker", staleMessageID, "none", threadID, "", inputRequestID, commandHash, "NOT APPROVED: stale message id")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeadLetteredEventType, staleMessageID, "approver", "worker", staleReply, now.Add(4*time.Second))
+	assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, true)
+
+	reversedMessageID := "reversed.md"
+	reversedReply := commandApprovalInputContent("approver", "worker", reversedMessageID, "none", threadID, "", inputRequestID, commandHash, "NOT APPROVED: reversed order")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeadLetteredEventType, reversedMessageID, "approver", "worker", reversedReply, now.Add(5*time.Second))
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+		Reviewer:         "approver",
+		ReviewerAddress:  "review:approver",
+		RequesterAddress: "review:worker",
+		Decision:         journal.ApprovalDecisionRejected,
+		Reason:           "decision after dead-letter",
+		MessageID:        reversedMessageID,
+		InputRequestID:   inputRequestID,
+		CommandHash:      commandHash,
+	}, journal.AppendOptions{ThreadID: threadID}, now.Add(6*time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(reversed decision) error = %v", err)
+	}
+	assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, true)
+
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeadLetteredEventType, reversedMessageID, "approver", "worker", reversedReply, now.Add(7*time.Second))
+	assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, false)
+}
+
+func assertCommandApprovalReplySlotForProjection(t *testing.T, sessionDir, inputRequestID string, wantOpen bool) {
+	t.Helper()
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", time.Date(2026, time.May, 10, 12, 10, 0, 0, time.UTC), DefaultInputRequestStaleAfterSeconds)
+	if err != nil {
+		t.Fatalf("ProjectMessageInputRequestStateAt() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageInputRequestStateAt() ok = false, want true")
+	}
+	if got := hasInputRequest(state.InputRequired, inputRequestID); got != wantOpen {
+		t.Fatalf("InputRequired has %q = %v, want %v; state=%#v", inputRequestID, got, wantOpen, state.InputRequired)
+	}
+	if got := hasInputRequest(state.WaitingOnInput, inputRequestID); got != wantOpen {
+		t.Fatalf("WaitingOnInput has %q = %v, want %v; state=%#v", inputRequestID, got, wantOpen, state.WaitingOnInput)
+	}
+	if got := state.InputRequiredCounts["approver"]; (got > 0) != wantOpen {
+		t.Fatalf("InputRequiredCounts[approver] = %d, want open=%v", got, wantOpen)
+	}
+	if got := state.WaitingOnInputCounts["worker"]; (got > 0) != wantOpen {
+		t.Fatalf("WaitingOnInputCounts[worker] = %d, want open=%v", got, wantOpen)
+	}
+}
+
+func hasInputRequest(requests []InputRequestDetail, inputRequestID string) bool {
+	for _, request := range requests {
+		if request.InputRequestID == inputRequestID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProjectVerdictDebtState_OutgoingVerdictStampClearsDebt(t *testing.T) {
