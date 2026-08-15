@@ -33,19 +33,22 @@ Modes:
              from the configured reviewer for the exact command digest.
 
 Fail-open rule (command_approver_node):
-  Every mode above, including blocking, only becomes restrictive once a VALID
-  command_approver_node is configured by marking one real node in postman.md
-  Mermaid edges with class <node> command_approver_node, same family as ui_node.
-  The approver is global; per-policy approver routing is not supported. Unset,
-  or set to a node name that does not resolve, means every command runs, recorded
-  distinctly as auto_approved_no_reviewer rather than a real approval. An
-  unresolvable command_approver_node also produces a load-time warning and a visible
-  marker in get-status, so a typo never silently disables blocking mode.
+  When no command_approver_node is configured by marking a real node in
+  postman.md Mermaid edges with class <node> command_approver_node (same
+  family as ui_node), every mode above, including blocking, fails open. Every
+  command runs and is recorded distinctly as auto_approved_no_reviewer rather
+  than a real approval. The approver is global; per-policy approver routing is
+  not supported. A configured but currently unresolvable
+  command_approver_node is different: blocking fails closed and does not run
+  the command; advisory continues; and warn-only still requires explicit
+  --override-approval. An unresolvable command_approver_node also produces a
+  load-time warning and a visible marker in get-status.
 
   When a valid command_approver_node exists, execute-bash also delivers the approval
   request to it directly as a reply-required message; reply with a body
-  starting APPROVED:/NOT APPROVED: and the given thread_id to record a
-  decision without running --record-decision yourself. A reply body that
+  starting APPROVED:/NOT APPROVED: while preserving the given thread_id, the
+  exact fills_input_request_id, and command_hash frontmatter fields to record
+  a decision without running --record-decision yourself. A reply body that
   doesn't start with one of those two prefixes is logged and not recorded.
   Only a reply whose sender matches the resolved command_approver_node is ever
   honored, regardless of the reviewer audit label. The same rule applies to

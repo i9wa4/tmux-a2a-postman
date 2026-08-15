@@ -10,30 +10,34 @@ import (
 const commandApprovalDecisionHistorySchemaVersion = 1
 
 type CommandApprovalDecisionHistoryEntry struct {
-	SchemaVersion       int              `json:"schema_version"`
-	SessionKey          string           `json:"session_key"`
-	TmuxSessionName     string           `json:"tmux_session_name"`
-	Generation          int              `json:"generation"`
-	EventSequence       int              `json:"event_sequence"`
-	EventID             string           `json:"event_id"`
-	ThreadID            string           `json:"thread_id"`
-	Decision            ApprovalDecision `json:"decision"`
-	EffectiveStatus     string           `json:"effective_status"`
-	Requester           string           `json:"requester,omitempty"`
-	Reviewer            string           `json:"reviewer,omitempty"`
-	CommandApproverNode string           `json:"command_approver_node,omitempty"`
-	DecisionReviewer    string           `json:"decision_reviewer"`
-	Mode                string           `json:"mode,omitempty"`
-	Label               string           `json:"label,omitempty"`
-	Category            string           `json:"category,omitempty"`
-	CommandHash         string           `json:"command_hash,omitempty"`
-	RequestReason       string           `json:"request_reason,omitempty"`
-	DecisionReason      string           `json:"decision_reason,omitempty"`
-	RequestedAt         string           `json:"requested_at,omitempty"`
-	ExpiresAt           string           `json:"expires_at,omitempty"`
-	DecidedAt           string           `json:"decided_at"`
-	DecisionMessageID   string           `json:"decision_message_id,omitempty"`
-	CommandText         string           `json:"command_text,omitempty"`
+	SchemaVersion           int              `json:"schema_version"`
+	SessionKey              string           `json:"session_key"`
+	TmuxSessionName         string           `json:"tmux_session_name"`
+	Generation              int              `json:"generation"`
+	EventSequence           int              `json:"event_sequence"`
+	EventID                 string           `json:"event_id"`
+	ThreadID                string           `json:"thread_id"`
+	Decision                ApprovalDecision `json:"decision"`
+	EffectiveStatus         string           `json:"effective_status"`
+	Requester               string           `json:"requester,omitempty"`
+	RequesterAddress        string           `json:"requester_address,omitempty"`
+	Reviewer                string           `json:"reviewer,omitempty"`
+	CommandApproverNode     string           `json:"command_approver_node,omitempty"`
+	CommandApproverAddress  string           `json:"command_approver_address,omitempty"`
+	DecisionReviewer        string           `json:"decision_reviewer"`
+	DecisionReviewerAddress string           `json:"decision_reviewer_address,omitempty"`
+	Mode                    string           `json:"mode,omitempty"`
+	Label                   string           `json:"label,omitempty"`
+	Category                string           `json:"category,omitempty"`
+	CommandHash             string           `json:"command_hash,omitempty"`
+	RequestReason           string           `json:"request_reason,omitempty"`
+	DecisionReason          string           `json:"decision_reason,omitempty"`
+	RequestedAt             string           `json:"requested_at,omitempty"`
+	ExpiresAt               string           `json:"expires_at,omitempty"`
+	DecidedAt               string           `json:"decided_at"`
+	DecisionMessageID       string           `json:"decision_message_id,omitempty"`
+	CommandText             string           `json:"command_text,omitempty"`
+	HistoricalOnly          bool             `json:"historical_only,omitempty"`
 }
 
 func CommandApprovalDecisionHistoryDir(sessionDir string) string {
@@ -47,6 +51,7 @@ func SyncCommandApprovalDecisionHistory(sessionDir string) error {
 	}
 	requests := make(map[string]CommandApprovalRequestPayload)
 	requestedAt := make(map[string]string)
+	decided := make(map[string]bool)
 	expected := make(map[string]CommandApprovalDecisionHistoryEntry)
 	for _, event := range events {
 		switch event.Type {
@@ -66,6 +71,10 @@ func SyncCommandApprovalDecisionHistory(sessionDir string) error {
 			if !ok {
 				continue
 			}
+			if !commandApprovalDecisionMatchesRequest(request, payload) || decided[event.ThreadID] {
+				continue
+			}
+			decided[event.ThreadID] = true
 			entry := commandApprovalDecisionHistoryEntry(event, request, requestedAt[event.ThreadID], payload)
 			expected[commandApprovalDecisionHistoryFilename(event)] = entry
 		}
@@ -86,30 +95,34 @@ func SyncCommandApprovalDecisionHistory(sessionDir string) error {
 
 func commandApprovalDecisionHistoryEntry(event Event, request CommandApprovalRequestPayload, requestOccurredAt string, decision CommandApprovalDecisionPayload) CommandApprovalDecisionHistoryEntry {
 	return CommandApprovalDecisionHistoryEntry{
-		SchemaVersion:       commandApprovalDecisionHistorySchemaVersion,
-		SessionKey:          event.SessionKey,
-		TmuxSessionName:     event.TmuxSessionName,
-		Generation:          event.Generation,
-		EventSequence:       event.Sequence,
-		EventID:             event.EventID,
-		ThreadID:            event.ThreadID,
-		Decision:            decision.Decision,
-		EffectiveStatus:     commandApprovalDecisionEffectiveStatus(request, decision),
-		Requester:           request.Requester,
-		Reviewer:            request.Reviewer,
-		CommandApproverNode: request.CommandApproverNode,
-		DecisionReviewer:    decision.Reviewer,
-		Mode:                request.Mode,
-		Label:               request.Label,
-		Category:            request.Category,
-		CommandHash:         request.CommandHash,
-		RequestReason:       request.Reason,
-		DecisionReason:      decision.Reason,
-		RequestedAt:         requestOccurredAt,
-		ExpiresAt:           request.ExpiresAt,
-		DecidedAt:           event.OccurredAt,
-		DecisionMessageID:   decision.MessageID,
-		CommandText:         request.CommandText,
+		SchemaVersion:           commandApprovalDecisionHistorySchemaVersion,
+		SessionKey:              event.SessionKey,
+		TmuxSessionName:         event.TmuxSessionName,
+		Generation:              event.Generation,
+		EventSequence:           event.Sequence,
+		EventID:                 event.EventID,
+		ThreadID:                event.ThreadID,
+		Decision:                decision.Decision,
+		EffectiveStatus:         commandApprovalDecisionEffectiveStatus(request, decision),
+		Requester:               request.Requester,
+		RequesterAddress:        request.RequesterAddress,
+		Reviewer:                request.Reviewer,
+		CommandApproverNode:     request.CommandApproverNode,
+		CommandApproverAddress:  request.CommandApproverAddress,
+		DecisionReviewer:        decision.Reviewer,
+		DecisionReviewerAddress: decision.ReviewerAddress,
+		Mode:                    request.Mode,
+		Label:                   request.Label,
+		Category:                request.Category,
+		CommandHash:             request.CommandHash,
+		RequestReason:           request.Reason,
+		DecisionReason:          decision.Reason,
+		RequestedAt:             requestOccurredAt,
+		ExpiresAt:               request.ExpiresAt,
+		DecidedAt:               event.OccurredAt,
+		DecisionMessageID:       decision.MessageID,
+		CommandText:             request.CommandText,
+		HistoricalOnly:          commandApprovalDecisionUsesLegacyIdentity(request, decision),
 	}
 }
 
@@ -117,7 +130,7 @@ func commandApprovalDecisionEffectiveStatus(request CommandApprovalRequestPayloa
 	if request.Requester == "" {
 		return "stale"
 	}
-	if request.CommandApproverNode == "" || decision.Reviewer != request.CommandApproverNode {
+	if !commandApprovalDecisionMatchesRequestIdentity(request, decision) {
 		return "wrong_reviewer"
 	}
 	switch decision.Decision {
@@ -128,6 +141,43 @@ func commandApprovalDecisionEffectiveStatus(request CommandApprovalRequestPayloa
 	default:
 		return "unknown"
 	}
+}
+
+func commandApprovalDecisionMatchesRequest(request CommandApprovalRequestPayload, decision CommandApprovalDecisionPayload) bool {
+	if !commandApprovalDecisionMatchesRequestIdentity(request, decision) {
+		return false
+	}
+	if request.InputRequestID != "" && decision.InputRequestID != request.InputRequestID {
+		return false
+	}
+	if request.InputRequestID != "" && request.CommandHash != "" && decision.CommandHash != request.CommandHash {
+		return false
+	}
+	switch decision.Decision {
+	case ApprovalDecisionApproved, ApprovalDecisionRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+func commandApprovalDecisionMatchesRequestIdentity(request CommandApprovalRequestPayload, decision CommandApprovalDecisionPayload) bool {
+	if request.CommandApproverAddress != "" || request.RequesterAddress != "" || decision.ReviewerAddress != "" || decision.RequesterAddress != "" {
+		return request.CommandApproverAddress != "" &&
+			request.RequesterAddress != "" &&
+			decision.ReviewerAddress == request.CommandApproverAddress &&
+			decision.RequesterAddress == request.RequesterAddress
+	}
+	return request.CommandApproverNode != "" && decision.Reviewer == request.CommandApproverNode
+}
+
+func commandApprovalDecisionUsesLegacyIdentity(request CommandApprovalRequestPayload, decision CommandApprovalDecisionPayload) bool {
+	return request.CommandApproverAddress == "" &&
+		request.RequesterAddress == "" &&
+		decision.ReviewerAddress == "" &&
+		decision.RequesterAddress == "" &&
+		request.CommandApproverNode != "" &&
+		decision.Reviewer == request.CommandApproverNode
 }
 
 func commandApprovalDecisionHistoryFilename(event Event) string {

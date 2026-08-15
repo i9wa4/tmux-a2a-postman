@@ -36,42 +36,39 @@ graph LR
 ```
 ````
 
-It is global for the whole configuration and is what makes a mode restrictive
-at all — see the fail-open rule below. Per-policy approver routing is not
-supported; every execute-bash policy shares the single class-designated
-approver.
+It is global for the whole configuration. An absent approver leaves every mode
+fail-open; a configured-but-unresolvable approver makes `blocking` fail closed.
+See the rule below. Per-policy approver routing is not supported; every
+execute-bash policy shares the single class-designated approver.
 
 Migration note: legacy `[postman] command_approver_node` and
 `[[postman.command_approval]] command_approver_node` keys in `postman.toml` are
 ignored with a deprecation warning. Move the approver marker to `postman.md`
-before relying on `blocking`; until the Mermaid class resolves to a configured
-node, command approval intentionally fails open and records
-`auto_approved_no_reviewer`. `get-status` also reports ignored legacy TOML
-approver keys under `command_approval.deprecated_command_approvers`; a migration
-is complete only when both `command_approval.unresolved_command_approvers` and
+before relying on `blocking`; without a Mermaid approver, command approval
+intentionally fails open and records `auto_approved_no_reviewer`. `get-status`
+also reports ignored legacy TOML approver keys under
+`command_approval.deprecated_command_approvers`; a migration is complete only
+when both `command_approval.unresolved_command_approvers` and
 `command_approval.deprecated_command_approvers` are absent.
 
 ### 1.1. Fail-open rule (#626)
 
-Unless a VALID `command_approver_node` is configured — the Mermaid class is set
-AND resolves to a node that actually exists in this config — every command is
-treated as approved, in every mode, including `blocking`. This covers both an
-unconfigured `command_approver_node` and one that names a node that doesn't
-exist (a typo). Approval only becomes restrictive once a valid
-`command_approver_node` exists.
+An absent `command_approver_node` makes every command treated as approved, in
+every mode, including `blocking`. Such commands are recorded with the decision
+`auto_approved_no_reviewer`, distinct from a real recorded approval, so the
+audit trail never confuses the two.
 
-Such commands are recorded with the decision `auto_approved_no_reviewer`,
-distinct from a real recorded approval, so the audit trail never confuses the
-two. A configured-but-unresolvable `command_approver_node` also produces a
-load-time warning and a visible `command_approval.unresolved_command_approvers`
-marker in `get-status`, so a typo that silently disables blocking mode is loud
-rather than a silent no-op.
+A configured-but-unresolvable `command_approver_node` is different. In
+`blocking` mode the wrapper fails closed and does not run the command. In
+`advisory` and `warn-only` modes, the existing nonblocking semantics remain:
+`advisory` continues after recording and `warn-only` still requires an explicit
+override. The unresolved name also produces a load-time warning and a visible
+`command_approval.unresolved_command_approvers` marker in `get-status`.
 
 Ignored legacy TOML `command_approver_node` values produce
 `command_approval.deprecated_command_approvers` markers in `get-status`. Treat
-that status field as a migration failure: the TOML key is ignored, and approval
-remains fail-open unless the Mermaid `command_approver_node` resolves to a
-configured node.
+that status field as a migration failure: the TOML key is ignored, so approval
+remains fail-open unless a Mermaid `command_approver_node` is configured.
 
 ## 2. Running Commands
 
@@ -130,8 +127,10 @@ directly, carrying the command hash, label, mode, and the approval thread id
 — so the reviewer does not have to poll `inspect-command-approvals`. To
 record a decision by replying instead of running `--record-decision`
 directly, start the reply body with `APPROVED: <reason>` or
-`NOT APPROVED: <reason>` and keep the given `thread_id` in the reply's own
-frontmatter; the daemon records the decision automatically on delivery. A
+`NOT APPROVED: <reason>` and keep all three generated correlation fields in
+the reply's own frontmatter: `thread_id`, the exact
+`fills_input_request_id`, and the exact `command_hash`; the daemon records the
+decision automatically on delivery. A
 reply on a command approval thread whose body does not start with one of
 those two prefixes is logged as a warning and not recorded as a decision at
 all — use `--record-decision` directly if you need to attach a reply body
@@ -140,11 +139,12 @@ delivery failure (for example, the command_approver_node is not currently
 discoverable) is logged but never blocks or duplicates the already-journaled
 approval request.
 
-Only a reply whose sender matches the request's config-resolved
-`command_approver_node` is ever honored; a reply from anyone else is recorded as
-`wrong_reviewer` and has no effect on the command, regardless of what the
-policy's `reviewer` audit label says (#626 B1) — the `reviewer` label itself
-is a plain, requester-influenceable string and has no bearing on this check.
+Only a reply whose sender exactly matches the request's stored
+session-qualified `command_approver_node` address is ever honored; a reply from
+anyone else leaves the request pending and has no effect on the command,
+regardless of what the policy's `reviewer` audit label says (#626 B1) — the
+`reviewer` label itself is a plain, requester-influenceable string and has no
+bearing on this check.
 
 The same authenticated-caller requirement applies to `--record-decision` (#626
 B1-residual): the decision's reviewer identity is always the calling process's

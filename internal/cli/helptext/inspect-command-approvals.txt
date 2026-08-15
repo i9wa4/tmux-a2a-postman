@@ -15,5 +15,5 @@ Statuses:
   approved        Matching reviewer approved before expiry.
   rejected        Matching reviewer rejected.
   expired         Pending or approved request is past expires_at.
-  wrong_reviewer  Decision reviewer did not match the request reviewer.
+  wrong_reviewer  Historical invalid-reviewer state; current invalid decisions leave requests pending.
   stale           Decision exists without a matching request thread.

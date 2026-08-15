@@ -11,6 +11,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 )
@@ -926,6 +927,9 @@ func TestTmuxHandAdapterDeliverSystemMessageWritesInbox(t *testing.T) {
 	if !result.Delivered {
 		t.Fatal("DeliverSystemMessage() delivered = false, want true")
 	}
+	if !result.Committed || !result.Projected {
+		t.Fatalf("DeliverSystemMessage() result = %#v, want committed and projected delivery", result)
+	}
 
 	body, err := os.ReadFile(filepath.Join(sessionDir, "inbox", "worker", "20260414-120000-r1234-from-postman-to-worker.md"))
 	if err != nil {
@@ -1074,6 +1078,170 @@ func TestFilesystemSystemMessageAdapterWritesInbox(t *testing.T) {
 	}
 	if string(body) != "system delivery" {
 		t.Fatalf("inbox body = %q, want %q", string(body), "system delivery")
+	}
+}
+
+func TestFilesystemSystemMessageAdapterRenameFailureLeavesNoCommittedMessage(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs() error = %v", err)
+	}
+	target := Target{ActorID: "worker", SessionName: "review-session", SessionDir: sessionDir}
+	manager := journal.NewManager("test-ctx", 31341)
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	filename := "20260414-120000-r1234-from-postman-to-worker.md"
+	if err := os.MkdirAll(filepath.Join(sessionDir, "inbox", "worker"), 0o700); err != nil {
+		t.Fatalf("MkdirAll(inbox) error = %v", err)
+	}
+	// An existing directory at the final name deterministically makes rename
+	// fail after the draft has been written, exercising cleanup before commit.
+	if err := os.Mkdir(filepath.Join(sessionDir, "inbox", "worker", filename), 0o700); err != nil {
+		t.Fatalf("Mkdir(final collision) error = %v", err)
+	}
+	_, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(target, SystemMessageDelivery{Filename: filename, Sender: "worker", Content: "raw-command-sentinel-never-deliver", QueueCap: 20})
+	if err == nil {
+		t.Fatal("DeliverSystemMessage() error = nil, want rename failure")
+	}
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker"))
+	if err != nil {
+		t.Fatalf("ReadDir(inbox) error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filename || !entries[0].IsDir() {
+		t.Fatalf("inbox entries after failed commit = %#v, want only collision directory", entries)
+	}
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("journal events after failed commit = %d, want 0", len(events))
+	}
+}
+
+func TestFilesystemSystemMessageAdapterDirectorySyncFailureIsCommittedUnprojected(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	original := syncInboxDirectoryFn
+	syncInboxDirectoryFn = func(string) error { return fmt.Errorf("injected directory sync failure") }
+	t.Cleanup(func() { syncInboxDirectoryFn = original })
+	filename := "20260414-120000-r1234-from-worker-to-approver.md"
+	result, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(Target{ActorID: "approver", SessionName: "review-session", SessionDir: sessionDir}, SystemMessageDelivery{Filename: filename, Sender: "worker", Content: "body", QueueCap: 20})
+	if err == nil || !result.Delivered || !result.Committed || result.Projected {
+		t.Fatalf("result=%#v err=%v, want committed unprojected error", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "approver", filename)); err != nil {
+		t.Fatalf("committed inbox file missing: %v", err)
+	}
+	if events, err := journal.Replay(sessionDir); err != nil || len(events) != 0 {
+		t.Fatalf("events=%d err=%v, want no projection", len(events), err)
+	}
+}
+
+func TestFilesystemSystemMessageAdapterProjectionAppendFailureIsCommittedUnprojected(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	original := appendMailboxProjectionPayloadFn
+	appendMailboxProjectionPayloadFn = func(string, string, string, journal.Visibility, journal.MailboxEventPayload) error {
+		return fmt.Errorf("injected projection append failure")
+	}
+	t.Cleanup(func() { appendMailboxProjectionPayloadFn = original })
+	filename := "20260414-120000-r1234-from-worker-to-approver.md"
+	result, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(Target{ActorID: "approver", SessionName: "review-session", SessionDir: sessionDir}, SystemMessageDelivery{Filename: filename, Sender: "worker", Content: "body", QueueCap: 20})
+	if err == nil || !result.Delivered || !result.Committed || result.Projected {
+		t.Fatalf("result=%#v err=%v, want committed unprojected error", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "approver", filename)); err != nil {
+		t.Fatalf("committed inbox file missing: %v", err)
+	}
+}
+
+func TestFilesystemSystemMessageAdapterProjectionSyncFailureIsCommittedUnprojected(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	original := syncMailboxProjectionFn
+	syncMailboxProjectionFn = func(string) error { return fmt.Errorf("injected projection sync failure") }
+	t.Cleanup(func() { syncMailboxProjectionFn = original })
+	filename := "20260414-120000-r1234-from-worker-to-approver.md"
+	result, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(Target{ActorID: "approver", SessionName: "review-session", SessionDir: sessionDir}, SystemMessageDelivery{Filename: filename, Sender: "worker", Content: "body", QueueCap: 20})
+	if err == nil || !result.Delivered || !result.Committed || result.Projected {
+		t.Fatalf("result=%#v err=%v, want committed unprojected error", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "approver", filename)); err != nil {
+		t.Fatalf("committed inbox file missing: %v", err)
+	}
+}
+
+func TestFilesystemSystemMessageAdapterPreCommitFailuresLeaveNoDelivery(t *testing.T) {
+	for _, stage := range []string{"write", "file-sync", "file-close", "rename"} {
+		t.Run(stage, func(t *testing.T) {
+			sessionDir := filepath.Join(t.TempDir(), "review-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			original := beforeSystemMessageCommitFn
+			beforeSystemMessageCommitFn = func(got string) error {
+				if got == stage {
+					return fmt.Errorf("injected %s failure", stage)
+				}
+				return nil
+			}
+			t.Cleanup(func() { beforeSystemMessageCommitFn = original })
+			filename := "20260414-120000-r1234-from-worker-to-approver.md"
+			result, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(Target{ActorID: "approver", SessionName: "review-session", SessionDir: sessionDir}, SystemMessageDelivery{Filename: filename, Sender: "worker", Content: "body", QueueCap: 20})
+			if err == nil || result.Delivered || result.Committed || result.Projected {
+				t.Fatalf("result=%#v err=%v, want uncommitted error", result, err)
+			}
+			if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "approver", filename)); !os.IsNotExist(err) {
+				t.Fatalf("final inbox file visible: %v", err)
+			}
+			entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "approver"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("temporary files retained: %#v", entries)
+			}
+			if events, err := journal.Replay(sessionDir); err != nil || len(events) != 0 {
+				t.Fatalf("events=%d err=%v", len(events), err)
+			}
+		})
+	}
+}
+
+func TestFilesystemSystemMessageAdapterPostCommitFailuresRemainRecoverable(t *testing.T) {
+	for _, stage := range []string{"directory-open", "directory-close", "final-stat"} {
+		t.Run(stage, func(t *testing.T) {
+			sessionDir := filepath.Join(t.TempDir(), "review-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			original := afterSystemMessageCommitFn
+			afterSystemMessageCommitFn = func(got string) error {
+				if got == stage {
+					return fmt.Errorf("injected %s failure", stage)
+				}
+				return nil
+			}
+			t.Cleanup(func() { afterSystemMessageCommitFn = original })
+			filename := "20260414-120000-r1234-from-worker-to-approver.md"
+			result, err := (FilesystemSystemMessageAdapter{}).DeliverSystemMessage(Target{ActorID: "approver", SessionName: "review-session", SessionDir: sessionDir}, SystemMessageDelivery{Filename: filename, Sender: "worker", Content: "body", QueueCap: 20})
+			if err == nil || !result.Delivered || !result.Committed || result.Projected {
+				t.Fatalf("result=%#v err=%v", result, err)
+			}
+			if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "approver", filename)); err != nil {
+				t.Fatalf("final inbox missing: %v", err)
+			}
+			if events, err := journal.Replay(sessionDir); err != nil || len(events) != 0 {
+				t.Fatalf("events=%d err=%v", len(events), err)
+			}
+		})
 	}
 }
 

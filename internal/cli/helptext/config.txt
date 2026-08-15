@@ -72,9 +72,12 @@ Mermaid node designation:
 Migration note:
   [postman] command_approver_node and per-policy command_approver_node keys in
   postman.toml are ignored with a deprecation warning. Move the approver to
-  postman.md. Until a valid Mermaid command_approver_node resolves to a
-  configured node, every execute-bash mode, including blocking, fails open and
-  records auto_approved_no_reviewer.
+  postman.md. An absent Mermaid command_approver_node makes every execute-bash
+  mode, including blocking, fail open and record auto_approved_no_reviewer. A
+  configured-but-unresolvable Mermaid command_approver_node is different:
+  blocking fails closed and does not run the command, while advisory and
+  warn-only retain their normal behavior: advisory continues and warn-only
+  requires an explicit --override-approval.
   get-status reports stale ignored TOML approver keys under
   command_approval.deprecated_command_approvers. Migration is complete only
   when command_approval.unresolved_command_approvers and

@@ -85,3 +85,47 @@ func TestSyncCommandApprovalDecisionHistoryRemovesStaleGeneratedJSON(t *testing.
 		t.Fatalf("history entries = %d, want 0 after pruning stale generated JSON: %#v", len(history), history)
 	}
 }
+
+func TestSyncCommandApprovalDecisionHistoryPreservesLegacyPreAddressTerminalDecision(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "session")
+	now := time.Date(2026, time.July, 20, 1, 30, 0, 0, time.UTC)
+	writer, err := OpenShadowWriter(sessionDir, "ctx-legacy", "session", os.Getpid(), now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	threadID := "command-approval-legacy"
+	if _, err := writer.AppendEventWithOptions(CommandApprovalRequestedEventType, VisibilityOperatorVisible, CommandApprovalRequestPayload{
+		Requester:           "worker",
+		Reviewer:            "orchestrator",
+		CommandApproverNode: "orchestrator",
+		Mode:                "blocking",
+		Label:               "legacy",
+		CommandHash:         "sha256:legacy",
+		InputRequestID:      "ireq_legacy",
+	}, AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+	}
+	if _, err := writer.AppendEventWithOptions(CommandApprovalDecidedEventType, VisibilityOperatorVisible, CommandApprovalDecisionPayload{
+		Reviewer:       "orchestrator",
+		Decision:       ApprovalDecisionRejected,
+		Reason:         "legacy rejection",
+		InputRequestID: "ireq_legacy",
+		CommandHash:    "sha256:legacy",
+	}, AppendOptions{ThreadID: threadID}, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(decision) error = %v", err)
+	}
+
+	if err := SyncCommandApprovalDecisionHistory(sessionDir); err != nil {
+		t.Fatalf("SyncCommandApprovalDecisionHistory() error = %v", err)
+	}
+	history, err := ListCommandApprovalDecisionHistory(sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history entries = %d, want 1: %#v", len(history), history)
+	}
+	if history[0].EffectiveStatus != "rejected" || history[0].DecisionReason != "legacy rejection" || history[0].CommandApproverAddress != "" || history[0].DecisionReviewerAddress != "" || !history[0].HistoricalOnly {
+		t.Fatalf("legacy history = %#v, want rejected pre-address audit entry", history[0])
+	}
+}

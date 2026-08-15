@@ -14,26 +14,30 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 type executeBashFixture struct {
-	baseDir             string
-	contextID           string
-	sessionName         string
-	sessionDir          string
-	now                 time.Time
-	policies            []config.CommandApprovalPolicy
-	commandApproverNode string
-	nodes               map[string]config.NodeConfig
-	discoveredNodes     map[string]discovery.NodeInfo
-	stdout              bytes.Buffer
-	stderr              bytes.Buffer
-	runCount            int
-	commands            []string
-	runStatus           int
-	runErr              error
+	baseDir              string
+	contextID            string
+	sessionName          string
+	sessionDir           string
+	now                  time.Time
+	policies             []config.CommandApprovalPolicy
+	commandApproverNode  string
+	nodes                map[string]config.NodeConfig
+	discoveredNodes      map[string]discovery.NodeInfo
+	notificationTemplate string
+	stdout               bytes.Buffer
+	stderr               bytes.Buffer
+	runCount             int
+	commands             []string
+	runStatus            int
+	runErr               error
 }
 
 func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
@@ -89,10 +93,11 @@ func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
 		stderr: &f.stderr,
 		loadConfig: func(string) (*config.Config, error) {
 			return &config.Config{
-				BaseDir:             f.baseDir,
-				CommandApproval:     f.policies,
-				CommandApproverNode: f.commandApproverNode,
-				Nodes:               f.nodes,
+				BaseDir:              f.baseDir,
+				CommandApproval:      f.policies,
+				CommandApproverNode:  f.commandApproverNode,
+				Nodes:                f.nodes,
+				NotificationTemplate: f.notificationTemplate,
 			}, nil
 		},
 		getTmuxPaneName:    func() string { return paneName },
@@ -118,7 +123,7 @@ func (f *executeBashFixture) args(extra ...string) []string {
 
 func TestRunExecuteBashAdvisoryRecordsRequestWithoutCommandTextAndRuns(t *testing.T) {
 	fixture := newExecuteBashFixture(t)
-	commandText := "printf secret-token"
+	commandText := "printf raw-command-sentinel-7f3c3d9b-never-mailbox"
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "low-risk",
@@ -187,6 +192,220 @@ func TestRunExecuteBashStoreCommandTextOptIn(t *testing.T) {
 		}
 	}
 	t.Fatal("no audit event stored command_text after explicit opt in")
+}
+
+func TestRunExecuteBashStoreCommandTextDoesNotLeakToApprovalMailbox(t *testing.T) {
+	policy := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policy)
+	approverInfo := discovery.NodeInfo{SessionName: fixture.sessionName, SessionDir: fixture.sessionDir}
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{
+		"orchestrator":              approverInfo,
+		"test-session:orchestrator": approverInfo,
+	}
+	commandText := "printf raw-command-sentinel-mailbox-boundary"
+	var observed message.DeliveryNotificationObservation
+	restoreNotificationObserver := message.SetDeliveryNotificationObserverForTest(func(observation message.DeliveryNotificationObservation) {
+		observed = observation
+	})
+	t.Cleanup(restoreNotificationObserver)
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--store-command-text",
+		"--reason", "review raw command storage boundary",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want pending blocking approval")
+	}
+	if !strings.Contains(err.Error(), "approval is absent") {
+		t.Fatalf("error = %v, want pending approval absence", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want zero execution", fixture.runCount)
+	}
+
+	for _, forbidden := range []string{commandText, "raw-command-sentinel-mailbox-boundary"} {
+		if strings.Contains(observed.Message, forbidden) {
+			t.Fatalf("approval notification leaked raw command sentinel %q in %q", forbidden, observed.Message)
+		}
+	}
+	if observed.Target.ActorID != "orchestrator" || observed.Recipient != "orchestrator" || observed.Sender != "worker" {
+		t.Fatalf("notification provenance = %#v, want logical worker -> orchestrator", observed)
+	}
+
+	events := replayCommandEvents(t, fixture.sessionDir)
+	storedInRequesterAudit := false
+	for _, event := range events {
+		if event.Type == journal.CommandApprovalRequestedEventType && bytes.Contains(event.Payload, []byte(commandText)) && bytes.Contains(event.Payload, []byte("command_text")) {
+			storedInRequesterAudit = true
+		}
+	}
+	if !storedInRequesterAudit {
+		t.Fatal("requester audit did not store command_text after explicit opt in")
+	}
+	deadLetters, err := filepath.Glob(filepath.Join(fixture.sessionDir, "dead-letter", "*.md"))
+	if err != nil {
+		t.Fatalf("Glob(dead-letter) error = %v", err)
+	}
+	if len(deadLetters) != 0 {
+		t.Fatalf("dead letters = %v, want none for trusted approval request delivery", deadLetters)
+	}
+}
+
+func TestRunExecuteBashCommandApprovalABCLifecycleRejectsWithoutExecution(t *testing.T) {
+	policy := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policy)
+	manager := journal.NewManager(fixture.contextID, os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	fixture.commandApproverNode = "approver"
+	fixture.notificationTemplate = "notice {from_node}->{node} {filename}"
+	fixture.nodes = map[string]config.NodeConfig{
+		"worker":       {},
+		"orchestrator": {},
+		"approver":     {},
+		"other":        {},
+	}
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{
+		"test-session:worker":       {PaneID: "%1", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+		"test-session:orchestrator": {PaneID: "%2", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+		"test-session:approver":     {PaneID: "%3", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+		"test-session:other":        {PaneID: "%4", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+	}
+	nodes := fixture.discoveredNodes
+	adjacency := map[string][]string{
+		"worker":       {"orchestrator"},
+		"orchestrator": {"approver"},
+		"approver":     {"orchestrator"},
+	}
+	commandText := "printf f006-rejection-lifecycle-sentinel"
+	var observed message.DeliveryNotificationObservation
+	restoreNotificationObserver := message.SetDeliveryNotificationObserverForTest(func(observation message.DeliveryNotificationObservation) {
+		observed = observation
+	})
+	t.Cleanup(restoreNotificationObserver)
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--reviewer", "orchestrator",
+		"--reason", "F006 lifecycle request",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want pending blocking approval")
+	}
+	if !strings.Contains(err.Error(), "approval is absent") {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want approval absence", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after request = %d, want zero execution", fixture.runCount)
+	}
+
+	threadID, thread := onlyApprovalThread(t, fixture.sessionDir, fixture.now)
+	if thread.Status != projection.CommandApprovalStatusPending {
+		t.Fatalf("initial status = %q, want pending", thread.Status)
+	}
+	if thread.Requester != "worker" || thread.Reviewer != "orchestrator" || thread.CommandApproverNode != "approver" {
+		t.Fatalf("thread routing fields = %#v, want requester worker, reviewer orchestrator, approver approver", thread)
+	}
+	if thread.InputRequestID == "" || thread.CommandHash == "" {
+		t.Fatalf("thread missing correlation metadata: %#v", thread)
+	}
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, true)
+	if observed.Target.ActorID != "approver" || observed.Recipient != "approver" || observed.Sender != "worker" {
+		t.Fatalf("notification provenance = %#v, want logical worker -> approver", observed)
+	}
+	if !strings.Contains(observed.Message, "worker->approver") || !strings.Contains(observed.Message, filepath.Base(observed.NotificationPath)) {
+		t.Fatalf("notification message = %q, want sender, recipient, and message filename", observed.Message)
+	}
+	if strings.Contains(observed.Message, commandText) {
+		t.Fatalf("approval notification leaked raw command text: %q", observed.Message)
+	}
+	requestFiles := listDirNames(t, filepath.Join(fixture.sessionDir, "inbox", "approver"))
+	if len(requestFiles) != 1 {
+		t.Fatalf("approver inbox files = %v, want exactly one approval request; session files: %v; events: %v; observed: %#v", requestFiles, walkRelativeFiles(t, fixture.sessionDir), summarizeJournalEvents(t, fixture.sessionDir), observed)
+	}
+	requestContent := readFileString(t, filepath.Join(fixture.sessionDir, "inbox", "approver", requestFiles[0]))
+	for _, required := range []string{threadID, thread.InputRequestID, thread.CommandHash, "fills_input_request_id"} {
+		if !strings.Contains(requestContent, required) {
+			t.Fatalf("approval request missing %q:\n%s", required, requestContent)
+		}
+	}
+	for _, actor := range []string{"worker", "orchestrator", "other"} {
+		if got := listDirNames(t, filepath.Join(fixture.sessionDir, "inbox", actor)); len(got) != 0 {
+			t.Fatalf("%s inbox files = %v, want no approval request", actor, got)
+		}
+	}
+
+	deliverLifecyclePost(t, fixture.sessionDir, "20260601-100001-rabc-from-worker-to-approver.md", "test-session", nodes, adjacency, func(string) bool { return true }, lifecycleEnvelope(fixture.contextID, "worker", "approver", "", "", "", "ordinary A to C mail"))
+	assertApprovalLifecycle(t, fixture.sessionDir, fixture.now, threadID, projection.CommandApprovalStatusPending, 0, "")
+	assertLifecycleDeadLetters(t, fixture.sessionDir, "dl-routing-denied", 1)
+	if got := listDirNames(t, filepath.Join(fixture.sessionDir, "inbox", "approver")); len(got) != 1 {
+		t.Fatalf("approver inbox files after ordinary A->C = %v, want only approval request", got)
+	}
+
+	invalidAttempts := []struct {
+		name        string
+		filename    string
+		from        string
+		to          string
+		threadID    string
+		fillID      string
+		commandHash string
+		body        string
+		enabled     func(string) bool
+		wantSuffix  string
+	}{
+		{name: "mismatched fill", filename: "20260601-100002-rabc-from-approver-to-worker.md", from: "approver", to: "worker", threadID: threadID, fillID: "ireq_wrong", commandHash: thread.CommandHash, body: "NOT APPROVED: wrong fill.", wantSuffix: "dl-routing-denied"},
+		{name: "mismatched hash", filename: "20260601-100003-rabc-from-approver-to-worker.md", from: "approver", to: "worker", threadID: threadID, fillID: thread.InputRequestID, commandHash: "sha256:badc0ffee", body: "NOT APPROVED: wrong hash.", wantSuffix: "dl-routing-denied"},
+		{name: "mismatched thread", filename: "20260601-100004-rabc-from-approver-to-worker.md", from: "approver", to: "worker", threadID: "command-approval-wrong-thread", fillID: thread.InputRequestID, commandHash: thread.CommandHash, body: "NOT APPROVED: wrong thread.", wantSuffix: "dl-routing-denied"},
+		{name: "mismatched requester", filename: "20260601-100005-rabc-from-approver-to-other.md", from: "approver", to: "other", threadID: threadID, fillID: thread.InputRequestID, commandHash: thread.CommandHash, body: "NOT APPROVED: wrong requester.", wantSuffix: "dl-routing-denied"},
+		{name: "mismatched reviewer", filename: "20260601-100006-rabc-from-orchestrator-to-worker.md", from: "orchestrator", to: "worker", threadID: threadID, fillID: thread.InputRequestID, commandHash: thread.CommandHash, body: "NOT APPROVED: wrong reviewer.", wantSuffix: "dl-routing-denied"},
+		{name: "session disabled", filename: "20260601-100007-rabc-from-approver-to-worker.md", from: "approver", to: "worker", threadID: threadID, fillID: thread.InputRequestID, commandHash: thread.CommandHash, body: "NOT APPROVED: disabled.", enabled: func(string) bool { return false }, wantSuffix: "dl-session-disabled"},
+	}
+	expectedDeadLetters := map[string]int{"dl-routing-denied": 1}
+	for _, attempt := range invalidAttempts {
+		t.Run(attempt.name, func(t *testing.T) {
+			enabled := attempt.enabled
+			if enabled == nil {
+				enabled = func(string) bool { return true }
+			}
+			deliverLifecyclePost(t, fixture.sessionDir, attempt.filename, "test-session", nodes, adjacency, enabled, lifecycleEnvelope(fixture.contextID, attempt.from, attempt.to, attempt.threadID, attempt.fillID, attempt.commandHash, attempt.body))
+			assertApprovalLifecycle(t, fixture.sessionDir, fixture.now, threadID, projection.CommandApprovalStatusPending, 0, "")
+			assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, true)
+			expectedDeadLetters[attempt.wantSuffix]++
+			assertLifecycleDeadLetters(t, fixture.sessionDir, attempt.wantSuffix, expectedDeadLetters[attempt.wantSuffix])
+		})
+	}
+
+	rejectReason := "F006 explicit rejection."
+	validRejectFilename := "20260601-100008-rabc-from-approver-to-worker.md"
+	deliverLifecyclePost(t, fixture.sessionDir, validRejectFilename, "test-session", nodes, adjacency, func(string) bool { return true }, lifecycleEnvelope(fixture.contextID, "approver", "worker", threadID, thread.InputRequestID, thread.CommandHash, "NOT APPROVED: "+rejectReason))
+	assertApprovalLifecycle(t, fixture.sessionDir, fixture.now, threadID, projection.CommandApprovalStatusRejected, 1, rejectReason)
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, false)
+	assertLifecycleDeadLetters(t, fixture.sessionDir, "dl-routing-denied", 7)
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after rejection = %d, want zero execution", fixture.runCount)
+	}
+
+	deliverLifecyclePost(t, fixture.sessionDir, "20260601-100009-rabc-from-approver-to-worker.md", "test-session", nodes, adjacency, func(string) bool { return true }, lifecycleEnvelope(fixture.contextID, "approver", "worker", threadID, thread.InputRequestID, thread.CommandHash, "NOT APPROVED: replayed rejection."))
+	assertApprovalLifecycle(t, fixture.sessionDir, fixture.now, threadID, projection.CommandApprovalStatusRejected, 1, rejectReason)
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, false)
+	assertLifecycleDeadLetters(t, fixture.sessionDir, "dl-routing-denied", 8)
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after duplicate replay = %d, want zero execution", fixture.runCount)
+	}
 }
 
 func TestRunExecuteBashWarnOnlyRequiresOverride(t *testing.T) {
@@ -279,12 +498,12 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 			wantReason: "approval is expired",
 		},
 		{
-			name: "wrong reviewer",
+			name: "wrong reviewer remains pending",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 				fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "critic", fixture.now.Add(15*time.Minute))
 			},
 			command:    "printf reviewer",
-			wantReason: "reviewer does not match",
+			wantReason: "approval is pending",
 		},
 		{
 			name: "changed digest",
@@ -571,6 +790,92 @@ func TestRunExecuteBashBlockingRunsMatchingApprovedDigest(t *testing.T) {
 	}
 	if fixture.runCount != 1 {
 		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+func TestRunExecuteBashBlockingRejectsLegacyAddresslessApprovedAuditOnly(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf legacy-approved"
+	commandHash := commandDigest(commandText)
+	threadID := commandApprovalThreadID(policy, commandHash)
+	inputRequestID := "ireq_" + strings.TrimPrefix(threadID, "command-approval-")
+	writer := fixture.openWriter(t)
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+		Requester:           "worker",
+		Reviewer:            "orchestrator",
+		CommandApproverNode: "orchestrator",
+		Mode:                "blocking",
+		Label:               "protected",
+		Category:            "release",
+		CommandHash:         commandHash,
+		InputRequestID:      inputRequestID,
+		Reason:              "legacy request",
+		ExpiresAt:           fixture.now.Add(15 * time.Minute).UTC().Format(time.RFC3339Nano),
+	}, journal.AppendOptions{ThreadID: threadID}, fixture.now); err != nil {
+		t.Fatalf("AppendEventWithOptions(legacy request): %v", err)
+	}
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+		Reviewer:       "orchestrator",
+		Decision:       journal.ApprovalDecisionApproved,
+		Reason:         "legacy approved",
+		InputRequestID: inputRequestID,
+		CommandHash:    commandHash,
+	}, journal.AppendOptions{ThreadID: threadID}, fixture.now.Add(time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(legacy decision): %v", err)
+	}
+
+	state, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now.Add(2*time.Second))
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v), want legacy approval state", state, ok, err)
+	}
+	thread := state.Threads[threadID]
+	if thread.Status != projection.CommandApprovalStatusApproved || !thread.HistoricalOnly {
+		t.Fatalf("legacy thread = %#v, want approved historical-only audit state", thread)
+	}
+	if err := journal.SyncCommandApprovalDecisionHistory(fixture.sessionDir); err != nil {
+		t.Fatalf("SyncCommandApprovalDecisionHistory() error = %v", err)
+	}
+	history, err := journal.ListCommandApprovalDecisionHistory(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != 1 || history[0].EffectiveStatus != "approved" || !history[0].HistoricalOnly {
+		t.Fatalf("legacy history = %#v, want approved historical-only audit entry", history)
+	}
+
+	err = runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--thread-id", threadID,
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want historical-only approval block")
+	}
+	if !strings.Contains(err.Error(), "historical audit-only") {
+		t.Fatalf("error = %v, want historical-only diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0; legacy address-less approval must not authorize live execution", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != "blocked" || !strings.Contains(decision.Reason, "historical audit-only") {
+		t.Fatalf("execution decision = %#v, want blocked historical-only reason", decision)
 	}
 }
 
@@ -999,7 +1304,7 @@ func (f *executeBashFixture) appendCommandApproval(t *testing.T, policy resolved
 	t.Helper()
 
 	threadID := f.appendCommandApprovalRequest(t, policy, commandText, expiresAt)
-	f.appendCommandApprovalDecisionOnly(t, threadID, decisionReviewer, decision)
+	f.appendCommandApprovalDecisionForRequest(t, threadID, decisionReviewer, decision)
 	return threadID
 }
 
@@ -1013,19 +1318,26 @@ func (f *executeBashFixture) appendCommandApprovalRequest(t *testing.T, policy r
 	// as recordCommandApprovalRequest always populates it from the
 	// config-resolved node in production — this is the field decisions are
 	// actually validated against now, never the plain Reviewer label.
+	commandApproverAddress := ""
+	if f.commandApproverNode != "" {
+		commandApproverAddress = nodeaddr.Full(f.commandApproverNode, f.sessionName)
+	}
 	_, err := writer.AppendEventWithOptions(
 		journal.CommandApprovalRequestedEventType,
 		journal.VisibilityOperatorVisible,
 		journal.CommandApprovalRequestPayload{
-			Requester:           policy.Requester,
-			Reviewer:            policy.Reviewer,
-			CommandApproverNode: f.commandApproverNode,
-			Mode:                policy.Mode,
-			Label:               policy.Label,
-			Category:            policy.Category,
-			CommandHash:         commandHash,
-			Reason:              "review requested",
-			ExpiresAt:           expiresAt.UTC().Format(time.RFC3339Nano),
+			Requester:              policy.Requester,
+			RequesterAddress:       nodeaddr.Full(policy.Requester, f.sessionName),
+			Reviewer:               policy.Reviewer,
+			CommandApproverNode:    f.commandApproverNode,
+			CommandApproverAddress: commandApproverAddress,
+			Mode:                   policy.Mode,
+			Label:                  policy.Label,
+			Category:               policy.Category,
+			CommandHash:            commandHash,
+			InputRequestID:         "ireq_" + strings.TrimPrefix(threadID, "command-approval-"),
+			Reason:                 "review requested",
+			ExpiresAt:              expiresAt.UTC().Format(time.RFC3339Nano),
 		},
 		journal.AppendOptions{ThreadID: threadID},
 		f.now,
@@ -1034,6 +1346,38 @@ func (f *executeBashFixture) appendCommandApprovalRequest(t *testing.T, policy r
 		t.Fatalf("AppendEventWithOptions(request): %v", err)
 	}
 	return threadID
+}
+
+func (f *executeBashFixture) appendCommandApprovalDecisionForRequest(t *testing.T, threadID, reviewer string, decision journal.ApprovalDecision) {
+	t.Helper()
+
+	state, ok, err := projection.ProjectCommandApprovalState(f.sessionDir, f.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v), want request state before decision", state, ok, err)
+	}
+	thread, ok := state.Threads[threadID]
+	if !ok {
+		t.Fatalf("missing thread %q before decision", threadID)
+	}
+	writer := f.openWriter(t)
+	_, err = writer.AppendEventWithOptions(
+		journal.CommandApprovalDecidedEventType,
+		journal.VisibilityOperatorVisible,
+		journal.CommandApprovalDecisionPayload{
+			Reviewer:         reviewer,
+			ReviewerAddress:  nodeaddr.Full(reviewer, f.sessionName),
+			RequesterAddress: thread.RequesterAddress,
+			Decision:         decision,
+			Reason:           "reviewed",
+			InputRequestID:   thread.InputRequestID,
+			CommandHash:      thread.CommandHash,
+		},
+		journal.AppendOptions{ThreadID: threadID},
+		f.now,
+	)
+	if err != nil {
+		t.Fatalf("AppendEventWithOptions(decision): %v", err)
+	}
 }
 
 func (f *executeBashFixture) appendCommandApprovalDecisionOnly(t *testing.T, threadID, reviewer string, decision journal.ApprovalDecision) {
@@ -1095,6 +1439,210 @@ func replayCommandEvents(t *testing.T, sessionDir string) []journal.Event {
 		}
 	}
 	return commandEvents
+}
+
+func onlyApprovalThread(t *testing.T, sessionDir string, now time.Time) (string, projection.CommandApprovalThread) {
+	t.Helper()
+
+	state, ok, err := projection.ProjectCommandApprovalState(sessionDir, now)
+	if err != nil {
+		t.Fatalf("ProjectCommandApprovalState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectCommandApprovalState() ok = false, want true")
+	}
+	if len(state.Threads) != 1 {
+		t.Fatalf("threads = %#v, want exactly one", state.Threads)
+	}
+	for threadID, thread := range state.Threads {
+		return threadID, thread
+	}
+	t.Fatal("missing only approval thread")
+	return "", projection.CommandApprovalThread{}
+}
+
+func assertApprovalLifecycle(t *testing.T, sessionDir string, now time.Time, threadID string, wantStatus projection.CommandApprovalStatus, wantHistory int, wantReason string) {
+	t.Helper()
+
+	state, ok, err := projection.ProjectCommandApprovalState(sessionDir, now)
+	if err != nil {
+		t.Fatalf("ProjectCommandApprovalState() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectCommandApprovalState() ok = false, want true")
+	}
+	thread, ok := state.Threads[threadID]
+	if !ok {
+		t.Fatalf("missing thread %q in %#v", threadID, state.Threads)
+	}
+	if thread.Status != wantStatus {
+		t.Fatalf("thread status = %q, want %q", thread.Status, wantStatus)
+	}
+	history, err := journal.ListCommandApprovalDecisionHistory(sessionDir)
+	if err != nil {
+		t.Fatalf("ListCommandApprovalDecisionHistory() error = %v", err)
+	}
+	if len(history) != wantHistory {
+		t.Fatalf("decision history length = %d, want %d: %#v", len(history), wantHistory, history)
+	}
+	if wantHistory == 0 {
+		return
+	}
+	entry := history[0]
+	if entry.ThreadID != threadID || entry.Decision != journal.ApprovalDecisionRejected || entry.EffectiveStatus != "rejected" {
+		t.Fatalf("history decision fields = %#v, want rejected %s", entry, threadID)
+	}
+	if entry.Requester != "worker" || entry.Reviewer != "orchestrator" || entry.CommandApproverNode != "approver" || entry.DecisionReviewer != "approver" {
+		t.Fatalf("history provenance = %#v, want worker/orchestrator/approver", entry)
+	}
+	if entry.CommandHash != thread.CommandHash || entry.DecisionReason != wantReason {
+		t.Fatalf("history correlation/reason = %#v, want hash %q reason %q", entry, thread.CommandHash, wantReason)
+	}
+}
+
+func assertApprovalReplySlot(t *testing.T, sessionDir, sessionName, inputRequestID string, wantOpen bool) {
+	t.Helper()
+
+	state, ok, err := projection.ProjectMessageInputRequestStateAt(sessionDir, sessionName, time.Date(2026, time.June, 1, 10, 30, 0, 0, time.UTC), projection.DefaultInputRequestStaleAfterSeconds)
+	if err != nil {
+		t.Fatalf("ProjectMessageInputRequestStateAt() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ProjectMessageInputRequestStateAt() ok = false, want true")
+	}
+	foundInbound := false
+	for _, input := range state.InputRequired {
+		if input.InputRequestID == inputRequestID {
+			foundInbound = true
+			break
+		}
+	}
+	foundOutbound := false
+	for _, input := range state.WaitingOnInput {
+		if input.InputRequestID == inputRequestID {
+			foundOutbound = true
+			break
+		}
+	}
+	if foundInbound != wantOpen || foundOutbound != wantOpen {
+		t.Fatalf("input request %q open inbound/outbound = %v/%v, want %v/%v; inbound=%#v outbound=%#v", inputRequestID, foundInbound, foundOutbound, wantOpen, wantOpen, state.InputRequired, state.WaitingOnInput)
+	}
+	if got := state.InputRequiredCounts["approver"]; (got > 0) != wantOpen {
+		t.Fatalf("InputRequiredCounts[approver] = %d, want open=%v; counts=%#v", got, wantOpen, state.InputRequiredCounts)
+	}
+	if got := state.WaitingOnInputCounts["worker"]; (got > 0) != wantOpen {
+		t.Fatalf("WaitingOnInputCounts[worker] = %d, want open=%v; counts=%#v", got, wantOpen, state.WaitingOnInputCounts)
+	}
+}
+
+func deliverLifecyclePost(t *testing.T, sessionDir, filename, sessionName string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, enabled func(string) bool, content string) {
+	t.Helper()
+
+	path := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", filename, err)
+	}
+	if err := message.DeliverMessage(path, "ctx-484", nodes, adjacency, &config.Config{}, enabled, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage(%s) error = %v", filename, err)
+	}
+}
+
+func lifecycleEnvelope(contextID, from, to, threadID, fillID, commandHash, body string) string {
+	var b strings.Builder
+	b.WriteString("---\nparams:\n")
+	b.WriteString("  contextId: " + contextID + "\n")
+	b.WriteString("  from: " + from + "\n")
+	b.WriteString("  to: " + to + "\n")
+	if threadID != "" {
+		b.WriteString("  thread_id: " + threadID + "\n")
+	}
+	if fillID != "" {
+		b.WriteString("  fills_input_request_id: " + fillID + "\n")
+	}
+	if commandHash != "" {
+		b.WriteString("  command_hash: " + commandHash + "\n")
+	}
+	b.WriteString("  timestamp: 2026-06-01T10:00:00Z\n---\n\n")
+	b.WriteString(body)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func listDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("ReadDir(%s) error = %v", dir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	return string(content)
+}
+
+func walkRelativeFiles(t *testing.T, root string) []string {
+	t.Helper()
+
+	var files []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkDir(%s) error = %v", root, err)
+	}
+	return files
+}
+
+func summarizeJournalEvents(t *testing.T, sessionDir string) []string {
+	t.Helper()
+
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay(%s) error = %v", sessionDir, err)
+	}
+	summaries := make([]string, 0, len(events))
+	for _, event := range events {
+		summaries = append(summaries, fmt.Sprintf("%d:%s:%s:%s:%s", event.Sequence, event.Type, event.Visibility, event.SessionKey, string(event.Payload)))
+	}
+	return summaries
+}
+
+func assertLifecycleDeadLetters(t *testing.T, sessionDir, suffix string, want int) {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(sessionDir, "dead-letter", "*"+suffix+".md"))
+	if err != nil {
+		t.Fatalf("Glob(dead-letter) error = %v", err)
+	}
+	if len(matches) != want {
+		t.Fatalf("dead letters with suffix %s = %d (%v), want %d", suffix, len(matches), matches, want)
+	}
 }
 
 func findExecutionDecisionPayload(t *testing.T, sessionDir string) journal.CommandExecutionDecisionPayload {

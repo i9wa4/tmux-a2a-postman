@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/agentruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -145,7 +148,12 @@ type SystemMessageDelivery struct {
 }
 
 type SystemMessageResult struct {
+	// Delivered means the final inbox name is visible. Committed distinguishes
+	// post-rename failures from ordinary retry-safe failures; Projected records
+	// whether the durable mailbox projection was appended and synchronized.
 	Delivered bool
+	Committed bool
+	Projected bool
 }
 
 type InteractiveDeliveryAdapter interface {
@@ -533,6 +541,32 @@ func (a TmuxInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDeli
 
 type FilesystemSystemMessageAdapter struct{}
 
+var syncInboxDirectoryFn = func(inboxDir string) error {
+	dir, err := os.Open(inboxDir)
+	if err != nil {
+		return fmt.Errorf("opening inbox for durability sync: %w", err)
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return fmt.Errorf("syncing inbox directory: %w", err)
+	}
+	return nil
+}
+
+var (
+	appendMailboxProjectionPayloadFn = appendMailboxProjectionPayload
+	syncMailboxProjectionFn          = projection.SyncMailboxProjection
+	openCurrentWriterFn              = journal.OpenCurrentWriter
+	beforeSystemMessageCommitFn      = func(string) error { return nil }
+	afterSystemMessageCommitFn       = func(string) error { return nil }
+)
+
+func SetOpenCurrentWriterForTest(fn func(string) (*journal.Writer, error)) func() {
+	original := openCurrentWriterFn
+	openCurrentWriterFn = fn
+	return func() { openCurrentWriterFn = original }
+}
+
 func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
 	recipientInbox := target.InboxDir()
 	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
@@ -545,20 +579,77 @@ func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delive
 	}
 
 	dst := filepath.Join(recipientInbox, delivery.Filename)
-	if err := os.WriteFile(dst, []byte(delivery.Content), 0o600); err != nil {
-		return SystemMessageResult{}, fmt.Errorf("writing to inbox: %w", err)
+	tmp, err := os.CreateTemp(recipientInbox, "."+delivery.Filename+".tmp-")
+	if err != nil {
+		return SystemMessageResult{}, fmt.Errorf("creating inbox draft: %w", err)
 	}
-	recordMailboxProjectionPayload(target.SessionDir, target.SessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return SystemMessageResult{}, fmt.Errorf("setting inbox draft permissions: %w", err)
+	}
+	if _, err := tmp.WriteString(delivery.Content); err != nil {
+		tmp.Close()
+		return SystemMessageResult{}, fmt.Errorf("writing inbox draft: %w", err)
+	}
+	if err := beforeSystemMessageCommitFn("write"); err != nil {
+		tmp.Close()
+		return SystemMessageResult{}, err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return SystemMessageResult{}, fmt.Errorf("syncing inbox draft: %w", err)
+	}
+	if err := beforeSystemMessageCommitFn("file-sync"); err != nil {
+		tmp.Close()
+		return SystemMessageResult{}, err
+	}
+	if err := tmp.Close(); err != nil {
+		return SystemMessageResult{}, fmt.Errorf("closing inbox draft: %w", err)
+	}
+	if err := beforeSystemMessageCommitFn("file-close"); err != nil {
+		return SystemMessageResult{}, err
+	}
+	if err := beforeSystemMessageCommitFn("rename"); err != nil {
+		return SystemMessageResult{}, err
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		return SystemMessageResult{}, fmt.Errorf("committing inbox delivery: %w", err)
+	}
+	committed := SystemMessageResult{Delivered: true, Committed: true}
+	if err := afterSystemMessageCommitFn("directory-open"); err != nil {
+		return committed, err
+	}
+	if err := syncInboxDirectoryFn(recipientInbox); err != nil {
+		return committed, fmt.Errorf("inbox delivery committed but durability sync failed: %w", err)
+	}
+	if err := afterSystemMessageCommitFn("directory-close"); err != nil {
+		return committed, err
+	}
+	if err := afterSystemMessageCommitFn("final-stat"); err != nil {
+		return committed, err
+	}
+	if _, err := os.Stat(dst); err != nil {
+		return committed, fmt.Errorf("inbox delivery committed but final verification failed: %w", err)
+	}
+	payload := journal.MailboxEventPayload{
 		MessageID: delivery.Filename,
 		From:      delivery.Sender,
 		To:        target.ActorID,
 		ThreadID:  delivery.ThreadID,
 		Path:      shadowRelativePath(target.SessionDir, dst),
 		Content:   delivery.Content,
-	})
-	syncMailboxProjection(target.SessionDir)
+	}
+	if err := appendMailboxProjectionPayloadFn(target.SessionDir, target.SessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, payload); err != nil {
+		return committed, fmt.Errorf("inbox delivery committed but projection append failed (recoverable by projection sync): %w", err)
+	}
+	if err := syncMailboxProjectionFn(target.SessionDir); err != nil {
+		return committed, fmt.Errorf("inbox delivery committed but projection sync failed (recoverable by projection sync): %w", err)
+	}
 
-	return SystemMessageResult{Delivered: true}, nil
+	committed.Projected = true
+	return committed, nil
 }
 
 func DefaultHandAdapter(target Target) (HandAdapter, error) {
@@ -589,9 +680,88 @@ func DefaultHandAdapter(target Target) (HandAdapter, error) {
 }
 
 func recordMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) {
-	if err := journal.RecordProcessMailboxPayload(sessionDir, sessionName, eventType, visibility, payload, time.Now()); err != nil {
+	if err := appendMailboxProjectionPayload(sessionDir, sessionName, eventType, visibility, payload); err != nil {
 		log.Printf("postman: WARNING: component=%s event=append_failed mailbox_event=%s err=%v\n", projection.MailboxProjectionComponent, eventType, err)
 	}
+}
+
+func appendMailboxProjectionPayload(sessionDir, sessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload) error {
+	payload = enrichMailboxProjectionPayload(payload)
+	now := time.Now()
+	if _, err := journal.RecordProcessMailboxPayloadIfAbsent(sessionDir, sessionName, eventType, visibility, payload, sameMailboxProjectionPayload(eventType, payload), now); err != nil {
+		return err
+	}
+	writer, err := openCurrentWriterFn(sessionDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("opening current writer after mailbox commit: %w", err)
+		}
+		if _, shadowErr := journal.OpenShadowWriter(sessionDir, "system-message-delivery", sessionName, os.Getpid(), now); shadowErr != nil {
+			return fmt.Errorf("opening current writer after mailbox commit: %w", err)
+		}
+		writer, err = openCurrentWriterFn(sessionDir)
+		if err != nil {
+			return fmt.Errorf("opening current writer after mailbox commit: %w", err)
+		}
+	}
+	_, _, err = writer.AppendCurrentSessionEventIfAbsent(eventType, visibility, payload, journal.AppendOptions{
+		ThreadID: payload.ThreadID,
+	}, now, sameMailboxProjectionPayload(eventType, payload))
+	return err
+}
+
+func sameMailboxProjectionPayload(eventType string, want journal.MailboxEventPayload) journal.EventEquivalenceFunc {
+	return func(event journal.Event) (bool, error) {
+		if event.Type != eventType {
+			return false, nil
+		}
+		var got journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &got); err != nil {
+			return false, err
+		}
+		return got.MessageID == want.MessageID &&
+			got.Path == want.Path &&
+			got.SourcePath == want.SourcePath &&
+			got.From == want.From &&
+			got.To == want.To &&
+			got.ThreadID == want.ThreadID, nil
+	}
+}
+
+// enrichMailboxProjectionPayload keeps the durable mailbox event aligned with
+// the logical envelope identity. System delivery may use a privileged transport
+// path, but the journal must retain the requester and approval correlation IDs
+// authored in the envelope rather than treating the transport as the sender.
+func enrichMailboxProjectionPayload(payload journal.MailboxEventPayload) journal.MailboxEventPayload {
+	if payload.Content == "" {
+		return payload
+	}
+	metadata, err := envelope.ParseMetadata(payload.Content)
+	if err != nil {
+		return payload
+	}
+	if payload.MessageID == "" {
+		payload.MessageID = metadata.MessageID
+	}
+	if payload.From == "" {
+		payload.From = metadata.From
+	}
+	if payload.To == "" {
+		payload.To = metadata.To
+	}
+	if payload.ThreadID == "" {
+		payload.ThreadID = metadata.ThreadID
+	}
+	if payload.InputRequestID == "" {
+		payload.InputRequestID = metadata.InputRequestID
+	}
+	if payload.FillsInputRequestID == "" {
+		payload.FillsInputRequestID = metadata.FillsInputRequestID
+	}
+	if payload.InputRequestSetID == "" {
+		payload.InputRequestSetID = metadata.InputRequestSetID
+	}
+	return payload
 }
 
 func syncMailboxProjection(sessionDir string) {
