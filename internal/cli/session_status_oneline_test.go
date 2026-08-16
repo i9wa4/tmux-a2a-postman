@@ -140,6 +140,24 @@ func TestCompactNodeStatusMarkUsesContextualNodeSeverityWhenVisibleReady(t *test
 			want: "🔴",
 		},
 		{
+			name: "blocked flow is not hidden behind unknown pane-local evidence",
+			node: status.NodeStatus{
+				VisibleState: "ready",
+				Severity:     "blocked",
+				NodeLocal: &status.NodeLocalStatus{
+					State:         "unknown",
+					Severity:      "ok",
+					EvidenceLevel: "unknown",
+				},
+				Flow: &status.NodeFlowStatus{
+					State:         "blocked",
+					Severity:      "blocked",
+					EvidenceLevel: "proven",
+				},
+			},
+			want: "🔴",
+		},
+		{
 			name: "unknown pane-local evidence is neutral not green",
 			node: status.NodeStatus{
 				VisibleState: "ready",

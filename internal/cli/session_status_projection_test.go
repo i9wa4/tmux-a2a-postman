@@ -550,6 +550,10 @@ func TestSessionStatusBuildsDefaultCompactAfterNodeLocalEnrichment(t *testing.T)
 		wantCompact      string
 		wantNodeLocal    string
 		wantSeverity     string
+		wantNodeSeverity string
+		blockedReports   []projection.BlockedReport
+		wantFlowState    string
+		wantCompactSev   string
 		wantOneline      string
 		wantReasonSubstr string
 	}{
@@ -629,10 +633,38 @@ func TestSessionStatusBuildsDefaultCompactAfterNodeLocalEnrichment(t *testing.T)
 			wantOneline:      "🔴",
 			wantReasonSubstr: "pane state is idle",
 		},
+		{
+			name:           "blocked flow beats unknown local evidence",
+			paneState:      "active",
+			currentCommand: "claude",
+			screenProgress: missingScreenProgressEvidence(),
+			blockedReports: []projection.BlockedReport{
+				{
+					Node:            "worker",
+					MessageID:       "blocked-message",
+					BlockedReportID: "blocked-report-001",
+					EvidenceLevel:   "proven",
+					EvidenceSource:  "blocked_report_file",
+					Reason:          "waiting on owner",
+				},
+			},
+			wantCompact:      "🔴",
+			wantNodeLocal:    "unknown",
+			wantSeverity:     "ok",
+			wantNodeSeverity: "blocked",
+			wantFlowState:    "blocked",
+			wantCompactSev:   "blocked:node=worker:blocked_report=blocked-report-001",
+			wantOneline:      "🔴",
+			wantReasonSubstr: "missing",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			blockedByNode := map[string][]projection.BlockedReport{}
+			if len(tt.blockedReports) > 0 {
+				blockedByNode["worker"] = tt.blockedReports
+			}
 			health := buildSessionStatusSnapshot(sessionStatusInputs{
 				contextID:        "ctx",
 				sessionName:      "review",
@@ -663,7 +695,7 @@ func TestSessionStatusBuildsDefaultCompactAfterNodeLocalEnrichment(t *testing.T)
 				},
 				inboxCounts:   map[string]int{},
 				delivery:      &status.DeliveryStatus{State: "ok", Severity: "ok", EvidenceLevel: "proven"},
-				blockedByNode: map[string][]projection.BlockedReport{},
+				blockedByNode: blockedByNode,
 				now:           now,
 			})
 
@@ -679,6 +711,22 @@ func TestSessionStatusBuildsDefaultCompactAfterNodeLocalEnrichment(t *testing.T)
 			local := health.Nodes[0].NodeLocal
 			if local.State != tt.wantNodeLocal || local.Severity != tt.wantSeverity {
 				t.Fatalf("node_local = %#v, want state/severity %q/%q", local, tt.wantNodeLocal, tt.wantSeverity)
+			}
+			node := health.Nodes[0]
+			wantNodeSeverity := tt.wantNodeSeverity
+			if wantNodeSeverity == "" {
+				wantNodeSeverity = tt.wantSeverity
+			}
+			if node.Severity != wantNodeSeverity {
+				t.Fatalf("node severity = %q, want %q; node=%#v", node.Severity, wantNodeSeverity, node)
+			}
+			if tt.wantFlowState != "" {
+				if node.Flow == nil || node.Flow.State != tt.wantFlowState {
+					t.Fatalf("flow = %#v, want state %q", node.Flow, tt.wantFlowState)
+				}
+			}
+			if tt.wantCompactSev != "" && health.CompactSeverity != tt.wantCompactSev {
+				t.Fatalf("CompactSeverity = %q, want %q", health.CompactSeverity, tt.wantCompactSev)
 			}
 			if tt.wantReasonSubstr != "" && !strings.Contains(local.Reason, tt.wantReasonSubstr) {
 				t.Fatalf("Reason = %q, want substring %q", local.Reason, tt.wantReasonSubstr)

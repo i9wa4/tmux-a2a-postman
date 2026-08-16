@@ -61,7 +61,7 @@ func compactNodeStatusMark(node status.NodeStatus) string {
 		return compactStatusMark(node.VisibleState)
 	}
 
-	if node.NodeLocal != nil && node.NodeLocal.State == "unknown" {
+	if node.NodeLocal != nil && node.NodeLocal.State == "unknown" && status.SeverityRank(node.Severity) == status.SeverityRank("ok") {
 		return "⚫"
 	}
 
