@@ -287,6 +287,41 @@ func TestValidateConfig_WorkspaceTree(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_WorkspaceTreeDiplomatMustResolveUniquely(t *testing.T) {
+	base := &Config{Nodes: map[string]NodeConfig{"repo:orchestrator": {}, "api:worker": {}}}
+	base.WorkspaceTree = []WorkspaceTreeNodeConfig{
+		{SessionName: "repo", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "repo", DiplomatNode: "worker"},
+	}
+	for _, err := range ValidateConfig(base) {
+		if err.Field == "workspace_tree[0].diplomat_node" || err.Field == "workspace_tree[1].diplomat_node" {
+			t.Fatalf("unexpected diplomat validation error: %v", err)
+		}
+	}
+
+	stale := *base
+	stale.WorkspaceTree = append([]WorkspaceTreeNodeConfig{}, base.WorkspaceTree...)
+	stale.WorkspaceTree[1].DiplomatNode = "missing"
+	if !hasValidationError(ValidateConfig(&stale), "workspace_tree[1].diplomat_node", "does not match") {
+		t.Fatalf("missing stale diplomat validation error: %#v", ValidateConfig(&stale))
+	}
+
+	ambiguous := *base
+	ambiguous.Nodes = map[string]NodeConfig{"worker": {}, "api:worker": {}, "repo:orchestrator": {}}
+	if !hasValidationError(ValidateConfig(&ambiguous), "workspace_tree[1].diplomat_node", "ambiguous") {
+		t.Fatalf("missing ambiguous diplomat validation error: %#v", ValidateConfig(&ambiguous))
+	}
+}
+
+func hasValidationError(errors []ValidationError, field, fragment string) bool {
+	for _, err := range errors {
+		if err.Field == field && err.Severity == "error" && strings.Contains(err.Message, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestValidateConfig_CommandApproverNodeUnresolvable guards #626/#629's decided
 // requirement 2 (foot-gun mitigation): a configured-but-unresolvable
 // command_approver_node must produce a load-time WARNING, never an error — the

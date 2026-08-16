@@ -35,6 +35,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 var discoverNodesWithCollisionsForRuntime = discovery.DiscoverNodesWithCollisions
@@ -1458,7 +1459,7 @@ func runtimeActivationNodeNames(cfg *config.Config) map[string]bool {
 	if cfg == nil {
 		return map[string]bool{}
 	}
-	candidateNodes := config.GetEdgeNodeNames(cfg.Edges)
+	candidateNodes := workspacetree.EligibleNodeNames(cfg)
 	if candidateNodes == nil {
 		candidateNodes = make(map[string]bool)
 	}

@@ -1,6 +1,10 @@
 package workspacetree
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+)
 
 func TestNearestParentDoesNotRequireRegisteredRoot(t *testing.T) {
 	topology := Build([]Registration{
@@ -186,5 +190,19 @@ func TestTopologyDiplomatEdgesDerivesOnlyDesignatedParentChildPairs(t *testing.T
 	got := topology.DiplomatEdges()
 	if len(got) != 1 || got[0] != "api:worker --- root:orchestrator" {
 		t.Fatalf("DiplomatEdges() = %#v, want only api:worker --- root:orchestrator", got)
+	}
+}
+
+func TestConfiguredEdgesDeduplicatesStaticDiplomatRelation(t *testing.T) {
+	cfg := &config.Config{
+		Edges: []string{"root:orchestrator --- api:worker"},
+		WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+			{SessionName: "root", DiplomatNode: "orchestrator"},
+			{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+		},
+	}
+	got := ConfiguredEdges(cfg)
+	if len(got) != 1 || got[0] != "root:orchestrator --- api:worker" {
+		t.Fatalf("ConfiguredEdges() = %#v, want exactly one static/derived relation", got)
 	}
 }

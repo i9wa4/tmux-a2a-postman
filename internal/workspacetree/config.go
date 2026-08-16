@@ -24,3 +24,40 @@ func RegistrationsFromConfig(cfg *config.Config) []Registration {
 func BuildFromConfig(cfg *config.Config) Topology {
 	return Build(RegistrationsFromConfig(cfg))
 }
+
+// ConfiguredEdges combines explicit configuration with tree-derived diplomat
+// authorization edges so every consumer shares one eligibility model.
+func ConfiguredEdges(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	edges := append([]string{}, cfg.Edges...)
+	for _, derived := range BuildFromConfig(cfg).DiplomatEdges() {
+		if !hasUndirectedEdge(edges, derived) {
+			edges = append(edges, derived)
+		}
+	}
+	return edges
+}
+
+func EligibleNodeNames(cfg *config.Config) map[string]bool {
+	return config.GetEdgeNodeNames(ConfiguredEdges(cfg))
+}
+
+// hasUndirectedEdge recognizes the same pair even if the configured edge is
+// written in the opposite direction. This prevents a static declaration from
+// duplicating a relationship that the workspace tree also derives.
+func hasUndirectedEdge(edges []string, candidate string) bool {
+	candidateNodes := config.OrderedEdgeNodeNames([]string{candidate})
+	if len(candidateNodes) != 2 {
+		return false
+	}
+	for _, edge := range edges {
+		nodes := config.OrderedEdgeNodeNames([]string{edge})
+		if len(nodes) == 2 && ((nodes[0] == candidateNodes[0] && nodes[1] == candidateNodes[1]) ||
+			(nodes[0] == candidateNodes[1] && nodes[1] == candidateNodes[0])) {
+			return true
+		}
+	}
+	return false
+}

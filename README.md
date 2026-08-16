@@ -339,7 +339,9 @@ Set `diplomat_node` on both sides of a parent/child `workspace_tree`
 relationship to authorize that pair's cross-session delivery. Postman derives
 one bidirectional edge between those `session:node` addresses. This is separate
 from `representative`: representatives resolve aliases; diplomats authorize
-delivery. Omitting either diplomat derives no edge.
+delivery. Each designation must resolve to exactly one configured node (prefer
+the session-qualified `session:node` spelling); stale or ambiguous diplomats
+fail configuration validation. Omitting either diplomat derives no edge.
 
 Read the next inbox message:
 

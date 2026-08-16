@@ -1017,6 +1017,17 @@ role = "diplomat"
 	}); err != nil {
 		t.Fatalf("RunSendMessage: %v", err)
 	}
+	entries, err := os.ReadDir(filepath.Join(tmpDir, "ctx-send-diplomat", "test-session", "post"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ReadDir post = %v, entries = %d; want one", err, len(entries))
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-send-diplomat", "test-session", "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	if !strings.Contains(string(content), "- test-session:messenger: diplomat") {
+		t.Fatalf("derived recipient footer missing sender diplomat reachability:\n%s", content)
+	}
 }
 
 func TestSendMessage_WorkspaceParentAliasDefaultsToRepresentativeAndHintsChildAlias(t *testing.T) {

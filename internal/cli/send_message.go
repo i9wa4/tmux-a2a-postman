@@ -573,9 +573,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 }
 
 func parseConfiguredEdges(cfg *config.Config) (map[string][]string, error) {
-	topology := workspacetree.BuildFromConfig(cfg)
-	edges := append(append([]string{}, cfg.Edges...), topology.DiplomatEdges()...)
-	return config.ParseEdges(edges)
+	return config.ParseEdges(workspacetree.ConfiguredEdges(cfg))
 }
 
 func projectSendInputRequestState(sessionDir, sessionName string) (projection.MessageInputRequestState, bool) {

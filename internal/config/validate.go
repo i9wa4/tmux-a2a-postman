@@ -158,6 +158,23 @@ func ValidateConfig(cfg *Config) []ValidationError {
 				Severity: "error",
 			})
 		}
+		if diplomat := strings.TrimSpace(node.DiplomatNode); diplomat != "" {
+			matches := diplomatNodeMatches(cfg, node.SessionName, diplomat)
+			switch len(matches) {
+			case 0:
+				errors = append(errors, ValidationError{
+					Field:    field + ".diplomat_node",
+					Message:  fmt.Sprintf("diplomat_node %q does not match a configured node for session %q", diplomat, node.SessionName),
+					Severity: "error",
+				})
+			case 2:
+				errors = append(errors, ValidationError{
+					Field:    field + ".diplomat_node",
+					Message:  fmt.Sprintf("diplomat_node %q is ambiguous for session %q (matches %q and %q)", diplomat, node.SessionName, matches[0], matches[1]),
+					Severity: "error",
+				})
+			}
+		}
 	}
 
 	// Rule 5: command_approver_node resolvability check (severity: warning, #626).
@@ -174,6 +191,23 @@ func ValidateConfig(cfg *Config) []ValidationError {
 		}
 	}
 	return errors
+}
+
+// diplomatNodeMatches permits the legacy bare node spelling only when it is
+// the sole match. A session-qualified node is otherwise required so derived
+// authorization cannot silently target the wrong diplomat.
+func diplomatNodeMatches(cfg *Config, sessionName, diplomat string) []string {
+	if cfg == nil {
+		return nil
+	}
+	keys := []string{diplomat, strings.TrimSpace(sessionName) + ":" + diplomat}
+	matches := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if _, ok := cfg.Nodes[key]; ok {
+			matches = append(matches, key)
+		}
+	}
+	return matches
 }
 
 // normalizeEdge normalizes an edge string for duplicate detection.
