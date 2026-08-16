@@ -133,6 +133,13 @@ func (t Topology) DiplomatEdges() []string {
 		if child.ParentSessionName == "" || child.DiplomatNode == "" {
 			continue
 		}
+		// Authorization must never be derived from a raw registration when its
+		// canonical session is ambiguous. NodeForSession also protects against a
+		// duplicate parent below; both endpoints must be unambiguous before an
+		// edge can enter any consumer's eligibility graph.
+		if _, ok, _ := t.NodeForSession(child.SessionName); !ok {
+			continue
+		}
 		parent, ok, _ := t.NodeForSession(child.ParentSessionName)
 		if !ok || parent.DiplomatNode == "" {
 			continue

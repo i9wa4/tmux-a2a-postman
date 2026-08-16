@@ -176,6 +176,26 @@ func ValidateConfig(cfg *Config) []ValidationError {
 			}
 		}
 	}
+	// A workspace-tree session is a canonical authorization identity. Duplicate
+	// registrations make both its own diplomat designation and any derived
+	// parent/child relation ambiguous, so reject every duplicate before edges are
+	// consumed by send, status, or pane eligibility.
+	workspaceSessions := make(map[string]int)
+	for i, node := range cfg.WorkspaceTree {
+		sessionName := strings.TrimSpace(node.SessionName)
+		if sessionName == "" {
+			continue
+		}
+		if firstIndex, exists := workspaceSessions[sessionName]; exists {
+			errors = append(errors, ValidationError{
+				Field:    fmt.Sprintf("workspace_tree[%d].session", i),
+				Message:  fmt.Sprintf("duplicate canonical workspace session %q (first occurrence at workspace_tree[%d].session)", sessionName, firstIndex),
+				Severity: "error",
+			})
+			continue
+		}
+		workspaceSessions[sessionName] = i
+	}
 
 	// Rule 5: command_approver_node resolvability check (severity: warning, #626).
 	// An unresolvable command_approver_node is never a load error, but it MUST

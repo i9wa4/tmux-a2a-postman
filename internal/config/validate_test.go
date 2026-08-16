@@ -313,6 +313,20 @@ func TestValidateConfig_WorkspaceTreeDiplomatMustResolveUniquely(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_RejectsDuplicateCanonicalWorkspaceSession(t *testing.T) {
+	cfg := &Config{Nodes: map[string]NodeConfig{
+		"root:orchestrator": {},
+		"api:worker":        {},
+	}, WorkspaceTree: []WorkspaceTreeNodeConfig{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker", ID: "api-a"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker", ID: "api-b"},
+	}}
+	if !hasValidationError(ValidateConfig(cfg), "workspace_tree[2].session", "duplicate canonical workspace session") {
+		t.Fatalf("missing duplicate canonical workspace session validation error: %#v", ValidateConfig(cfg))
+	}
+}
+
 func hasValidationError(errors []ValidationError, field, fragment string) bool {
 	for _, err := range errors {
 		if err.Field == field && err.Severity == "error" && strings.Contains(err.Message, fragment) {

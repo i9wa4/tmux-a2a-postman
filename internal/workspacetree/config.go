@@ -52,10 +52,16 @@ func hasUndirectedEdge(edges []string, candidate string) bool {
 	if len(candidateNodes) != 2 {
 		return false
 	}
-	for _, edge := range edges {
-		nodes := config.OrderedEdgeNodeNames([]string{edge})
-		if len(nodes) == 2 && ((nodes[0] == candidateNodes[0] && nodes[1] == candidateNodes[1]) ||
-			(nodes[0] == candidateNodes[1] && nodes[1] == candidateNodes[0])) {
+	// ParseEdges expands every declaration into adjacent pairs, including
+	// chains such as A --- B --- C. Looking up the candidate pair in that
+	// adjacency prevents a derived A---B or B---C relation from being appended
+	// merely because the static declaration contained a third node.
+	adjacency, err := config.ParseEdges(edges)
+	if err != nil {
+		return false
+	}
+	for _, neighbor := range adjacency[candidateNodes[0]] {
+		if neighbor == candidateNodes[1] {
 			return true
 		}
 	}
