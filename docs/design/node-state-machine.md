@@ -60,7 +60,7 @@ input-request identity belongs to daemon status and reply projection.
 | `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`                       | Non-content pane progress evidence                        |
 | `nodes[*].node_local.state`               | `unknown`, `live`, `working`, `stale`, `conflict`                | Pane-local lifecycle before message-flow overlay          |
 | `nodes[*].node_local.freshness`           | `unknown`, `fresh`, `aging`, `stale`, `conflict`                 | Age class for pane-local progress evidence                |
-| `nodes[*].flow.state`                     | `idle`, `expected_wait`, `needs_action`, `blocked`, `conflict`   | Input-request and blocked-report lifecycle                |
+| `nodes[*].flow.state`                     | `idle`, `expected_wait`, `needs_action`, `blocked`               | Input-request and blocked-report lifecycle                |
 | session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session status |
 | `severity`                                | See contextual severity table                                    | Additive triage severity for operators                    |
 | `compact_severity`                        | ASCII token                                                      | One-line severity summary for opt-in compact scans        |
@@ -74,40 +74,45 @@ configured or expected AI panes before any positive response, activity, or other
 live evidence arrives. A configured edge, role name, or AI command alone is not
 enough to mark a node or session `ready`.
 
-`screen_progress` carries timestamps and an opaque fingerprint from pane
-capture state so operators can tell whether the pane is still changing without
-reading raw pane text. `screen_progress.stale_duration_seconds` is the elapsed
-capture time since `last_screen_change_at` when both timestamps are known and
-the latest capture is after the latest change. The value feeds
-`node_local.freshness`; it does not directly affect legacy visible-state
+`screen_progress` carries timestamps, a reason for missing or malformed
+evidence, and an opaque fingerprint from pane capture state so operators can
+tell whether the pane is still changing without reading raw pane text.
+`screen_progress.stale_duration_seconds` is the elapsed capture time since
+`last_screen_change_at` when both timestamps are known and the latest capture is
+after the latest change. `node_local.age_seconds` is separate: it is the
+observation age of `last_capture_at` relative to the status collection time.
+`node_local.unchanged_seconds` preserves the unchanged duration. These values
+feed `node_local.freshness`; they do not directly affect legacy visible-state
 ranking.
 
 Pane-local freshness classes are intentionally coarse:
 
-| Freshness  | Meaning                                                                  |
-| ---------- | ------------------------------------------------------------------------ |
-| `unknown`  | Progress evidence is missing or cannot be timestamped                    |
-| `fresh`    | The last capture changed, or unchanged evidence is within 30 seconds     |
-| `aging`    | Unchanged evidence is older than 30 seconds but younger than 180 seconds |
-| `stale`    | Pane state is stale, progress is stale, or unchanged for at least 180s   |
-| `conflict` | Reserved for contradictory pane evidence                                 |
+| Freshness  | Meaning                                                               |
+| ---------- | --------------------------------------------------------------------- |
+| `unknown`  | Progress evidence is missing or cannot be timestamped                 |
+| `fresh`    | The capture is within 30 seconds and shows a coherent latest change   |
+| `aging`    | Capture or unchanged evidence is older than 30s but younger than 180s |
+| `stale`    | Pane state is stale, capture is stale, or unchanged for at least 180s |
+| `conflict` | Reserved for contradictory pane evidence                              |
 
 `node_local.state` is derived before workflow facts:
 
 | State      | Required evidence                                                                  |
 | ---------- | ---------------------------------------------------------------------------------- |
-| `unknown`  | Missing pane activity evidence                                                     |
+| `unknown`  | Missing pane activity evidence, missing progress, or malformed progress            |
 | `live`     | Live pane with no current activity evidence                                        |
-| `working`  | Changed screen evidence, or active pane with missing progress evidence             |
+| `working`  | Fresh, coherent changed screen evidence                                            |
 | `stale`    | Stale pane evidence, stale progress evidence, or stale unchanged progress evidence |
-| `conflict` | Reserved for contradictory pane evidence                                           |
+| `conflict` | Future timestamps, impossible capture/change ordering, or contradictory signals    |
 
-An `active` pane does not remain `working` solely because it is inside
-`node_active_seconds` when explicit `screen_progress.evidence_state:
-unchanged` exists. In that case the node stays pane-local `live` while
-freshness reports whether the unchanged screen is `fresh`, `aging`, or `stale`.
-This preserves backward-compatible `visible_state: ready` while preventing a
-stale or aging screen from being reported as definitive active work.
+An `active` pane does not remain `working` solely because the tmux pane is
+active or because it is inside `node_active_seconds`. If progress evidence is
+missing or malformed, pane-local state is `unknown`. If explicit
+`screen_progress.evidence_state: unchanged` exists, the node stays pane-local
+`live` while freshness reports whether the unchanged screen is `fresh`,
+`aging`, or `stale`. This preserves backward-compatible `visible_state: ready`
+while preventing stale, lagged, missing, or incoherent screen evidence from
+being reported as definitive active work.
 
 `unavailable` is a session-level fallback, not a per-node state. It means this
 daemon cannot provide canonical status for that tmux session. It is displayed
@@ -316,9 +321,11 @@ prints `compact_severity` instead. A `?` suffix marks inferred evidence, such as
 | Scenario              | Primary evidence                                                                | Severity           |
 | --------------------- | ------------------------------------------------------------------------------- | ------------------ |
 | Idle                  | Positive live pane, no open action or wait                                      | `ok`               |
-| Active work           | Changed screen evidence, or active pane with missing progress evidence          | `working`          |
+| Active work           | Fresh, coherent changed screen evidence                                         | `working`          |
+| Aging capture         | Changed screen evidence from a capture older than 30s but younger than 180s     | `ok`               |
 | Aging unchanged pane  | Active pane with unchanged screen evidence older than 30s but younger than 180s | `ok`               |
-| Stale screen progress | Active pane with unchanged screen evidence at least 180s old                    | `attention_stale`  |
+| Stale screen progress | Capture or unchanged screen evidence at least 180s old                          | `attention_stale`  |
+| Conflicting progress  | Future timestamp, impossible ordering, or contradictory pane evidence           | `attention_stale`  |
 | Approval wait         | Outbound required reply still open                                              | `expected_wait`    |
 | Reply-required wait   | Outbound required reply still open                                              | `expected_wait`    |
 | Required action       | Inbound required reply open                                                     | `needs_action`     |

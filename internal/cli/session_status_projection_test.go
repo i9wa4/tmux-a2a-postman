@@ -326,87 +326,161 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	}
 }
 
-func TestSessionStatusClassifiesNodeLocalFreshnessFromScreenProgress(t *testing.T) {
-	fixture := writeSessionStatusProjectionFixture(
-		t,
-		map[string]string{"worker": "active", "critic": "active"},
-		nil,
-		nil,
-	)
-	writeSessionStatusPaneActivity(t, fixture, `{
-  "%11": {"status":"active","lastChangeAt":"2026-04-14T00:00:00Z","lastCaptureAt":"2026-04-14T00:04:00Z","screenFingerprint":"00000011"},
-  "%12": {"status":"active","lastChangeAt":"2026-04-14T00:01:00Z","lastCaptureAt":"2026-04-14T00:01:00Z","screenFingerprint":"00000012"}
-}`)
-
-	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
-	if err != nil {
-		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+func TestSessionStatusClassifiesNodeLocalFreshnessMatrix(t *testing.T) {
+	now := time.Date(2026, time.April, 14, 0, 10, 0, 0, time.UTC)
+	progress := func(state string, changeDelta, captureDelta time.Duration) *status.ScreenProgressEvidence {
+		captureAt := now.Add(captureDelta)
+		changeAt := now.Add(changeDelta)
+		result := &status.ScreenProgressEvidence{
+			EvidenceState:        state,
+			LastCaptureAt:        captureAt.Format(time.RFC3339Nano),
+			LastScreenChangeAt:   changeAt.Format(time.RFC3339Nano),
+			ScreenFingerprint:    "00000011",
+			StaleDurationSeconds: int(captureAt.Sub(changeAt).Seconds()),
+		}
+		if result.StaleDurationSeconds < 0 {
+			result.StaleDurationSeconds = 0
+		}
+		return result
 	}
 
-	nodeByName := map[string]status.NodeStatus{}
-	for _, node := range health.Nodes {
-		nodeByName[node.Name] = node
+	tests := []struct {
+		name             string
+		node             status.NodeStatus
+		wantState        string
+		wantSeverity     string
+		wantEvidence     string
+		wantFreshness    string
+		wantAge          int
+		wantUnchanged    int
+		wantReasonSubstr string
+	}{
+		{
+			name:          "fresh changed becomes working",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -5*time.Second, -5*time.Second)},
+			wantState:     "working",
+			wantSeverity:  "working",
+			wantEvidence:  "observed",
+			wantFreshness: "fresh",
+			wantAge:       5,
+		},
+		{
+			name:          "fresh unchanged remains live",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -20*time.Second, -5*time.Second)},
+			wantState:     "live",
+			wantSeverity:  "ok",
+			wantEvidence:  "observed",
+			wantFreshness: "fresh",
+			wantAge:       5,
+			wantUnchanged: 15,
+		},
+		{
+			name:          "aging unchanged remains live",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -70*time.Second, -5*time.Second)},
+			wantState:     "live",
+			wantSeverity:  "ok",
+			wantEvidence:  "observed",
+			wantFreshness: "aging",
+			wantAge:       5,
+			wantUnchanged: 65,
+		},
+		{
+			name:             "old but changed is stale",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -4*time.Minute, -4*time.Minute)},
+			wantState:        "stale",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "stale",
+			wantAge:          240,
+			wantReasonSubstr: "capture is stale",
+		},
+		{
+			name:             "runtime lagged changed is aging live",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -45*time.Second, -45*time.Second)},
+			wantState:        "live",
+			wantSeverity:     "ok",
+			wantEvidence:     "observed",
+			wantFreshness:    "aging",
+			wantAge:          45,
+			wantReasonSubstr: "capture is aging",
+		},
+		{
+			name:             "explicit stale is stale",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: &status.ScreenProgressEvidence{EvidenceState: "stale", StaleDurationSeconds: 181}},
+			wantState:        "stale",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "stale",
+			wantUnchanged:    181,
+			wantReasonSubstr: "evidence is stale",
+		},
+		{
+			name:             "active missing is unknown not working",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: missingScreenProgressEvidence()},
+			wantState:        "unknown",
+			wantSeverity:     "ok",
+			wantEvidence:     "unknown",
+			wantFreshness:    "unknown",
+			wantReasonSubstr: "missing",
+		},
+		{
+			name:             "malformed progress is unknown not working",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: screenProgressEvidence("active", "bad", now.Format(time.RFC3339Nano), "00000011")},
+			wantState:        "unknown",
+			wantSeverity:     "ok",
+			wantEvidence:     "unknown",
+			wantFreshness:    "unknown",
+			wantReasonSubstr: "malformed",
+		},
+		{
+			name:             "future capture is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", time.Second, time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          -1,
+			wantReasonSubstr: "future",
+		},
+		{
+			name:             "change after capture is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -5*time.Second, -10*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          10,
+			wantReasonSubstr: "after the capture",
+		},
+		{
+			name:             "contradictory changed state is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -20*time.Second, -5*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          5,
+			wantUnchanged:    15,
+			wantReasonSubstr: "contradicts",
+		},
 	}
 
-	worker := nodeByName["worker"]
-	if worker.NodeLocal == nil {
-		t.Fatal("worker node_local is nil")
-	}
-	if worker.NodeLocal.State != "stale" || worker.NodeLocal.Severity != "attention_stale" {
-		t.Fatalf("worker node_local = %#v, want stale attention from unchanged old screen progress", worker.NodeLocal)
-	}
-	if worker.NodeLocal.Freshness != "stale" || worker.NodeLocal.AgeSeconds != 240 {
-		t.Fatalf("worker node_local freshness/age = %q/%d, want stale/240", worker.NodeLocal.Freshness, worker.NodeLocal.AgeSeconds)
-	}
-	if worker.NodeLocal.EvidenceLevel != "observed" {
-		t.Fatalf("worker node_local evidence = %q, want observed", worker.NodeLocal.EvidenceLevel)
-	}
-	if health.CompactSeverity != "attention_stale:node=worker" {
-		t.Fatalf("CompactSeverity = %q, want attention_stale for stale pane-local evidence", health.CompactSeverity)
-	}
-
-	critic := nodeByName["critic"]
-	if critic.NodeLocal == nil {
-		t.Fatal("critic node_local is nil")
-	}
-	if critic.NodeLocal.State != "working" || critic.NodeLocal.Freshness != "fresh" {
-		t.Fatalf("critic node_local = %#v, want fresh working from changed screen progress", critic.NodeLocal)
-	}
-}
-
-func TestSessionStatusKeepsAgingUnchangedPaneLiveNotWorking(t *testing.T) {
-	fixture := writeSessionStatusProjectionFixture(
-		t,
-		map[string]string{"worker": "active", "critic": "active"},
-		nil,
-		nil,
-	)
-	writeSessionStatusPaneActivity(t, fixture, `{
-  "%11": {"status":"active","lastChangeAt":"2026-04-14T00:00:00Z","lastCaptureAt":"2026-04-14T00:01:00Z","screenFingerprint":"00000011"},
-  "%12": {"status":"active","lastChangeAt":"2026-04-14T00:02:00Z","lastCaptureAt":"2026-04-14T00:02:00Z","screenFingerprint":"00000012"}
-}`)
-
-	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
-	if err != nil {
-		t.Fatalf("collectLiveSessionStatus() error = %v", err)
-	}
-
-	nodeByName := map[string]status.NodeStatus{}
-	for _, node := range health.Nodes {
-		nodeByName[node.Name] = node
-	}
-	worker := nodeByName["worker"]
-	if worker.NodeLocal == nil {
-		t.Fatal("worker node_local is nil")
-	}
-	if worker.NodeLocal.State != "live" || worker.NodeLocal.Severity != "ok" {
-		t.Fatalf("worker node_local = %#v, want live ok from aging unchanged screen progress", worker.NodeLocal)
-	}
-	if worker.NodeLocal.Freshness != "aging" || worker.NodeLocal.AgeSeconds != 60 {
-		t.Fatalf("worker node_local freshness/age = %q/%d, want aging/60", worker.NodeLocal.Freshness, worker.NodeLocal.AgeSeconds)
-	}
-	if health.CompactSeverity != "working:node=critic" {
-		t.Fatalf("CompactSeverity = %q, want only changed critic to report working", health.CompactSeverity)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveNodeLocalStatusAt(tt.node, now)
+			if got.State != tt.wantState || got.Severity != tt.wantSeverity || got.EvidenceLevel != tt.wantEvidence || got.Freshness != tt.wantFreshness {
+				t.Fatalf("node_local = %#v, want state/severity/evidence/freshness %q/%q/%q/%q", got, tt.wantState, tt.wantSeverity, tt.wantEvidence, tt.wantFreshness)
+			}
+			if got.AgeSeconds != tt.wantAge {
+				t.Fatalf("AgeSeconds = %d, want %d (%#v)", got.AgeSeconds, tt.wantAge, got)
+			}
+			if got.UnchangedSeconds != tt.wantUnchanged {
+				t.Fatalf("UnchangedSeconds = %d, want %d (%#v)", got.UnchangedSeconds, tt.wantUnchanged, got)
+			}
+			if tt.wantReasonSubstr != "" && !strings.Contains(got.Reason, tt.wantReasonSubstr) {
+				t.Fatalf("Reason = %q, want substring %q", got.Reason, tt.wantReasonSubstr)
+			}
+		})
 	}
 }
 

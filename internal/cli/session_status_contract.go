@@ -208,7 +208,7 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 	result.WorkspaceTree = buildWorkspaceTreeStatus(inputs.cfg, inputs.sessionName)
 	result.CommandApproval = buildCommandApprovalStatus(inputs.cfg)
 	result.Compact = buildSessionCompact(result, inputs.panes)
-	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode)
+	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode, inputs.now)
 	return result
 }
 
@@ -520,8 +520,8 @@ func missingScreenProgressEvidence() *status.ScreenProgressEvidence {
 func screenProgressEvidence(paneState, lastChangeAt, lastCaptureAt, screenFingerprint string) *status.ScreenProgressEvidence {
 	progress := missingScreenProgressEvidence()
 
-	lastChangeText, lastChangeTime, hasLastChange := normalizeProgressTimestamp(lastChangeAt)
-	lastCaptureText, lastCaptureTime, hasLastCapture := normalizeProgressTimestamp(lastCaptureAt)
+	lastChangeText, lastChangeTime, hasLastChange, invalidLastChange := normalizeProgressTimestamp(lastChangeAt)
+	lastCaptureText, lastCaptureTime, hasLastCapture, invalidLastCapture := normalizeProgressTimestamp(lastCaptureAt)
 	if hasLastChange {
 		progress.LastScreenChangeAt = lastChangeText
 	}
@@ -538,29 +538,39 @@ func screenProgressEvidence(paneState, lastChangeAt, lastCaptureAt, screenFinger
 	switch {
 	case paneState == "stale":
 		progress.EvidenceState = "stale"
+	case invalidLastChange || invalidLastCapture:
+		progress.EvidenceState = "missing"
+		progress.Reason = "screen progress timestamp is malformed"
 	case !hasLastCapture || progress.ScreenFingerprint == "":
 		progress.EvidenceState = "missing"
+		if !hasLastCapture {
+			progress.Reason = "screen progress capture timestamp is missing"
+		} else {
+			progress.Reason = "screen progress fingerprint is missing"
+		}
 	case hasLastChange && !lastCaptureTime.After(lastChangeTime):
 		progress.EvidenceState = "changed"
 	case hasLastChange:
 		progress.EvidenceState = "unchanged"
 	default:
 		progress.EvidenceState = "missing"
+		progress.Reason = "screen progress change timestamp is missing"
 	}
 
 	return progress
 }
 
-func normalizeProgressTimestamp(value string) (string, time.Time, bool) {
+func normalizeProgressTimestamp(value string) (string, time.Time, bool, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", time.Time{}, false
+		return "", time.Time{}, false, false
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil || parsed.IsZero() {
-		return "", time.Time{}, false
+		return "", time.Time{}, false, true
 	}
-	return parsed.UTC().Format(time.RFC3339Nano), parsed, true
+	parsed = parsed.UTC()
+	return parsed.Format(time.RFC3339Nano), parsed, true, false
 }
 
 func normalizeScreenFingerprint(value string) string {

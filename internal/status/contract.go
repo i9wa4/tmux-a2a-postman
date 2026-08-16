@@ -44,6 +44,7 @@ type ConventionMeterStatus struct {
 
 type ScreenProgressEvidence struct {
 	EvidenceState        string `json:"evidence_state"`
+	Reason               string `json:"reason,omitempty"`
 	LastCaptureAt        string `json:"last_capture_at,omitempty"`
 	LastScreenChangeAt   string `json:"last_screen_change_at,omitempty"`
 	StaleDurationSeconds int    `json:"stale_duration_seconds,omitempty"`
@@ -126,16 +127,18 @@ type NodeFlowStatus struct {
 }
 
 type NodeLocalStatus struct {
-	State          string                  `json:"state"`
-	Severity       string                  `json:"severity"`
-	EvidenceLevel  string                  `json:"evidence_level"`
-	EvidenceSource string                  `json:"evidence_source,omitempty"`
-	Freshness      string                  `json:"freshness,omitempty"`
-	AgeSeconds     int                     `json:"age_seconds,omitempty"`
-	Reason         string                  `json:"reason,omitempty"`
-	PaneState      string                  `json:"pane_state,omitempty"`
-	CurrentCommand string                  `json:"current_command,omitempty"`
-	ScreenProgress *ScreenProgressEvidence `json:"screen_progress,omitempty"`
+	State            string                  `json:"state"`
+	Severity         string                  `json:"severity"`
+	EvidenceLevel    string                  `json:"evidence_level"`
+	EvidenceSource   string                  `json:"evidence_source,omitempty"`
+	Freshness        string                  `json:"freshness,omitempty"`
+	AgeSeconds       int                     `json:"age_seconds,omitempty"`
+	ObservedAt       string                  `json:"observed_at,omitempty"`
+	UnchangedSeconds int                     `json:"unchanged_seconds,omitempty"`
+	Reason           string                  `json:"reason,omitempty"`
+	PaneState        string                  `json:"pane_state,omitempty"`
+	CurrentCommand   string                  `json:"current_command,omitempty"`
+	ScreenProgress   *ScreenProgressEvidence `json:"screen_progress,omitempty"`
 }
 
 type DeliveryStatus struct {
