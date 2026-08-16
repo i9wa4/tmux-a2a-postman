@@ -979,6 +979,46 @@ role = "orchestrator"
 	}
 }
 
+func TestSendMessage_AllowsTreeDerivedDiplomatEdge(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = []
+
+[[postman.workspace_tree]]
+session = "repo-session"
+label = "repo"
+diplomat_node = "orchestrator"
+
+[[postman.workspace_tree]]
+session = "test-session"
+label = "api"
+parent = "repo-session"
+diplomat_node = "messenger"
+
+["test-session:messenger"]
+role = "diplomat"
+
+["repo-session:orchestrator"]
+role = "diplomat"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := runSendHeredocWithBody(t, "hello", []string{
+		"--config", configPath,
+		"--context-id", "ctx-send-diplomat",
+		"--to", "repo-session:orchestrator",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+}
+
 func TestSendMessage_WorkspaceParentAliasDefaultsToRepresentativeAndHintsChildAlias(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

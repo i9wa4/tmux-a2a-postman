@@ -151,6 +151,13 @@ func ValidateConfig(cfg *Config) []ValidationError {
 				Severity: "error",
 			})
 		}
+		if node.DiplomatNode != "" && !binding.ValidateNodeName(node.DiplomatNode) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".diplomat_node",
+				Message:  fmt.Sprintf("diplomat_node %q must match %s", node.DiplomatNode, binding.NodeNamePattern),
+				Severity: "error",
+			})
+		}
 	}
 
 	// Rule 5: command_approver_node resolvability check (severity: warning, #626).

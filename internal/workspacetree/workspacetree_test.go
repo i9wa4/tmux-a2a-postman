@@ -176,3 +176,15 @@ func TestResolveAliasCanRequireLiveNodeExistence(t *testing.T) {
 		t.Fatalf("ResolveAlias nodeExists = %#v, want unknown_node with compiled address", resolution)
 	}
 }
+
+func TestTopologyDiplomatEdgesDerivesOnlyDesignatedParentChildPairs(t *testing.T) {
+	topology := Build([]Registration{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+		{SessionName: "docs", ParentSessionName: "root"},
+	})
+	got := topology.DiplomatEdges()
+	if len(got) != 1 || got[0] != "api:worker --- root:orchestrator" {
+		t.Fatalf("DiplomatEdges() = %#v, want only api:worker --- root:orchestrator", got)
+	}
+}

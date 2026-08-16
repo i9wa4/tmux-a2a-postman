@@ -335,6 +335,12 @@ representative. Message footers keep the concrete `session:node` recipient and
 add relationship aliases, such as `@parent` or `@child/api`, when they are
 available.
 
+Set `diplomat_node` on both sides of a parent/child `workspace_tree`
+relationship to authorize that pair's cross-session delivery. Postman derives
+one bidirectional edge between those `session:node` addresses. This is separate
+from `representative`: representatives resolve aliases; diplomats authorize
+delivery. Omitting either diplomat derives no edge.
+
 Read the next inbox message:
 
 ```sh

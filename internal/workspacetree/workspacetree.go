@@ -36,6 +36,7 @@ type Registration struct {
 	Label             string
 	ParentSessionName string
 	Representative    string
+	DiplomatNode      string
 	Order             int
 }
 
@@ -45,6 +46,7 @@ type Node struct {
 	Label             string
 	ParentSessionName string
 	Representative    string
+	DiplomatNode      string
 	Order             int
 }
 
@@ -105,6 +107,7 @@ func Build(registrations []Registration) Topology {
 			Label:             label,
 			ParentSessionName: parentSessionName,
 			Representative:    strings.TrimSpace(registration.Representative),
+			DiplomatNode:      strings.TrimSpace(registration.DiplomatNode),
 			Order:             registration.Order,
 		})
 		topology.bySession[sessionName] = append(topology.bySession[sessionName], idx)
@@ -117,6 +120,31 @@ func Build(registrations []Registration) Topology {
 	topology.recordUnknownParents()
 	sortDiagnostics(topology.diagnostics)
 	return topology
+}
+
+// DiplomatEdges returns the explicit cross-session authorization edges implied
+// by parent/child workspace-tree relations. A relation contributes an edge only
+// when both sessions designate a diplomat; representatives remain addressing
+// metadata and never authorize delivery.
+func (t Topology) DiplomatEdges() []string {
+	edges := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, child := range t.nodes {
+		if child.ParentSessionName == "" || child.DiplomatNode == "" {
+			continue
+		}
+		parent, ok, _ := t.NodeForSession(child.ParentSessionName)
+		if !ok || parent.DiplomatNode == "" {
+			continue
+		}
+		edge := nodeaddr.Full(child.DiplomatNode, child.SessionName) + " --- " + nodeaddr.Full(parent.DiplomatNode, parent.SessionName)
+		if !seen[edge] {
+			seen[edge] = true
+			edges = append(edges, edge)
+		}
+	}
+	sort.Strings(edges)
+	return edges
 }
 
 func (t *Topology) recordDuplicateSessions() {
