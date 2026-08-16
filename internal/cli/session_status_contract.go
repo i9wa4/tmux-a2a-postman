@@ -528,6 +528,9 @@ func screenProgressEvidence(paneState, lastChangeAt, lastCaptureAt, screenFinger
 	if hasLastCapture {
 		progress.LastCaptureAt = lastCaptureText
 	}
+	if hasLastChange && hasLastCapture && lastCaptureTime.After(lastChangeTime) {
+		progress.StaleDurationSeconds = int(lastCaptureTime.Sub(lastChangeTime).Seconds())
+	}
 	if fingerprint := normalizeScreenFingerprint(screenFingerprint); fingerprint != "" {
 		progress.ScreenFingerprint = fingerprint
 	}

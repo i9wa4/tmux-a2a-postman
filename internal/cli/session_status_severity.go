@@ -187,12 +187,15 @@ func collectDeadLetterItems(sessionDir string) []status.StatusItem {
 }
 
 func deriveNodeLocalStatus(node status.NodeStatus) *status.NodeLocalStatus {
+	freshness, ageSeconds := nodeLocalFreshness(node.ScreenProgress)
 	local := &status.NodeLocalStatus{
-		State:          "quiet",
+		State:          "live",
 		Severity:       "ok",
-		EvidenceLevel:  "proven",
+		EvidenceLevel:  "observed",
 		EvidenceSource: "pane_activity",
-		Reason:         "pane is live without recent activity evidence",
+		Freshness:      freshness,
+		AgeSeconds:     ageSeconds,
+		Reason:         "pane is live without current activity evidence",
 		PaneState:      node.PaneState,
 		CurrentCommand: node.CurrentCommand,
 		ScreenProgress: node.ScreenProgress,
@@ -200,6 +203,8 @@ func deriveNodeLocalStatus(node status.NodeStatus) *status.NodeLocalStatus {
 	if status.NormalizePaneState(node.PaneState) == "stale" {
 		local.State = "stale"
 		local.Severity = "attention_stale"
+		local.EvidenceLevel = "observed"
+		local.Freshness = "stale"
 		local.Reason = "pane state is stale"
 		return local
 	}
@@ -207,19 +212,69 @@ func deriveNodeLocalStatus(node status.NodeStatus) *status.NodeLocalStatus {
 		local.State = "unknown"
 		local.Severity = "ok"
 		local.EvidenceLevel = "unknown"
+		local.Freshness = "unknown"
 		local.Reason = "pane activity evidence is missing"
 		return local
 	}
-	if node.PaneState == "active" || (node.ScreenProgress != nil && node.ScreenProgress.EvidenceState == "changed") {
+	if node.ScreenProgress != nil && node.ScreenProgress.EvidenceState == "stale" {
+		local.State = "stale"
+		local.Severity = "attention_stale"
+		local.EvidenceLevel = "observed"
+		local.Freshness = "stale"
+		local.Reason = "screen progress evidence is stale"
+		return local
+	}
+	if local.Freshness == "stale" {
+		local.State = "stale"
+		local.Severity = "attention_stale"
+		local.EvidenceLevel = "observed"
+		local.Reason = "screen progress has not changed within the pane-local freshness window"
+		return local
+	}
+	if node.ScreenProgress != nil && node.ScreenProgress.EvidenceState == "changed" {
+		local.State = "working"
+		local.Severity = "working"
+		local.EvidenceLevel = "observed"
+		local.Freshness = "fresh"
+		local.Reason = "screen progress changed in the latest capture"
+		return local
+	}
+	if node.PaneState == "active" && (node.ScreenProgress == nil || node.ScreenProgress.EvidenceState == "missing") {
 		local.State = "working"
 		local.Severity = "working"
 		local.EvidenceLevel = "inferred"
-		local.Reason = "pane activity suggests current work"
+		local.Freshness = "unknown"
+		local.Reason = "pane activity suggests current work but screen progress evidence is missing"
 		return local
 	}
-	local.State = "live"
 	local.Reason = "pane is live"
 	return local
+}
+
+func nodeLocalFreshness(progress *status.ScreenProgressEvidence) (string, int) {
+	if progress == nil {
+		return "unknown", 0
+	}
+	switch progress.EvidenceState {
+	case "missing":
+		return "unknown", 0
+	case "stale":
+		return "stale", progress.StaleDurationSeconds
+	case "changed":
+		return "fresh", 0
+	case "unchanged":
+		ageSeconds := progress.StaleDurationSeconds
+		switch {
+		case ageSeconds >= status.NodeLocalStaleAfterSeconds:
+			return "stale", ageSeconds
+		case ageSeconds > status.NodeLocalFreshAfterSeconds:
+			return "aging", ageSeconds
+		default:
+			return "fresh", ageSeconds
+		}
+	default:
+		return "unknown", progress.StaleDurationSeconds
+	}
 }
 
 func deriveNodeFlowStatus(node status.NodeStatus, blockedReports []projection.BlockedReport) *status.NodeFlowStatus {

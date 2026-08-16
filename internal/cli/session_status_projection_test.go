@@ -303,6 +303,9 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	if worker.ScreenFingerprint != "00000011" {
 		t.Fatalf("worker screen_fingerprint = %q, want 00000011", worker.ScreenFingerprint)
 	}
+	if worker.StaleDurationSeconds != 5 {
+		t.Fatalf("worker stale_duration_seconds = %d, want 5", worker.StaleDurationSeconds)
+	}
 
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
@@ -320,6 +323,90 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	}
 	if critic.ScreenFingerprint != "00000012" {
 		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+}
+
+func TestSessionStatusClassifiesNodeLocalFreshnessFromScreenProgress(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		nil,
+		nil,
+	)
+	writeSessionStatusPaneActivity(t, fixture, `{
+  "%11": {"status":"active","lastChangeAt":"2026-04-14T00:00:00Z","lastCaptureAt":"2026-04-14T00:04:00Z","screenFingerprint":"00000011"},
+  "%12": {"status":"active","lastChangeAt":"2026-04-14T00:01:00Z","lastCaptureAt":"2026-04-14T00:01:00Z","screenFingerprint":"00000012"}
+}`)
+
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeStatus{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+
+	worker := nodeByName["worker"]
+	if worker.NodeLocal == nil {
+		t.Fatal("worker node_local is nil")
+	}
+	if worker.NodeLocal.State != "stale" || worker.NodeLocal.Severity != "attention_stale" {
+		t.Fatalf("worker node_local = %#v, want stale attention from unchanged old screen progress", worker.NodeLocal)
+	}
+	if worker.NodeLocal.Freshness != "stale" || worker.NodeLocal.AgeSeconds != 240 {
+		t.Fatalf("worker node_local freshness/age = %q/%d, want stale/240", worker.NodeLocal.Freshness, worker.NodeLocal.AgeSeconds)
+	}
+	if worker.NodeLocal.EvidenceLevel != "observed" {
+		t.Fatalf("worker node_local evidence = %q, want observed", worker.NodeLocal.EvidenceLevel)
+	}
+	if health.CompactSeverity != "attention_stale:node=worker" {
+		t.Fatalf("CompactSeverity = %q, want attention_stale for stale pane-local evidence", health.CompactSeverity)
+	}
+
+	critic := nodeByName["critic"]
+	if critic.NodeLocal == nil {
+		t.Fatal("critic node_local is nil")
+	}
+	if critic.NodeLocal.State != "working" || critic.NodeLocal.Freshness != "fresh" {
+		t.Fatalf("critic node_local = %#v, want fresh working from changed screen progress", critic.NodeLocal)
+	}
+}
+
+func TestSessionStatusKeepsAgingUnchangedPaneLiveNotWorking(t *testing.T) {
+	fixture := writeSessionStatusProjectionFixture(
+		t,
+		map[string]string{"worker": "active", "critic": "active"},
+		nil,
+		nil,
+	)
+	writeSessionStatusPaneActivity(t, fixture, `{
+  "%11": {"status":"active","lastChangeAt":"2026-04-14T00:00:00Z","lastCaptureAt":"2026-04-14T00:01:00Z","screenFingerprint":"00000011"},
+  "%12": {"status":"active","lastChangeAt":"2026-04-14T00:02:00Z","lastCaptureAt":"2026-04-14T00:02:00Z","screenFingerprint":"00000012"}
+}`)
+
+	health, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() error = %v", err)
+	}
+
+	nodeByName := map[string]status.NodeStatus{}
+	for _, node := range health.Nodes {
+		nodeByName[node.Name] = node
+	}
+	worker := nodeByName["worker"]
+	if worker.NodeLocal == nil {
+		t.Fatal("worker node_local is nil")
+	}
+	if worker.NodeLocal.State != "live" || worker.NodeLocal.Severity != "ok" {
+		t.Fatalf("worker node_local = %#v, want live ok from aging unchanged screen progress", worker.NodeLocal)
+	}
+	if worker.NodeLocal.Freshness != "aging" || worker.NodeLocal.AgeSeconds != 60 {
+		t.Fatalf("worker node_local freshness/age = %q/%d, want aging/60", worker.NodeLocal.Freshness, worker.NodeLocal.AgeSeconds)
+	}
+	if health.CompactSeverity != "working:node=critic" {
+		t.Fatalf("CompactSeverity = %q, want only changed critic to report working", health.CompactSeverity)
 	}
 }
 

@@ -2,7 +2,11 @@ package status
 
 const SchemaVersion = 5
 
-const DeliveryStuckAfterSeconds = 180
+const (
+	DeliveryStuckAfterSeconds  = 180
+	NodeLocalFreshAfterSeconds = 30
+	NodeLocalStaleAfterSeconds = 180
+)
 
 type NodeStatus struct {
 	Name                string                      `json:"name"`
@@ -126,6 +130,8 @@ type NodeLocalStatus struct {
 	Severity       string                  `json:"severity"`
 	EvidenceLevel  string                  `json:"evidence_level"`
 	EvidenceSource string                  `json:"evidence_source,omitempty"`
+	Freshness      string                  `json:"freshness,omitempty"`
+	AgeSeconds     int                     `json:"age_seconds,omitempty"`
 	Reason         string                  `json:"reason,omitempty"`
 	PaneState      string                  `json:"pane_state,omitempty"`
 	CurrentCommand string                  `json:"current_command,omitempty"`
