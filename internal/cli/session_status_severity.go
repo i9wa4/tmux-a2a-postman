@@ -186,15 +186,11 @@ func collectDeadLetterItems(sessionDir string) []status.StatusItem {
 	return items
 }
 
-func deriveNodeLocalStatus(node status.NodeStatus) *status.NodeLocalStatus {
-	return deriveNodeLocalStatusAt(node, time.Now())
-}
-
 func deriveNodeLocalStatusAt(node status.NodeStatus, now time.Time) *status.NodeLocalStatus {
 	if now.IsZero() {
 		now = time.Now()
 	}
-	evidence := evaluateNodeLocalProgress(node.ScreenProgress, now)
+	evidence := evaluateNodeLocalProgress(node, now)
 	local := &status.NodeLocalStatus{
 		State:            "live",
 		Severity:         "ok",
@@ -210,6 +206,14 @@ func deriveNodeLocalStatusAt(node status.NodeStatus, now time.Time) *status.Node
 		ScreenProgress:   node.ScreenProgress,
 	}
 	if status.NormalizePaneState(node.PaneState) == "stale" {
+		if evidence.state == nodeLocalProgressConflict {
+			local.State = "conflict"
+			local.Severity = "attention_stale"
+			local.EvidenceLevel = "observed"
+			local.Freshness = "conflict"
+			local.Reason = evidence.reason
+			return local
+		}
 		local.State = "stale"
 		local.Severity = "attention_stale"
 		local.EvidenceLevel = "observed"
@@ -295,7 +299,8 @@ type nodeLocalProgressEvaluation struct {
 	unchangedSeconds      int
 }
 
-func evaluateNodeLocalProgress(progress *status.ScreenProgressEvidence, now time.Time) nodeLocalProgressEvaluation {
+func evaluateNodeLocalProgress(node status.NodeStatus, now time.Time) nodeLocalProgressEvaluation {
+	progress := node.ScreenProgress
 	result := nodeLocalProgressEvaluation{
 		state:     nodeLocalProgressMissing,
 		freshness: "unknown",
@@ -339,7 +344,7 @@ func evaluateNodeLocalProgress(progress *status.ScreenProgressEvidence, now time
 
 	result.observedAt = captureAt.Format(time.RFC3339Nano)
 	result.observationAgeSeconds = int(now.Sub(captureAt).Seconds())
-	if result.observationAgeSeconds < 0 || changeAt.After(now) {
+	if captureAt.After(now) || changeAt.After(now) {
 		result.state = nodeLocalProgressConflict
 		result.freshness = "conflict"
 		result.reason = "screen progress timestamp is in the future"
@@ -363,6 +368,24 @@ func evaluateNodeLocalProgress(progress *status.ScreenProgressEvidence, now time
 		result.state = nodeLocalProgressConflict
 		result.freshness = "conflict"
 		result.reason = "unchanged screen progress has no elapsed unchanged duration"
+		return result
+	}
+	if progress.EvidenceState == "changed" && isShellCommand(node.CurrentCommand) {
+		result.state = nodeLocalProgressConflict
+		result.freshness = "conflict"
+		result.reason = "screen progress changed while current command is a shell"
+		return result
+	}
+	if progress.EvidenceState == "changed" && node.PaneState == "idle" {
+		result.state = nodeLocalProgressConflict
+		result.freshness = "conflict"
+		result.reason = "screen progress changed while pane state is idle"
+		return result
+	}
+	if node.PaneState == "stale" && progress.EvidenceState == "changed" {
+		result.state = nodeLocalProgressConflict
+		result.freshness = "conflict"
+		result.reason = "screen progress changed while pane state is stale"
 		return result
 	}
 

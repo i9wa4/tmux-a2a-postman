@@ -337,11 +337,11 @@ prints `compact_severity` instead. A `?` suffix marks inferred evidence, such as
 Default compact marks are therefore a projection of the separated layers, not a
 raw alias for `visible_state`:
 
-| Mark | Meaning                                                       |
-| ---- | ------------------------------------------------------------- |
-| `⚫`  | Initial, unavailable, unowned, or missing local state         |
-| `🟢`  | Ready with no worse contextual node severity                  |
-| `🔵`  | Ready but pane-local evidence indicates active work           |
-| `🟡`  | Waiting or expected wait                                      |
-| `🔷`  | Pending or needs action                                       |
-| `🔴`  | Stale, blocked, delivery failure, or other attention severity |
+| Mark | Meaning                                                                  |
+| ---- | ------------------------------------------------------------------------ |
+| `⚫`  | Initial, unavailable, unowned, missing, or malformed local evidence      |
+| `🟢`  | Ready with positive pane-local evidence and no worse contextual severity |
+| `🔵`  | Ready but pane-local evidence indicates active work                      |
+| `🟡`  | Waiting or expected wait                                                 |
+| `🔷`  | Pending or needs action                                                  |
+| `🔴`  | Stale, blocked, delivery failure, or other attention severity            |

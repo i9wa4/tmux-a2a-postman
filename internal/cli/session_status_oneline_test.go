@@ -140,6 +140,19 @@ func TestCompactNodeStatusMarkUsesContextualNodeSeverityWhenVisibleReady(t *test
 			want: "🔴",
 		},
 		{
+			name: "unknown pane-local evidence is neutral not green",
+			node: status.NodeStatus{
+				VisibleState: "ready",
+				Severity:     "ok",
+				NodeLocal: &status.NodeLocalStatus{
+					State:         "unknown",
+					Severity:      "ok",
+					EvidenceLevel: "unknown",
+				},
+			},
+			want: "⚫",
+		},
+		{
 			name: "pending obligation keeps pending mark",
 			node: status.NodeStatus{
 				VisibleState: "pending",
@@ -158,6 +171,59 @@ func TestCompactNodeStatusMarkUsesContextualNodeSeverityWhenVisibleReady(t *test
 		t.Run(tt.name, func(t *testing.T) {
 			if got := compactNodeStatusMark(tt.node); got != tt.want {
 				t.Fatalf("compactNodeStatusMark(...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldSkipCompactNodeKeepsClassifiedShellEvidence(t *testing.T) {
+	tests := []struct {
+		name string
+		node status.NodeStatus
+		want bool
+	}{
+		{
+			name: "plain shell pane is skipped",
+			node: status.NodeStatus{
+				CurrentCommand: "bash",
+				Severity:       "ok",
+				NodeLocal: &status.NodeLocalStatus{
+					State:    "live",
+					Severity: "ok",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "shell pane with unknown evidence is retained as neutral",
+			node: status.NodeStatus{
+				CurrentCommand: "bash",
+				Severity:       "ok",
+				NodeLocal: &status.NodeLocalStatus{
+					State:    "unknown",
+					Severity: "ok",
+				},
+			},
+			want: false,
+		},
+		{
+			name: "shell pane with conflict evidence is retained",
+			node: status.NodeStatus{
+				CurrentCommand: "bash",
+				Severity:       "attention_stale",
+				NodeLocal: &status.NodeLocalStatus{
+					State:    "conflict",
+					Severity: "attention_stale",
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldSkipCompactNode(tt.node); got != tt.want {
+				t.Fatalf("shouldSkipCompactNode(...) = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -324,7 +390,7 @@ func TestRunGetSessionStatusOneline_UsesSessionIDOrder(t *testing.T) {
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
 	}
 
-	if stdout.String() != "[0]🔷🟢:🟢 [1]🟢🔷\n" {
+	if stdout.String() != "[0]🔷⚫:⚫ [1]⚫🔷\n" {
 		t.Fatalf("stdout = %q, want compact status line", stdout.String())
 	}
 
@@ -427,7 +493,7 @@ func TestRunGetSessionStatusOneline_PreservesSessionIDIndicesAcrossSessionsWitho
 		t.Fatalf("RunGetSessionStatusOneline: %v", err)
 	}
 
-	if stdout.String() != "[0]🟢🟢 [1]⚫\n" {
+	if stdout.String() != "[0]⚫⚫ [1]⚫\n" {
 		t.Fatalf("stdout = %q, want compact status line", stdout.String())
 	}
 }

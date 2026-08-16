@@ -61,6 +61,10 @@ func compactNodeStatusMark(node status.NodeStatus) string {
 		return compactStatusMark(node.VisibleState)
 	}
 
+	if node.NodeLocal != nil && node.NodeLocal.State == "unknown" {
+		return "⚫"
+	}
+
 	switch node.Severity {
 	case "working":
 		return "🔵"
@@ -207,8 +211,8 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 	result.Windows = buildSessionWindows(result.LayoutGroups)
 	result.WorkspaceTree = buildWorkspaceTreeStatus(inputs.cfg, inputs.sessionName)
 	result.CommandApproval = buildCommandApprovalStatus(inputs.cfg)
-	result.Compact = buildSessionCompact(result, inputs.panes)
 	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode, inputs.now)
+	result.Compact = buildSessionCompact(result, inputs.panes)
 	return result
 }
 
@@ -695,7 +699,7 @@ func buildSessionCompact(health status.SessionStatus, panes []sessionPane) strin
 	for _, windowIndex := range windowOrder {
 		var marks strings.Builder
 		for _, node := range windowNodes[windowIndex] {
-			if isShellCommand(node.CurrentCommand) {
+			if shouldSkipCompactNode(node) {
 				continue
 			}
 			marks.WriteString(compactNodeStatusMark(node))
@@ -711,6 +715,16 @@ func buildSessionCompact(health status.SessionStatus, panes []sessionPane) strin
 	}
 
 	return strings.Join(windowMarks, ":")
+}
+
+func shouldSkipCompactNode(node status.NodeStatus) bool {
+	if !isShellCommand(node.CurrentCommand) {
+		return false
+	}
+	if node.Severity != "ok" {
+		return false
+	}
+	return node.NodeLocal == nil || node.NodeLocal.State != "unknown"
 }
 
 func buildSessionLayoutGroups(nodes []status.NodeStatus, panes []sessionPane) []status.LayoutGroup {
