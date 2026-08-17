@@ -43,7 +43,7 @@ Body input:
 
 Output:
   Always JSON.
-  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"daemon-submit"}
+  {"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"post"}
   Reply-required sends include "input_request_id".
   Exact replies include "fills_input_request_id".
   Evidence flags populate outer envelope evidence_* params. If any evidence
@@ -60,13 +60,11 @@ Status:
   queued                  Local handoff succeeded, but daemon handling was not observed
 
 submit_path:
-  daemon-submit           Request/response path owned by the running daemon
-  post                    Direct write to the session post/ queue
+  post                    Atomic local handoff to the session post/ queue
 
-Timeouts:
-  A daemon-submit timeout does not prove failure. The daemon may still commit a
-  side-effecting send after the CLI stops waiting. Do not retry blindly; inspect
-  status, recipient inbox/read evidence, or recipient-side confirmation before
-  resending. Use inspect-daemon-submit --id <request_id> to look up the timed-out
-  request, and get-status --debug for bounded daemon_submit pending, claimed,
-  late response, worker, and saturation counts.
+Normal sends:
+  send-heredoc always uses the post/ handoff. A running daemon consumes the
+  post asynchronously; processed means consumption was observed, while queued
+  means the local handoff succeeded but consumption was not yet observed.
+  Do not resend a queued message blindly; inspect status, recipient inbox/read
+  evidence, or recipient-side confirmation first.

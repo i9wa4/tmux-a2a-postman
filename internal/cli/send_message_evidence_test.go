@@ -14,7 +14,6 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	messagedelivery "github.com/i9wa4/tmux-a2a-postman/internal/message"
-	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestRunSendMessage_CustomTemplateOwnedBoundaryDrivesEvidenceGate(t *testing.T) {
@@ -193,26 +192,29 @@ role = "orchestrator"
 			if err := manager.Bootstrap(sessionDir, "test-session", time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)); err != nil {
 				t.Fatalf("journal bootstrap failed: %v", err)
 			}
+			var deliveryNotifications int
+			restoreNotificationObserver := messagedelivery.SetDeliveryNotificationObserverForTest(func(messagedelivery.DeliveryNotificationObservation) {
+				deliveryNotifications++
+			})
+			t.Cleanup(restoreNotificationObserver)
 
 			deliverDone := make(chan error, 1)
 			go func() {
-				requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
-				senderBody, ok := envelope.SenderBodyFromContent(request.Content)
+				postDir := filepath.Join(sessionDir, "post")
+				filename := awaitMarkdownFile(t, postDir, time.Second)
+				postPath := filepath.Join(postDir, filename)
+				content, err := os.ReadFile(postPath)
+				if err != nil {
+					deliverDone <- fmt.Errorf("ReadFile postPath: %w", err)
+					return
+				}
+				senderBody, ok := envelope.SenderBodyFromContent(string(content))
 				if !ok {
-					deliverDone <- fmt.Errorf("SenderBodyFromContent(request.Content) ok = false; content:\n%s", request.Content)
+					deliverDone <- fmt.Errorf("SenderBodyFromContent(post content) ok = false; content:\n%s", content)
 					return
 				}
 				if !strings.HasPrefix(senderBody, tc.body) {
-					deliverDone <- fmt.Errorf("SenderBodyFromContent(request.Content) = %q, want prefix %q", senderBody, tc.body)
-					return
-				}
-				postPath := filepath.Join(sessionDir, "post", request.Filename)
-				if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-					deliverDone <- fmt.Errorf("WriteFile postPath: %w", err)
-					return
-				}
-				if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-					deliverDone <- fmt.Errorf("Remove requestPath: %w", err)
+					deliverDone <- fmt.Errorf("SenderBodyFromContent(post content) = %q, want prefix %q", senderBody, tc.body)
 					return
 				}
 
@@ -232,15 +234,6 @@ role = "orchestrator"
 				}
 				if err := messagedelivery.DeliverMessage(postPath, "ctx-supported-evidence", nodes, adjacency, deliveryCfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 					deliverDone <- fmt.Errorf("DeliverMessage: %w", err)
-					return
-				}
-				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-					RequestID: request.RequestID,
-					Command:   request.Command,
-					HandledAt: time.Now().UTC().Format(time.RFC3339),
-					Filename:  request.Filename,
-				}); err != nil {
-					deliverDone <- fmt.Errorf("WriteDaemonSubmitResponse: %w", err)
 					return
 				}
 				deliverDone <- nil
@@ -271,6 +264,9 @@ role = "orchestrator"
 				t.Fatal(deliverErr)
 			}
 			if tc.wantDeadLetter {
+				if deliveryNotifications != 0 {
+					t.Fatalf("delivery notifications = %d, want 0 for rejected message", deliveryNotifications)
+				}
 				if err == nil {
 					t.Fatal("RunSendHeredoc() error = nil, want missing-evidence dead letter")
 				}
@@ -288,6 +284,12 @@ role = "orchestrator"
 			payload := decodeSendOutputForTest(t, stdout)
 			if payload.Status != string(sendStatusProcessed) {
 				t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+			}
+			if payload.Notify != "" {
+				t.Fatalf("payload.Notify = %q, want empty because daemon delivery owns the recipient hint", payload.Notify)
+			}
+			if deliveryNotifications != 1 {
+				t.Fatalf("delivery notifications = %d, want exactly 1", deliveryNotifications)
 			}
 			if _, statErr := os.Stat(filepath.Join(sessionDir, "inbox", "orchestrator", payload.Sent)); statErr != nil {
 				t.Fatalf("Stat delivered inbox file: %v", statErr)
