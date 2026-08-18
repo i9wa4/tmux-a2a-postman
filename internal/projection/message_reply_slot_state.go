@@ -35,6 +35,13 @@ type InputRequestDetail struct {
 	OpenedEventID  string
 	ReadAt         string
 	ReadEventID    string
+	// CommandApprovalThreadID and CommandHash bind an approval opening to its
+	// control-plane tuple. They are replay-local correlation data: a reply may
+	// not opt out of strict validation by omitting or changing its thread.
+	CommandApprovalThreadID        string
+	CommandHash                    string
+	CommandApprovalOpeningThreadID string
+	CommandApprovalOpeningHash     string
 }
 
 type RequestSatisfaction struct {
@@ -79,7 +86,8 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	satisfactionFallback := make(map[string]InputRequestDetail)
 	infoUnread := make(map[string]InputRequestDetail)
 	commandApprovalThreads := make(map[string]CommandApprovalThread)
-	acceptedCommandApprovalDecisions := make(map[commandApprovalReplySlotKey]bool)
+	acceptedCommandApprovalDecisions := make(map[commandApprovalReplySlotKey]string)
+	pendingCommandApprovalReplies := make(map[commandApprovalReplySlotKey]commandApprovalPendingReply)
 	sawLease := false
 	sawResolution := false
 	sawCompleteMailboxEvent := false
@@ -111,7 +119,8 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 			}
 			thread := commandApprovalThreads[event.ThreadID]
 			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok {
-				acceptedCommandApprovalDecisions[key] = true
+				acceptedCommandApprovalDecisions[key] = event.OccurredAt
+				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			}
 			continue
 		case MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionDeadLetteredEventType:
@@ -136,24 +145,40 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 
 		switch event.Type {
 		case MailboxProjectionPostConsumedEventType:
-			fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
-			resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
+			rememberCommandApprovalReply(pendingCommandApprovalReplies, meta, event.OccurredAt, sessionName)
+			if resolved, commandOpening := resolveCommandApprovalReplySlot(projected, openInboundExact, openOutboundExact, satisfactionExact, meta, event.OccurredAt, acceptedCommandApprovalDecisions, sessionName); !commandOpening {
+				// Preserve the pre-command-approval behavior: post-consumed only
+				// resolves the inbound slot and satisfaction opening.
+				resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
+				fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
+			} else if !resolved {
+				continue
+			}
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID)
+				openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads)
 				projected.WaitingOnInputCounts[meta.From]++
+				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			}
 		case MailboxProjectionDeliveredEventType:
-			resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
-			fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
+			rememberCommandApprovalReply(pendingCommandApprovalReplies, meta, event.OccurredAt, sessionName)
+			if resolved, commandOpening := resolveCommandApprovalReplySlot(projected, openInboundExact, openOutboundExact, satisfactionExact, meta, event.OccurredAt, acceptedCommandApprovalDecisions, sessionName); !commandOpening {
+				// Preserve the pre-command-approval behavior: delivered only
+				// resolves the outbound slot and satisfaction opening.
+				resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
+				fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
+			} else if !resolved {
+				continue
+			}
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type, event.EventID)
-				openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
+				openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads)
+				openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID, commandApprovalThreads)
 				projected.InputRequiredCounts[meta.To]++
 				if commandApprovalRequestOpensRequesterWaiting(meta) {
-					openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID)
+					openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads)
 					projected.WaitingOnInputCounts[meta.From]++
 				}
+				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			} else {
 				infoUnread[inputRequestKey(meta.MessageID, meta.To)] = InputRequestDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
 				projected.InfoUnreadCounts[meta.To]++
@@ -167,17 +192,19 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
 			}
 		case MailboxProjectionDeadLetteredEventType:
+			rememberCommandApprovalReply(pendingCommandApprovalReplies, meta, event.OccurredAt, sessionName)
 			// A correlated reply may be denied by ordinary graph routing after its
 			// authenticated control-plane effect was recorded. Its exact
 			// fills_input_request_id still closes the advertised reply obligation;
 			// dead-lettering is a delivery outcome, not a reason to leave the
 			// requester or reviewer waiting indefinitely.
-			if commandApprovalReplySlotRequiresDecision(meta) && !acceptedCommandApprovalDecisions[commandApprovalReplySlotKeyFromMetadata(meta, sessionName)] {
+			if resolved, commandOpening := resolveCommandApprovalReplySlot(projected, openInboundExact, openOutboundExact, satisfactionExact, meta, event.OccurredAt, acceptedCommandApprovalDecisions, sessionName); commandOpening && !resolved {
 				continue
+			} else if !commandOpening {
+				resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
+				resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
+				fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
 			}
-			resolveInboundInputRequest(projected, openInboundExact, openInboundFallback, meta)
-			resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
-			fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
 			deadLetterRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
 		}
 	}
@@ -191,8 +218,66 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	return projected, true, nil
 }
 
-func commandApprovalReplySlotRequiresDecision(meta envelope.Metadata) bool {
-	return strings.HasPrefix(meta.ThreadID, "command-approval-") && meta.FillsInputRequestID != ""
+// resolveCommandApprovalReplySlot is the only dual-direction resolver. It
+// derives whether strict validation is necessary from the opening selected by
+// fills_input_request_id, never from reply-side thread metadata. Thus a reply
+// with a missing, ordinary, or forged thread cannot fall back to generic slot
+// resolution for a command-approval opening.
+type commandApprovalPendingReply struct {
+	meta       envelope.Metadata
+	resolvedAt string
+}
+
+func rememberCommandApprovalReply(pending map[commandApprovalReplySlotKey]commandApprovalPendingReply, meta envelope.Metadata, resolvedAt, sessionName string) {
+	if meta.FillsInputRequestID == "" {
+		return
+	}
+	key := commandApprovalReplySlotKeyFromMetadata(meta, sessionName)
+	if key.MessageID == "" || key.InputRequestID == "" {
+		return
+	}
+	if _, seen := pending[key]; !seen {
+		pending[key] = commandApprovalPendingReply{meta: meta, resolvedAt: resolvedAt}
+	}
+}
+
+func reconcilePendingCommandApprovalReplies(state MessageInputRequestState, openInbound, openOutbound, satisfaction map[string]InputRequestDetail, pending map[commandApprovalReplySlotKey]commandApprovalPendingReply, accepted map[commandApprovalReplySlotKey]string, sessionName string) {
+	for key, reply := range pending {
+		if _, ok := accepted[key]; !ok {
+			continue
+		}
+		if resolved, commandOpening := resolveCommandApprovalReplySlot(state, openInbound, openOutbound, satisfaction, reply.meta, reply.resolvedAt, accepted, sessionName); resolved || commandOpening {
+			delete(pending, key)
+		}
+	}
+}
+
+func resolveCommandApprovalReplySlot(state MessageInputRequestState, openInbound, openOutbound, satisfaction map[string]InputRequestDetail, meta envelope.Metadata, resolvedAt string, accepted map[commandApprovalReplySlotKey]string, sessionName string) (resolved, commandOpening bool) {
+	if meta.FillsInputRequestID == "" {
+		return false, false
+	}
+	opening, commandOpening := commandApprovalOpeningForFill(meta.FillsInputRequestID, openInbound, openOutbound, satisfaction)
+	if !commandOpening {
+		return false, false
+	}
+	key := commandApprovalReplySlotKeyFromMetadata(meta, sessionName)
+	decisionAt, isAccepted := accepted[key]
+	if opening.CommandApprovalOpeningThreadID != opening.CommandApprovalThreadID || opening.CommandApprovalOpeningHash != opening.CommandHash || meta.ThreadID != opening.CommandApprovalThreadID || meta.CommandHash != opening.CommandHash || nodeaddr.Full(opening.Sender, sessionName) != key.RequesterAddress || nodeaddr.Full(opening.Recipient, sessionName) != key.ReviewerAddress || !isAccepted {
+		return false, true
+	}
+	resolveInboundInputRequest(state, openInbound, nil, meta)
+	resolveOutboundInputRequest(state, openOutbound, nil, meta)
+	fillRequestSatisfaction(state.RequestSatisfaction, satisfaction, nil, meta, decisionAt)
+	return true, true
+}
+
+func commandApprovalOpeningForFill(inputRequestID string, openings ...map[string]InputRequestDetail) (InputRequestDetail, bool) {
+	for _, open := range openings {
+		if opening, ok := open[inputRequestID]; ok && opening.CommandApprovalThreadID != "" {
+			return opening, true
+		}
+	}
+	return InputRequestDetail{}, false
 }
 
 func commandApprovalRequestOpensRequesterWaiting(meta envelope.Metadata) bool {
@@ -295,17 +380,21 @@ func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelo
 	return meta
 }
 
-func openInputRequest(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string) {
+func openInputRequest(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) {
 	inputRequest := InputRequestDetail{
-		Direction:      direction,
-		MessageID:      meta.MessageID,
-		InputRequestID: meta.InputRequestID,
-		Sender:         meta.From,
-		Recipient:      meta.To,
-		ReplyPolicy:    envelope.ResolveReplyPolicyFromMetadata(meta),
-		OpenedAt:       openedAt,
-		OpenedAtSource: openedAtSource,
-		OpenedEventID:  openedEventID,
+		Direction:                      direction,
+		MessageID:                      meta.MessageID,
+		InputRequestID:                 meta.InputRequestID,
+		Sender:                         meta.From,
+		Recipient:                      meta.To,
+		ReplyPolicy:                    envelope.ResolveReplyPolicyFromMetadata(meta),
+		OpenedAt:                       openedAt,
+		OpenedAtSource:                 openedAtSource,
+		OpenedEventID:                  openedEventID,
+		CommandApprovalThreadID:        commandApprovalOpeningThreadID(meta, commandApprovalThreads),
+		CommandHash:                    commandApprovalOpeningHash(meta, commandApprovalThreads),
+		CommandApprovalOpeningThreadID: meta.ThreadID,
+		CommandApprovalOpeningHash:     meta.CommandHash,
 	}
 	if meta.InputRequestID != "" {
 		openExact[meta.InputRequestID] = inputRequest
@@ -314,16 +403,20 @@ func openInputRequest(openExact, openFallback map[string]InputRequestDetail, met
 	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
 }
 
-func openRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, openedAt, openedAtSource, openedEventID string) {
+func openRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) {
 	inputRequest := InputRequestDetail{
-		MessageID:      meta.MessageID,
-		InputRequestID: meta.InputRequestID,
-		Sender:         meta.From,
-		Recipient:      meta.To,
-		ReplyPolicy:    envelope.ResolveReplyPolicyFromMetadata(meta),
-		OpenedAt:       openedAt,
-		OpenedAtSource: openedAtSource,
-		OpenedEventID:  openedEventID,
+		MessageID:                      meta.MessageID,
+		InputRequestID:                 meta.InputRequestID,
+		Sender:                         meta.From,
+		Recipient:                      meta.To,
+		ReplyPolicy:                    envelope.ResolveReplyPolicyFromMetadata(meta),
+		OpenedAt:                       openedAt,
+		OpenedAtSource:                 openedAtSource,
+		OpenedEventID:                  openedEventID,
+		CommandApprovalThreadID:        commandApprovalOpeningThreadID(meta, commandApprovalThreads),
+		CommandHash:                    commandApprovalOpeningHash(meta, commandApprovalThreads),
+		CommandApprovalOpeningThreadID: meta.ThreadID,
+		CommandApprovalOpeningHash:     meta.CommandHash,
 	}
 	stats := satisfaction[meta.To]
 	stats.OpenedCount++
@@ -333,6 +426,30 @@ func openRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openEx
 		return
 	}
 	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
+}
+
+func commandApprovalOpeningThreadID(meta envelope.Metadata, threads map[string]CommandApprovalThread) string {
+	if meta.InputRequestID == "" {
+		return ""
+	}
+	for threadID, thread := range threads {
+		if thread.InputRequestID == meta.InputRequestID {
+			return threadID
+		}
+	}
+	if strings.HasPrefix(meta.ThreadID, "command-approval-") {
+		return meta.ThreadID
+	}
+	return ""
+}
+
+func commandApprovalOpeningHash(meta envelope.Metadata, threads map[string]CommandApprovalThread) string {
+	if threadID := commandApprovalOpeningThreadID(meta, threads); threadID != "" {
+		if thread, ok := threads[threadID]; ok {
+			return thread.CommandHash
+		}
+	}
+	return meta.CommandHash
 }
 
 func fillRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, filledAt string) {
@@ -354,7 +471,7 @@ func deadLetterRequestSatisfaction(satisfaction map[string]RequestSatisfaction, 
 	}
 	inputRequest, ok := findOpenRequestSatisfaction(openExact, openFallback, meta)
 	if !ok {
-		openRequestSatisfaction(satisfaction, openExact, openFallback, meta, deadLetteredAt, openedAtSource, openedEventID)
+		openRequestSatisfaction(satisfaction, openExact, openFallback, meta, deadLetteredAt, openedAtSource, openedEventID, nil)
 		inputRequest, ok = findOpenRequestSatisfaction(openExact, openFallback, meta)
 		if !ok {
 			return
