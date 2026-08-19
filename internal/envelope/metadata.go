@@ -498,7 +498,7 @@ func EnsureParams(content string, fields map[string]string) string {
 	}
 
 	insert := []string{}
-	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "input_request_set_id", "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
+	for _, key := range []string{"messageId", "replyPolicy", "replyTo", "input_request_id", "fills_input_request_id", "thread_id", "command_hash", "input_request_set_id", "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule", "runtimeContextId", "runtimeContextScope", "runtimeContextCapturedAt", "runtimeContextHash"} {
 		value := managedParamFieldValue(fields, key)
 		if value == "" || existing[key] {
 			continue
@@ -651,6 +651,10 @@ func managedParamFieldKey(key string) (string, bool) {
 		return "input_request_id", true
 	case "fills_input_request_id":
 		return "fills_input_request_id", true
+	case "thread_id":
+		return "thread_id", true
+	case "command_hash":
+		return "command_hash", true
 	case "input_request_set_id":
 		return "input_request_set_id", true
 	case "evidence_command":
@@ -710,6 +714,8 @@ func managedParamFieldAliases(fieldKey string) []string {
 		return []string{"input_request_id"}
 	case "fills_input_request_id":
 		return []string{"fills_input_request_id"}
+	case "thread_id", "command_hash":
+		return []string{fieldKey}
 	case "input_request_set_id":
 		return []string{"input_request_set_id"}
 	case "evidence_command", "evidence_cwd", "evidence_env_allowlist", "evidence_timeout_seconds", "evidence_side_effect_class", "evidence_artifact", "evidence_hash", "branch_id", "completion_rule":
