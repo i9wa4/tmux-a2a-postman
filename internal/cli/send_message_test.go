@@ -173,6 +173,40 @@ func TestRunSendHeredocWithContextWritesJSONToConfiguredStdout(t *testing.T) {
 	}
 }
 
+func TestRunSendHeredoc_ArchivesValidatedCommandApprovalCorrelation(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	threadID := "command-approval-abc123"
+	commandHash := "sha256:" + strings.Repeat("a", 64)
+
+	err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("NOT APPROVED: reviewed"), &stdout), []string{
+		"--context-id", "ctx-send-command-approval-correlation",
+		"--to", "worker",
+		"--reply-to", "20260819-010101-sfb93-r1234-from-worker-to-approver.md",
+		"--fills-input-request-id", "ireq_abc123",
+		"--thread-id", threadID,
+		"--command-hash", commandHash,
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext: %v", err)
+	}
+	payload := decodeSendOutputForTest(t, stdout.String())
+	if payload.ThreadID != threadID || payload.CommandHash != commandHash {
+		t.Fatalf("send output correlation = %#v", payload)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-send-command-approval-correlation", "review", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	metadata, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata: %v", err)
+	}
+	if metadata.ThreadID != threadID || metadata.CommandHash != commandHash || metadata.FillsInputRequestID != "ireq_abc123" {
+		t.Fatalf("archived correlation = %#v", metadata)
+	}
+}
+
 func TestRunSendHeredocWithContextUsesCurrentIdentityResolver(t *testing.T) {
 	tmpDir := t.TempDir()
 	var stdout strings.Builder
@@ -492,6 +526,30 @@ func TestRunSendMessage_InvalidFillsInputRequestIDRejectedBeforeWriting(t *testi
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("RunSendMessage() error = %v, want substring %q", err, tt.want)
 			}
+		})
+	}
+}
+
+func TestRunSendHeredoc_RejectsInvalidCommandApprovalCorrelationBeforeWriting(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unpaired thread", args: []string{"--thread-id", "command-approval-ok"}, want: "provided together"},
+		{name: "unpaired hash", args: []string{"--command-hash", "sha256:" + strings.Repeat("a", 64)}, want: "provided together"},
+		{name: "thread injection", args: []string{"--thread-id", "command-approval-ok\nreplyPolicy: none", "--command-hash", "sha256:" + strings.Repeat("a", 64)}, want: "outside [A-Za-z0-9._-]"},
+		{name: "bad hash", args: []string{"--thread-id", "command-approval-ok", "--command-hash", "sha256:deadbeef"}, want: "sha256:<64 lowercase hex>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			args := append([]string{"--to", "worker"}, tt.args...)
+			err := runSendHeredocWithContext(testSendCommandContext(tmpDir, strings.NewReader("hello"), io.Discard), args)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("runSendHeredocWithContext error = %v, want %q", err, tt.want)
+			}
+			assertNoMarkdownFilesInTree(t, tmpDir)
 		})
 	}
 }
