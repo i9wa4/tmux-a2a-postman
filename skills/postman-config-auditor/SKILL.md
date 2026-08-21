@@ -19,8 +19,8 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 
 - Audit or fix `postman.toml`, `postman.md`, or `nodes/*` config.
 - Check Mermaid edges, `ui_node`, role templates, and skill catalogs.
-- Diagnose `get-status` evidence for dead-letter, missing route, quiet node, or
-  unread backlog symptoms.
+- Diagnose `get-status` evidence for dead-letter, missing route, live-but-idle
+  node, or unread backlog symptoms.
 
 ## 2. Procedure
 

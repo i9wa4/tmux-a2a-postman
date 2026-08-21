@@ -329,8 +329,8 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	if got := payload["visible_state"]; got != "pending" {
 		t.Fatalf("visible_state = %#v, want %q", got, "pending")
 	}
-	if got := payload["compact"]; got != "🔷🟢" {
-		t.Fatalf("compact = %#v, want %q", got, "🔷🟢")
+	if got := payload["compact"]; got != "🔷⚫" {
+		t.Fatalf("compact = %#v, want %q", got, "🔷⚫")
 	}
 	if _, ok := payload["runtime_diagnostics"]; ok {
 		t.Fatalf("runtime_diagnostics present without --debug: %#v", payload["runtime_diagnostics"])
@@ -794,8 +794,8 @@ func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	if payload.Nodes[0].Name != "worker" || payload.Nodes[1].Name != "critic" {
 		t.Fatalf("nodes order = %#v, want worker then critic", payload.Nodes)
 	}
-	if payload.Compact != "🟢:🟢" {
-		t.Fatalf("compact = %q, want %q", payload.Compact, "🟢:🟢")
+	if payload.Compact != "⚫:⚫" {
+		t.Fatalf("compact = %q, want %q", payload.Compact, "⚫:⚫")
 	}
 
 	if len(payload.Windows) != 2 {
@@ -928,11 +928,11 @@ func TestCollectAllSessionStatus_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "review" {
 		t.Fatalf("session order = %#v, want main then review to match numeric tmux session_id order", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🔷🟢:🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🟢:🟢")
+	if payload.Sessions[0].Compact != "🔷⚫:⚫" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷⚫:⚫")
 	}
-	if payload.Sessions[1].Compact != "🟢🔷" {
-		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🟢🔷")
+	if payload.Sessions[1].Compact != "⚫🔷" {
+		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "⚫🔷")
 	}
 }
 
@@ -1025,8 +1025,8 @@ func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionI
 	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "ghost" {
 		t.Fatalf("session order = %#v, want main then ghost", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🟢🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🟢🟢")
+	if payload.Sessions[0].Compact != "⚫⚫" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "⚫⚫")
 	}
 	if payload.Sessions[1].VisibleState != "initial" {
 		t.Fatalf("ghost visible_state = %q, want %q", payload.Sessions[1].VisibleState, "initial")
