@@ -68,7 +68,7 @@
               hash = "sha256-T2aKMvv8ETLmqIH7lowvHa2mMUkqM5IRc1+7JVpCYC0=";
             };
           });
-          buildGo126Module = pkgs.buildGoModule.override { go = go126; };
+          buildGo126Module = pkgs.buildGoModule.override { go = pkgs.go_1_26; };
           commonDevPackages = with pkgs; [
             gh
             go126
