@@ -80,8 +80,8 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			remaining = 0
 		}
 		markdownPath := response.MarkdownPath
-		if markdownPath == "" && response.Filename != "" {
-			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
+		if err := validateDaemonPopArchive(sessionDir, response, markdownPath); err != nil {
+			return err
 		}
 		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon, popReceiverContextOptions{
 			ContextID:       resolvedContextID,
@@ -136,6 +136,57 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		Node:            nodeName,
 		CurrentIdentity: ctx.currentIdentity,
 	})
+}
+
+func validateDaemonPopArchive(sessionDir string, response projection.DaemonSubmitResponse, markdownPath string) error {
+	if sessionDir == "" || !filepath.IsAbs(sessionDir) {
+		return fmt.Errorf("daemon submit pop active session path must be absolute")
+	}
+	if response.Filename == "" {
+		return fmt.Errorf("daemon submit pop response missing filename")
+	}
+	if response.Filename != filepath.Base(response.Filename) || strings.ContainsAny(response.Filename, `/\`) {
+		return fmt.Errorf("daemon submit pop response filename must be a base name: %s", response.Filename)
+	}
+	if markdownPath == "" {
+		return fmt.Errorf("daemon submit pop response for %q missing archived markdown_path", response.Filename)
+	}
+	if !filepath.IsAbs(markdownPath) {
+		return fmt.Errorf("daemon submit pop archived markdown_path must be absolute: %s", markdownPath)
+	}
+	if markdownPath != filepath.Clean(markdownPath) {
+		return fmt.Errorf("daemon submit pop archived markdown_path must be canonical: %s", markdownPath)
+	}
+	readDir := filepath.Join(sessionDir, "read")
+	expectedPath := filepath.Join(readDir, response.Filename)
+	if markdownPath != expectedPath {
+		return fmt.Errorf("daemon submit pop archived markdown_path %s does not match expected active-session path %s", markdownPath, expectedPath)
+	}
+	if info, err := os.Lstat(readDir); err != nil {
+		return fmt.Errorf("daemon submit pop read directory unavailable at %s: %w", readDir, err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("daemon submit pop read directory is symlink: %s", readDir)
+	}
+	if info, err := os.Lstat(expectedPath); err != nil {
+		return fmt.Errorf("daemon submit pop archived body unavailable at %s: %w", expectedPath, err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("daemon submit pop archived body is symlink: %s", expectedPath)
+	}
+	canonicalPath, err := filepath.EvalSymlinks(markdownPath)
+	if err != nil {
+		return fmt.Errorf("daemon submit pop archived markdown_path canonicalization failed at %s: %w", markdownPath, err)
+	}
+	if canonicalPath != expectedPath {
+		return fmt.Errorf("daemon submit pop archived markdown_path canonical target %s does not match expected active-session path %s", canonicalPath, expectedPath)
+	}
+	data, err := os.ReadFile(expectedPath)
+	if err != nil {
+		return fmt.Errorf("daemon submit pop archived body unavailable at %s: %w", expectedPath, err)
+	}
+	if string(data) != response.Content {
+		return fmt.Errorf("daemon submit pop archived body mismatch at %s", expectedPath)
+	}
+	return nil
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {

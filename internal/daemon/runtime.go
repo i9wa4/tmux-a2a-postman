@@ -77,21 +77,24 @@ type daemonRuntime struct {
 	autoPingEventsMu sync.Mutex
 	activeAutoPings  map[string]bool
 
-	processDaemonSubmit           daemonSubmitProcessor
-	launchDaemonSubmitWorker      daemonSubmitWorkerLauncher
-	daemonSubmitSem               chan struct{}
-	daemonSubmitResults           chan daemonSubmitRuntimeResult
-	activeDaemonSubmitKeys        map[string]bool
-	daemonSubmitSaturationCount   int
-	daemonSubmitLastSaturatedAt   time.Time
-	scheduleRuntimeTimer          runtimeTimerScheduler
-	mailboxProjectionSyncMu       sync.Mutex
-	activeMailboxProjectionSyncs  map[string]bool
-	pendingMailboxProjectionSyncs map[string]bool
-	mailboxProjectionSyncWG       sync.WaitGroup
-	sendPaneNotification          paneNotificationSender
-	lastEscalationCheck           time.Time
-	lastEscalationPushKey         string
+	processDaemonSubmit            daemonSubmitProcessor
+	launchDaemonSubmitWorker       daemonSubmitWorkerLauncher
+	afterDaemonSubmitResultPublish func()
+	beforeDaemonSubmitReleaseWait  func()
+	daemonSubmitSems               map[string]chan struct{}
+	daemonSubmitResults            chan daemonSubmitRuntimeResult
+	activeDaemonSubmitKeys         map[string]bool
+	activeDaemonSubmitSessions     map[string]int
+	daemonSubmitSaturationCount    int
+	daemonSubmitLastSaturatedAt    time.Time
+	scheduleRuntimeTimer           runtimeTimerScheduler
+	mailboxProjectionSyncMu        sync.Mutex
+	activeMailboxProjectionSyncs   map[string]bool
+	pendingMailboxProjectionSyncs  map[string]bool
+	mailboxProjectionSyncWG        sync.WaitGroup
+	sendPaneNotification           paneNotificationSender
+	lastEscalationCheck            time.Time
+	lastEscalationPushKey          string
 }
 
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
@@ -109,6 +112,8 @@ type paneNotificationSender func(paneID string, message string, enterDelay time.
 type daemonSubmitRuntimeResult struct {
 	requestPath string
 	dispatchKey string
+	sessionKey  string
+	releaseDone <-chan struct{}
 	result      daemonSubmitProcessResult
 	err         error
 }
@@ -181,9 +186,10 @@ func newDaemonRuntime(
 		activeAutoPings:               make(map[string]bool),
 		processDaemonSubmit:           processDaemonSubmitRequest,
 		launchDaemonSubmitWorker:      defaultDaemonSubmitWorkerLauncher,
-		daemonSubmitSem:               make(chan struct{}, daemonSubmitWorkerLimit),
+		daemonSubmitSems:              make(map[string]chan struct{}),
 		daemonSubmitResults:           make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
 		activeDaemonSubmitKeys:        make(map[string]bool),
+		activeDaemonSubmitSessions:    make(map[string]int),
 		scheduleRuntimeTimer:          defaultRuntimeTimerScheduler,
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
@@ -443,13 +449,16 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	if rt.activeDaemonSubmitKeys[dispatchKey] {
 		return daemonSubmitDispatchDeferred
 	}
+	sessionKey := daemonSubmitSessionKey(requestPath)
+	sem := rt.daemonSubmitSemForSession(sessionKey)
 	select {
-	case rt.daemonSubmitSem <- struct{}{}:
+	case sem <- struct{}{}:
 	default:
 		rt.recordDaemonSubmitSaturation()
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
+	rt.activeDaemonSubmitSessions[sessionKey]++
 	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
 	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), sessionNameForDaemonSubmitRequestPath(requestPath), request.Content)
 	fields.DaemonSubmitRequestID = request.RequestID
@@ -457,18 +466,29 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	fields.SubmitPath = string(projection.SubmitPathDaemon)
 	msgtrace.Log("daemon_submit_dispatch", fields)
 	processor := rt.processDaemonSubmit
+	afterResultPublish := rt.afterDaemonSubmitResultPublish
 
 	worker := func() {
+		releaseDone := make(chan struct{})
 		workerResult := daemonSubmitRuntimeResult{
 			requestPath: requestPath,
 			dispatchKey: dispatchKey,
+			sessionKey:  sessionKey,
+			releaseDone: releaseDone,
 		}
 		defer func() {
 			if r := recover(); r != nil {
 				workerResult.err = fmt.Errorf("panic processing %s: %v", filepath.Base(requestPath), r)
 			}
+			// Keep the originating session slot until the bounded runtime result
+			// handoff succeeds. This prevents result-pending work from escaping
+			// the session admission limit when the consumer is slow.
 			rt.daemonSubmitResults <- workerResult
-			<-rt.daemonSubmitSem
+			if afterResultPublish != nil {
+				afterResultPublish()
+			}
+			<-sem
+			close(releaseDone)
 		}()
 		workerResult.result, workerResult.err = processor(requestPath)
 	}
@@ -622,7 +642,7 @@ func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
 func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.DaemonSubmitRuntimeDiagnostics {
 	diagnostics := status.DaemonSubmitRuntimeDiagnostics{
 		WorkerLimit:        rt.daemonSubmitWorkerLimit(),
-		ActiveWorkerCount:  len(rt.daemonSubmitSem),
+		ActiveWorkerCount:  rt.daemonSubmitActiveWorkerCount(),
 		ActiveRequestCount: len(rt.activeDaemonSubmitKeys),
 		SaturationCount:    rt.daemonSubmitSaturationCount,
 	}
@@ -638,10 +658,31 @@ func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.Da
 }
 
 func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
-	if rt.daemonSubmitSem != nil {
-		return cap(rt.daemonSubmitSem)
-	}
 	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
+}
+
+func (rt *daemonRuntime) daemonSubmitActiveWorkerCount() int {
+	active := 0
+	for _, sem := range rt.daemonSubmitSems {
+		active += len(sem)
+	}
+	return active
+}
+
+func daemonSubmitSessionKey(requestPath string) string {
+	if sessionDir, ok := daemonSubmitSessionDir(requestPath); ok {
+		return sessionDir
+	}
+	return requestPath
+}
+
+func (rt *daemonRuntime) daemonSubmitSemForSession(sessionKey string) chan struct{} {
+	if sem := rt.daemonSubmitSems[sessionKey]; sem != nil {
+		return sem
+	}
+	sem := make(chan struct{}, rt.daemonSubmitWorkerLimit())
+	rt.daemonSubmitSems[sessionKey] = sem
+	return sem
 }
 
 // nonDaemonDeliveryBudget returns the shared post/auto-PING/manual-PING
@@ -760,14 +801,17 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 	if rt.launchDaemonSubmitWorker == nil {
 		rt.launchDaemonSubmitWorker = defaultDaemonSubmitWorkerLauncher
 	}
-	if rt.daemonSubmitSem == nil {
-		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimitFromConfig(rt.cfg))
+	if rt.daemonSubmitSems == nil {
+		rt.daemonSubmitSems = make(map[string]chan struct{})
 	}
 	if rt.daemonSubmitResults == nil {
 		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.activeDaemonSubmitKeys == nil {
 		rt.activeDaemonSubmitKeys = make(map[string]bool)
+	}
+	if rt.activeDaemonSubmitSessions == nil {
+		rt.activeDaemonSubmitSessions = make(map[string]int)
 	}
 }
 
@@ -803,6 +847,20 @@ func sessionNameForDaemonSubmitRequestPath(requestPath string) string {
 func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
 	rt.ensureDaemonSubmitRuntime()
 	delete(rt.activeDaemonSubmitKeys, workerResult.dispatchKey)
+	if workerResult.sessionKey != "" {
+		if rt.activeDaemonSubmitSessions[workerResult.sessionKey] <= 1 {
+			delete(rt.activeDaemonSubmitSessions, workerResult.sessionKey)
+		} else {
+			rt.activeDaemonSubmitSessions[workerResult.sessionKey]--
+		}
+		if workerResult.releaseDone != nil {
+			if rt.beforeDaemonSubmitReleaseWait != nil {
+				rt.beforeDaemonSubmitReleaseWait()
+			}
+			<-workerResult.releaseDone
+		}
+		rt.pruneIdleDaemonSubmitSem(workerResult.sessionKey)
+	}
 	if workerResult.err != nil {
 		rt.events <- tui.DaemonEvent{
 			Type:    "error",
@@ -821,18 +879,31 @@ func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRunti
 	rt.dispatchPendingDaemonSubmitRequests()
 }
 
+func (rt *daemonRuntime) pruneIdleDaemonSubmitSem(sessionKey string) {
+	if rt.activeDaemonSubmitSessions[sessionKey] != 0 {
+		return
+	}
+	if sem := rt.daemonSubmitSems[sessionKey]; sem != nil && len(sem) == 0 {
+		delete(rt.daemonSubmitSems, sessionKey)
+	}
+}
+
 func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 	pendingBySession := rt.pendingDaemonSubmitRequestsBySession()
 	for {
 		dispatchedInRound := false
 		for i := range pendingBySession {
 			pending := &pendingBySession[i]
+			if pending.saturated {
+				continue
+			}
 			for pending.next < len(pending.names) {
 				name := pending.names[pending.next]
 				pending.next++
 				status := rt.dispatchDaemonSubmitRequest(filepath.Join(pending.requestsDir, name))
 				if status == daemonSubmitDispatchSaturated {
-					return
+					pending.saturated = true
+					break
 				}
 				if status == daemonSubmitDispatched {
 					dispatchedInRound = true
@@ -850,6 +921,7 @@ type pendingDaemonSubmitSessionRequests struct {
 	requestsDir string
 	names       []string
 	next        int
+	saturated   bool
 }
 
 func (rt *daemonRuntime) pendingDaemonSubmitRequestsBySession() []pendingDaemonSubmitSessionRequests {
