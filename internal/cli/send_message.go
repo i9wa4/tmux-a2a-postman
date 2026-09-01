@@ -484,43 +484,6 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	}
 	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
-	if ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
-			Command:  projection.DaemonSubmitSend,
-			Filename: filename,
-			Sender:   sender,
-			Content:  content,
-		}, daemonSubmitTimeout(cfg.TmuxTimeout))
-		if err != nil {
-			return fmt.Errorf("daemon submit send: %w", err)
-		}
-		deliveredFilename := filename
-		if response.Filename != "" {
-			deliveredFilename = response.Filename
-		}
-		status, err := observeSendOutcomeWithContext(ctx, baseDir, resolvedContextID, sessionDir, deliveredFilename)
-		if err != nil {
-			return fmt.Errorf("send outcome: %w", err)
-		}
-		output := sendOutput{
-			Sent:                deliveredFilename,
-			Status:              string(status),
-			ContextID:           resolvedContextID,
-			Session:             sessionName,
-			From:                sender,
-			To:                  recipient,
-			ReplyPolicy:         replyPolicy,
-			ReplyTo:             *replyTo,
-			InputRequestID:      inputRequestID,
-			FillsInputRequestID: *fillsInputRequestID,
-			ThreadID:            *threadID,
-			CommandHash:         *commandHash,
-			SubmitPath:          projection.SubmitPathDaemon,
-		}
-		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, recipient, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
-		return writeSendOutput(ctx.stdout, output)
-	}
-
 	if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
 		GraceSeconds:  cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
 		DebtCap:       cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
@@ -547,7 +510,10 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return fmt.Errorf("send outcome: %w", err)
 	}
 	var notifyStatus cliNotifyStatus
-	if status == sendStatusProcessed {
+	// Delivery owns recipient notification for a daemon-owned session. The CLI
+	// only owns the hint for non-owned direct delivery, avoiding a second pane
+	// notification after the daemon has already delivered the same post.
+	if status == sendStatusProcessed && !ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		freshNodes, _ := ctx.discoverNodes(baseDir, resolvedContextID, sessionName)
 		var paneID string
 		if freshNodes != nil {
@@ -1154,8 +1120,18 @@ func observeSendOutcomeWithContext(ctx commandContext, baseDir, contextID, sessi
 			return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
 		}
 
+		if observeSendOutcomeBeforePostStateCheckForTest != nil {
+			observeSendOutcomeBeforePostStateCheckForTest()
+		}
 		if _, err := os.Stat(postPath); err != nil {
 			if os.IsNotExist(err) {
+				// A post-to-dead-letter rename can race the scan above. Recheck after
+				// disappearance so a rejected send is never surfaced as processed.
+				if deadLetterBasename, ok, deadLetterErr := findMatchingDeadLetter(sessionDir, filename); deadLetterErr != nil {
+					return "", deadLetterErr
+				} else if ok {
+					return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
+				}
 				return sendStatusProcessed, nil
 			}
 			return "", fmt.Errorf("checking post queue state: %w", err)
@@ -1166,6 +1142,8 @@ func observeSendOutcomeWithContext(ctx commandContext, baseDir, contextID, sessi
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+var observeSendOutcomeBeforePostStateCheckForTest func()
 
 func findMatchingDeadLetter(sessionDir, filename string) (string, bool, error) {
 	deadLetterDir := filepath.Join(sessionDir, "dead-letter")

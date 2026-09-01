@@ -349,19 +349,19 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
-Both `send-heredoc` and `pop` prefer daemon-mediated delivery when the running
-daemon owns the session and fall back to direct filesystem access for non-owned
-sessions. Both output a `submit_path` field (`daemon-submit` or `post`) that
-identifies which path was taken, including on empty `pop` results. Operators
-can use this field to detect when daemon mediation was bypassed.
+`send-heredoc` always uses an atomic direct handoff to the session `post/`
+queue and reports `submit_path: post`. A daemon consumes that queue
+asynchronously when it is running: `processed` means consumption was observed,
+while `queued` means the local handoff succeeded but consumption was not yet
+observed. Do not blindly resend a queued message; inspect status, inbox/read
+state, archived message evidence, or recipient-side confirmation first.
 
-If a daemon-submit `send-heredoc` or `pop` times out, treat the result as
-unknown. The daemon may still commit the side effect after the CLI stops
-waiting, so inspect status, inbox/read state, archived message evidence, or
-recipient-side confirmation before retrying. Use
-`inspect-daemon-submit --id <request_id>` to look up the timed-out request, and
-use `get-status --debug` for bounded `daemon_submit` queue health, including
-pending, claimed, late response, worker, and saturation counts.
+`pop` still uses daemon-submit when the running daemon owns the session and
+otherwise uses direct filesystem access. Its `submit_path` identifies that
+route, including on empty results. If daemon-submit `pop` times out, treat the
+result as unknown and inspect status or archived message evidence before
+retrying. Use `inspect-daemon-submit --id <request_id>` and
+`get-status --debug` for bounded daemon-submit queue health.
 Configure daemon-submit concurrency with
 `daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers and
 values above 16 are clamped with a daemon warning.
