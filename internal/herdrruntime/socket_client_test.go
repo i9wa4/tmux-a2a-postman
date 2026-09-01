@@ -33,7 +33,7 @@ const (
 )
 
 func TestSocketClientPingUsesLivePongAndSchemaCommand(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := testSocketPath(t)
 	requests := serveHerdrSocketSequence(t, socketPath, herdr082PongFixture)
 	client := testSocketClient(socketPath)
 
@@ -70,7 +70,7 @@ func TestSocketClientRejectsUnsupportedCompatibilityEvidence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+			socketPath := testSocketPath(t)
 			serveHerdrSocketSequence(t, socketPath, tt.response)
 			client := &socketClient{
 				socketPath: socketPath,
@@ -100,7 +100,7 @@ func TestSocketClientRequiresMatchingStringResponseID(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+			socketPath := testSocketPath(t)
 			serveHerdrSocketSequence(t, socketPath, tt.response)
 			client := testSocketClient(socketPath)
 			if _, err := client.Ping(context.Background()); err == nil {
@@ -111,7 +111,7 @@ func TestSocketClientRequiresMatchingStringResponseID(t *testing.T) {
 }
 
 func TestSocketClientSessionSnapshotUsesHerdrLineProtocol(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := testSocketPath(t)
 	requests := serveHerdrSocketSequence(t, socketPath,
 		herdr082PongFixture,
 		`{"id":"postman:2","result":{"type":"session_snapshot","snapshot":`+herdr082SnapshotFixture+`}}`+"\n",
@@ -144,7 +144,7 @@ func TestSocketClientSessionSnapshotUsesHerdrLineProtocol(t *testing.T) {
 }
 
 func TestSocketClientReadProcessAndWritesUseStrictTaggedResults(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := testSocketPath(t)
 	requests := serveHerdrSocketSequence(t, socketPath,
 		herdr082PongFixture,
 		`{"id":"postman:2","result":{"type":"pane_read","read":{"pane_id":"pane-1","workspace_id":"workspace-1","tab_id":"tab-1","source":"recent","format":"text","text":"hello\n","revision":8,"truncated":false}}}`+"\n",
@@ -289,7 +289,7 @@ func TestSocketClientRejectsMalformedTaggedResults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+			socketPath := testSocketPath(t)
 			serveHerdrSocketSequence(t, socketPath, tt.responses...)
 			if err := tt.run(testSocketClient(socketPath)); err == nil {
 				t.Fatal("operation error = nil, want strict decoder rejection")
@@ -299,7 +299,7 @@ func TestSocketClientRejectsMalformedTaggedResults(t *testing.T) {
 }
 
 func TestSocketClientHandlesStringErrorResponses(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := testSocketPath(t)
 	serveHerdrSocketSequence(t, socketPath, `{"id":"postman:1","error":{"code":"unsupported_protocol","message":"unsupported"}}`+"\n")
 	if _, err := testSocketClient(socketPath).Ping(context.Background()); err == nil || !strings.Contains(err.Error(), "unsupported_protocol") {
 		t.Fatalf("Ping() error = %v, want string error code", err)
@@ -307,7 +307,7 @@ func TestSocketClientHandlesStringErrorResponses(t *testing.T) {
 }
 
 func TestSocketClientReturnsCompatibilityForBackendGateToReject(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := testSocketPath(t)
 	serveHerdrSocketSequence(t, socketPath, `{"id":"postman:1","result":{"type":"pong","version":"0.8.2","protocol":19}}`+"\n")
 	client := &socketClient{
 		socketPath: socketPath,
@@ -355,7 +355,7 @@ func TestLoadHerdrAPISchemaRejectsCommandFailureAndMalformedJSON(t *testing.T) {
 }
 
 func TestSocketClientCompatibilityBoundsHangingSchemaCommand(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "herdr.sock")
+	socketPath := testSocketPath(t)
 	serveHerdrSocketSequence(t, socketPath, herdr082PongFixture)
 	installFakeHerdrCommand(t, "#!/bin/sh\nsleep 30\n")
 	client, err := NewSocketClient(config.HerdrConfig{SocketPath: socketPath})
@@ -376,6 +376,20 @@ const herdr082SnapshotFixture = `{"version":"0.8.2","protocol":20,"focused_works
 
 func testSocketClient(socketPath string) *socketClient {
 	return &socketClient{socketPath: socketPath, schema: testSchemaLoader}
+}
+
+func testSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "herdr-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("RemoveAll(%q) error = %v", dir, err)
+		}
+	})
+	return filepath.Join(dir, "h.sock")
 }
 
 func testSchemaLoader(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
