@@ -284,37 +284,6 @@ func normalizeSocketCallError(ctx context.Context, err error) error {
 	return multiplexer.NormalizeHerdrBackendError(err)
 }
 
-func decodeHerdrEnvelope(raw json.RawMessage) (multiplexer.HerdrResponseEnvelope, error) {
-	var decoded struct {
-		Envelope        multiplexer.HerdrResponseEnvelope `json:"envelope"`
-		ProtocolVersion string                            `json:"protocol_version"`
-		ProtocolCamel   string                            `json:"protocolVersion"`
-		Protocol        json.RawMessage                   `json:"protocol"`
-		SchemaVersion   int                               `json:"schema_version"`
-		SchemaCamel     int                               `json:"schemaVersion"`
-	}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return multiplexer.HerdrResponseEnvelope{}, err
-	}
-	envelope := decoded.Envelope
-	if envelope.ProtocolVersion == "" {
-		envelope.ProtocolVersion = decoded.ProtocolVersion
-	}
-	if envelope.ProtocolVersion == "" {
-		envelope.ProtocolVersion = decoded.ProtocolCamel
-	}
-	if envelope.ProtocolVersion == "" {
-		envelope.ProtocolVersion = decodeHerdrProtocolVersion(decoded.Protocol)
-	}
-	if envelope.SchemaVersion == 0 {
-		envelope.SchemaVersion = decoded.SchemaVersion
-	}
-	if envelope.SchemaVersion == 0 {
-		envelope.SchemaVersion = decoded.SchemaCamel
-	}
-	return envelope, nil
-}
-
 func decodeHerdrProtocolVersion(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
@@ -366,31 +335,6 @@ func decodeHerdrSessionSnapshotResult(raw json.RawMessage) (multiplexer.HerdrSes
 		return multiplexer.HerdrSessionSnapshot{}, fmt.Errorf("%w: session.snapshot result missing snapshot", multiplexer.ErrHerdrBackendUnavailable)
 	}
 	return decodeHerdrSessionSnapshotObject(result.Snapshot)
-}
-
-func decodeHerdrSessionSnapshot(raw json.RawMessage) (multiplexer.HerdrSessionSnapshot, error) {
-	var wrapper struct {
-		Snapshot json.RawMessage `json:"snapshot"`
-	}
-	if err := json.Unmarshal(raw, &wrapper); err != nil {
-		return multiplexer.HerdrSessionSnapshot{}, err
-	}
-	source := raw
-	if len(wrapper.Snapshot) > 0 && string(wrapper.Snapshot) != "null" {
-		source = wrapper.Snapshot
-	}
-	snapshot, err := decodeHerdrSessionSnapshotObject(source)
-	if err != nil {
-		return multiplexer.HerdrSessionSnapshot{}, err
-	}
-	if snapshot.Envelope.ProtocolVersion == "" && snapshot.Envelope.SchemaVersion == 0 {
-		envelope, err := decodeHerdrEnvelope(source)
-		if err != nil {
-			return multiplexer.HerdrSessionSnapshot{}, err
-		}
-		snapshot.Envelope = envelope
-	}
-	return snapshot, nil
 }
 
 func decodeHerdrSessionSnapshotObject(raw json.RawMessage) (multiplexer.HerdrSessionSnapshot, error) {
