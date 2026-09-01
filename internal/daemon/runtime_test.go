@@ -2971,7 +2971,7 @@ func daemonHerdrConfig() config.HerdrConfig {
 func daemonHerdrSnapshot(sessionOwner string) multiplexer.HerdrSessionSnapshot {
 	snapshot := daemonEmptyHerdrSnapshot()
 	if sessionOwner != "" {
-		snapshot.Workspaces[0].Metadata["postman.session_owner.work"] = sessionOwner
+		snapshot.Workspaces[0].Metadata[multiplexer.HerdrSessionOwnerMetadataKey] = sessionOwner
 	}
 	snapshot.Panes = []multiplexer.HerdrPaneSnapshot{daemonHerdrPane("workspace-1:pane-1")}
 	return snapshot
@@ -2988,7 +2988,7 @@ func daemonHerdrPane(paneID string) multiplexer.HerdrPaneSnapshot {
 		ID:             paneID,
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-1",
-		Metadata:       map[string]string{"postman.node": "worker"},
+		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		PostmanNode:    "worker",
 		PostmanSession: "work",
