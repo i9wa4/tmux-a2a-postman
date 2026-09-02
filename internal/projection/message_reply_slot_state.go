@@ -263,7 +263,7 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 			if (thread.Status == CommandApprovalStatusApproved || thread.Status == CommandApprovalStatusRejected) && preExpiryDecision {
 				effectiveCommandApprovalDecisions[event.ThreadID] = append(effectiveCommandApprovalDecisions[event.ThreadID], event)
 			}
-			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok && (preExpiryDecision || thread.Status == CommandApprovalStatusRejected) {
+			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok && preExpiryDecision {
 				acceptedCommandApprovalDecisions[key] = event.OccurredAt
 				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			}

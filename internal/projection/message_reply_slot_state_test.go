@@ -716,6 +716,45 @@ func TestValidateCommandApprovalReplySlotReconciliationRejectsAmbiguousAndPostEx
 		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "decision.md", "approver", "worker", reply, now.Add(6*time.Second))
 		assertCommandApprovalReplySlotForProjection(t, sessionDir, repair.InputRequestID, true)
 	})
+
+	t.Run("post expiry rejection reply keeps slot open", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writer, repair := appendCommandApprovalSlotWithoutDecision(t, sessionDir, now)
+		decision, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+			Reviewer:         "approver",
+			ReviewerAddress:  "review:approver",
+			RequesterAddress: "review:worker",
+			Decision:         journal.ApprovalDecisionRejected,
+			MessageID:        "decision.md",
+			InputRequestID:   repair.InputRequestID,
+			CommandHash:      repair.CommandHash,
+		}, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(5*time.Second))
+		if err != nil {
+			t.Fatalf("AppendEventWithOptions(post-expiry rejection): %v", err)
+		}
+		repair.DecisionEventID = decision.EventID
+
+		reply := commandApprovalInputContent("approver", "worker", "decision.md", "none", repair.ThreadID, "", repair.InputRequestID, repair.CommandHash, "REJECTED")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "decision.md", "approver", "worker", reply, now.Add(6*time.Second))
+		state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(10*time.Minute), DefaultInputRequestStaleAfterSeconds)
+		if err != nil || !ok {
+			t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+		}
+		if !hasInputRequest(state.InputRequired, repair.InputRequestID) || !hasInputRequest(state.WaitingOnInput, repair.InputRequestID) {
+			t.Fatalf("post-expiry rejection closed slot: %#v", state)
+		}
+		stats := state.RequestSatisfaction["approver"]
+		if stats.OpenedCount != 1 || stats.FilledCount != 0 || stats.OpenCount != 1 {
+			t.Fatalf("post-expiry rejection satisfaction = %#v, want open without fill", stats)
+		}
+		plan, ok, err := ValidateCommandApprovalReplySlotReconciliation(sessionDir, "review", repair, now.Add(10*time.Minute))
+		if err != nil || !ok {
+			t.Fatalf("ValidateCommandApprovalReplySlotReconciliation() = (%#v, %v, %v)", plan, ok, err)
+		}
+		if plan.Status != "rejected" {
+			t.Fatalf("plan = %#v, want rejected post-expiry rejection", plan)
+		}
+	})
 }
 
 func TestCommandApprovalReplySlotReconciliationUsesFinalReplayEvidence(t *testing.T) {

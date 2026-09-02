@@ -182,6 +182,98 @@ func TestAppendCommandApprovalReplySlotReconciliationReportsDedupedAsAlreadyReco
 	}
 }
 
+func TestRunReconcileCommandApprovalReplySlotApplyRejectsSlotClosedAfterInitialValidation(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-reconcile"
+	sessionName := "review"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	t.Setenv("POSTMAN_HOME", baseDir)
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	repair := appendCLIReconcileableCommandApprovalSlot(t, sessionDir, now)
+	args := reconcileCommandApprovalReplySlotArgs(contextID, sessionName, repair)
+
+	reconcileCommandApprovalReplySlotBeforeAppendHook = func() error {
+		reconcileCommandApprovalReplySlotBeforeAppendHook = nil
+		writer, err := journal.OpenCurrentWriter(sessionDir)
+		if err != nil {
+			return err
+		}
+		reply := "---\nparams:\n" +
+			"  from: approver\n" +
+			"  to: worker\n" +
+			"  messageId: decision.md\n" +
+			"  replyPolicy: none\n" +
+			"  thread_id: " + repair.ThreadID + "\n" +
+			"  command_hash: " + repair.CommandHash + "\n" +
+			"  fills_input_request_id: " + repair.InputRequestID + "\n" +
+			"---\n\nordinary closure\n"
+		appendInputRequestMailboxEventForCLI(t, writer, projection.MailboxProjectionDeliveredEventType, "decision.md", "approver", "worker", reply, now.Add(4*time.Second))
+		appendInputRequestMailboxEventForCLI(t, writer, projection.MailboxProjectionPostConsumedEventType, "decision.md", "approver", "worker", reply, now.Add(4*time.Second))
+		return nil
+	}
+	defer func() {
+		reconcileCommandApprovalReplySlotBeforeAppendHook = nil
+	}()
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunReconcileCommandApprovalReplySlot(append(args, "--apply"))
+	})
+	if err == nil || !strings.Contains(err.Error(), "not currently open") {
+		t.Fatalf("RunReconcileCommandApprovalReplySlot() error = %v, want in-fence closed-slot rejection", err)
+	}
+	if strings.Contains(stdout, `"applied"`) {
+		t.Fatalf("stdout = %q, want no applied report", stdout)
+	}
+	if countCommandApprovalReplySlotReconciledEvents(t, sessionDir) != 0 {
+		t.Fatal("closed-slot race appended reconciliation event")
+	}
+}
+
+func TestRunReconcileCommandApprovalReplySlotApplyRejectsConflictingDecisionAfterInitialValidation(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-reconcile"
+	sessionName := "review"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	t.Setenv("POSTMAN_HOME", baseDir)
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	repair := appendCLIReconcileableCommandApprovalSlot(t, sessionDir, now)
+	args := reconcileCommandApprovalReplySlotArgs(contextID, sessionName, repair)
+
+	reconcileCommandApprovalReplySlotBeforeAppendHook = func() error {
+		reconcileCommandApprovalReplySlotBeforeAppendHook = nil
+		writer, err := journal.OpenCurrentWriter(sessionDir)
+		if err != nil {
+			return err
+		}
+		_, err = writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+			Reviewer:         "approver",
+			ReviewerAddress:  repair.ApproverAddress,
+			RequesterAddress: repair.RequesterAddress,
+			Decision:         journal.ApprovalDecisionRejected,
+			MessageID:        "decision-2.md",
+			InputRequestID:   repair.InputRequestID,
+			CommandHash:      repair.CommandHash,
+		}, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(4*time.Second))
+		return err
+	}
+	defer func() {
+		reconcileCommandApprovalReplySlotBeforeAppendHook = nil
+	}()
+
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunReconcileCommandApprovalReplySlot(append(args, "--apply"))
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected exactly one effective terminal command approval decision") {
+		t.Fatalf("RunReconcileCommandApprovalReplySlot() error = %v, want in-fence conflicting-decision rejection", err)
+	}
+	if strings.Contains(stdout, `"applied"`) {
+		t.Fatalf("stdout = %q, want no applied report", stdout)
+	}
+	if countCommandApprovalReplySlotReconciledEvents(t, sessionDir) != 0 {
+		t.Fatal("conflicting-decision race appended reconciliation event")
+	}
+}
+
 func appendCLIReconcileableCommandApprovalSlot(t *testing.T, sessionDir string, now time.Time) journal.CommandApprovalReplySlotReconciledPayload {
 	t.Helper()
 	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-reconcile", "review", 101, now)

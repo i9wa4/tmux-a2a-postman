@@ -21,6 +21,8 @@ type reconcileCommandApprovalReplySlotOutput struct {
 	Plan        projection.CommandApprovalReplySlotReconciliationPlan `json:"plan"`
 }
 
+var reconcileCommandApprovalReplySlotBeforeAppendHook func() error
+
 func RunReconcileCommandApprovalReplySlot(args []string) error {
 	fs := flag.NewFlagSet("reconcile-command-approval-reply-slot", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
@@ -91,25 +93,32 @@ func appendCommandApprovalReplySlotReconciliation(sessionDir, sessionName string
 	if err != nil {
 		return journal.Event{}, false, projection.CommandApprovalReplySlotReconciliationPlan{}, err
 	}
-	plan, ok, err := projection.ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName, repair, now)
-	if err != nil {
-		return journal.Event{}, false, projection.CommandApprovalReplySlotReconciliationPlan{}, fmt.Errorf("fresh validation before append: %w", err)
+	if reconcileCommandApprovalReplySlotBeforeAppendHook != nil {
+		if err := reconcileCommandApprovalReplySlotBeforeAppendHook(); err != nil {
+			return journal.Event{}, false, projection.CommandApprovalReplySlotReconciliationPlan{}, err
+		}
 	}
-	if !ok {
-		return journal.Event{}, false, plan, fmt.Errorf("command approval reply slot reconciliation unavailable: %s", plan.Reason)
-	}
-	if plan.Status != "ready" && plan.Status != "already_reconciled" {
-		return journal.Event{}, false, plan, fmt.Errorf("command approval reply slot reconciliation rejected: %s", plan.Reason)
-	}
-	if plan.Status == "already_reconciled" {
-		return journal.Event{EventID: plan.ExistingEventID}, false, plan, nil
-	}
-	event, appended, err := writer.AppendCurrentSessionEventIfAbsent(
+	var plan projection.CommandApprovalReplySlotReconciliationPlan
+	event, appended, err := writer.AppendCurrentSessionEventIfAbsentValidated(
 		journal.CommandApprovalReplySlotReconciledEventType,
 		journal.VisibilityOperatorVisible,
 		repair,
 		journal.AppendOptions{ThreadID: repair.ThreadID},
 		now,
+		func() error {
+			currentPlan, ok, err := projection.ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName, repair, now)
+			if err != nil {
+				return fmt.Errorf("fresh validation before append: %w", err)
+			}
+			plan = currentPlan
+			if !ok {
+				return fmt.Errorf("command approval reply slot reconciliation unavailable: %s", plan.Reason)
+			}
+			if plan.Status != "ready" {
+				return fmt.Errorf("command approval reply slot reconciliation rejected: %s", plan.Reason)
+			}
+			return nil
+		},
 		func(event journal.Event) (bool, error) {
 			if event.Type != journal.CommandApprovalReplySlotReconciledEventType {
 				return false, nil
