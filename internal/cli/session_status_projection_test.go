@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
@@ -141,7 +142,7 @@ func TestSessionStatusLayoutGroupsProjectTmuxWindowsCompatibility(t *testing.T) 
 		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	if got, want := health.Compact, "🟢🟢"; got != want {
+	if got, want := health.Compact, "⚫⚫"; got != want {
 		t.Fatalf("Compact = %q, want %q", got, want)
 	}
 	if len(health.Windows) != 1 || health.Windows[0].Index != "0" {
@@ -256,7 +257,7 @@ func TestSessionStatusUsesLiveArtifactsWithoutSnapshot(t *testing.T) {
 	if projected.SessionName != fixture.sessionName {
 		t.Fatalf("SessionName = %q, want %q", projected.SessionName, fixture.sessionName)
 	}
-	if projected.VisibleState != "pending" || projected.Compact != "🔷🟢" || projected.NodeCount != 2 {
+	if projected.VisibleState != "pending" || projected.Compact != "🔷⚫" || projected.NodeCount != 2 {
 		t.Fatalf("unexpected live health payload: %#v", projected)
 	}
 	if len(projected.Nodes) != 2 || len(projected.Windows) != 1 {
@@ -303,6 +304,9 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	if worker.ScreenFingerprint != "00000011" {
 		t.Fatalf("worker screen_fingerprint = %q, want 00000011", worker.ScreenFingerprint)
 	}
+	if worker.StaleDurationSeconds != 5 {
+		t.Fatalf("worker stale_duration_seconds = %d, want 5", worker.StaleDurationSeconds)
+	}
 
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
@@ -320,6 +324,414 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	}
 	if critic.ScreenFingerprint != "00000012" {
 		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+}
+
+func TestSessionStatusClassifiesNodeLocalFreshnessMatrix(t *testing.T) {
+	now := time.Date(2026, time.April, 14, 0, 10, 0, 0, time.UTC)
+	progress := func(state string, changeDelta, captureDelta time.Duration) *status.ScreenProgressEvidence {
+		captureAt := now.Add(captureDelta)
+		changeAt := now.Add(changeDelta)
+		result := &status.ScreenProgressEvidence{
+			EvidenceState:        state,
+			LastCaptureAt:        captureAt.Format(time.RFC3339Nano),
+			LastScreenChangeAt:   changeAt.Format(time.RFC3339Nano),
+			ScreenFingerprint:    "00000011",
+			StaleDurationSeconds: int(captureAt.Sub(changeAt).Seconds()),
+		}
+		if result.StaleDurationSeconds < 0 {
+			result.StaleDurationSeconds = 0
+		}
+		return result
+	}
+
+	tests := []struct {
+		name             string
+		node             status.NodeStatus
+		wantState        string
+		wantSeverity     string
+		wantEvidence     string
+		wantFreshness    string
+		wantAge          int
+		wantUnchanged    int
+		wantReasonSubstr string
+	}{
+		{
+			name:          "fresh changed becomes working",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -5*time.Second, -5*time.Second)},
+			wantState:     "working",
+			wantSeverity:  "working",
+			wantEvidence:  "observed",
+			wantFreshness: "fresh",
+			wantAge:       5,
+		},
+		{
+			name:          "fresh unchanged remains live",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -20*time.Second, -5*time.Second)},
+			wantState:     "live",
+			wantSeverity:  "ok",
+			wantEvidence:  "observed",
+			wantFreshness: "fresh",
+			wantAge:       5,
+			wantUnchanged: 15,
+		},
+		{
+			name:          "aging unchanged remains live",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -70*time.Second, -5*time.Second)},
+			wantState:     "live",
+			wantSeverity:  "ok",
+			wantEvidence:  "observed",
+			wantFreshness: "aging",
+			wantAge:       5,
+			wantUnchanged: 65,
+		},
+		{
+			name:             "old but changed is stale",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -4*time.Minute, -4*time.Minute)},
+			wantState:        "stale",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "stale",
+			wantAge:          240,
+			wantReasonSubstr: "capture is stale",
+		},
+		{
+			name:             "runtime lagged changed is aging live",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -45*time.Second, -45*time.Second)},
+			wantState:        "live",
+			wantSeverity:     "ok",
+			wantEvidence:     "observed",
+			wantFreshness:    "aging",
+			wantAge:          45,
+			wantReasonSubstr: "capture is aging",
+		},
+		{
+			name:             "explicit stale is stale",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: &status.ScreenProgressEvidence{EvidenceState: "stale", StaleDurationSeconds: 181}},
+			wantState:        "stale",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "stale",
+			wantUnchanged:    181,
+			wantReasonSubstr: "evidence is stale",
+		},
+		{
+			name:             "active missing is unknown not working",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: missingScreenProgressEvidence()},
+			wantState:        "unknown",
+			wantSeverity:     "ok",
+			wantEvidence:     "unknown",
+			wantFreshness:    "unknown",
+			wantReasonSubstr: "missing",
+		},
+		{
+			name:             "malformed progress is unknown not working",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: screenProgressEvidence("active", "bad", now.Format(time.RFC3339Nano), "00000011")},
+			wantState:        "unknown",
+			wantSeverity:     "ok",
+			wantEvidence:     "unknown",
+			wantFreshness:    "unknown",
+			wantReasonSubstr: "malformed",
+		},
+		{
+			name:             "future capture is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", time.Second, time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          -1,
+			wantReasonSubstr: "future",
+		},
+		{
+			name:             "sub-second future capture is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", 500*time.Millisecond, 500*time.Millisecond)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantReasonSubstr: "future",
+		},
+		{
+			name:             "change after capture is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -5*time.Second, -10*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          10,
+			wantReasonSubstr: "after the capture",
+		},
+		{
+			name:             "contradictory changed state is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("changed", -20*time.Second, -5*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          5,
+			wantUnchanged:    15,
+			wantReasonSubstr: "contradicts",
+		},
+		{
+			name:             "changed screen with shell command is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "active", CurrentCommand: "bash", ScreenProgress: progress("changed", -5*time.Second, -5*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          5,
+			wantReasonSubstr: "current command is a shell",
+		},
+		{
+			name:             "changed screen with idle pane is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "idle", CurrentCommand: "claude", ScreenProgress: progress("changed", -5*time.Second, -5*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          5,
+			wantReasonSubstr: "pane state is idle",
+		},
+		{
+			name:             "changed screen with stale pane is conflict",
+			node:             status.NodeStatus{Name: "worker", PaneState: "stale", CurrentCommand: "claude", ScreenProgress: progress("changed", -5*time.Second, -5*time.Second)},
+			wantState:        "conflict",
+			wantSeverity:     "attention_stale",
+			wantEvidence:     "observed",
+			wantFreshness:    "conflict",
+			wantAge:          5,
+			wantReasonSubstr: "pane state is stale",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveNodeLocalStatusAt(tt.node, now)
+			if got.State != tt.wantState || got.Severity != tt.wantSeverity || got.EvidenceLevel != tt.wantEvidence || got.Freshness != tt.wantFreshness {
+				t.Fatalf("node_local = %#v, want state/severity/evidence/freshness %q/%q/%q/%q", got, tt.wantState, tt.wantSeverity, tt.wantEvidence, tt.wantFreshness)
+			}
+			if got.AgeSeconds != tt.wantAge {
+				t.Fatalf("AgeSeconds = %d, want %d (%#v)", got.AgeSeconds, tt.wantAge, got)
+			}
+			if got.UnchangedSeconds != tt.wantUnchanged {
+				t.Fatalf("UnchangedSeconds = %d, want %d (%#v)", got.UnchangedSeconds, tt.wantUnchanged, got)
+			}
+			if tt.wantReasonSubstr != "" && !strings.Contains(got.Reason, tt.wantReasonSubstr) {
+				t.Fatalf("Reason = %q, want substring %q", got.Reason, tt.wantReasonSubstr)
+			}
+		})
+	}
+}
+
+func TestSessionStatusBuildsDefaultCompactAfterNodeLocalEnrichment(t *testing.T) {
+	now := time.Date(2026, time.April, 14, 0, 10, 0, 0, time.UTC)
+	progress := func(state string, changeDelta, captureDelta time.Duration) *status.ScreenProgressEvidence {
+		captureAt := now.Add(captureDelta)
+		changeAt := now.Add(changeDelta)
+		result := &status.ScreenProgressEvidence{
+			EvidenceState:        state,
+			LastCaptureAt:        captureAt.Format(time.RFC3339Nano),
+			LastScreenChangeAt:   changeAt.Format(time.RFC3339Nano),
+			ScreenFingerprint:    "00000011",
+			StaleDurationSeconds: int(captureAt.Sub(changeAt).Seconds()),
+		}
+		if result.StaleDurationSeconds < 0 {
+			result.StaleDurationSeconds = 0
+		}
+		return result
+	}
+
+	tests := []struct {
+		name             string
+		paneState        string
+		currentCommand   string
+		screenProgress   *status.ScreenProgressEvidence
+		wantCompact      string
+		wantNodeLocal    string
+		wantSeverity     string
+		wantNodeSeverity string
+		blockedReports   []projection.BlockedReport
+		wantFlowState    string
+		wantCompactSev   string
+		wantOneline      string
+		wantReasonSubstr string
+	}{
+		{
+			name:           "fresh work is blue not legacy green",
+			paneState:      "active",
+			currentCommand: "claude",
+			screenProgress: progress("changed", -5*time.Second, -5*time.Second),
+			wantCompact:    "🔵",
+			wantNodeLocal:  "working",
+			wantSeverity:   "working",
+			wantOneline:    "🔵",
+		},
+		{
+			name:             "missing progress is neutral not green",
+			paneState:        "active",
+			currentCommand:   "claude",
+			screenProgress:   missingScreenProgressEvidence(),
+			wantCompact:      "⚫",
+			wantNodeLocal:    "unknown",
+			wantSeverity:     "ok",
+			wantOneline:      "⚫",
+			wantReasonSubstr: "missing",
+		},
+		{
+			name:             "malformed progress is neutral not green",
+			paneState:        "active",
+			currentCommand:   "claude",
+			screenProgress:   screenProgressEvidence("active", "bad", now.Format(time.RFC3339Nano), "00000011"),
+			wantCompact:      "⚫",
+			wantNodeLocal:    "unknown",
+			wantSeverity:     "ok",
+			wantOneline:      "⚫",
+			wantReasonSubstr: "malformed",
+		},
+		{
+			name:             "stale capture is red",
+			paneState:        "active",
+			currentCommand:   "claude",
+			screenProgress:   progress("changed", -4*time.Minute, -4*time.Minute),
+			wantCompact:      "🔴",
+			wantNodeLocal:    "stale",
+			wantSeverity:     "attention_stale",
+			wantOneline:      "🔴",
+			wantReasonSubstr: "capture is stale",
+		},
+		{
+			name:             "sub-second future is red conflict",
+			paneState:        "active",
+			currentCommand:   "claude",
+			screenProgress:   progress("changed", 500*time.Millisecond, 500*time.Millisecond),
+			wantCompact:      "🔴",
+			wantNodeLocal:    "conflict",
+			wantSeverity:     "attention_stale",
+			wantOneline:      "🔴",
+			wantReasonSubstr: "future",
+		},
+		{
+			name:             "shell command contradiction is red not skipped green",
+			paneState:        "active",
+			currentCommand:   "bash",
+			screenProgress:   progress("changed", -5*time.Second, -5*time.Second),
+			wantCompact:      "🔴",
+			wantNodeLocal:    "conflict",
+			wantSeverity:     "attention_stale",
+			wantOneline:      "🔴",
+			wantReasonSubstr: "current command is a shell",
+		},
+		{
+			name:             "idle pane with changed screen is red conflict",
+			paneState:        "idle",
+			currentCommand:   "claude",
+			screenProgress:   progress("changed", -5*time.Second, -5*time.Second),
+			wantCompact:      "🔴",
+			wantNodeLocal:    "conflict",
+			wantSeverity:     "attention_stale",
+			wantOneline:      "🔴",
+			wantReasonSubstr: "pane state is idle",
+		},
+		{
+			name:           "blocked flow beats unknown local evidence",
+			paneState:      "active",
+			currentCommand: "claude",
+			screenProgress: missingScreenProgressEvidence(),
+			blockedReports: []projection.BlockedReport{
+				{
+					Node:            "worker",
+					MessageID:       "blocked-message",
+					BlockedReportID: "blocked-report-001",
+					EvidenceLevel:   "proven",
+					EvidenceSource:  "blocked_report_file",
+					Reason:          "waiting on owner",
+				},
+			},
+			wantCompact:      "🔴",
+			wantNodeLocal:    "unknown",
+			wantSeverity:     "ok",
+			wantNodeSeverity: "blocked",
+			wantFlowState:    "blocked",
+			wantCompactSev:   "blocked:node=worker:blocked_report=blocked-report-001",
+			wantOneline:      "🔴",
+			wantReasonSubstr: "missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blockedByNode := map[string][]projection.BlockedReport{}
+			if len(tt.blockedReports) > 0 {
+				blockedByNode["worker"] = tt.blockedReports
+			}
+			health := buildSessionStatusSnapshot(sessionStatusInputs{
+				contextID:        "ctx",
+				sessionName:      "review",
+				cfg:              config.DefaultConfig(),
+				orderedEdgeNodes: []string{"worker"},
+				edgeNodeRank:     map[string]int{"worker": 0},
+				nodes: map[string]discovery.NodeInfo{
+					"worker": {
+						PaneID:      "%11",
+						SessionName: "review",
+					},
+				},
+				paneActivity: map[string]paneActivityEvidence{
+					"%11": {
+						Status:         tt.paneState,
+						ScreenProgress: tt.screenProgress,
+					},
+				},
+				panes: []sessionPane{
+					{
+						windowIndex:    "0",
+						windowOrder:    0,
+						paneOrder:      0,
+						paneID:         "%11",
+						title:          "worker",
+						currentCommand: tt.currentCommand,
+					},
+				},
+				inboxCounts:   map[string]int{},
+				delivery:      &status.DeliveryStatus{State: "ok", Severity: "ok", EvidenceLevel: "proven"},
+				blockedByNode: blockedByNode,
+				now:           now,
+			})
+
+			if health.Compact != tt.wantCompact {
+				t.Fatalf("Compact = %q, want %q; health=%#v", health.Compact, tt.wantCompact, health)
+			}
+			if got := formatSessionStatusOneline(health); got != tt.wantOneline {
+				t.Fatalf("formatSessionStatusOneline(...) = %q, want %q", got, tt.wantOneline)
+			}
+			if len(health.Nodes) != 1 || health.Nodes[0].NodeLocal == nil {
+				t.Fatalf("node_local missing in health: %#v", health.Nodes)
+			}
+			local := health.Nodes[0].NodeLocal
+			if local.State != tt.wantNodeLocal || local.Severity != tt.wantSeverity {
+				t.Fatalf("node_local = %#v, want state/severity %q/%q", local, tt.wantNodeLocal, tt.wantSeverity)
+			}
+			node := health.Nodes[0]
+			wantNodeSeverity := tt.wantNodeSeverity
+			if wantNodeSeverity == "" {
+				wantNodeSeverity = tt.wantSeverity
+			}
+			if node.Severity != wantNodeSeverity {
+				t.Fatalf("node severity = %q, want %q; node=%#v", node.Severity, wantNodeSeverity, node)
+			}
+			if tt.wantFlowState != "" {
+				if node.Flow == nil || node.Flow.State != tt.wantFlowState {
+					t.Fatalf("flow = %#v, want state %q", node.Flow, tt.wantFlowState)
+				}
+			}
+			if tt.wantCompactSev != "" && health.CompactSeverity != tt.wantCompactSev {
+				t.Fatalf("CompactSeverity = %q, want %q", health.CompactSeverity, tt.wantCompactSev)
+			}
+			if tt.wantReasonSubstr != "" && !strings.Contains(local.Reason, tt.wantReasonSubstr) {
+				t.Fatalf("Reason = %q, want substring %q", local.Reason, tt.wantReasonSubstr)
+			}
+		})
 	}
 }
 
