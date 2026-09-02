@@ -169,14 +169,14 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 		plan.Reason = "recorded input request opening is not the matching command approval slot"
 		return plan, true, nil
 	}
+	var inputState MessageInputRequestState
 	if matchingReconciliation.EventID != "" {
-		plan.Status = "already_reconciled"
-		plan.Reason = "matching reconciliation event already exists"
-		plan.ExistingEventID = matchingReconciliation.EventID
-		return plan, true, nil
+		inputState, ok, err = projectMessageInputRequestStateAt(sessionDir, sessionName, now, DefaultInputRequestStaleAfterSeconds, func(existing journal.CommandApprovalReplySlotReconciledPayload) bool {
+			return commandApprovalReplySlotReconciliationPayloadEqual(existing, repair)
+		})
+	} else {
+		inputState, ok, err = ProjectMessageInputRequestStateAt(sessionDir, sessionName, now, DefaultInputRequestStaleAfterSeconds)
 	}
-
-	inputState, ok, err := ProjectMessageInputRequestStateAt(sessionDir, sessionName, now, DefaultInputRequestStaleAfterSeconds)
 	if err != nil {
 		return CommandApprovalReplySlotReconciliationPlan{}, false, err
 	}
@@ -193,12 +193,24 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 		plan.Reason = "open input request is not the matching command approval slot"
 		return plan, true, nil
 	}
+	if matchingReconciliation.EventID != "" {
+		plan.Status = "already_reconciled"
+		plan.Reason = "matching reconciliation event already exists"
+		plan.ExistingEventID = matchingReconciliation.EventID
+		return plan, true, nil
+	}
 	plan.Status = "ready"
 	plan.Reason = "matching terminal command approval decision can reconcile the open reply slot"
 	return plan, true, nil
 }
 
 func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.Time, staleAfterSeconds int) (MessageInputRequestState, bool, error) {
+	return projectMessageInputRequestStateAt(sessionDir, sessionName, now, staleAfterSeconds, nil)
+}
+
+type commandApprovalReconciliationIgnoreFunc func(journal.CommandApprovalReplySlotReconciledPayload) bool
+
+func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.Time, staleAfterSeconds int, ignoreReconciliation commandApprovalReconciliationIgnoreFunc) (MessageInputRequestState, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
 		return MessageInputRequestState{}, false, nil
@@ -272,6 +284,9 @@ func ProjectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 			var repair journal.CommandApprovalReplySlotReconciledPayload
 			if err := json.Unmarshal(event.Payload, &repair); err != nil {
 				return MessageInputRequestState{}, false, err
+			}
+			if ignoreReconciliation != nil && ignoreReconciliation(repair) {
+				continue
 			}
 			pendingCommandApprovalReconciliations = append(pendingCommandApprovalReconciliations, repair)
 			continue

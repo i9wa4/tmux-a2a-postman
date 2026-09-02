@@ -114,7 +114,7 @@ func appendCommandApprovalReplySlotReconciliation(sessionDir, sessionName string
 			if !ok {
 				return fmt.Errorf("command approval reply slot reconciliation unavailable: %s", plan.Reason)
 			}
-			if plan.Status != "ready" {
+			if plan.Status != "ready" && plan.Status != "already_reconciled" {
 				return fmt.Errorf("command approval reply slot reconciliation rejected: %s", plan.Reason)
 			}
 			return nil

@@ -492,14 +492,14 @@ func (w *Writer) AppendCurrentSessionEventIfAbsentValidated(eventType string, vi
 			}); err != nil {
 				return err
 			}
-			if event.EventID != "" {
-				return nil
-			}
 		}
 		if validate != nil {
 			if err := validate(); err != nil {
 				return err
 			}
+		}
+		if event.EventID != "" {
+			return nil
 		}
 
 		payloadBytes, err := json.Marshal(payload)
