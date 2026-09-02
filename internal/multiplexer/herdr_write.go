@@ -13,8 +13,9 @@ import (
 const (
 	// Match tmux delivery's Codex submit key; literal Enter may insert a newline.
 	HerdrKeySubmit                = "C-m"
-	HerdrSessionOwnerMetadataKey  = "postman.session_owner"
-	HerdrPaneContextIDMetadataKey = "postman.context_id"
+	HerdrSessionOwnerMetadataKey  = "postman_owner"
+	HerdrPaneContextIDMetadataKey = "postman_context"
+	HerdrPostmanNodeMetadataKey   = "postman_node"
 )
 
 var (
@@ -173,11 +174,40 @@ func (b HerdrBackend) validateConfiguredWorkspaceInSnapshot(ctx context.Context)
 }
 
 func herdrSessionOwnerMetadataKey(sessionName string) (string, error) {
-	sessionName, err := sanitizeHerdrMetadataValue(sessionName)
-	if err != nil {
-		return "", fmt.Errorf("invalid herdr session owner metadata key: %w", err)
+	if _, err := sanitizeHerdrMetadataValue(sessionName); err != nil {
+		return "", fmt.Errorf("invalid herdr session owner metadata value: %w", err)
 	}
-	return HerdrSessionOwnerMetadataKey + "." + sessionName, nil
+	return validatedHerdrMetadataToken(HerdrSessionOwnerMetadataKey)
+}
+
+func herdrPaneContextMetadataKey() (string, error) {
+	return validatedHerdrMetadataToken(HerdrPaneContextIDMetadataKey)
+}
+
+func validatedHerdrMetadataToken(key string) (string, error) {
+	if err := validateHerdrMetadataToken(key); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+func validateHerdrMetadataToken(key string) error {
+	if key == "" {
+		return fmt.Errorf("invalid herdr metadata token: empty")
+	}
+	if len(key) > 32 {
+		return fmt.Errorf("invalid herdr metadata token %q: exceeds 32 bytes", key)
+	}
+	for _, r := range key {
+		if r >= utf8.RuneSelf {
+			return fmt.Errorf("invalid herdr metadata token %q: non-ascii character %q", key, r)
+		}
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("invalid herdr metadata token %q: character %q is not allowed", key, r)
+	}
+	return nil
 }
 
 func (b HerdrBackend) PaneOwnerMarker(ctx context.Context, pane ResourceID) (string, error) {
@@ -197,9 +227,13 @@ func (b HerdrBackend) PaneOwnerMarker(ctx context.Context, pane ResourceID) (str
 	if err := b.validatePaneContainment(snapshot, b.Config.Runtime.TabID, pane.Native); err != nil {
 		return "", err
 	}
+	metadataKey, err := herdrPaneContextMetadataKey()
+	if err != nil {
+		return "", err
+	}
 	for _, snapshotPane := range snapshot.Panes {
 		if snapshotPane.ID == pane.Native && snapshotPane.WorkspaceID == b.Config.Runtime.WorkspaceID && snapshotPane.TabID == b.Config.Runtime.TabID {
-			return snapshotPane.Metadata[HerdrPaneContextIDMetadataKey], nil
+			return snapshotPane.Metadata[metadataKey], nil
 		}
 	}
 	return "", nil
@@ -229,7 +263,11 @@ func (b HerdrBackend) SetPaneOwnerMarker(ctx context.Context, pane ResourceID, c
 	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return err
 	}
-	result, err := client.SetPaneMetadata(ctx, pane.Native, HerdrPaneContextIDMetadataKey, markerValue)
+	metadataKey, err := herdrPaneContextMetadataKey()
+	if err != nil {
+		return err
+	}
+	result, err := client.SetPaneMetadata(ctx, pane.Native, metadataKey, markerValue)
 	if err != nil {
 		return NormalizeHerdrBackendError(err)
 	}
@@ -253,7 +291,11 @@ func (b HerdrBackend) ClearPaneOwnerMarker(ctx context.Context, pane ResourceID)
 	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return err
 	}
-	result, err := client.ClearPaneMetadata(ctx, pane.Native, HerdrPaneContextIDMetadataKey)
+	metadataKey, err := herdrPaneContextMetadataKey()
+	if err != nil {
+		return err
+	}
+	result, err := client.ClearPaneMetadata(ctx, pane.Native, metadataKey)
 	if err != nil {
 		return NormalizeHerdrBackendError(err)
 	}
