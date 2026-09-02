@@ -1,6 +1,10 @@
 package workspacetree
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+)
 
 func TestNearestParentDoesNotRequireRegisteredRoot(t *testing.T) {
 	topology := Build([]Registration{
@@ -174,5 +178,100 @@ func TestResolveAliasCanRequireLiveNodeExistence(t *testing.T) {
 	})
 	if resolution.Found || resolution.FailureReason != FailureUnknownNode || resolution.Address != "repo:orchestrator" {
 		t.Fatalf("ResolveAlias nodeExists = %#v, want unknown_node with compiled address", resolution)
+	}
+}
+
+func TestTopologyDiplomatEdgesDerivesOnlyDesignatedParentChildPairs(t *testing.T) {
+	topology := Build([]Registration{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+		{SessionName: "docs", ParentSessionName: "root"},
+	})
+	got := topology.DiplomatEdges()
+	if len(got) != 1 || got[0] != "api:worker --- root:orchestrator" {
+		t.Fatalf("DiplomatEdges() = %#v, want only api:worker --- root:orchestrator", got)
+	}
+}
+
+func TestTopologyDiplomatEdgesFailClosedForDuplicateChildSession(t *testing.T) {
+	topology := Build([]Registration{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker", ID: "api-a"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker", ID: "api-b"},
+	})
+	if got := topology.DiplomatEdges(); len(got) != 0 {
+		t.Fatalf("DiplomatEdges() = %#v, want no edge for ambiguous child session", got)
+	}
+}
+
+func TestConfiguredEdgesFailClosedForDuplicateChildSession(t *testing.T) {
+	cfg := &config.Config{WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker", ID: "api-a"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker", ID: "api-b"},
+	}}
+	if got := ConfiguredEdges(cfg); len(got) != 0 {
+		t.Fatalf("ConfiguredEdges() = %#v, want no ambiguous-child authorization edge", got)
+	}
+	if got := EligibleNodeNames(cfg); len(got) != 0 {
+		t.Fatalf("EligibleNodeNames() = %#v, want no consumer eligibility from ambiguous child", got)
+	}
+}
+
+func TestConfiguredEdgesDeduplicatesStaticDiplomatRelation(t *testing.T) {
+	cfg := &config.Config{
+		Edges: []string{"root:orchestrator --- api:worker"},
+		WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+			{SessionName: "root", DiplomatNode: "orchestrator"},
+			{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+		},
+	}
+	got := ConfiguredEdges(cfg)
+	if len(got) != 1 || got[0] != "root:orchestrator --- api:worker" {
+		t.Fatalf("ConfiguredEdges() = %#v, want exactly one static/derived relation", got)
+	}
+}
+
+func TestConfiguredEdgesDeduplicatesStaticChainDiplomatRelations(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		edge  string
+		child string
+	}{
+		{name: "first adjacent", edge: "root:orchestrator --- api:worker --- docs:worker", child: "api"},
+		{name: "second adjacent", edge: "root:orchestrator --- api:worker --- docs:worker", child: "docs"},
+		{name: "reversed first adjacent", edge: "docs:worker --- api:worker --- root:orchestrator", child: "api"},
+		{name: "reversed second adjacent", edge: "docs:worker --- api:worker --- root:orchestrator", child: "docs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Edges: []string{tc.edge}, WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+				{SessionName: "root", DiplomatNode: "orchestrator"},
+				{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+				{SessionName: "docs", ParentSessionName: "api", DiplomatNode: "worker"},
+			}}
+			if tc.child == "api" {
+				cfg.WorkspaceTree = cfg.WorkspaceTree[:2]
+			} else {
+				// Keep the api parent without a diplomat so only docs/root? no: docs
+				// must retain api's diplomat for its derived adjacent pair.
+			}
+			got := ConfiguredEdges(cfg)
+			if len(got) != 1 || got[0] != tc.edge {
+				t.Fatalf("ConfiguredEdges() = %#v, want unchanged static chain %#v", got, tc.edge)
+			}
+			adjacency, err := config.ParseEdges(got)
+			if err != nil {
+				t.Fatalf("ParseEdges: %v", err)
+			}
+			for node, neighbors := range adjacency {
+				seen := map[string]bool{}
+				for _, neighbor := range neighbors {
+					if seen[neighbor] {
+						t.Fatalf("duplicate consumer neighbor %q -> %q in %#v", node, neighbor, adjacency)
+					}
+					seen[neighbor] = true
+				}
+			}
+		})
 	}
 }

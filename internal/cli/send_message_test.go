@@ -1037,6 +1037,57 @@ role = "orchestrator"
 	}
 }
 
+func TestSendMessage_AllowsTreeDerivedDiplomatEdge(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := `[postman]
+edges = []
+
+[[postman.workspace_tree]]
+session = "repo-session"
+label = "repo"
+diplomat_node = "orchestrator"
+
+[[postman.workspace_tree]]
+session = "test-session"
+label = "api"
+parent = "repo-session"
+diplomat_node = "messenger"
+
+["test-session:messenger"]
+role = "diplomat"
+
+["repo-session:orchestrator"]
+role = "diplomat"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
+
+	if err := runSendHeredocWithBody(t, "hello", []string{
+		"--config", configPath,
+		"--context-id", "ctx-send-diplomat",
+		"--to", "repo-session:orchestrator",
+	}); err != nil {
+		t.Fatalf("RunSendMessage: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(tmpDir, "ctx-send-diplomat", "test-session", "post"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ReadDir post = %v, entries = %d; want one", err, len(entries))
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-send-diplomat", "test-session", "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	if !strings.Contains(string(content), "- test-session:messenger: diplomat") {
+		t.Fatalf("derived recipient footer missing sender diplomat reachability:\n%s", content)
+	}
+}
+
 func TestSendMessage_WorkspaceParentAliasDefaultsToRepresentativeAndHintsChildAlias(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)

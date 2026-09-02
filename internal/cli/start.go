@@ -227,7 +227,7 @@ func sendCompactionPings(contextID string, cfg *config.Config, idleTracker *idle
 
 	activeNodes := activePingNodeNames(nodes)
 	livenessMap := idleTracker.GetLivenessMap()
-	pingAdjacency, err := config.ParseEdges(cfg.Edges)
+	pingAdjacency, err := parseConfiguredEdges(cfg)
 	if err != nil || pingAdjacency == nil {
 		pingAdjacency = map[string][]string{}
 	}
@@ -339,7 +339,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	}
 
 	// Parse edge definitions for routing
-	adjacency, err := config.ParseEdges(cfg.Edges)
+	adjacency, err := parseConfiguredEdges(cfg)
 	if err != nil {
 		return fmt.Errorf("parsing edges: %w", err)
 	}
@@ -849,7 +849,7 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 					activeNodes := activePingNodeNames(freshNodes)
 					// Send PING to all discovered nodes in the target session.
 					livenessMap := idleTracker.GetLivenessMap()
-					pingAdjacency, _ := config.ParseEdges(cfg.Edges)
+					pingAdjacency, _ := parseConfiguredEdges(cfg)
 					if pingAdjacency == nil {
 						pingAdjacency = map[string][]string{}
 					}
