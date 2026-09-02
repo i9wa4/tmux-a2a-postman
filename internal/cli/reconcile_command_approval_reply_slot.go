@@ -40,6 +40,9 @@ func RunReconcileCommandApprovalReplySlot(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments: %v", fs.Args())
+	}
 
 	sessionDir, resolvedContextID, resolvedSessionName, err := resolveInspectMessageSessionDir(*contextID, *sessionName, *configPath)
 	if err != nil {
@@ -66,23 +69,42 @@ func RunReconcileCommandApprovalReplySlot(args []string) error {
 		return fmt.Errorf("command approval reply slot reconciliation rejected: %s", plan.Reason)
 	}
 	if *apply && plan.Status == "ready" {
-		event, appended, err := appendCommandApprovalReplySlotReconciliation(sessionDir, repair, now)
+		event, appended, appendPlan, err := appendCommandApprovalReplySlotReconciliation(sessionDir, resolvedSessionName, repair, now)
 		if err != nil {
 			return err
 		}
-		output.Status = "applied"
-		output.Applied = appended
+		output.Plan = appendPlan
 		output.EventID = event.EventID
+		if appended {
+			output.Status = "applied"
+			output.Applied = true
+		} else {
+			output.Status = appendPlan.Status
+			output.Applied = false
+		}
 	}
 	return writeReconcileCommandApprovalReplySlotOutput(output)
 }
 
-func appendCommandApprovalReplySlotReconciliation(sessionDir string, repair journal.CommandApprovalReplySlotReconciledPayload, now time.Time) (journal.Event, bool, error) {
+func appendCommandApprovalReplySlotReconciliation(sessionDir, sessionName string, repair journal.CommandApprovalReplySlotReconciledPayload, now time.Time) (journal.Event, bool, projection.CommandApprovalReplySlotReconciliationPlan, error) {
 	writer, err := journal.OpenCurrentWriter(sessionDir)
 	if err != nil {
-		return journal.Event{}, false, err
+		return journal.Event{}, false, projection.CommandApprovalReplySlotReconciliationPlan{}, err
 	}
-	return writer.AppendCurrentSessionEventIfAbsent(
+	plan, ok, err := projection.ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName, repair, now)
+	if err != nil {
+		return journal.Event{}, false, projection.CommandApprovalReplySlotReconciliationPlan{}, fmt.Errorf("fresh validation before append: %w", err)
+	}
+	if !ok {
+		return journal.Event{}, false, plan, fmt.Errorf("command approval reply slot reconciliation unavailable: %s", plan.Reason)
+	}
+	if plan.Status != "ready" && plan.Status != "already_reconciled" {
+		return journal.Event{}, false, plan, fmt.Errorf("command approval reply slot reconciliation rejected: %s", plan.Reason)
+	}
+	if plan.Status == "already_reconciled" {
+		return journal.Event{EventID: plan.ExistingEventID}, false, plan, nil
+	}
+	event, appended, err := writer.AppendCurrentSessionEventIfAbsent(
 		journal.CommandApprovalReplySlotReconciledEventType,
 		journal.VisibilityOperatorVisible,
 		repair,
@@ -99,6 +121,15 @@ func appendCommandApprovalReplySlotReconciliation(sessionDir string, repair jour
 			return existing == repair, nil
 		},
 	)
+	if err != nil {
+		return journal.Event{}, false, plan, err
+	}
+	if !appended {
+		plan.Status = "already_reconciled"
+		plan.Reason = "matching reconciliation event already exists"
+		plan.ExistingEventID = event.EventID
+	}
+	return event, appended, plan, nil
 }
 
 func writeReconcileCommandApprovalReplySlotOutput(output reconcileCommandApprovalReplySlotOutput) error {

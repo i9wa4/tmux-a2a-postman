@@ -107,6 +107,81 @@ func TestRunReconcileCommandApprovalReplySlotRejectsMismatchedTuple(t *testing.T
 	}
 }
 
+func TestRunReconcileCommandApprovalReplySlotRejectsPositionalOperands(t *testing.T) {
+	stdout, _, err := captureCommandOutput(t, func() error {
+		return RunReconcileCommandApprovalReplySlot([]string{"unexpected"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("RunReconcileCommandApprovalReplySlot() error = %v, want positional rejection", err)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+}
+
+func TestAppendCommandApprovalReplySlotReconciliationRevalidatesCurrentOpenSlot(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-reconcile"
+	sessionName := "review"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	repair := appendCLIReconcileableCommandApprovalSlot(t, sessionDir, now)
+	writer, err := journal.OpenCurrentWriter(sessionDir)
+	if err != nil {
+		t.Fatalf("OpenCurrentWriter() error = %v", err)
+	}
+	reply := "---\nparams:\n" +
+		"  from: approver\n" +
+		"  to: worker\n" +
+		"  messageId: decision.md\n" +
+		"  replyPolicy: none\n" +
+		"  thread_id: " + repair.ThreadID + "\n" +
+		"  command_hash: " + repair.CommandHash + "\n" +
+		"  fills_input_request_id: " + repair.InputRequestID + "\n" +
+		"---\n\nordinary closure\n"
+	appendInputRequestMailboxEventForCLI(t, writer, projection.MailboxProjectionDeliveredEventType, "decision.md", "approver", "worker", reply, now.Add(4*time.Second))
+	appendInputRequestMailboxEventForCLI(t, writer, projection.MailboxProjectionPostConsumedEventType, "decision.md", "approver", "worker", reply, now.Add(4*time.Second))
+
+	_, appended, plan, err := appendCommandApprovalReplySlotReconciliation(sessionDir, sessionName, repair, now.Add(5*time.Second))
+	if err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("appendCommandApprovalReplySlotReconciliation() error = %v, want rejection", err)
+	}
+	if appended || plan.Status != "rejected" || !strings.Contains(plan.Reason, "not currently open") {
+		t.Fatalf("append result appended=%v plan=%#v, want rejected current-open validation", appended, plan)
+	}
+	if countCommandApprovalReplySlotReconciledEvents(t, sessionDir) != 0 {
+		t.Fatal("fresh validation failure appended reconciliation event")
+	}
+}
+
+func TestAppendCommandApprovalReplySlotReconciliationReportsDedupedAsAlreadyReconciled(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-reconcile"
+	sessionName := "review"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	repair := appendCLIReconcileableCommandApprovalSlot(t, sessionDir, now)
+	writer, err := journal.OpenCurrentWriter(sessionDir)
+	if err != nil {
+		t.Fatalf("OpenCurrentWriter() error = %v", err)
+	}
+	existing, err := writer.AppendEventWithOptions(journal.CommandApprovalReplySlotReconciledEventType, journal.VisibilityOperatorVisible, repair, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(4*time.Second))
+	if err != nil {
+		t.Fatalf("AppendEventWithOptions(reconciliation): %v", err)
+	}
+
+	event, appended, plan, err := appendCommandApprovalReplySlotReconciliation(sessionDir, sessionName, repair, now.Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("appendCommandApprovalReplySlotReconciliation() error = %v", err)
+	}
+	if appended || plan.Status != "already_reconciled" || plan.ExistingEventID != existing.EventID || event.EventID != existing.EventID {
+		t.Fatalf("append result event=%#v appended=%v plan=%#v, want existing already_reconciled", event, appended, plan)
+	}
+	if countCommandApprovalReplySlotReconciledEvents(t, sessionDir) != 1 {
+		t.Fatal("deduped append created duplicate reconciliation event")
+	}
+}
+
 func appendCLIReconcileableCommandApprovalSlot(t *testing.T, sessionDir string, now time.Time) journal.CommandApprovalReplySlotReconciledPayload {
 	t.Helper()
 	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-reconcile", "review", 101, now)
