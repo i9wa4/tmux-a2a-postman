@@ -14,6 +14,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	messagedelivery "github.com/i9wa4/tmux-a2a-postman/internal/message"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 func TestRunSendMessage_CustomTemplateOwnedBoundaryDrivesEvidenceGate(t *testing.T) {
@@ -257,12 +258,27 @@ role = "orchestrator"
 				)
 			}
 
-			stdout, stderr, err := captureCommandOutput(t, func() error {
-				return runSendHeredocWithBody(t, tc.body, args)
-			})
-			if deliverErr := <-deliverDone; deliverErr != nil {
-				t.Fatal(deliverErr)
+			var stdout strings.Builder
+			ctx := defaultCommandContext()
+			ctx.stdin = strings.NewReader(tc.body)
+			ctx.stdout = &stdout
+			ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+			ctx.roundTripDaemonSubmit = func(gotSessionDir string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+				if gotSessionDir != sessionDir {
+					t.Fatalf("roundTripDaemonSubmit sessionDir = %q, want %q", gotSessionDir, sessionDir)
+				}
+				if request.Command != projection.DaemonSubmitValidateSend {
+					t.Fatalf("roundTripDaemonSubmit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+				}
+				return projection.DaemonSubmitResponse{Command: request.Command, Filename: request.Filename}, nil
 			}
+			_, stderr, err := captureCommandOutput(t, func() error {
+				runErr := runSendHeredocWithContext(ctx, args)
+				if deliverErr := <-deliverDone; deliverErr != nil {
+					t.Fatal(deliverErr)
+				}
+				return runErr
+			})
 			if tc.wantDeadLetter {
 				if deliveryNotifications != 0 {
 					t.Fatalf("delivery notifications = %d, want 0 for rejected message", deliveryNotifications)
@@ -273,15 +289,15 @@ role = "orchestrator"
 				if !strings.Contains(err.Error(), "missing-evidence") {
 					t.Fatalf("RunSendHeredoc() error = %v, want missing-evidence", err)
 				}
-				if stdout != "" {
-					t.Fatalf("stdout = %q, want empty on dead letter", stdout)
+				if stdout.String() != "" {
+					t.Fatalf("stdout = %q, want empty on dead letter", stdout.String())
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("RunSendHeredoc: %v\nstderr=%s", err, stderr)
 			}
-			payload := decodeSendOutputForTest(t, stdout)
+			payload := decodeSendOutputForTest(t, stdout.String())
 			if payload.Status != string(sendStatusProcessed) {
 				t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
 			}

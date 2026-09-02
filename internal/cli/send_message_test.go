@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +134,22 @@ func testSendCommandContext(baseDir string, stdin io.Reader, stdout io.Writer) c
 			return "%1"
 		},
 	}
+}
+
+func stubDaemonValidateSendForTest(t *testing.T) {
+	t.Helper()
+
+	previous := defaultRoundTripDaemonSubmit
+	defaultRoundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+		if request.Command == projection.DaemonSubmitSend {
+			t.Fatalf("legacy daemon-submit send used before direct post: %#v", request)
+		}
+		if request.Command != projection.DaemonSubmitValidateSend {
+			t.Fatalf("daemon-submit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+		}
+		return projection.DaemonSubmitResponse{Command: request.Command, Filename: request.Filename}, nil
+	}
+	t.Cleanup(func() { defaultRoundTripDaemonSubmit = previous })
 }
 
 func createEvidenceRootForSendTest(t *testing.T) string {
@@ -2103,6 +2120,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	now := time.Date(2026, time.May, 3, 9, 0, 0, 0, time.UTC)
 	writer, err := journal.OpenShadowWriter(sessionDir, contextID, "test-session", 101, now)
 	if err != nil {
@@ -3038,6 +3056,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
@@ -3116,6 +3135,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
@@ -3210,6 +3230,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-owned-direct", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
@@ -3288,6 +3309,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-owned-direct-reply", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
@@ -3331,11 +3353,9 @@ role = "worker"
 
 func TestRunSendHeredoc_DirectPathEnforcesVerdictGate(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
-	configContent := `[postman]
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
 edges = ["orchestrator --- worker"]
 verdict_debt_cap = 0
 verdict_grace_seconds = 3600
@@ -3345,25 +3365,29 @@ role = "orchestrator"
 
 [worker]
 role = "worker"
-`
+`, tmpDir)
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
-	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
-
 	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate", "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
-	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
-		t.Fatalf("WriteSessionPIDFile: %v", err)
+	manager := journal.NewManager("ctx-direct-verdict-gate", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
 	}
 	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_direct_gate", time.Now().Add(-10*time.Second).UTC())
-	if !config.ContextOwnsSession(tmpDir, "ctx-direct-verdict-gate", "test-session") {
-		t.Fatal("ContextOwnsSession() = false, want owned session")
-	}
 
-	err := runSendHeredocWithBody(t, "new direct work", []string{
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new direct work"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.loadConfig = config.LoadConfig
+
+	err := runSendHeredocWithContext(ctx, []string{
 		"--config", configPath,
 		"--context-id", "ctx-direct-verdict-gate",
 		"--to", "worker",
@@ -3379,6 +3403,198 @@ role = "worker"
 	if readErr == nil && len(postEntries) != 0 {
 		t.Fatalf("direct post file written despite verdict gate rejection: found %d entries", len(postEntries))
 	}
+}
+
+func TestRunSendHeredoc_LiveOwnedDirectPathUsesDaemonVerdictGate(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate-daemon", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-direct-verdict-gate-daemon", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_daemon_gate", time.Now().Add(-10*time.Second).UTC())
+
+	var stdout strings.Builder
+	var validateCalls int
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new direct work"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.contextOwnsSession = func(string, string, string) bool { return true }
+	ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+	ctx.loadConfig = func(string) (*config.Config, error) {
+		return &config.Config{
+			BaseDir:             tmpDir,
+			Edges:               []string{"orchestrator --- worker"},
+			VerdictDebtCap:      3,
+			VerdictGraceSeconds: 3600,
+		}, nil
+	}
+	ctx.roundTripDaemonSubmit = func(gotSessionDir string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+		if gotSessionDir != sessionDir {
+			t.Fatalf("roundTripDaemonSubmit sessionDir = %q, want %q", gotSessionDir, sessionDir)
+		}
+		if request.Command == projection.DaemonSubmitSend {
+			t.Fatalf("roundTripDaemonSubmit used legacy send command before direct post: %#v", request)
+		}
+		if request.Command != projection.DaemonSubmitValidateSend {
+			t.Fatalf("roundTripDaemonSubmit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+		}
+		validateCalls++
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has verdict debt 1 above verdict_debt_cap=0", "orchestrator")
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-direct-verdict-gate-daemon",
+		"--to", "worker",
+		"--reply-required",
+	})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want daemon verdict gate rejection")
+	}
+	if !strings.Contains(err.Error(), "verdict_debt_cap=0") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want daemon debt-cap rejection", err)
+	}
+	if validateCalls != 1 {
+		t.Fatalf("validateCalls = %d, want 1", validateCalls)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post file written despite daemon verdict gate rejection: found %d entries", len(postEntries))
+	}
+}
+
+func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-direct-workload"
+	sessionName := "test-session"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	const iterations = 25
+	var clientWaits []time.Duration
+	var deliveryE2E []time.Duration
+	var directPostWrites int
+	var deliverySuccesses int
+	var daemonSubmitSendRequests int
+	var daemonSubmitValidateRequests int
+	var timeouts int
+	var deadLetters int
+
+	for i := 0; i < iterations; i++ {
+		var stdout strings.Builder
+		postedAt := make(chan time.Time, 1)
+		deliveredAt := make(chan time.Time, 1)
+		go func() {
+			postDir := filepath.Join(sessionDir, "post")
+			filename := awaitMarkdownFile(t, postDir, time.Second)
+			postPath := filepath.Join(postDir, filename)
+			postedAt <- time.Now()
+			inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+			if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+				t.Errorf("MkdirAll inboxDir: %v", err)
+				return
+			}
+			if err := os.Rename(postPath, filepath.Join(inboxDir, filename)); err != nil {
+				t.Errorf("Rename post to inbox: %v", err)
+				return
+			}
+			deliveredAt <- time.Now()
+		}()
+
+		ctx := testSendCommandContext(tmpDir, strings.NewReader(fmt.Sprintf("workload message %d", i)), &stdout)
+		ctx.getTmuxSessionName = func() string { return sessionName }
+		ctx.contextOwnsSession = func(string, string, string) bool { return true }
+		ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+		ctx.roundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+			switch request.Command {
+			case projection.DaemonSubmitValidateSend:
+				daemonSubmitValidateRequests++
+			case projection.DaemonSubmitSend:
+				daemonSubmitSendRequests++
+			default:
+				t.Fatalf("unexpected daemon-submit command: %q", request.Command)
+			}
+			return projection.DaemonSubmitResponse{Command: request.Command, Filename: request.Filename}, nil
+		}
+
+		startedAt := time.Now()
+		err := runSendHeredocWithContext(ctx, []string{
+			"--context-id", contextID,
+			"--to", "worker",
+		})
+		clientWaits = append(clientWaits, time.Since(startedAt))
+		if err != nil {
+			if strings.Contains(err.Error(), "timed out") {
+				timeouts++
+			}
+			if strings.Contains(err.Error(), "dead-lettered") {
+				deadLetters++
+			}
+			t.Fatalf("runSendHeredocWithContext: %v", err)
+		}
+		payload := decodeSendOutputForTest(t, stdout.String())
+		if payload.SubmitPath != projection.SubmitPathPost {
+			t.Fatalf("SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
+		}
+		if payload.Status != string(sendStatusProcessed) {
+			t.Fatalf("Status = %q, want %q", payload.Status, sendStatusProcessed)
+		}
+		directPostWrites++
+		posted := <-postedAt
+		delivered := <-deliveredAt
+		deliveryE2E = append(deliveryE2E, delivered.Sub(startedAt))
+		if delivered.Before(posted) {
+			t.Fatalf("delivery completed before post write")
+		}
+		deliverySuccesses++
+	}
+
+	t.Logf("client_wait_p50_ms=%.3f client_wait_p95_ms=%.3f client_wait_p99_ms=%.3f delivery_e2e_p50_ms=%.3f delivery_e2e_p95_ms=%.3f delivery_e2e_p99_ms=%.3f direct_post_writes=%d daemon_submit_send_requests=%d daemon_submit_validate_requests=%d delivery_successes=%d timeouts=%d dead_letters=%d",
+		durationPercentileMillis(clientWaits, 50),
+		durationPercentileMillis(clientWaits, 95),
+		durationPercentileMillis(clientWaits, 99),
+		durationPercentileMillis(deliveryE2E, 50),
+		durationPercentileMillis(deliveryE2E, 95),
+		durationPercentileMillis(deliveryE2E, 99),
+		directPostWrites,
+		daemonSubmitSendRequests,
+		daemonSubmitValidateRequests,
+		deliverySuccesses,
+		timeouts,
+		deadLetters,
+	)
+	if daemonSubmitSendRequests != 0 {
+		t.Fatalf("daemonSubmitSendRequests = %d, want 0", daemonSubmitSendRequests)
+	}
+	if daemonSubmitValidateRequests != iterations {
+		t.Fatalf("daemonSubmitValidateRequests = %d, want %d", daemonSubmitValidateRequests, iterations)
+	}
+	if directPostWrites != iterations || deliverySuccesses != iterations || timeouts != 0 || deadLetters != 0 {
+		t.Fatalf("workload conservation failed: direct_post_writes=%d delivery_successes=%d timeouts=%d dead_letters=%d", directPostWrites, deliverySuccesses, timeouts, deadLetters)
+	}
+}
+
+func durationPercentileMillis(values []time.Duration, percentile int) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]time.Duration(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	index := (len(sorted)*percentile + 99) / 100
+	if index <= 0 {
+		index = 1
+	}
+	if index > len(sorted) {
+		index = len(sorted)
+	}
+	return float64(sorted[index-1].Microseconds()) / 1000
 }
 
 func TestRunSendMessage_DefaultJSONUsesDirectPostWhenDaemonOwnsSession(t *testing.T) {
@@ -3408,6 +3624,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-owned-direct-json", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
@@ -3777,6 +3994,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-marker-resolution", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}

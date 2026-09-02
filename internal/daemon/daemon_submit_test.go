@@ -185,6 +185,51 @@ func TestProcessDaemonSubmitRequest_SendRefusesReplyRequiredWhenVerdictGraceExpi
 	}
 }
 
+func TestProcessDaemonSubmitRequest_ValidateSendRefusesBeforePostWrite(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "orchestrator", "worker", "ireq_validate_expired", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	verdictGraceSeconds = 60
+	verdictDebtCap = 3
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+	})
+
+	filename := "20260713-120002-from-orchestrator-to-worker.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-validate-verdict-expired",
+		Command:   projection.DaemonSubmitValidateSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Sender:    "orchestrator",
+		Content:   verdictGateSendContent("orchestrator", "worker", filename, "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-validate-verdict-expired"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "past verdict_grace_seconds=60") {
+		t.Fatalf("response.Error = %q, want grace-window verdict gate rejection", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+		t.Fatalf("post file written despite validate-send rejection: %v", err)
+	}
+}
+
 func TestProcessDaemonSubmitRequest_SendRefusesReplyRequiredWhenVerdictDebtExceedsCap(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {

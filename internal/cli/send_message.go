@@ -484,7 +484,17 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	}
 	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
-	if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
+	ownedLiveSession := ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) && ctx.contextHasLiveDaemon(baseDir, resolvedContextID)
+	if ownedLiveSession {
+		if _, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+			Command:  projection.DaemonSubmitValidateSend,
+			Filename: filename,
+			Sender:   sender,
+			Content:  content,
+		}, daemonSubmitTimeout(cfg.TmuxTimeout)); err != nil {
+			return fmt.Errorf("daemon validate-send: %w", err)
+		}
+	} else if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
 		GraceSeconds:  cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
 		DebtCap:       cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
 		ExemptUINode:  cfg.UINode,
