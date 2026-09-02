@@ -2986,11 +2986,11 @@ func daemonHerdrSnapshotForPane(paneID string) multiplexer.HerdrSessionSnapshot 
 func daemonHerdrPane(paneID string) multiplexer.HerdrPaneSnapshot {
 	return multiplexer.HerdrPaneSnapshot{
 		ID:             paneID,
+		TerminalID:     paneID + ":terminal",
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-1",
 		Metadata:       map[string]string{"postman.node": "worker"},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-		PostmanNode:    "worker",
 		PostmanSession: "work",
 	}
 }
