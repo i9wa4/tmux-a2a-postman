@@ -349,8 +349,12 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
-`send-heredoc` always uses an atomic direct handoff to the session `post/`
-queue and reports `submit_path: post`. A daemon consumes that queue
+`send-heredoc` uses an atomic direct handoff to the session `post/` queue and
+reports `submit_path: post` after that handoff succeeds. For owned live
+sessions, ordinary sends do not enter daemon-submit; `--reply-required` sends
+first ask the owning daemon to validate verdict-debt policy. If that validation
+is rejected, times out, or the request/response fails, the command exits before
+creating a `post/` entry. A daemon consumes successful `post/` handoffs
 asynchronously when it is running: `processed` means consumption was observed,
 while `queued` means the local handoff succeeded but consumption was not yet
 observed. Do not blindly resend a queued message; inspect status, inbox/read

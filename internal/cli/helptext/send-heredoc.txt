@@ -68,8 +68,13 @@ submit_path:
   post                    Atomic local handoff to the session post/ queue
 
 Normal sends:
-  send-heredoc always uses the post/ handoff. A running daemon consumes the
-  post asynchronously; processed means consumption was observed, while queued
-  means the local handoff succeeded but consumption was not yet observed.
-  Do not resend a queued message blindly; inspect status, recipient inbox/read
-  evidence, or recipient-side confirmation first.
+  send-heredoc uses the post/ handoff and reports submit_path: post after that
+  local handoff succeeds. For owned live sessions, ordinary sends do not enter
+  daemon-submit; --reply-required sends first ask the owning daemon to validate
+  verdict-debt policy. If validation is rejected, times out, or the
+  request/response fails, the command exits before creating a post/ entry. A
+  running daemon consumes successful posts asynchronously; processed means
+  consumption was observed, while queued means the local handoff succeeded but
+  consumption was not yet observed. Do not resend a queued message blindly;
+  inspect status, recipient inbox/read evidence, or recipient-side confirmation
+  first.

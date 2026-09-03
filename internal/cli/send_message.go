@@ -485,7 +485,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
 	ownedLiveSession := ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) && ctx.contextHasLiveDaemon(baseDir, resolvedContextID)
-	if ownedLiveSession {
+	if ownedLiveSession && replyPolicy == "required" {
 		if _, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command:  projection.DaemonSubmitValidateSend,
 			Filename: filename,

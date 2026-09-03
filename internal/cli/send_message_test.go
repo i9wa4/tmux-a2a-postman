@@ -3468,7 +3468,87 @@ func TestRunSendHeredoc_LiveOwnedDirectPathUsesDaemonVerdictGate(t *testing.T) {
 	}
 }
 
-func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
+func TestRunSendHeredoc_LiveOwnedReplyRequiredValidationFailureLeavesNoPost(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		wantErr string
+	}{
+		{
+			name:    "rejection",
+			err:     fmt.Errorf("reply gate: verdict required before new reply-required send"),
+			wantErr: "daemon validate-send: reply gate:",
+		},
+		{
+			name:    "timeout",
+			err:     projection.DaemonSubmitResponseTimeoutError{RequestID: "req-timeout", Timeout: 25 * time.Millisecond},
+			wantErr: "daemon validate-send: timed out waiting for daemon submit response",
+		},
+		{
+			name:    "request response failure",
+			err:     fmt.Errorf("daemon response error: write failed"),
+			wantErr: "daemon validate-send: daemon response error: write failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			contextID := "ctx-direct-reply-required-validation-" + strings.ReplaceAll(tt.name, " ", "-")
+			sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+
+			var validateCalls int
+			var stdout strings.Builder
+			ctx := testSendCommandContext(tmpDir, strings.NewReader("reply-required failure boundary"), &stdout)
+			ctx.getTmuxPaneName = func() string { return "orchestrator" }
+			ctx.getTmuxSessionName = func() string { return "test-session" }
+			ctx.contextOwnsSession = func(string, string, string) bool { return true }
+			ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+			ctx.loadConfig = func(string) (*config.Config, error) {
+				return &config.Config{
+					BaseDir:             tmpDir,
+					Edges:               []string{"orchestrator --- worker"},
+					VerdictDebtCap:      3,
+					VerdictGraceSeconds: 3600,
+				}, nil
+			}
+			ctx.roundTripDaemonSubmit = func(gotSessionDir string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+				if gotSessionDir != sessionDir {
+					t.Fatalf("roundTripDaemonSubmit sessionDir = %q, want %q", gotSessionDir, sessionDir)
+				}
+				if request.Command != projection.DaemonSubmitValidateSend {
+					t.Fatalf("roundTripDaemonSubmit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+				}
+				validateCalls++
+				return projection.DaemonSubmitResponse{}, tt.err
+			}
+
+			err := runSendHeredocWithContext(ctx, []string{
+				"--context-id", contextID,
+				"--to", "worker",
+				"--reply-required",
+			})
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want validation failure")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("runSendHeredocWithContext() error = %v, want substring %q", err, tt.wantErr)
+			}
+			if validateCalls != 1 {
+				t.Fatalf("validateCalls = %d, want 1", validateCalls)
+			}
+			postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+			if readErr == nil && len(postEntries) != 0 {
+				t.Fatalf("post file written despite validation failure: found %d entries", len(postEntries))
+			}
+		})
+	}
+}
+
+func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetricsComparesLegacyValidation(t *testing.T) {
 	tmpDir := t.TempDir()
 	contextID := "ctx-direct-workload"
 	sessionName := "test-session"
@@ -3482,6 +3562,8 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 	var deliveryE2E []time.Duration
 	var directPostWrites int
 	var deliverySuccesses int
+	var deliveryTimeouts int
+	var deadLetters int
 	var daemonSubmitSendRequests int
 	var daemonSubmitValidateRequests int
 
@@ -3548,7 +3630,14 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 		deliverySuccesses++
 	}
 
-	t.Logf("client_wait_p50_ms=%.3f client_wait_p95_ms=%.3f client_wait_p99_ms=%.3f delivery_e2e_p50_ms=%.3f delivery_e2e_p95_ms=%.3f delivery_e2e_p99_ms=%.3f direct_post_writes=%d daemon_submit_send_requests=%d daemon_submit_validate_requests=%d delivery_successes=%d",
+	legacyDaemonSubmitValidateRequests := iterations
+	legacyDaemonSubmitHandlerWork := iterations
+	currentDaemonSubmitHandlerWork := daemonSubmitSendRequests + daemonSubmitValidateRequests
+	t.Logf("legacy_daemon_submit_validate_requests=%d current_daemon_submit_validate_requests=%d legacy_daemon_submit_handler_work=%d current_daemon_submit_handler_work=%d client_wait_p50_ms=%.3f client_wait_p95_ms=%.3f client_wait_p99_ms=%.3f delivery_e2e_p50_ms=%.3f delivery_e2e_p95_ms=%.3f delivery_e2e_p99_ms=%.3f direct_post_writes=%d daemon_submit_send_requests=%d delivery_successes=%d delivery_timeouts=%d dead_letters=%d",
+		legacyDaemonSubmitValidateRequests,
+		daemonSubmitValidateRequests,
+		legacyDaemonSubmitHandlerWork,
+		currentDaemonSubmitHandlerWork,
 		durationPercentileMillis(clientWaits, 50),
 		durationPercentileMillis(clientWaits, 95),
 		durationPercentileMillis(clientWaits, 99),
@@ -3557,14 +3646,18 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 		durationPercentileMillis(deliveryE2E, 99),
 		directPostWrites,
 		daemonSubmitSendRequests,
-		daemonSubmitValidateRequests,
 		deliverySuccesses,
+		deliveryTimeouts,
+		deadLetters,
 	)
 	if daemonSubmitSendRequests != 0 {
 		t.Fatalf("daemonSubmitSendRequests = %d, want 0", daemonSubmitSendRequests)
 	}
-	if daemonSubmitValidateRequests != iterations {
-		t.Fatalf("daemonSubmitValidateRequests = %d, want %d", daemonSubmitValidateRequests, iterations)
+	if daemonSubmitValidateRequests != 0 {
+		t.Fatalf("daemonSubmitValidateRequests = %d, want 0", daemonSubmitValidateRequests)
+	}
+	if currentDaemonSubmitHandlerWork != 0 {
+		t.Fatalf("currentDaemonSubmitHandlerWork = %d, want 0", currentDaemonSubmitHandlerWork)
 	}
 	if directPostWrites != iterations || deliverySuccesses != iterations {
 		t.Fatalf("workload conservation failed: direct_post_writes=%d delivery_successes=%d", directPostWrites, deliverySuccesses)
