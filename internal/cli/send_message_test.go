@@ -3484,8 +3484,6 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 	var deliverySuccesses int
 	var daemonSubmitSendRequests int
 	var daemonSubmitValidateRequests int
-	var timeouts int
-	var deadLetters int
 
 	for i := 0; i < iterations; i++ {
 		var stdout strings.Builder
@@ -3531,12 +3529,6 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 		})
 		clientWaits = append(clientWaits, time.Since(startedAt))
 		if err != nil {
-			if strings.Contains(err.Error(), "timed out") {
-				timeouts++
-			}
-			if strings.Contains(err.Error(), "dead-lettered") {
-				deadLetters++
-			}
 			t.Fatalf("runSendHeredocWithContext: %v", err)
 		}
 		payload := decodeSendOutputForTest(t, stdout.String())
@@ -3556,7 +3548,7 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 		deliverySuccesses++
 	}
 
-	t.Logf("client_wait_p50_ms=%.3f client_wait_p95_ms=%.3f client_wait_p99_ms=%.3f delivery_e2e_p50_ms=%.3f delivery_e2e_p95_ms=%.3f delivery_e2e_p99_ms=%.3f direct_post_writes=%d daemon_submit_send_requests=%d daemon_submit_validate_requests=%d delivery_successes=%d timeouts=%d dead_letters=%d",
+	t.Logf("client_wait_p50_ms=%.3f client_wait_p95_ms=%.3f client_wait_p99_ms=%.3f delivery_e2e_p50_ms=%.3f delivery_e2e_p95_ms=%.3f delivery_e2e_p99_ms=%.3f direct_post_writes=%d daemon_submit_send_requests=%d daemon_submit_validate_requests=%d delivery_successes=%d",
 		durationPercentileMillis(clientWaits, 50),
 		durationPercentileMillis(clientWaits, 95),
 		durationPercentileMillis(clientWaits, 99),
@@ -3567,8 +3559,6 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 		daemonSubmitSendRequests,
 		daemonSubmitValidateRequests,
 		deliverySuccesses,
-		timeouts,
-		deadLetters,
 	)
 	if daemonSubmitSendRequests != 0 {
 		t.Fatalf("daemonSubmitSendRequests = %d, want 0", daemonSubmitSendRequests)
@@ -3576,8 +3566,8 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetrics(t *testing.T) {
 	if daemonSubmitValidateRequests != iterations {
 		t.Fatalf("daemonSubmitValidateRequests = %d, want %d", daemonSubmitValidateRequests, iterations)
 	}
-	if directPostWrites != iterations || deliverySuccesses != iterations || timeouts != 0 || deadLetters != 0 {
-		t.Fatalf("workload conservation failed: direct_post_writes=%d delivery_successes=%d timeouts=%d dead_letters=%d", directPostWrites, deliverySuccesses, timeouts, deadLetters)
+	if directPostWrites != iterations || deliverySuccesses != iterations {
+		t.Fatalf("workload conservation failed: direct_post_writes=%d delivery_successes=%d", directPostWrites, deliverySuccesses)
 	}
 }
 
