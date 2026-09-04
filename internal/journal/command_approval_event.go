@@ -1,11 +1,30 @@
 package journal
 
 const (
-	CommandApprovalRequestedEventType  = "command_approval_requested"
-	CommandApprovalDecidedEventType    = "command_approval_decided"
-	CommandExecutionDecidedEventType   = "command_execution_decided"
-	CommandExecutionCompletedEventType = "command_execution_completed"
+	CommandApprovalRequestedEventType = "command_approval_requested"
+	CommandApprovalDecidedEventType   = "command_approval_decided"
+	// CommandApprovalReplySlotReconciledEventType is an operator-authored,
+	// evidence-carrying projection repair.  It is deliberately distinct from a
+	// mailbox reply: it must never claim that a reviewer sent a message.
+	CommandApprovalReplySlotReconciledEventType = "command_approval_reply_slot_reconciled"
+	CommandExecutionDecidedEventType            = "command_execution_decided"
+	CommandExecutionCompletedEventType          = "command_execution_completed"
 )
+
+// CommandApprovalReplySlotReconciledPayload records the immutable tuple an
+// operator inspected before requesting a projection-only slot reconciliation.
+// Consumers must independently replay and validate every field; this payload
+// is an audit request, not authority to close an arbitrary input request.
+type CommandApprovalReplySlotReconciledPayload struct {
+	InputRequestID   string `json:"input_request_id"`
+	ThreadID         string `json:"thread_id"`
+	CommandHash      string `json:"command_hash"`
+	Requester        string `json:"requester"`
+	RequesterAddress string `json:"requester_address"`
+	Approver         string `json:"approver"`
+	ApproverAddress  string `json:"approver_address"`
+	DecisionEventID  string `json:"decision_event_id"`
+}
 
 type CommandApprovalRequestPayload struct {
 	Requester        string `json:"requester"`
