@@ -24,6 +24,7 @@ type DaemonSubmitCommand string
 
 const (
 	DaemonSubmitSend               DaemonSubmitCommand = "send"
+	DaemonSubmitValidateSend       DaemonSubmitCommand = "validate-send"
 	DaemonSubmitPop                DaemonSubmitCommand = "pop"
 	DaemonSubmitRuntimeDiagnostics DaemonSubmitCommand = "runtime-diagnostics"
 	DaemonSubmitRuntimeProfile     DaemonSubmitCommand = "runtime-profile"

@@ -38,6 +38,8 @@ type commandContext struct {
 	runBash               func(command string, stdout, stderr io.Writer) (int, error)
 }
 
+var defaultRoundTripDaemonSubmit = roundTripDaemonSubmit
+
 func defaultCommandContext() commandContext {
 	return commandContext{}.withDefaults()
 }
@@ -75,7 +77,7 @@ func (ctx commandContext) withDefaults() commandContext {
 		ctx.contextHasLiveDaemon = config.ContextHasLiveDaemon
 	}
 	if ctx.roundTripDaemonSubmit == nil {
-		ctx.roundTripDaemonSubmit = roundTripDaemonSubmit
+		ctx.roundTripDaemonSubmit = defaultRoundTripDaemonSubmit
 	}
 	if ctx.currentIdentity == nil && !customTmuxIdentityHooks {
 		ctx.currentIdentity = config.CurrentTmuxIdentity

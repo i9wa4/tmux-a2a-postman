@@ -200,22 +200,7 @@ func daemonSubmitSessionDir(requestPath string) (string, bool) {
 }
 
 func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
-	if request.RequestID == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing request_id")
-	}
-	if request.Filename == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing filename")
-	}
-	if strings.ContainsAny(request.Filename, "/\\") {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send filename must not contain path separators")
-	}
-	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send invalid filename: %w", err)
-	}
-	if request.Content == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
-	}
-	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
+	if err := validateDaemonSubmitSendRequest(sessionDir, request, "daemon submit send"); err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
 	postDir := filepath.Join(sessionDir, "post")
@@ -241,6 +226,40 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 		HandledAt: time.Now().UTC().Format(time.RFC3339),
 		Filename:  request.Filename,
 	}, nil
+}
+
+func handleDaemonSubmitValidateSend(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
+	if err := validateDaemonSubmitSendRequest(sessionDir, request, "daemon submit validate-send"); err != nil {
+		return projection.DaemonSubmitResponse{}, err
+	}
+	return projection.DaemonSubmitResponse{
+		RequestID: request.RequestID,
+		Command:   request.Command,
+		HandledAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  request.Filename,
+	}, nil
+}
+
+func validateDaemonSubmitSendRequest(sessionDir string, request projection.DaemonSubmitRequest, commandName string) error {
+	if request.RequestID == "" {
+		return fmt.Errorf("%s missing request_id", commandName)
+	}
+	if request.Filename == "" {
+		return fmt.Errorf("%s missing filename", commandName)
+	}
+	if strings.ContainsAny(request.Filename, "/\\") {
+		return fmt.Errorf("%s filename must not contain path separators", commandName)
+	}
+	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
+		return fmt.Errorf("%s invalid filename: %w", commandName, err)
+	}
+	if request.Content == "" {
+		return fmt.Errorf("%s missing content", commandName)
+	}
+	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
+		return err
+	}
+	return nil
 }
 
 func enforceVerdictGate(sessionDir, sender, filename, content string) error {
@@ -505,6 +524,8 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 			result.Filename = response.Filename
 			result.PostPath = filepath.Join(sessionDir, "post", response.Filename)
 		}
+	case projection.DaemonSubmitValidateSend:
+		response, err = handleDaemonSubmitValidateSend(sessionDir, request)
 	case projection.DaemonSubmitPop:
 		response, err = handleDaemonSubmitPop(sessionDir, request)
 		if err == nil && !response.Empty {
