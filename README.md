@@ -367,8 +367,9 @@ result as unknown and inspect status or archived message evidence before
 retrying. Use `inspect-daemon-submit --id <request_id>` and
 `get-status --debug` for bounded daemon-submit queue health.
 Configure daemon-submit concurrency with
-`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers and
-values above 16 are clamped with a daemon warning.
+`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers per
+managed session, so a busy session cannot consume another session's submit
+slots. Values above 16 are clamped with a daemon warning.
 
 The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime
