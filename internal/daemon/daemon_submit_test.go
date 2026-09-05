@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -1046,6 +1047,391 @@ func TestProcessDaemonSubmitRequest_PopArchivesUnreadMessage(t *testing.T) {
 	}
 	if response.UnreadBefore != 2 {
 		t.Fatalf("response.UnreadBefore = %d, want 2", response.UnreadBefore)
+	}
+}
+
+// TestHandleDaemonSubmitPop_RollsBackToInboxWhenArchiveReadinessCheckFails is
+// the regression test for #755's producer-side ordering requirement,
+// including guardian's rework-1 correction: validate the just-archived file
+// before ever constructing a response that contains MarkdownPath, AND roll
+// the archive back to inbox on failure so a retry genuinely re-discovers and
+// re-verifies the message. Without the rollback, ArchiveInboxMessage has
+// already moved the file out of inbox by the time verification runs, and
+// nothing scans read/ for undelivered mail -- so a verification failure
+// would otherwise leave the message permanently unreachable, silently
+// removing it from the unread set. The underlying rename is a same-host,
+// same-filesystem atomic operation not practical to race from a test, so
+// this injects the failure via daemonPopArchiveVerify's test seam instead of
+// trying to reproduce real filesystem timing.
+func TestHandleDaemonSubmitPop_RollsBackToInboxWhenArchiveReadinessCheckFails(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260414-033200-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:32:00Z\n---\n\npayload\n"
+	inboxPath := filepath.Join(inboxDir, filename)
+	if err := os.WriteFile(inboxPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	originalVerify := daemonPopArchiveVerify
+	injectedErr := errors.New("simulated readiness failure")
+	daemonPopArchiveVerify = func(readPath, expectedContent string) error {
+		return injectedErr
+	}
+	t.Cleanup(func() { daemonPopArchiveVerify = originalVerify })
+
+	response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-block",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err == nil {
+		t.Fatalf("handleDaemonSubmitPop() error = nil, want a readiness failure")
+	}
+	if !errors.Is(err, injectedErr) {
+		t.Fatalf("handleDaemonSubmitPop() error = %v, want it to wrap %v", err, injectedErr)
+	}
+	if response.MarkdownPath != "" || response.Filename != "" || response.Content != "" {
+		t.Fatalf("handleDaemonSubmitPop() response = %+v, want a zero-value response: publication must be blocked, not merely flagged", response)
+	}
+
+	// The rollback is the point of this test: the message must be back in
+	// inbox (not stranded in read/) so a retry pop can find it at all. The
+	// rollback writes the known-good in-memory content back to inbox rather
+	// than renaming read/<filename>, so read/<filename> is left as-is (see
+	// TestHandleDaemonSubmitPop_DedupBranchRollbackPreservesBothCopies for
+	// why that matters); asserting its continued presence here, not its
+	// absence.
+	if got, readErr := os.ReadFile(inboxPath); readErr != nil || string(got) != content {
+		t.Fatalf("message not rolled back to inbox: content = %q, err = %v, want %q, nil", got, readErr, content)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(sessionDir, "read", filename)); readErr != nil || string(got) != content {
+		t.Fatalf("archived read file missing or changed after rollback: content = %q, err = %v, want %q, nil", got, readErr, content)
+	}
+}
+
+// TestHandleDaemonSubmitPop_RollbackCallSiteConsultsWriteFileAtomicOpsSeam is
+// the regression test for guardian's B1 reopen: critic reran the exact F-014
+// mutation this file's own atomicity tests were meant to catch
+// (writeFileAtomic's call site in handleDaemonSubmitPop's rollback path
+// silently replaced with a direct os.WriteFile) and both packages still
+// passed. Root cause: TestWriteFileAtomicWriteFailure/RenameFailure... call
+// writeFileAtomic directly, proving the HELPER is atomic, but nothing pinned
+// that the ROLLBACK CALL SITE actually reaches that helper rather than
+// bypassing it entirely. This test drives handleDaemonSubmitPop itself into
+// the rollback path (via the existing daemonPopArchiveVerify failure seam)
+// AND injects a writeFileAtomicOpsVar.writeFile failure, then asserts the
+// returned error wraps that injected failure. If the call site were mutated
+// to a direct os.WriteFile bypassing the seam, this injected failure would
+// never fire (the real filesystem write would simply succeed) and this
+// assertion would fail -- unlike the pre-existing unit tests, which call
+// writeFileAtomic directly and therefore can't observe a call-site bypass at
+// all.
+func TestHandleDaemonSubmitPop_RollbackCallSiteConsultsWriteFileAtomicOpsSeam(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260414-033200-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:32:00Z\n---\n\npayload\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	originalVerify := daemonPopArchiveVerify
+	daemonPopArchiveVerify = func(readPath, expectedContent string) error {
+		return errors.New("simulated readiness failure")
+	}
+	t.Cleanup(func() { daemonPopArchiveVerify = originalVerify })
+
+	originalOps := writeFileAtomicOpsVar
+	injectedOpsErr := errors.New("simulated rollback write-ops failure")
+	writeFileAtomicOpsVar = writeFileAtomicOps{
+		mkdirAll: os.MkdirAll,
+		writeFile: func(name string, data []byte, perm os.FileMode) error {
+			return injectedOpsErr
+		},
+		rename: os.Rename,
+	}
+	t.Cleanup(func() { writeFileAtomicOpsVar = originalOps })
+
+	_, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-rollback-seam",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err == nil {
+		t.Fatal("handleDaemonSubmitPop() error = nil, want a rollback-write failure")
+	}
+	if !errors.Is(err, injectedOpsErr) {
+		t.Fatalf("handleDaemonSubmitPop() error = %v, want it to wrap the injected writeFileAtomicOpsVar failure %v -- this proves the rollback call site actually consults the seam rather than bypassing it with a direct os.WriteFile", err, injectedOpsErr)
+	}
+}
+
+// TestWriteFileAtomicWriteFailureLeavesDestinationUntouched is the
+// regression test for F-014's mutation-testing gap: guardian found that
+// reverting writeFileAtomic to a plain os.WriteFile(path, data, 0o600) left
+// every existing test still passing, because none of them exercised the
+// atomicity property specifically -- only that the function writes correct
+// bytes on success or reports an error on rename failure, not that a
+// failure partway through never leaves `path` holding partial content. This
+// calls the real, unmodified writeFileAtomic function and injects a
+// write-step failure via the package-level writeFileAtomicOpsVar seam
+// (simulating a write interrupted before completion, which the real
+// implementation directs at tmpPath, never at path itself), then asserts
+// path is left exactly as it was beforehand -- never modified at all, let
+// alone partially. Swapping the package variable rather than taking a
+// parallel ops-parameterized function is deliberate: it means a mutation
+// can't defeat this test simply by reverting writeFileAtomic's one-line
+// call sites while leaving a separate "WithOps" test-only variant intact.
+//
+// MAJ-4 fix: the injected writeFile mock ACTUALLY WRITES partial bytes to
+// whatever path it is given, then returns the error, rather than a pure
+// no-op that returns only an error. A pure no-op mock cannot distinguish
+// atomic from non-atomic behavior at all -- it never touches the
+// filesystem, so `path` would come back unchanged whether writeFileAtomic
+// correctly directs the write at a temp file (atomic) or was mutated to
+// write directly at `path` (not atomic), because in the mutated case the
+// mock's no-op still never reaches the real filesystem before "failing".
+// With a mock that genuinely writes to whatever name it's called with, an
+// atomic implementation's partial write lands on tmpPath (path is
+// untouched, as asserted below); a mutated non-atomic implementation that
+// passes `path` directly to this seam would have its partial write land
+// on `path` itself, and this assertion would correctly fail.
+func TestWriteFileAtomicWriteFailureLeavesDestinationUntouched(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "message.md")
+	original := "original-content"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile(original): %v", err)
+	}
+	writeErr := errors.New("simulated interrupted write")
+
+	originalOps := writeFileAtomicOpsVar
+	t.Cleanup(func() { writeFileAtomicOpsVar = originalOps })
+	writeFileAtomicOpsVar = writeFileAtomicOps{
+		mkdirAll: os.MkdirAll,
+		writeFile: func(name string, data []byte, perm os.FileMode) error {
+			// C13: pin that the temp file lives in the SAME directory as
+			// its destination -- a temp path under a different directory
+			// (e.g. os.TempDir()) could be on a different filesystem,
+			// which would make the subsequent os.Rename fail with EXDEV
+			// and turn every rollback into the data-loss path this whole
+			// fix exists to prevent.
+			if filepath.Dir(name) != filepath.Dir(path) {
+				t.Fatalf("writeFile seam received name %q in a different directory than destination %q", name, path)
+			}
+			// Simulate a real interrupted write: some bytes genuinely land
+			// on disk at whatever path this seam was given, before the
+			// call reports failure.
+			_ = os.WriteFile(name, []byte("PARTIAL"), perm)
+			return writeErr
+		},
+		rename: os.Rename,
+	}
+
+	err := writeFileAtomic(path, []byte("new-content"))
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("writeFileAtomic() error = %v, want %v", err, writeErr)
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil || string(got) != original {
+		t.Fatalf("destination changed after a failed write step: content = %q, err = %v, want %q, nil", got, readErr, original)
+	}
+}
+
+// TestWriteFileAtomicRenameFailureLeavesDestinationUntouched is the
+// companion to the write-failure test above: it calls the real
+// writeFileAtomic and injects a rename-step failure (the temp file is
+// genuinely written with the new content first, via the real
+// os.WriteFile, then the rename into place fails), then asserts the
+// destination is left exactly as it was beforehand -- proving a failed
+// rename cannot leave `path` half-written either, only either fully
+// replaced (on success) or fully untouched (on any failure).
+func TestWriteFileAtomicRenameFailureLeavesDestinationUntouched(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "message.md")
+	original := "original-content"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatalf("WriteFile(original): %v", err)
+	}
+	renameErr := errors.New("simulated rename failure")
+
+	originalOps := writeFileAtomicOpsVar
+	t.Cleanup(func() { writeFileAtomicOpsVar = originalOps })
+	writeFileAtomicOpsVar = writeFileAtomicOps{
+		mkdirAll:  os.MkdirAll,
+		writeFile: os.WriteFile,
+		rename: func(oldPath, newPath string) error {
+			return renameErr
+		},
+	}
+
+	err := writeFileAtomic(path, []byte("new-content"))
+	if !errors.Is(err, renameErr) {
+		t.Fatalf("writeFileAtomic() error = %v, want %v", err, renameErr)
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil || string(got) != original {
+		t.Fatalf("destination changed after a failed rename step: content = %q, err = %v, want %q, nil", got, readErr, original)
+	}
+}
+
+// TestWriteFileAtomicCreatesDestinationDirectoryWhenMissing is the
+// regression test for Blocker 3: on handleDaemonSubmitPop's dedup rollback
+// path, ArchiveInboxMessage's dedup branch removes the sole file in
+// inbox/<node>/, and internal/projection's removeEmptyDirs (called during
+// projection sync) can prune that now-empty directory before the rollback
+// write runs -- so the destination directory can genuinely be gone, not
+// just the destination file. Without MkdirAll, that rollback write fails
+// ENOENT and the only complete copy of the message is silently discarded --
+// the exact "message permanently lost" consequence class this whole fix
+// exists to prevent. This asserts writeFileAtomic succeeds and recreates
+// the directory when the destination's parent doesn't exist at all.
+func TestWriteFileAtomicCreatesDestinationDirectoryWhenMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	// inboxDir is never created -- simulates it having been pruned by
+	// removeEmptyDirs after the dedup branch removed its last file.
+	inboxDir := filepath.Join(tmpDir, "inbox", "worker")
+	path := filepath.Join(inboxDir, "message.md")
+	content := "restored-content"
+
+	if err := writeFileAtomic(path, []byte(content)); err != nil {
+		t.Fatalf("writeFileAtomic() error = %v, want success with directory auto-created", err)
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil || string(got) != content {
+		t.Fatalf("ReadFile() = %q, %v, want %q, nil", got, readErr, content)
+	}
+}
+
+// TestHandleDaemonSubmitPop_DedupBranchRollbackPreservesBothCopies is the
+// regression test for F-012: ArchiveInboxMessage's dedup branch (taken when
+// read/<filename> already exists) does not rename anything -- it only
+// removes the inbox copy. A rollback that assumes a rename happened (i.e.
+// renames read/<filename> back to inbox) is wrong on this branch: it would
+// both erase whatever was legitimately archived at read/<filename> and, if
+// the two copies genuinely differ (exactly what triggers this readiness
+// failure), replace the fresh inbox content with the stale/differing
+// archived bytes instead of preserving it. This test seeds a pre-existing
+// read/<filename> with DIFFERENT content than the fresh inbox copy, uses
+// the real (non-mocked) daemonPopArchiveVerify so the mismatch is
+// genuinely detected, and asserts both copies survive unchanged: the fresh
+// content back in inbox (available for a future genuine archive attempt),
+// and the pre-existing archive record untouched in read/.
+func TestHandleDaemonSubmitPop_DedupBranchRollbackPreservesBothCopies(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	readDir := filepath.Join(sessionDir, "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll read: %v", err)
+	}
+	filename := "20260414-033200-from-orchestrator-to-worker.md"
+	freshContent := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:32:00Z\n---\n\nfresh-inbox-content\n"
+	archivedContent := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:32:00Z\n---\n\nalready-archived-content\n"
+	inboxPath := filepath.Join(inboxDir, filename)
+	readPath := filepath.Join(readDir, filename)
+	if err := os.WriteFile(inboxPath, []byte(freshContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(inbox): %v", err)
+	}
+	if err := os.WriteFile(readPath, []byte(archivedContent), 0o600); err != nil {
+		t.Fatalf("WriteFile(read): %v", err)
+	}
+
+	// Uses the real daemonPopArchiveVerify (no test-seam override): the
+	// dedup branch leaves readPath's pre-existing content untouched, so
+	// comparing it against the freshly read inbox content genuinely
+	// mismatches without any injected failure.
+	response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-dedup",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err == nil {
+		t.Fatalf("handleDaemonSubmitPop() error = nil, want a content-mismatch readiness failure")
+	}
+	if !strings.Contains(err.Error(), "content mismatch") {
+		t.Fatalf("handleDaemonSubmitPop() error = %v, want it to mention content mismatch", err)
+	}
+	if response.MarkdownPath != "" || response.Filename != "" || response.Content != "" {
+		t.Fatalf("handleDaemonSubmitPop() response = %+v, want a zero-value response", response)
+	}
+
+	if got, readErr := os.ReadFile(inboxPath); readErr != nil || string(got) != freshContent {
+		t.Fatalf("fresh inbox content not preserved: content = %q, err = %v, want %q, nil", got, readErr, freshContent)
+	}
+	if got, readErr := os.ReadFile(readPath); readErr != nil || string(got) != archivedContent {
+		t.Fatalf("pre-existing archive record not preserved: content = %q, err = %v, want %q, nil", got, readErr, archivedContent)
+	}
+}
+
+// TestHandleDaemonSubmitPop_SecondPopReturnsSameMessageAfterReadinessFailure
+// is the end-to-end regression test critic specified (adopted by guardian as
+// stronger than checking an internal file location): after a readiness
+// failure and its rollback, a SECOND pop must return the SAME message, not
+// an empty result. This is what actually matters to whoever is waiting on
+// that message -- it proves the message's unread state genuinely survives a
+// readiness failure, rather than merely proving a file ended up in a
+// particular directory.
+func TestHandleDaemonSubmitPop_SecondPopReturnsSameMessageAfterReadinessFailure(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll inbox: %v", err)
+	}
+	filename := "20260414-033200-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  timestamp: 2026-04-14T03:32:00Z\n---\n\npayload\n"
+	if err := os.WriteFile(filepath.Join(inboxDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	originalVerify := daemonPopArchiveVerify
+	t.Cleanup(func() { daemonPopArchiveVerify = originalVerify })
+
+	daemonPopArchiveVerify = func(readPath, expectedContent string) error {
+		return errors.New("simulated readiness failure")
+	}
+	if _, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-first",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	}); err == nil {
+		t.Fatalf("first handleDaemonSubmitPop() error = nil, want a readiness failure")
+	}
+
+	daemonPopArchiveVerify = originalVerify
+	response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-pop-second",
+		Command:   projection.DaemonSubmitPop,
+		Node:      "worker",
+	})
+	if err != nil {
+		t.Fatalf("second handleDaemonSubmitPop() error = %v, want the message to be re-discoverable", err)
+	}
+	if response.Empty {
+		t.Fatalf("second handleDaemonSubmitPop() reported Empty=true, want the same message returned, not an empty result")
+	}
+	if response.Filename != filename {
+		t.Fatalf("second handleDaemonSubmitPop() Filename = %q, want %q", response.Filename, filename)
+	}
+	if response.Content != content {
+		t.Fatalf("second handleDaemonSubmitPop() Content = %q, want %q", response.Content, content)
 	}
 }
 

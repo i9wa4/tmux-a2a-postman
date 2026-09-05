@@ -284,6 +284,95 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 	}
 }
 
+// daemonPopArchiveVerify is a package-level indirection so tests can inject
+// a readiness failure without needing filesystem timing tricks (the
+// underlying rename is a same-host, same-filesystem atomic operation that
+// is not practical to race from a test). Production code always uses
+// verifyDaemonPopArchiveReadable; tests may temporarily replace this var to
+// prove handleDaemonSubmitPop blocks response publication when readiness
+// fails, then must restore it.
+var daemonPopArchiveVerify = verifyDaemonPopArchiveReadable
+
+// verifyDaemonPopArchiveReadable confirms readPath is a real, non-symlink
+// file whose contents match expectedContent, immediately after
+// message.ArchiveInboxMessage reports success. This is the producer-side
+// half of the #755 fix: validate before publishing a response containing
+// MarkdownPath, rather than publishing first and leaving detection to the
+// pop caller (internal/cli's validateDaemonPopArchive, which still runs
+// independently as defense in depth for legacy daemons that predate this
+// check, and should this producer-side check ever be bypassed or removed).
+func verifyDaemonPopArchiveReadable(readPath, expectedContent string) error {
+	info, err := os.Lstat(readPath)
+	if err != nil {
+		return fmt.Errorf("archived message not visible at %s: %w", readPath, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("archived message is symlink: %s", readPath)
+	}
+	data, err := os.ReadFile(readPath)
+	if err != nil {
+		return fmt.Errorf("archived message unreadable at %s: %w", readPath, err)
+	}
+	if string(data) != expectedContent {
+		return fmt.Errorf("archived message content mismatch at %s", readPath)
+	}
+	return nil
+}
+
+// writeFileAtomic writes data to path via a temp-file-then-rename, the same
+// pattern internal/projection's writeDaemonSubmitJSON uses: either the full
+// content lands at path, or path is left untouched -- no window where an
+// interrupted write (process death, this call's own goroutine crashing)
+// leaves it partially written. This does not fsync the file or its parent
+// directory, so it does not protect against power loss or a kernel panic
+// mid-write; that tradeoff is accepted here as local agent tooling.
+// MkdirAll is required here,
+// unlike a plain write to an already-populated directory: on
+// handleDaemonSubmitPop's dedup rollback path, the inbox/<node>/ directory
+// may have just been emptied and pruned by removeEmptyDirs as part of
+// archiving the very message being rolled back, so the destination
+// directory can genuinely be gone by the time this runs.
+func writeFileAtomic(path string, data []byte) error {
+	if err := writeFileAtomicOpsVar.mkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := writeFileAtomicOpsVar.writeFile(tmpPath, data, 0o600); err != nil {
+		return err
+	}
+	return writeFileAtomicOpsVar.rename(tmpPath, path)
+}
+
+// writeFileAtomicOps is the injectable-ops seam writeFileAtomic reads from
+// directly (via the package-level writeFileAtomicOpsVar, the same
+// swap-and-restore pattern this file already uses for
+// daemonPopArchiveVerify). It exists so tests can prove writeFileAtomic's
+// atomicity property itself -- that path is never left holding partial
+// content -- against the real production function, rather than only
+// exercising the happy path or a corrupted-byte path, neither of which
+// distinguishes this implementation from a plain, non-atomic os.WriteFile.
+//
+// This seam by itself does NOT prevent a call site from bypassing
+// writeFileAtomic entirely (e.g. calling os.WriteFile directly instead).
+// B1 (see TestHandleDaemonSubmitPop_RollbackCallSiteConsultsWriteFileAtomicOpsSeam)
+// closes that gap: helper-level tests call writeFileAtomic directly and
+// therefore cannot observe a call site that bypasses it entirely. (For
+// comparison, internal/store/mailbox_store.go's archiveFileOps uses the
+// opposite shape -- a parallel function taking an ops struct as a
+// parameter -- which does not close a call-site bypass either; neither
+// shape substitutes for a test that exercises the actual call site.)
+type writeFileAtomicOps struct {
+	mkdirAll  func(string, os.FileMode) error
+	writeFile func(string, []byte, os.FileMode) error
+	rename    func(string, string) error
+}
+
+var writeFileAtomicOpsVar = writeFileAtomicOps{
+	mkdirAll:  os.MkdirAll,
+	writeFile: os.WriteFile,
+	rename:    os.Rename,
+}
+
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
 	if request.RequestID == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop missing request_id")
@@ -334,6 +423,61 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	readPath, err := message.ArchiveInboxMessage(abs, msgs[0].Filename)
 	if err != nil {
 		return projection.DaemonSubmitResponse{}, err
+	}
+	// Producer-side readiness barrier: verify the just-archived file is
+	// actually readable, non-symlink, and byte-identical to the content
+	// already read into memory above, BEFORE this function ever constructs
+	// a response containing MarkdownPath. This is the ordering #755
+	// requires -- validate, then publish -- rather than publishing first
+	// and leaving the caller to discover a not-yet-visible file on its own.
+	// On failure this returns an error and no response is ever built or
+	// handed to a caller. Critically, this also ROLLS BACK the archive: on
+	// its own, handleDaemonSubmitPop only discovers messages via
+	// ScanInboxMessages on the inbox directory, and ArchiveInboxMessage has
+	// already moved the file OUT of inbox by this point. Without a
+	// rollback, a verification failure would leave this pop's content
+	// unrecoverable -- gone from inbox on either of ArchiveInboxMessage's
+	// branches (they leave read/ in different states; see below), with
+	// nothing scanning read/ for undelivered mail -- so a retry pop would
+	// simply never find it again: the message would silently and
+	// permanently leave the unread set, the same consequence class this
+	// whole fix exists to prevent.
+	//
+	// The rollback recreates abs by writing `data` -- the exact bytes
+	// already read from inbox before archiving -- rather than renaming
+	// readPath back. This is deliberate: ArchiveInboxMessage has two
+	// internal branches, a normal rename (inbox -> read/) and a dedup
+	// remove (when read/<filename> already existed, in which case only the
+	// inbox copy is deleted and read/<filename> is left as it was). On the
+	// dedup branch, readPath was NOT created by this call and does not
+	// necessarily hold this pop's content at all -- a mismatch there is
+	// exactly what would trigger a readiness failure in the first place.
+	// Renaming it into inbox in that case would both erase a legitimate
+	// pre-existing archive record and, if the two copies genuinely
+	// differed, replace the original inbox content with the wrong bytes.
+	// Writing back the known-good in-memory `data` is correct for both
+	// branches and never touches readPath, so a pre-existing archive record
+	// is preserved untouched either way.
+	//
+	// The write itself goes through writeFileAtomic (temp-file-then-rename,
+	// the same pattern writeDaemonSubmitJSON already uses elsewhere in this
+	// repo) rather than a direct os.WriteFile: on the dedup branch the
+	// inbox original has already been removed, so an interrupted write
+	// would otherwise leave the message existing nowhere in complete form.
+	// See writeFileAtomic's own doc comment for what this protects against
+	// and what it doesn't (process death, not power loss).
+	//
+	// This cross-pop retry loop is DELIBERATELY unbounded here: a persistently
+	// unreadable archive (corruption, a permissions problem, disk pressure)
+	// currently retries forever rather than ever giving up. That bound is
+	// #761's job (F-013, bounded dead-letter after repeated failures),
+	// tracked and reviewed on its own split-out PR -- this is not an
+	// oversight to "fix" by adding a retry cap here.
+	if verifyErr := daemonPopArchiveVerify(readPath, string(data)); verifyErr != nil {
+		if rollbackErr := writeFileAtomic(abs, data); rollbackErr != nil {
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s and rollback to inbox failed: %w (readiness error: %v)", readPath, rollbackErr, verifyErr)
+		}
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s, rolled back to inbox: %w", readPath, verifyErr)
 	}
 	fields := msgtrace.FromContent(msgs[0].Filename, filepath.Join("read", msgs[0].Filename), filepath.Base(sessionDir), string(data))
 	fields.DaemonSubmitRequestID = request.RequestID
