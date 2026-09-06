@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -310,6 +311,14 @@ func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) 
 	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
 	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll read dir: %v", err)
+	}
+	if err := os.WriteFile(readPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile read archive: %v", err)
+	}
 
 	var stdout bytes.Buffer
 	var gotRequest projection.DaemonSubmitRequest
@@ -332,7 +341,8 @@ func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) 
 			return projection.DaemonSubmitResponse{
 				Command:      request.Command,
 				Filename:     filename,
-				Content:      messageFixture("orchestrator", "worker", "daemon dependency payload"),
+				Content:      content,
+				MarkdownPath: readPath,
 				UnreadBefore: 1,
 			}, nil
 		},
@@ -344,11 +354,459 @@ func TestRunPopWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) 
 		t.Fatalf("daemon request = %#v, want pop for worker", gotRequest)
 	}
 	payload := decodePopMessageOutputForTest(t, stdout.String())
-	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
-		t.Fatalf("MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
+	if payload.MarkdownPath != readPath {
+		t.Fatalf("MarkdownPath = %q, want daemon read path", payload.MarkdownPath)
 	}
 	if payload.SubmitPath != projection.SubmitPathDaemon {
 		t.Fatalf("SubmitPath = %q, want %q (daemon-submit path)", payload.SubmitPath, projection.SubmitPathDaemon)
+	}
+}
+
+// TestRunPop_DaemonPopFailsWithoutFilenameOrMarkdownPath covers the case
+// where no fallback path can be constructed at all: both MarkdownPath and
+// Filename are absent, so validateDaemonPopArchive's filename check fires
+// before it ever reaches the markdown_path check. This asserts
+// "missing filename" -- not "missing archived markdown_path" -- since
+// Filename absent fails earlier; there is no longer a reachable path from
+// runPopWithContext into validateDaemonPopArchive's empty-markdown_path
+// branch specifically, because Filename present now always produces a
+// constructed fallback path (see
+// TestRunPop_DaemonPopFallsBackToConstructedPathWhenMarkdownPathAbsent for
+// that F-015 compatibility case). The empty-markdown_path branch itself is
+// covered directly by TestValidateDaemonPopArchiveRejectsUnsafePathTrust's
+// "empty markdown path" table case, which calls validateDaemonPopArchive
+// directly with a non-empty filename and an empty markdownPath.
+func TestRunPop_DaemonPopFailsWithoutFilenameOrMarkdownPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-submit-archive-required"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+
+	err := runPopWithContext(commandContext{
+		stdout: io.Discard,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			return projection.DaemonSubmitResponse{
+				Command:      request.Command,
+				Content:      messageFixture("orchestrator", "worker", "daemon dependency payload"),
+				UnreadBefore: 1,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err == nil || !strings.Contains(err.Error(), "missing filename") {
+		t.Fatalf("runPopWithContext error = %v, want missing filename", err)
+	}
+}
+
+// TestRunPop_DaemonPopFallsBackToConstructedPathWhenMarkdownPathAbsent is
+// the regression test for F-015: a daemon that predates markdown_path (the
+// normal shape of daemon/CLI version skew during an upgrade -- the daemon
+// is long-running while the CLI is invoked fresh per command, so this is
+// the expected case, not exotic) must not make every pop fail outright.
+// The CLI falls back to constructing the expected archive path from the
+// trusted sessionDir plus the response's own filename, then validates that
+// constructed path exactly as it would a daemon-supplied one. Here the
+// constructed path genuinely exists with matching content, so pop must
+// succeed.
+func TestRunPop_DaemonPopFallsBackToConstructedPathWhenMarkdownPathAbsent(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-submit-archive-fallback"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+	readDir := filepath.Join(sessionDir, "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%s) error = %v", readDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(readDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	err := runPopWithContext(commandContext{
+		stdout: &stdout,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			return projection.DaemonSubmitResponse{
+				Command:      request.Command,
+				Filename:     filename,
+				Content:      content,
+				UnreadBefore: 1,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err != nil {
+		t.Fatalf("runPopWithContext() error = %v, want success via constructed-path fallback", err)
+	}
+	if !strings.Contains(stdout.String(), filename) {
+		t.Fatalf("stdout = %q, want it to mention %q", stdout.String(), filename)
+	}
+}
+
+// TestRunPop_DaemonPopFailsFastWhenArchiveFileNotYetVisible is #755's
+// deterministic fault-injection repro. It targets a distinct scenario from
+// the two tests around it: TestRunPop_DaemonPopRequiresVisibleArchivePath
+// covers an empty MarkdownPath field, and
+// TestRunPop_DaemonPopRequiresReadableContentMatchingArchive covers a file
+// that exists but has the wrong bytes. Neither exercises the actual #755
+// race: the daemon believes its archive rename succeeded and reports a
+// well-formed, correctly-located MarkdownPath, but the file is not yet
+// visible to the pop caller's process at all (a plain stat/open failure,
+// not a content mismatch). This test injects exactly that state directly
+// (no sleep/retry/timing dependency, no reliance on the race actually
+// occurring) by returning a response whose MarkdownPath is the exact
+// expected <sessionDir>/read/<filename> location while deliberately never
+// creating that file, then asserts pop fails immediately with a clear
+// error rather than silently handing the caller a phantom path.
+//
+// Ruled out before landing on this test (see the accompanying commit
+// message and worker's progress reports for full evidence): the archive
+// rename (message.ArchiveInboxMessage) happens before the response is
+// constructed, the response write itself is already atomic
+// (write-to-temp-then-os.Rename in writeDaemonSubmitJSON), and the response
+// read (WaitDaemonSubmitResponse) polls the exact path with correct
+// not-exist handling — so the code paths that write and read the daemon
+// submit *response* were already race-free. This test's fault injection
+// instead represents the archived *message* file itself not yet being
+// durably visible, which is the scenario validateDaemonPopArchive's
+// os.Lstat check (added in this same commit) is responsible for catching.
+func TestRunPop_DaemonPopFailsFastWhenArchiveFileNotYetVisible(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-submit-archive-not-yet-visible"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	// The read directory itself exists (it is created once per session,
+	// long before any particular message is archived into it), but the
+	// specific archived file inside it does not: this is the fault being
+	// injected. The response below claims the file exists anyway, exactly
+	// as a daemon would if its own rename() had completed but the pop
+	// caller's view of the filesystem did not yet reflect it.
+	readDir := filepath.Join(sessionDir, "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%s) error = %v", readDir, err)
+	}
+	readPath := filepath.Join(readDir, filename)
+
+	err := runPopWithContext(commandContext{
+		stdout: io.Discard,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			return projection.DaemonSubmitResponse{
+				Command:      request.Command,
+				Filename:     filename,
+				Content:      messageFixture("orchestrator", "worker", "daemon dependency payload"),
+				MarkdownPath: readPath,
+				UnreadBefore: 1,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err == nil {
+		t.Fatal("runPopWithContext error = nil, want a fail-fast error when the archived file is not yet visible")
+	}
+	if !strings.Contains(err.Error(), "archived body unavailable") {
+		t.Fatalf("runPopWithContext error = %v, want archived body unavailable", err)
+	}
+}
+
+func TestRunPop_DaemonPopRequiresReadableContentMatchingArchive(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-pop-submit-archive-readable"
+	sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+	inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll read dir: %v", err)
+	}
+	if err := os.WriteFile(readPath, []byte("truncated"), 0o600); err != nil {
+		t.Fatalf("WriteFile read archive: %v", err)
+	}
+
+	err := runPopWithContext(commandContext{
+		stdout: io.Discard,
+		resolveInboxPath: func(args []string) (string, error) {
+			return inboxDir, nil
+		},
+		loadConfig: func(path string) (*config.Config, error) {
+			return config.DefaultConfig(), nil
+		},
+		contextOwnsSession: func(baseDir, resolvedContextID, sessionName string) bool {
+			return true
+		},
+		roundTripDaemonSubmit: func(gotSessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error) {
+			return projection.DaemonSubmitResponse{
+				Command:      request.Command,
+				Filename:     filename,
+				Content:      messageFixture("orchestrator", "worker", "daemon dependency payload"),
+				MarkdownPath: readPath,
+				UnreadBefore: 1,
+			}, nil
+		},
+	}, []string{"--context-id", contextID})
+	if err == nil || !strings.Contains(err.Error(), "archived body mismatch") {
+		t.Fatalf("runPopWithContext error = %v, want archived body mismatch", err)
+	}
+}
+
+func TestValidateDaemonPopArchiveRejectsUnsafePathTrust(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "active-session")
+	otherSessionDir := filepath.Join(tmpDir, "ctx", "other-session")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+	readPath := filepath.Join(sessionDir, "read", filename)
+	otherReadPath := filepath.Join(otherSessionDir, "read", filename)
+	outsidePath := filepath.Join(tmpDir, "outside", filename)
+	for _, path := range []string{readPath, otherReadPath, outsidePath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile(%s): %v", path, err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		filename     string
+		markdownPath string
+		want         string
+	}{
+		{
+			name:         "empty markdown path",
+			filename:     filename,
+			markdownPath: "",
+			want:         "missing archived markdown_path",
+		},
+		{
+			name:         "relative path",
+			filename:     filename,
+			markdownPath: filepath.Join("read", filename),
+			want:         "must be absolute",
+		},
+		{
+			name:         "outside session with matching bytes",
+			filename:     filename,
+			markdownPath: outsidePath,
+			want:         "does not match expected active-session path",
+		},
+		{
+			name:         "cross session with matching bytes",
+			filename:     filename,
+			markdownPath: otherReadPath,
+			want:         "does not match expected active-session path",
+		},
+		{
+			name:         "filename traversal",
+			filename:     filepath.Join("..", "worker", filename),
+			markdownPath: readPath,
+			want:         "filename must be a base name",
+		},
+		{
+			name:         "filename path mismatch",
+			filename:     "20260414-032801-from-orchestrator-to-worker.md",
+			markdownPath: readPath,
+			want:         "does not match expected active-session path",
+		},
+		{
+			name:         "noncanonical response path",
+			filename:     filename,
+			markdownPath: filepath.Join(sessionDir, "read") + string(filepath.Separator) + ".." + string(filepath.Separator) + "read" + string(filepath.Separator) + filename,
+			want:         "must be canonical",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDaemonPopArchive(sessionDir, projection.DaemonSubmitResponse{
+				Filename: tt.filename,
+				Content:  content,
+			}, tt.markdownPath)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validateDaemonPopArchive error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateDaemonPopArchiveRejectsSymlinkSubstitution(t *testing.T) {
+	t.Run("read directory symlink", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		sessionDir := filepath.Join(tmpDir, "ctx", "active-session")
+		targetReadDir := filepath.Join(tmpDir, "ctx", "other-session", "read")
+		filename := "20260414-032800-from-orchestrator-to-worker.md"
+		content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+		if err := os.MkdirAll(targetReadDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll target read dir: %v", err)
+		}
+		if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll session dir: %v", err)
+		}
+		if err := os.Symlink(targetReadDir, filepath.Join(sessionDir, "read")); err != nil {
+			t.Fatalf("Symlink read dir: %v", err)
+		}
+		markdownPath := filepath.Join(sessionDir, "read", filename)
+		if err := os.WriteFile(filepath.Join(targetReadDir, filename), []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile symlink target: %v", err)
+		}
+
+		err := validateDaemonPopArchive(sessionDir, projection.DaemonSubmitResponse{
+			Filename: filename,
+			Content:  content,
+		}, markdownPath)
+		if err == nil || !strings.Contains(err.Error(), "read directory is symlink") {
+			t.Fatalf("validateDaemonPopArchive error = %v, want read directory is symlink", err)
+		}
+	})
+
+	t.Run("archive file symlink with matching bytes", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		sessionDir := filepath.Join(tmpDir, "ctx", "active-session")
+		filename := "20260414-032800-from-orchestrator-to-worker.md"
+		content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+		readDir := filepath.Join(sessionDir, "read")
+		if err := os.MkdirAll(readDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll read dir: %v", err)
+		}
+		targetPath := filepath.Join(tmpDir, "outside", filename)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+			t.Fatalf("MkdirAll outside dir: %v", err)
+		}
+		if err := os.WriteFile(targetPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile outside target: %v", err)
+		}
+		markdownPath := filepath.Join(readDir, filename)
+		if err := os.Symlink(targetPath, markdownPath); err != nil {
+			t.Fatalf("Symlink archive file: %v", err)
+		}
+
+		err := validateDaemonPopArchive(sessionDir, projection.DaemonSubmitResponse{
+			Filename: filename,
+			Content:  content,
+		}, markdownPath)
+		if err == nil || !strings.Contains(err.Error(), "archived body is symlink") {
+			t.Fatalf("validateDaemonPopArchive error = %v, want archived body is symlink", err)
+		}
+	})
+}
+
+// TestDaemonPopArchiveCanonicalTargetsMatchRejectsLeafSymlinkWithoutLstatGuard
+// pins the coupling guardian flagged as F-009. daemonPopArchiveCanonicalTargetsMatch
+// resolves markdownPath fully but the expected side only resolves readDir's
+// ancestors, appending filename literally without following it; that
+// asymmetry is what rejects a leaf that is itself a symlink to different
+// content. This test calls the helper directly, WITHOUT
+// validateDaemonPopArchive's separate os.Lstat(expectedPath) guard, on a
+// leaf that IS a symlink pointing outside the session, to confirm the
+// asymmetry itself (not the Lstat guard) is what rejects the substitution.
+// It also pins against the regression risk this asymmetry invites: if a
+// future refactor "simplifies" the expected side to also fully resolve
+// (e.g. via EvalSymlinks on the whole expected path instead of appending
+// filename to the resolved readDir), both sides would agree by construction
+// and this test would start failing.
+func TestDaemonPopArchiveCanonicalTargetsMatchRejectsLeafSymlinkWithoutLstatGuard(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "active-session")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+	readDir := filepath.Join(sessionDir, "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll read dir: %v", err)
+	}
+	targetPath := filepath.Join(tmpDir, "outside", filename)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll outside dir: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile outside target: %v", err)
+	}
+	markdownPath := filepath.Join(readDir, filename)
+	if err := os.Symlink(targetPath, markdownPath); err != nil {
+		t.Fatalf("Symlink archive file: %v", err)
+	}
+
+	// Deliberately skip any os.Lstat guard here: this calls the helper on
+	// its own, exactly as it would behave if validateDaemonPopArchive's
+	// Lstat(expectedPath) check were ever removed or reordered.
+	matches, canonicalPath, canonicalExpectedPath, err := daemonPopArchiveCanonicalTargetsMatch(readDir, filename, markdownPath)
+	if err != nil {
+		t.Fatalf("daemonPopArchiveCanonicalTargetsMatch error = %v", err)
+	}
+	if matches {
+		t.Fatalf("daemonPopArchiveCanonicalTargetsMatch matched a substituted leaf symlink: canonicalPath=%s canonicalExpectedPath=%s", canonicalPath, canonicalExpectedPath)
+	}
+}
+
+// TestDaemonPopArchiveCanonicalTargetsMatchAcceptsReadDirSymlinkWithoutLstatGuard
+// is the mirror image of the leaf-substitution test above (guardian's
+// F-011): it pins that os.Lstat(readDir) in validateDaemonPopArchive is
+// SECURITY-LOAD-BEARING, unlike os.Lstat(expectedPath), which is
+// defense-in-depth only (the leaf case is independently caught by
+// daemonPopArchiveCanonicalTargetsMatch's asymmetric resolution; see the
+// test above). When readDir itself is a symlink to an attacker-controlled
+// location, the earlier textual check (markdownPath == expectedPath, both
+// built from the literal in-session "read" path segment) still passes, and
+// then BOTH sides of the helper's comparison resolve through that same
+// readDir symlink to the SAME attacker location -- so they agree, and the
+// helper alone WOULD wrongly accept the substitution. This test asserts
+// exactly that (matches == true) to prove os.Lstat(readDir) is not optional:
+// removing it would be a real, exploitable bypass, not just an asymmetry
+// quirk like the leaf case.
+func TestDaemonPopArchiveCanonicalTargetsMatchAcceptsReadDirSymlinkWithoutLstatGuard(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "active-session")
+	targetReadDir := filepath.Join(tmpDir, "ctx", "other-session", "read")
+	filename := "20260414-032800-from-orchestrator-to-worker.md"
+	content := messageFixture("orchestrator", "worker", "daemon dependency payload")
+	if err := os.MkdirAll(targetReadDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll target read dir: %v", err)
+	}
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll session dir: %v", err)
+	}
+	readDir := filepath.Join(sessionDir, "read")
+	if err := os.Symlink(targetReadDir, readDir); err != nil {
+		t.Fatalf("Symlink read dir: %v", err)
+	}
+	markdownPath := filepath.Join(readDir, filename)
+	if err := os.WriteFile(filepath.Join(targetReadDir, filename), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile symlink target: %v", err)
+	}
+
+	// Deliberately skip any os.Lstat guard here: this calls the helper on
+	// its own, exactly as it would behave if validateDaemonPopArchive's
+	// Lstat(readDir) check were ever removed or reordered.
+	matches, canonicalPath, canonicalExpectedPath, err := daemonPopArchiveCanonicalTargetsMatch(readDir, filename, markdownPath)
+	if err != nil {
+		t.Fatalf("daemonPopArchiveCanonicalTargetsMatch error = %v", err)
+	}
+	if !matches {
+		t.Fatalf("daemonPopArchiveCanonicalTargetsMatch unexpectedly rejected a readDir-symlink substitution without the Lstat(readDir) guard: canonicalPath=%s canonicalExpectedPath=%s (want them to match, proving the guard is load-bearing)", canonicalPath, canonicalExpectedPath)
 	}
 }
 
@@ -921,12 +1379,23 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	go func() {
 		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
 		requestSeen <- request
+		responseContent := messageFixture("orchestrator", "worker", "daemon submit pop payload")
+		readPath := filepath.Join(sessionDir, "read", filename)
+		if err := os.MkdirAll(filepath.Dir(readPath), 0o700); err != nil {
+			t.Errorf("MkdirAll read dir: %v", err)
+			return
+		}
+		if err := os.WriteFile(readPath, []byte(responseContent), 0o600); err != nil {
+			t.Errorf("WriteFile read archive: %v", err)
+			return
+		}
 		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
 			RequestID:    request.RequestID,
 			Command:      request.Command,
 			HandledAt:    time.Now().UTC().Format(time.RFC3339),
 			Filename:     filename,
-			Content:      messageFixture("orchestrator", "worker", "daemon submit pop payload"),
+			Content:      responseContent,
+			MarkdownPath: readPath,
 			UnreadBefore: 1,
 		}); err != nil {
 			t.Errorf("WriteDaemonSubmitResponse: %v", err)
@@ -952,7 +1421,7 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 	payload := decodePopMessageOutputForTest(t, stdout)
 	assertPopPayloadOmitsInlineMarkdown(t, stdout)
 	if payload.MarkdownPath != filepath.Join(sessionDir, "read", filename) {
-		t.Fatalf("payload.MarkdownPath = %q, want inferred daemon read path", payload.MarkdownPath)
+		t.Fatalf("payload.MarkdownPath = %q, want daemon read path", payload.MarkdownPath)
 	}
 	if strings.Contains(stdout, "## Local Runtime Context") {
 		t.Fatalf("stdout unexpectedly rendered runtime context block:\n%s", stdout)
