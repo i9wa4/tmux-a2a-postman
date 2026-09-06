@@ -24,8 +24,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
@@ -37,6 +39,14 @@ const (
 	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
 	defaultVerdictGraceSeconds                    = 3600
 	defaultVerdictDebtCap                         = 3
+
+	// popVerificationFailureDeadLetterThreshold is F-013's bounded-retry cap:
+	// once a message has accumulated this many pop archive-verification
+	// failures, handleDaemonSubmitPop gives up rolling it back to inbox for
+	// another attempt and dead-letters it instead, so a persistently
+	// unreadable archive (corruption, a permissions problem, disk pressure)
+	// cannot loop forever.
+	popVerificationFailureDeadLetterThreshold = 3
 )
 
 // daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
@@ -467,17 +477,12 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	// See writeFileAtomic's own doc comment for what this protects against
 	// and what it doesn't (process death, not power loss).
 	//
-	// This cross-pop retry loop is DELIBERATELY unbounded here: a persistently
-	// unreadable archive (corruption, a permissions problem, disk pressure)
-	// currently retries forever rather than ever giving up. That bound is
-	// #761's job (F-013, bounded dead-letter after repeated failures),
-	// tracked and reviewed on its own split-out PR -- this is not an
-	// oversight to "fix" by adding a retry cap here.
+	// See handleDaemonSubmitPopVerificationFailure for what happens next:
+	// either this same rollback so a retry can re-discover the message, or
+	// (after enough repeated failures) a bounded dead-letter -- #761's
+	// bound on what was, before this branch, an unbounded retry.
 	if verifyErr := daemonPopArchiveVerify(readPath, string(data)); verifyErr != nil {
-		if rollbackErr := writeFileAtomic(abs, data); rollbackErr != nil {
-			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s and rollback to inbox failed: %w (readiness error: %v)", readPath, rollbackErr, verifyErr)
-		}
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s, rolled back to inbox: %w", readPath, verifyErr)
+		return handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, msgs[0].Filename, data, verifyErr)
 	}
 	fields := msgtrace.FromContent(msgs[0].Filename, filepath.Join("read", msgs[0].Filename), filepath.Base(sessionDir), string(data))
 	fields.DaemonSubmitRequestID = request.RequestID
@@ -494,6 +499,251 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		MarkdownPath: readPath,
 		UnreadBefore: len(msgs),
 	}, nil
+}
+
+// handleDaemonSubmitPopVerificationFailure decides what happens after
+// daemonPopArchiveVerify rejects a just-archived message: filename is the
+// popped message's bare filename (the counting key -- see
+// projection.CountPopVerificationFailures for why filename alone, not
+// filename+node), abs is the inbox path ArchiveInboxMessage already moved
+// the message out of, readPath is where it now lives, and data is the exact
+// bytes already read from inbox before archiving (the only known-good copy
+// once this function is called, since ArchiveInboxMessage has already
+// mutated the filesystem on either of its two branches).
+//
+// It first appends a MailboxProjectionPopVerificationFailedEventType event
+// and projects the cumulative failure count for filename (#755 F-013): on
+// its own, handleDaemonSubmitPop only discovers messages via
+// ScanInboxMessages on the inbox directory, and nothing scans read/ for
+// undelivered mail, so a verification failure that did nothing else would
+// leave the message permanently unreachable -- gone from inbox, unusably
+// archived in read/. Below popVerificationFailureDeadLetterThreshold
+// failures it rolls the message back to inbox so a retry pop can
+// rediscover and re-verify it. At or above the threshold it gives up
+// retrying and dead-letters the message instead, so a persistently
+// unreadable archive (corruption, a permissions problem, disk pressure)
+// cannot loop forever.
+//
+// If CountPopVerificationFailures itself fails (a damaged journal record,
+// a read error), the count is treated as unknown rather than fabricated as
+// 0: journal.Replay is all-or-nothing, so one damaged record would
+// otherwise permanently pin the count at 0 for every message in the
+// session, silently switching the bound off exactly during the
+// corruption/permissions/disk-pressure scenarios this feature exists to
+// handle. An unknown count always takes the rollback path (fail-open --
+// failing closed here would destroy a healthy message the daemon merely
+// can't read history for) and is reported as "unknown" rather than a
+// fabricated "0/3" in the returned error.
+//
+// The chosen primary recovery (rollback below threshold, dead-letter at/
+// above it) falls back to the OTHER recovery if its own write fails, so a
+// local write failure on one arm doesn't discard the only known-good copy
+// of the message when the other arm might still succeed. Both writes
+// reconstruct the message from `data` rather than moving or renaming
+// readPath: ArchiveInboxMessage has two internal branches, a normal rename
+// (inbox -> read/) and a dedup remove (when read/<filename> already
+// existed, in which case only the inbox copy is deleted and
+// read/<filename> is left as it was); on the dedup branch, readPath was
+// NOT created by this call and does not necessarily hold this pop's
+// content at all, so moving or renaming it would risk erasing a legitimate
+// pre-existing archive record or propagating the wrong bytes. Using the
+// known-good in-memory `data` is correct for both branches and never
+// touches readPath, so a pre-existing archive record is preserved
+// untouched either way.
+func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filename string, data []byte, verifyErr error) (projection.DaemonSubmitResponse, error) {
+	sessionName := filepath.Base(sessionDir)
+	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionPopVerificationFailedEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID:     filename,
+		Path:          filepath.Join("read", filename),
+		FailureReason: verifyErr.Error(),
+	})
+
+	failureCount, countErr := projection.CountPopVerificationFailures(sessionDir, filename)
+	countKnown := countErr == nil
+	if !countKnown {
+		log.Printf("postman: WARNING: component=daemon-submit event=pop_verification_failure_count_unknown session=%s file=%s err=%v\n", sessionName, filename, countErr)
+	}
+	exhausted := countKnown && failureCount >= popVerificationFailureDeadLetterThreshold
+
+	rollback := func() error {
+		// See writeFileAtomic's own doc comment for what its atomicity
+		// protects against and what it doesn't (process death, not power
+		// loss).
+		return writeFileAtomic(abs, data)
+	}
+	deadLetter := func() error {
+		// B-3: this description must be honest on BOTH paths that can reach
+		// dead-lettering -- the normal exhausted-threshold path (where
+		// failureCount genuinely reached the threshold) and the fallback
+		// path (rollback itself failed to write, so dead-letter is
+		// attempted regardless of failureCount -- which can be as low as 1
+		// on the very first failure). A single hardcoded "after N
+		// verification attempts" using the threshold constant would be
+		// false on the fallback path.
+		var attemptsDescription string
+		switch {
+		case exhausted:
+			attemptsDescription = fmt.Sprintf("after %d verification attempts (threshold %d)", failureCount, popVerificationFailureDeadLetterThreshold)
+		case countKnown:
+			attemptsDescription = fmt.Sprintf("after the rollback recovery attempt itself failed (this message had failed verification %d time(s), below the %d-failure threshold)", failureCount, popVerificationFailureDeadLetterThreshold)
+		default:
+			attemptsDescription = "after the rollback recovery attempt itself failed (the prior verification-failure count is unknown)"
+		}
+		return handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename, data, attemptsDescription)
+	}
+
+	primary, fallback, primaryLabel, fallbackLabel := rollback, deadLetter, "rollback to inbox", "dead-letter"
+	if exhausted {
+		primary, fallback, primaryLabel, fallbackLabel = deadLetter, rollback, "dead-letter", "rollback to inbox"
+	}
+
+	if primaryErr := primary(); primaryErr != nil {
+		log.Printf("postman: WARNING: component=daemon-submit event=pop_recovery_primary_failed primary=%q session=%s file=%s err=%v\n", primaryLabel, sessionName, filename, primaryErr)
+		if fallbackErr := fallback(); fallbackErr != nil {
+			// Wraps all three errors (primary, fallback, verifyErr) via %w so
+			// errors.Is finds any of them -- a single %v would hide the
+			// injected/underlying errors from callers and tests that need to
+			// confirm which specific failure surfaced.
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: both %s and %s failed, message may be lost: %w; %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, fallbackErr, verifyErr)
+		}
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: %s failed, fell back to %s: %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, verifyErr)
+	}
+
+	if exhausted {
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready after %d verification failures, moved to dead-letter: %w", failureCount, verifyErr)
+	}
+	countDesc := "unknown"
+	if countKnown {
+		countDesc = fmt.Sprintf("%d/%d", failureCount, popVerificationFailureDeadLetterThreshold)
+	}
+	return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s, rolled back to inbox (failure %s): %w", readPath, countDesc, verifyErr)
+}
+
+// handleDaemonSubmitPopDeadLetter writes the message's known-good in-memory
+// bytes to dead-letter/ (never MoveToDeadLetter: there is no single live
+// file to move -- abs may already be gone, and readPath is the very file
+// that just failed verification), records the same
+// MailboxProjectionDeadLetteredEventType the post-to-inbox delivery
+// pipeline in internal/message uses for every other dead-letter reason so
+// this shows up identically to an operator, and sends an accurate
+// operator-visible notification (#755 F-013).
+func handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename string, data []byte, attemptsDescription string) error {
+	dst := store.PlanDeadLetterMessage(sessionDir, filename, message.DlSuffixPopVerificationExhausted).DestinationPath
+	if err := writeDeadLetterFileAtomic(dst, data); err != nil {
+		return err
+	}
+	payload := mailboxProjectionPayloadForFile(filename, filepath.Join("read", filename), string(data))
+	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID:     filename,
+		From:          payload.From,
+		To:            payload.To,
+		ThreadID:      payload.ThreadID,
+		Path:          filepath.Join("dead-letter", filepath.Base(dst)),
+		SourcePath:    filepath.Join("read", filename),
+		FailureReason: message.DeadLetterReasonPopVerificationExhausted,
+		Content:       string(data),
+	})
+	// payload.From falls back to an unvalidated envelope value when
+	// filename parsing fails; validating before use here is required
+	// because notifyPopVerificationDeadLetter joins it into a filesystem
+	// path and MkdirAlls it -- every other dead-letter notification call
+	// site in internal/message only ever passes a value that already came
+	// from a successful parse, so this is the first path that could
+	// otherwise carry body-controlled data into that sink unchecked.
+	if err := nodeaddr.Validate(payload.From); err != nil {
+		if payload.From != "" {
+			log.Printf("postman: WARNING: component=daemon-submit event=dead_letter_notify_skipped reason=invalid_sender sender=%q err=%v\n", payload.From, err)
+		}
+		return nil
+	}
+	var contextID string
+	if metadata, err := message.ParseEnvelopeMetadata(string(data)); err == nil {
+		contextID = metadata.ContextID
+	}
+	notifyPopVerificationDeadLetterFn(sessionDir, contextID, payload.From, filename, filepath.Base(dst), attemptsDescription)
+	return nil
+}
+
+// writeDeadLetterFileAtomic first MkdirAlls dst's parent directory, THEN
+// validates dst via store.ValidateDeadLetterTarget (rejecting a symlinked
+// dead-letter directory or target), THEN writes through writeFileAtomic
+// (temp-file-then-rename) -- rather than store.WriteDeadLetterFile's plain
+// os.WriteFile with no MkdirAll. This order is load-bearing in the opposite
+// direction from what it might look like: ValidateDeadLetterTarget lstats
+// the parent directory and errors on ENOENT if it doesn't exist yet, so
+// MkdirAll must run first, or every first-ever dead-letter write in a fresh
+// session would fail validation before it had a chance to succeed. This
+// matters specifically here because dead-lettering is the LAST chance for
+// this message -- unlike the rollback path, which is re-poppable if it
+// fails, a non-atomic or ENOENT-prone dead-letter write has no further
+// recovery path of its own (handleDaemonSubmitPopVerificationFailure's
+// fallback to rollback exists precisely to cover that case, but the write
+// itself should still be as safe as the rollback write it may fall back
+// to).
+func writeDeadLetterFileAtomic(dst string, data []byte) error {
+	if err := writeFileAtomicOpsVar.mkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return fmt.Errorf("creating dead-letter directory: %w", err)
+	}
+	if err := store.ValidateDeadLetterTarget(dst); err != nil {
+		return err
+	}
+	return writeFileAtomic(dst, data)
+}
+
+// notifyPopVerificationDeadLetter writes an operator-visible notification
+// into senderNode's inbox once nodeaddr.Validate(senderNode) has already
+// succeeded (checked by the only caller, handleDaemonSubmitPopDeadLetter).
+// Deliberately NOT internal/message's shared sendDeadLetterNotification:
+// that function's generic text ("was not delivered ... send a corrected
+// message") is accurate for routing/parse/session-disabled failures, but
+// actively misleading here -- this message WAS delivered and archived;
+// what failed is reading it back afterward, and resending fixes neither
+// corruption nor a permissions/disk-pressure problem on the receiving
+// session's own storage. contextID is read from the archived message's own
+// frontmatter (via message.ParseEnvelopeMetadata) since handleDaemonSubmitPop
+// has no contextID of its own to thread through.
+// notifyPopVerificationDeadLetterFn is a package-level indirection (the same
+// swap-and-restore pattern this file already uses for daemonPopArchiveVerify
+// and writeFileAtomicOpsVar) so tests can directly observe whether the
+// MAJ-3 sender-validation gate in handleDaemonSubmitPopDeadLetter actually
+// suppressed this call, rather than inferring it from filesystem side
+// effects -- filepath.Join cleans ".." segments internally, so a crafted
+// traversal sender does not land at a predictable, test-assertable path
+// under the session directory; it can escape arbitrarily far up the real
+// filesystem, which a filesystem-side-effect assertion cannot reliably
+// pin down across environments.
+var notifyPopVerificationDeadLetterFn = notifyPopVerificationDeadLetter
+
+func notifyPopVerificationDeadLetter(sessionDir, contextID, senderNode, originalFilename, deadLetterBasename, attemptsDescription string) {
+	senderSimpleName := nodeaddr.Simple(senderNode)
+	senderInbox := filepath.Join(sessionDir, "inbox", senderSimpleName)
+	if err := os.MkdirAll(senderInbox, 0o700); err != nil {
+		log.Printf("postman: WARNING: failed to create dead-letter notification inbox for %s: %v\n", senderNode, err)
+		return
+	}
+	now := time.Now()
+	notifFilename := fmt.Sprintf("%s-from-postman-to-%s.md", now.Format("20060102-150405"), senderSimpleName)
+	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterBasename)
+	// B-3: attemptsDescription is supplied by the caller rather than
+	// hardcoded here, because dead-lettering is reachable via two paths
+	// with very different attempt counts -- the normal exhausted-threshold
+	// path and the rollback-write-failure fallback, which can dead-letter a
+	// message after just its first failure. A single hardcoded "after N
+	// verification attempts" using the threshold constant would be false on
+	// the fallback path.
+	content := fmt.Sprintf(
+		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was delivered and archived, but could not be read back reliably %s, so it has been moved to dead-letter/ rather than retried indefinitely.\n\nThis is a storage or environment problem on the RECEIVING session (corruption, a permissions issue, or disk pressure), not a routing or delivery failure -- resending will not fix it.\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above and the daemon logs around this timestamp on the receiving session. Once the underlying storage issue is resolved, resend only if the content is still needed.\n",
+		contextID,
+		senderSimpleName,
+		now.Format(time.RFC3339),
+		originalFilename,
+		attemptsDescription,
+		deadLetterPath,
+	)
+	notifPath := filepath.Join(senderInbox, notifFilename)
+	if err := os.WriteFile(notifPath, []byte(content), 0o600); err != nil {
+		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, err)
+	}
 }
 
 func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
