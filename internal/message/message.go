@@ -35,6 +35,16 @@ const (
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
 	deadLetterReasonForeignSession           = "foreign session"
 	deadLetterReasonMissingEvidence          = "missing-evidence"
+
+	// DeadLetterReasonPopVerificationExhausted is exported (unlike its
+	// siblings above): internal/daemon's handleDaemonSubmitPop applies it
+	// directly via store.PlanDeadLetterMessage / a dedicated atomic write
+	// helper (#755 F-013). That failure is detected at pop time on the
+	// recipient's own already-delivered inbox, not during the post-to-inbox
+	// delivery pipeline planDeliveryPolicy models, so planDeliveryPolicy
+	// itself cannot produce it -- only this naming convention is shared
+	// with it.
+	DeadLetterReasonPopVerificationExhausted = "pop verification failed repeatedly"
 )
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
@@ -50,6 +60,10 @@ const (
 	dlSuffixForeignSession   = "-dl-foreign-session"
 	dlSuffixForgedSender     = "-dl-forged-sender"
 	dlSuffixMissingEvidence  = "-dl-missing-evidence"
+
+	// DlSuffixPopVerificationExhausted is exported for the same reason as
+	// DeadLetterReasonPopVerificationExhausted above (#755 F-013).
+	DlSuffixPopVerificationExhausted = "-dl-pop-verification-exhausted"
 )
 
 // inboxQueueCap is the maximum number of messages allowed in a recipient inbox
