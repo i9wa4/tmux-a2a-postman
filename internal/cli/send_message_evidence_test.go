@@ -193,26 +193,29 @@ role = "orchestrator"
 			if err := manager.Bootstrap(sessionDir, "test-session", time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC)); err != nil {
 				t.Fatalf("journal bootstrap failed: %v", err)
 			}
+			var deliveryNotifications int
+			restoreNotificationObserver := messagedelivery.SetDeliveryNotificationObserverForTest(func(messagedelivery.DeliveryNotificationObservation) {
+				deliveryNotifications++
+			})
+			t.Cleanup(restoreNotificationObserver)
 
 			deliverDone := make(chan error, 1)
 			go func() {
-				requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
-				senderBody, ok := envelope.SenderBodyFromContent(request.Content)
+				postDir := filepath.Join(sessionDir, "post")
+				filename := awaitMarkdownFile(t, postDir, time.Second)
+				postPath := filepath.Join(postDir, filename)
+				content, err := os.ReadFile(postPath)
+				if err != nil {
+					deliverDone <- fmt.Errorf("ReadFile postPath: %w", err)
+					return
+				}
+				senderBody, ok := envelope.SenderBodyFromContent(string(content))
 				if !ok {
-					deliverDone <- fmt.Errorf("SenderBodyFromContent(request.Content) ok = false; content:\n%s", request.Content)
+					deliverDone <- fmt.Errorf("SenderBodyFromContent(post content) ok = false; content:\n%s", content)
 					return
 				}
 				if !strings.HasPrefix(senderBody, tc.body) {
-					deliverDone <- fmt.Errorf("SenderBodyFromContent(request.Content) = %q, want prefix %q", senderBody, tc.body)
-					return
-				}
-				postPath := filepath.Join(sessionDir, "post", request.Filename)
-				if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-					deliverDone <- fmt.Errorf("WriteFile postPath: %w", err)
-					return
-				}
-				if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-					deliverDone <- fmt.Errorf("Remove requestPath: %w", err)
+					deliverDone <- fmt.Errorf("SenderBodyFromContent(post content) = %q, want prefix %q", senderBody, tc.body)
 					return
 				}
 
@@ -232,15 +235,6 @@ role = "orchestrator"
 				}
 				if err := messagedelivery.DeliverMessage(postPath, "ctx-supported-evidence", nodes, adjacency, deliveryCfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
 					deliverDone <- fmt.Errorf("DeliverMessage: %w", err)
-					return
-				}
-				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-					RequestID: request.RequestID,
-					Command:   request.Command,
-					HandledAt: time.Now().UTC().Format(time.RFC3339),
-					Filename:  request.Filename,
-				}); err != nil {
-					deliverDone <- fmt.Errorf("WriteDaemonSubmitResponse: %w", err)
 					return
 				}
 				deliverDone <- nil
@@ -264,30 +258,54 @@ role = "orchestrator"
 				)
 			}
 
-			stdout, stderr, err := captureCommandOutput(t, func() error {
-				return runSendHeredocWithBody(t, tc.body, args)
-			})
-			if deliverErr := <-deliverDone; deliverErr != nil {
-				t.Fatal(deliverErr)
+			var stdout strings.Builder
+			ctx := defaultCommandContext()
+			ctx.stdin = strings.NewReader(tc.body)
+			ctx.stdout = &stdout
+			ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+			ctx.roundTripDaemonSubmit = func(gotSessionDir string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+				if gotSessionDir != sessionDir {
+					t.Fatalf("roundTripDaemonSubmit sessionDir = %q, want %q", gotSessionDir, sessionDir)
+				}
+				if request.Command != projection.DaemonSubmitValidateSend {
+					t.Fatalf("roundTripDaemonSubmit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+				}
+				return projection.DaemonSubmitResponse{Command: request.Command, Filename: request.Filename}, nil
 			}
+			_, stderr, err := captureCommandOutput(t, func() error {
+				runErr := runSendHeredocWithContext(ctx, args)
+				if deliverErr := <-deliverDone; deliverErr != nil {
+					t.Fatal(deliverErr)
+				}
+				return runErr
+			})
 			if tc.wantDeadLetter {
+				if deliveryNotifications != 0 {
+					t.Fatalf("delivery notifications = %d, want 0 for rejected message", deliveryNotifications)
+				}
 				if err == nil {
 					t.Fatal("RunSendHeredoc() error = nil, want missing-evidence dead letter")
 				}
 				if !strings.Contains(err.Error(), "missing-evidence") {
 					t.Fatalf("RunSendHeredoc() error = %v, want missing-evidence", err)
 				}
-				if stdout != "" {
-					t.Fatalf("stdout = %q, want empty on dead letter", stdout)
+				if stdout.String() != "" {
+					t.Fatalf("stdout = %q, want empty on dead letter", stdout.String())
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("RunSendHeredoc: %v\nstderr=%s", err, stderr)
 			}
-			payload := decodeSendOutputForTest(t, stdout)
+			payload := decodeSendOutputForTest(t, stdout.String())
 			if payload.Status != string(sendStatusProcessed) {
 				t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+			}
+			if payload.Notify != "" {
+				t.Fatalf("payload.Notify = %q, want empty because daemon delivery owns the recipient hint", payload.Notify)
+			}
+			if deliveryNotifications != 1 {
+				t.Fatalf("delivery notifications = %d, want exactly 1", deliveryNotifications)
 			}
 			if _, statErr := os.Stat(filepath.Join(sessionDir, "inbox", "orchestrator", payload.Sent)); statErr != nil {
 				t.Fatalf("Stat delivered inbox file: %v", statErr)
