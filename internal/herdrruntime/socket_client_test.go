@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	herdr082SchemaProtocol = "20"
-	herdr082SchemaVersion  = 1
+	herdr082SchemaProtocol = supportedHerdrSocketProtocol
+	herdr082SchemaVersion  = supportedHerdrSocketSchemaVersion
 )
 
 var herdr082SchemaEnvelope = multiplexer.HerdrResponseEnvelope{
@@ -66,6 +66,8 @@ func TestSocketClientRejectsUnsupportedCompatibilityEvidence(t *testing.T) {
 		{name: "missing schema version", response: herdr082PongFixture, schema: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "20"}},
 		{name: "missing schema protocol", response: herdr082PongFixture, schema: multiplexer.HerdrResponseEnvelope{SchemaVersion: 1}},
 		{name: "schema protocol mismatch", response: herdr082PongFixture, schema: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "19", SchemaVersion: 1}},
+		{name: "same protocol unsupported schema version", response: herdr082PongFixture, schema: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "20", SchemaVersion: 2}},
+		{name: "unsupported pong protocol with matching schema", response: `{"id":"postman:1","result":{"type":"pong","version":"0.8.2","protocol":21}}` + "\n", schema: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "21", SchemaVersion: 1}},
 		{name: "pong protocol not numeric", response: `{"id":"postman:1","result":{"type":"pong","version":"0.8.2","protocol":"20"}}` + "\n", schema: herdr082SchemaEnvelope},
 	}
 	for _, tt := range tests {
@@ -128,6 +130,12 @@ func TestSocketClientSessionSnapshotUsesHerdrLineProtocol(t *testing.T) {
 	}
 	if snapshot.Panes[0].ID != "pane-1" || snapshot.Panes[0].TerminalID != "terminal-1" {
 		t.Fatalf("pane = %#v, want pane_id and terminal_id from Herdr snapshot", snapshot.Panes[0])
+	}
+	if snapshot.Workspaces[0].Metadata["postman.session"] != "work" {
+		t.Fatalf("workspace metadata = %#v, want postman.session token preserved", snapshot.Workspaces[0].Metadata)
+	}
+	if snapshot.Panes[0].Metadata["postman.node"] != "worker" {
+		t.Fatalf("pane metadata = %#v, want postman.node token preserved", snapshot.Panes[0].Metadata)
 	}
 	if snapshot.Envelope != herdr082SchemaEnvelope {
 		t.Fatalf("envelope = %#v, want negotiated compatibility envelope", snapshot.Envelope)
@@ -306,19 +314,29 @@ func TestSocketClientHandlesStringErrorResponses(t *testing.T) {
 	}
 }
 
-func TestSocketClientReturnsCompatibilityForBackendGateToReject(t *testing.T) {
+func TestSocketClientRejectsUnsupportedSameProtocolSchemaBeforeBackendGate(t *testing.T) {
 	socketPath := testSocketPath(t)
-	serveHerdrSocketSequence(t, socketPath, `{"id":"postman:1","result":{"type":"pong","version":"0.8.2","protocol":19}}`+"\n")
+	serveHerdrSocketSequence(t, socketPath, herdr082PongFixture)
 	client := &socketClient{
 		socketPath: socketPath,
 		schema: func(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
-			return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "19", SchemaVersion: 2}, nil
+			return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "20", SchemaVersion: 2}, nil
 		},
 	}
-	envelope, err := client.Ping(context.Background())
-	if err != nil {
-		t.Fatalf("Ping() error = %v", err)
+	if _, err := client.Ping(context.Background()); err == nil {
+		t.Fatal("Ping() error = nil, want unsupported same-protocol schema rejected before backend gate")
 	}
+}
+
+func TestSocketClientSnapshotTokensPublishThroughDiscovery(t *testing.T) {
+	socketPath := testSocketPath(t)
+	serveHerdrSocketSequence(t, socketPath,
+		herdr082PongFixture,
+		`{"id":"postman:2","result":{"type":"session_snapshot","snapshot":`+herdr082SnapshotFixture+`}}`+"\n",
+		herdr082PongFixtureWithID("postman:3"),
+		`{"id":"postman:4","result":{"type":"pane_process_info","process_info":{"pane_id":"pane-1","foreground_processes":[{"pid":123,"name":"codex"}]}}}`+"\n",
+	)
+	client := testSocketClient(socketPath)
 	policy := multiplexer.HerdrGatePolicy{
 		ReadEnabled:             true,
 		ReadScope:               multiplexer.HerdrReadScopeDiscovery,
@@ -330,9 +348,118 @@ func TestSocketClientReturnsCompatibilityForBackendGateToReject(t *testing.T) {
 		InputSanitizerReady:     true,
 		ComplianceDecision:      multiplexer.HerdrComplianceDecisionRecorded,
 	}
-	runtime := multiplexer.HerdrRuntimeIdentity{SocketPath: "/tmp/herdr.sock", SessionName: "work", WorkspaceID: "workspace-1"}
-	if err := multiplexer.ValidateHerdrReadGate(policy, runtime, envelope); err == nil {
-		t.Fatal("ValidateHerdrReadGate() error = nil, want unsupported compatibility rejection")
+	backend := multiplexer.HerdrBackend{
+		Config: multiplexer.HerdrReadConfig{
+			Enabled: true,
+			Runtime: multiplexer.HerdrRuntimeIdentity{
+				SocketPath:  "/tmp/herdr.sock",
+				SessionName: "work",
+				WorkspaceID: "workspace-1",
+			},
+			Policy: policy,
+		},
+		Client: client,
+	}
+
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(discovery.Layout.Groups) != 1 || len(discovery.Layout.Groups[0].Items) != 1 {
+		t.Fatalf("layout = %#v, want one published token-identified pane", discovery.Layout.Groups)
+	}
+	item := discovery.Layout.Groups[0].Items[0]
+	if item.LogicalName != "worker" || item.ID != multiplexer.HerdrPaneID("pane-1") {
+		t.Fatalf("layout item = %#v, want postman.node token published as worker pane", item)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "pane-1" {
+		t.Fatalf("focused_pane_id = %q, want token-shaped supported pane", got)
+	}
+}
+
+func TestSocketClientDiscoveryQuarantinesDecodedPaneEvidence(t *testing.T) {
+	tests := []struct {
+		name          string
+		snapshot      string
+		processResult string
+		wantStale     []multiplexer.ResourceID
+	}{
+		{
+			name:     "missing terminal id",
+			snapshot: strings.Replace(herdr082SnapshotFixture, `"terminal_id":"terminal-1",`, "", 1),
+			wantStale: []multiplexer.ResourceID{
+				multiplexer.HerdrPaneID("pane-1"),
+			},
+		},
+		{
+			name: "stale pane",
+			snapshot: strings.Replace(
+				herdr082SnapshotFixture,
+				`"tokens":{"postman.node":"worker"}`,
+				`"tokens":{"postman.node":"worker"},"stale":true,"stale_reason":"missing terminal process"`,
+				1,
+			),
+			wantStale: []multiplexer.ResourceID{
+				multiplexer.HerdrPaneID("pane-1"),
+			},
+		},
+		{
+			name:          "mismatched process pane id",
+			snapshot:      herdr082SnapshotFixture,
+			processResult: `{"id":"postman:4","result":{"type":"pane_process_info","process_info":{"pane_id":"pane-other","foreground_processes":[{"pid":123,"name":"codex"}]}}}` + "\n",
+			wantStale: []multiplexer.ResourceID{
+				multiplexer.HerdrPaneID("pane-1"),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			socketPath := testSocketPath(t)
+			responses := []string{
+				herdr082PongFixture,
+				`{"id":"postman:2","result":{"type":"session_snapshot","snapshot":` + tt.snapshot + `}}` + "\n",
+			}
+			if tt.processResult != "" {
+				responses = append(responses, herdr082PongFixtureWithID("postman:3"), tt.processResult)
+			}
+			serveHerdrSocketSequence(t, socketPath, responses...)
+			backend := multiplexer.HerdrBackend{
+				Config: multiplexer.HerdrReadConfig{
+					Enabled: true,
+					Runtime: multiplexer.HerdrRuntimeIdentity{
+						SocketPath:  "/tmp/herdr.sock",
+						SessionName: "work",
+						WorkspaceID: "workspace-1",
+					},
+					Policy: multiplexer.HerdrGatePolicy{
+						ReadEnabled:             true,
+						ReadScope:               multiplexer.HerdrReadScopeDiscovery,
+						AllowedSocketPaths:      []string{"/tmp/herdr.sock"},
+						AllowedSessions:         []string{"work"},
+						AllowedWorkspaceIDs:     []string{"workspace-1"},
+						AllowedProtocolVersions: []string{"20"},
+						AllowedSchemaVersions:   []int{1},
+						InputSanitizerReady:     true,
+						ComplianceDecision:      multiplexer.HerdrComplianceDecisionRecorded,
+					},
+				},
+				Client: testSocketClient(socketPath),
+			}
+
+			discovery, err := backend.Discover(context.Background(), "work")
+			if err != nil {
+				t.Fatalf("Discover() error = %v", err)
+			}
+			if len(discovery.Layout.Groups) != 1 || len(discovery.Layout.Groups[0].Items) != 0 {
+				t.Fatalf("layout = %#v, want decoded pane quarantined before publication", discovery.Layout.Groups)
+			}
+			if !equalResourceIDs(discovery.StalePanes, tt.wantStale) {
+				t.Fatalf("StalePanes = %#v, want %#v", discovery.StalePanes, tt.wantStale)
+			}
+			if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+				t.Fatalf("focused_pane_id = %q, want omitted for quarantined pane", got)
+			}
+		})
 	}
 }
 
@@ -372,7 +499,11 @@ func TestSocketClientCompatibilityBoundsHangingSchemaCommand(t *testing.T) {
 	}
 }
 
-const herdr082SnapshotFixture = `{"version":"0.8.2","protocol":20,"focused_workspace_id":"workspace-1","focused_tab_id":"tab-1","focused_pane_id":"pane-1","workspaces":[{"workspace_id":"workspace-1","number":1,"label":"work","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"tab-1","agent_status":"working","metadata":{"postman.session":"work"}}],"tabs":[{"tab_id":"tab-1","workspace_id":"workspace-1","number":1,"label":"main","focused":true,"pane_count":1,"agent_status":"working"}],"panes":[{"pane_id":"pane-1","terminal_id":"terminal-1","workspace_id":"workspace-1","tab_id":"tab-1","focused":true,"agent_status":"working","revision":7,"metadata":{"postman.node":"worker"}}],"layouts":[],"agents":[]}`
+const herdr082SnapshotFixture = `{"version":"0.8.2","protocol":20,"focused_workspace_id":"workspace-1","focused_tab_id":"tab-1","focused_pane_id":"pane-1","workspaces":[{"workspace_id":"workspace-1","number":1,"label":"work","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"tab-1","agent_status":"working","tokens":{"postman.session":"work"}}],"tabs":[{"tab_id":"tab-1","workspace_id":"workspace-1","number":1,"label":"main","focused":true,"pane_count":1,"agent_status":"working"}],"panes":[{"pane_id":"pane-1","terminal_id":"terminal-1","workspace_id":"workspace-1","tab_id":"tab-1","focused":true,"agent_status":"working","revision":7,"tokens":{"postman.node":"worker"}}],"layouts":[],"agents":[]}`
+
+func herdr082PongFixtureWithID(id string) string {
+	return `{"id":"` + id + `","result":{"type":"pong","version":"0.8.2","protocol":20,"capabilities":{"live_handoff":true}}}` + "\n"
+}
 
 func testSocketClient(socketPath string) *socketClient {
 	return &socketClient{socketPath: socketPath, schema: testSchemaLoader}
@@ -443,6 +574,18 @@ func assertTokenValue(t *testing.T, params map[string]any, key string, want any)
 	if len(tokens) != 1 {
 		t.Fatalf("tokens = %#v, want exactly one token", tokens)
 	}
+}
+
+func equalResourceIDs(left, right []multiplexer.ResourceID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func installFakeHerdrCommand(t *testing.T, script string) {

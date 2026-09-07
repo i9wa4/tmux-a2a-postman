@@ -25,6 +25,11 @@ type socketClient struct {
 
 const defaultSocketCallTimeout = 5 * time.Second
 
+const (
+	supportedHerdrSocketProtocol      = "20"
+	supportedHerdrSocketSchemaVersion = 1
+)
+
 type herdrSchemaLoader func(context.Context) (multiplexer.HerdrResponseEnvelope, error)
 
 type socketRequest struct {
@@ -250,6 +255,9 @@ func (c *socketClient) compatibilityEnvelope(ctx context.Context) (multiplexer.H
 	}
 	if schema.ProtocolVersion != pong.ProtocolVersion {
 		return multiplexer.HerdrResponseEnvelope{}, fmt.Errorf("%w: herdr socket protocol %s does not match schema protocol %s", multiplexer.ErrHerdrBackendUnavailable, pong.ProtocolVersion, schema.ProtocolVersion)
+	}
+	if pong.ProtocolVersion != supportedHerdrSocketProtocol || schema.SchemaVersion != supportedHerdrSocketSchemaVersion {
+		return multiplexer.HerdrResponseEnvelope{}, fmt.Errorf("%w: herdr socket compatibility protocol %s schema %d is unsupported", multiplexer.ErrHerdrBackendUnavailable, pong.ProtocolVersion, schema.SchemaVersion)
 	}
 	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: pong.ProtocolVersion, SchemaVersion: schema.SchemaVersion}, nil
 }
@@ -547,7 +555,7 @@ type rawHerdrPane struct {
 }
 
 func (p rawHerdrPane) validate() error {
-	if strings.TrimSpace(firstNonEmpty(p.ID, p.HerdrID)) == "" || strings.TrimSpace(p.TerminalID) == "" || strings.TrimSpace(firstNonEmpty(p.WorkspaceID, p.Workspace)) == "" || strings.TrimSpace(firstNonEmpty(p.TabID, p.Tab)) == "" || p.Focused == nil || strings.TrimSpace(firstNonEmpty(p.AgentStatus, p.AgentStatusAlt)) == "" || p.Revision == nil {
+	if strings.TrimSpace(firstNonEmpty(p.ID, p.HerdrID)) == "" || strings.TrimSpace(firstNonEmpty(p.WorkspaceID, p.Workspace)) == "" || strings.TrimSpace(firstNonEmpty(p.TabID, p.Tab)) == "" || p.Focused == nil || strings.TrimSpace(firstNonEmpty(p.AgentStatus, p.AgentStatusAlt)) == "" || p.Revision == nil {
 		return fmt.Errorf("%w: session.snapshot pane missing mandatory fields", multiplexer.ErrHerdrBackendUnavailable)
 	}
 	if len(p.ProcessInfoAlt) > 0 && string(p.ProcessInfoAlt) != "null" {

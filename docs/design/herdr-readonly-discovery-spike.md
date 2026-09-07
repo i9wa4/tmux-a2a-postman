@@ -43,7 +43,28 @@ Unavailable socket/server failures are normalized to
 `ErrHerdrBackendUnavailable` so higher layers can treat missing Herdr like an
 unavailable backend instead of a tmux failure.
 
-## 4. Identity Mapping
+## 4. Compatibility Authority
+
+The compatibility source of truth is the Herdr server reached through
+`HERDR_SOCKET_PATH`, corroborated by the `herdr api schema --json` command from
+the same Herdr installation on `PATH`. Postman does not treat either source as
+authoritative by itself:
+
+- `ping` must return the supported socket protocol before any response fields
+  are consumed;
+- `herdr api schema --json` must return the same protocol and a supported
+  schema version;
+- unsupported, missing, zero, unparsable, or same-protocol-but-newer schema
+  evidence fails closed as `ErrHerdrBackendUnavailable`;
+- the multiplexer read gate still validates the negotiated envelope against
+  local allowlists before discovery, capture, or process information is used.
+
+The first supported production boundary is Herdr `0.8.2` socket protocol `20`
+with schema version `1`. Expanding either value requires updating this design
+record, the socket-client compatibility constants, and the socket harness
+regression tests together.
+
+## 5. Identity Mapping
 
 The public postman address remains `session:node`.
 
@@ -58,14 +79,14 @@ For #658:
 - duplicate node claims become explicit `HerdrIdentityCollision` records;
 - stale pane evidence is reported as backend-native Herdr pane resource IDs.
 
-## 5. Status Projection
+## 6. Status Projection
 
 Herdr layout projects to backend-neutral `SessionLayout` groups with
 `kind: tab`, Herdr workspace/tab/pane native IDs, and `backend: herdr` resource
 IDs. tmux `windows` are marked unsupported in native evidence; first-phase
 Herdr status should use `layout_groups` as the authoritative structural shape.
 
-## 6. External References
+## 7. External References
 
 - Herdr socket API: <https://herdr.dev/docs/socket-api/>
 - Herdr session state and restore: <https://herdr.dev/docs/session-state/>
