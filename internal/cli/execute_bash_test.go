@@ -1645,6 +1645,24 @@ func assertLifecycleDeadLetters(t *testing.T, sessionDir, suffix string, want in
 	}
 }
 
+func TestResolveCommandApprovalPolicy_DefaultsToBlocking(t *testing.T) {
+	policy, err := resolveCommandApprovalPolicy(&config.Config{}, "worker", "protected", "release", "", "", 0)
+	if err != nil {
+		t.Fatalf("resolveCommandApprovalPolicy() error = %v", err)
+	}
+	if policy.Mode != commandApprovalModeBlocking {
+		t.Fatalf("resolveCommandApprovalPolicy() mode = %q, want %q", policy.Mode, commandApprovalModeBlocking)
+	}
+
+	advisory, err := resolveCommandApprovalPolicy(&config.Config{}, "worker", "protected", "release", "", commandApprovalModeAdvisory, 0)
+	if err != nil {
+		t.Fatalf("resolveCommandApprovalPolicy(advisory) error = %v", err)
+	}
+	if advisory.Mode != commandApprovalModeAdvisory {
+		t.Fatalf("explicit advisory mode = %q, want %q", advisory.Mode, commandApprovalModeAdvisory)
+	}
+}
+
 func findExecutionDecisionPayload(t *testing.T, sessionDir string) journal.CommandExecutionDecisionPayload {
 	t.Helper()
 
