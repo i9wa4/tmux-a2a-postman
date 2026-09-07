@@ -29,10 +29,12 @@ MUST load after sending or live mailbox/session work; first contact uses
    or no-action or no-op decision. `messageType: ping`, `replyPolicy: none`,
    and other metadata do not allow skipping the body. truncated command output
    does not count as a complete read.
-6. Both `send-heredoc` and `pop` output a `submit_path` field
-   (`daemon-submit` or `post`) identifying whether daemon mediation was used or
-   bypassed by direct filesystem access. This applies to all output including
-   empty `pop` results. Use `submit_path` to audit fallback behavior.
+6. `send-heredoc` always reports `submit_path: post` because it atomically
+   hands mail to the session `post/` queue; a running daemon consumes that
+   queue asynchronously. `pop` reports either `daemon-submit` or `post` to
+   identify whether its claim used daemon mediation or direct filesystem
+   access. This applies to all `pop` output including empty results. Use
+   `submit_path` to audit the claim route.
 7. Filling an input request closes transport, not task acceptance. After any
    exact reply, check send JSON `fill`, `required_input`, and `notice`.
    DONE/completion or BLOCKED/task-acceptance replies require

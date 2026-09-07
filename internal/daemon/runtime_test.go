@@ -441,8 +441,8 @@ func TestNewDaemonRuntimeConfiguresDaemonSubmitWorkerLimit(t *testing.T) {
 				"",
 				nil,
 			)
-			if got := cap(rt.daemonSubmitSem); got != tt.want {
-				t.Fatalf("daemonSubmitSem cap = %d, want %d", got, tt.want)
+			if got := rt.daemonSubmitWorkerLimit(); got != tt.want {
+				t.Fatalf("daemon submit worker limit = %d, want %d", got, tt.want)
 			}
 			if got := cap(rt.daemonSubmitResults); got != tt.want {
 				t.Fatalf("daemonSubmitResults cap = %d, want %d", got, tt.want)
@@ -1116,7 +1116,7 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	if got := len(workerHarness.workers); got != workerLimit {
 		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
 	}
-	if got := len(rt.daemonSubmitSem); got != workerLimit {
+	if got := rt.daemonSubmitActiveWorkerCount(); got != workerLimit {
 		t.Fatalf("active worker slots = %d, want %d", got, workerLimit)
 	}
 
@@ -1141,6 +1141,205 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	}
 	if !rt.daemonSubmitLastSaturatedAt.Equal(now) {
 		t.Fatalf("daemonSubmitLastSaturatedAt = %s, want %s", rt.daemonSubmitLastSaturatedAt, now)
+	}
+}
+
+func TestDispatchDaemonSubmitRequest_IsolatesWorkerLimitsBySession(t *testing.T) {
+	baseDir := t.TempDir()
+	firstSessionDir := filepath.Join(baseDir, "first-session")
+	secondSessionDir := filepath.Join(baseDir, "second-session")
+	for _, sessionDir := range []string{firstSessionDir, secondSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	firstPath, err := projection.WriteDaemonSubmitRequest(firstSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "first-request",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now,
+		Filename:  "20260601-120000-r1111-from-orchestrator-to-worker.md",
+		Content:   "first session",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(first): %v", err)
+	}
+	secondPath, err := projection.WriteDaemonSubmitRequest(secondSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "second-request",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now,
+		Filename:  "20260601-120001-r2222-from-orchestrator-to-worker.md",
+		Content:   "second session",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(second): %v", err)
+	}
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		cfg: &config.Config{DaemonSubmitWorkerLimit: 1},
+		processDaemonSubmit: func(string) (daemonSubmitProcessResult, error) {
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+
+	if status := rt.dispatchDaemonSubmitRequest(firstPath); status != daemonSubmitDispatched {
+		t.Fatalf("first session dispatch = %v, want dispatched", status)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(secondPath); status != daemonSubmitDispatched {
+		t.Fatalf("second session dispatch = %v, want dispatched despite first-session saturation", status)
+	}
+	if got := len(workerHarness.workers); got != 2 {
+		t.Fatalf("queued workers = %d, want 2", got)
+	}
+
+	workerHarness.runNext(t)
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	workerHarness.runNext(t)
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	if got := len(rt.daemonSubmitSems); got != 0 {
+		t.Fatalf("idle daemon-submit semaphores = %d, want 0", got)
+	}
+}
+
+func TestDispatchDaemonSubmitRequest_BoundsSessionWhenResultConsumerBlocked(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	paths := make([]string, 3)
+	for i := range paths {
+		path, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: fmt.Sprintf("backpressure-%d", i),
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: now,
+			Filename:  fmt.Sprintf("20260601-12000%d-r1111-from-orchestrator-to-worker.md", i),
+			Content:   "backpressure",
+		})
+		if err != nil {
+			t.Fatalf("WriteDaemonSubmitRequest(%d): %v", i, err)
+		}
+		paths[i] = path
+	}
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		cfg: &config.Config{DaemonSubmitWorkerLimit: 1},
+		processDaemonSubmit: func(string) (daemonSubmitProcessResult, error) {
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+	if status := rt.dispatchDaemonSubmitRequest(paths[0]); status != daemonSubmitDispatched {
+		t.Fatalf("first dispatch = %v, want dispatched", status)
+	}
+	workerHarness.runNext(t) // fills the one-result buffer.
+	if status := rt.dispatchDaemonSubmitRequest(paths[1]); status != daemonSubmitDispatched {
+		t.Fatalf("second dispatch = %v, want dispatched", status)
+	}
+	done := make(chan struct{})
+	go func() {
+		workerHarness.runNext(t)
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for rt.daemonSubmitActiveWorkerCount() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("second worker did not retain its session slot behind result backpressure")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(paths[2]); status != daemonSubmitDispatchSaturated {
+		t.Fatalf("third dispatch = %v, want saturated while a result handoff is blocked", status)
+	}
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second worker remained blocked after draining result")
+	}
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	if status := rt.dispatchDaemonSubmitRequest(paths[2]); status != daemonSubmitDispatched {
+		t.Fatalf("third dispatch = %v, want dispatched after result handoff completes", status)
+	}
+	workerHarness.runNext(t)
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+}
+
+func TestHandleDaemonSubmitResultPrunesSessionAfterWorkerRelease(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "result-before-release",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  "20260601-120000-r1111-from-orchestrator-to-worker.md",
+		Content:   "result-before-release",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	published := make(chan struct{})
+	allowRelease := make(chan struct{})
+	handlerAtReleaseWait := make(chan struct{})
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		cfg: &config.Config{DaemonSubmitWorkerLimit: 1},
+		processDaemonSubmit: func(string) (daemonSubmitProcessResult, error) {
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+		afterDaemonSubmitResultPublish: func() {
+			close(published)
+			<-allowRelease
+		},
+		beforeDaemonSubmitReleaseWait: func() { close(handlerAtReleaseWait) },
+	}
+	if status := rt.dispatchDaemonSubmitRequest(requestPath); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch = %v, want dispatched", status)
+	}
+	workerDone := make(chan struct{})
+	go func() {
+		workerHarness.runNext(t)
+		close(workerDone)
+	}()
+	select {
+	case <-published:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not publish its result")
+	}
+	result := waitForDaemonSubmitResult(t, rt)
+	handlerDone := make(chan struct{})
+	go func() {
+		rt.handleDaemonSubmitResult(result)
+		close(handlerDone)
+	}()
+	select {
+	case <-handlerAtReleaseWait:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not reach the post-result release wait")
+	}
+	if got := len(rt.daemonSubmitSems); got != 1 {
+		t.Fatalf("daemon-submit semaphores before release = %d, want 1", got)
+	}
+	close(allowRelease)
+	select {
+	case <-workerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not release its semaphore")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not prune after worker release")
+	}
+	if got := len(rt.daemonSubmitSems); got != 0 {
+		t.Fatalf("idle daemon-submit semaphores after release = %d, want 0", got)
 	}
 }
 
@@ -1908,7 +2107,7 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *test
 	}
 }
 
-func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t *testing.T) {
+func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsWithoutCrossSessionCap(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	baseDir := filepath.Join(tmpDir, "state")
@@ -1967,16 +2166,66 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
-	if got := len(workerHarness.workers); got != workerLimit {
-		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
+	if got := len(workerHarness.workers); got != workerLimit+1 {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit+1)
 	}
 	for len(workerHarness.workers) > 0 {
 		workerHarness.runNext(t)
+		waitForDaemonSubmitResult(t, rt)
 	}
 
-	wantStarted := []string{"high-01", "low-01", "high-02", "high-03"}
+	wantStarted := []string{"high-01", "low-01", "high-02", "high-03", "high-04"}
 	if !reflect.DeepEqual(started, wantStarted) {
 		t.Fatalf("started requests = %#v, want round-robin order %#v", started, wantStarted)
+	}
+}
+
+func TestDispatchPendingDaemonSubmitRequestsSkipsSaturatedSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-saturated-scan"
+	firstSessionDir := filepath.Join(baseDir, contextID, "a-saturated")
+	secondSessionDir := filepath.Join(baseDir, contextID, "b-eligible")
+	for _, sessionDir := range []string{firstSessionDir, secondSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	writeRequest := func(sessionDir, requestID string) string {
+		t.Helper()
+		path, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: requestID,
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: now,
+			Filename:  requestID + ".md",
+			Content:   requestID,
+		})
+		if err != nil {
+			t.Fatalf("WriteDaemonSubmitRequest(%q): %v", requestID, err)
+		}
+		return path
+	}
+	firstActivePath := writeRequest(firstSessionDir, "a-active")
+	writeRequest(firstSessionDir, "a-pending")
+	writeRequest(secondSessionDir, "b-pending")
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		sessionDir: firstSessionDir,
+		cfg:        &config.Config{DaemonSubmitWorkerLimit: 1},
+		nodes: map[string]discovery.NodeInfo{
+			"b-eligible:worker": {SessionName: "b-eligible", SessionDir: secondSessionDir},
+		},
+		processDaemonSubmit:      func(string) (daemonSubmitProcessResult, error) { return daemonSubmitProcessResult{}, nil },
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+	if status := rt.dispatchDaemonSubmitRequest(firstActivePath); status != daemonSubmitDispatched {
+		t.Fatalf("first session active dispatch = %v, want dispatched", status)
+	}
+	rt.dispatchPendingDaemonSubmitRequests()
+	if got := len(workerHarness.workers); got != 2 {
+		t.Fatalf("queued workers = %d, want saturated A plus eligible B", got)
 	}
 }
 

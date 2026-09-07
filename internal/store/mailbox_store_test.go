@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -218,7 +219,7 @@ func TestArchiveInboxMessageFailedRenamePreservesOriginalContent(t *testing.T) {
 
 	readPath, err := archiveInboxMessageWithOps(plan, archiveFileOps{
 		mkdirAll: os.MkdirAll,
-		stat: func(name string) (os.FileInfo, error) {
+		lstat: func(name string) (os.FileInfo, error) {
 			return nil, os.ErrNotExist
 		},
 		remove: os.Remove,
@@ -241,6 +242,57 @@ func TestArchiveInboxMessageFailedRenamePreservesOriginalContent(t *testing.T) {
 	}
 	if string(got) != "payload" {
 		t.Fatalf("source content changed: %q", got)
+	}
+}
+
+// TestArchiveInboxMessageRejectsSymlinkAtReadPathBeforeRemovingSource is the
+// regression test for the decisive #755 defect: archiveInboxMessageWithOps
+// previously used os.Stat (which follows symlinks) to decide whether
+// ReadPath was "already archived." A symlink planted at ReadPath made Stat
+// report success regardless of its target, so the dedup branch removed
+// SourcePath -- the inbox message -- without ever verifying anything was
+// safely archived. This asserts both halves of the fix: the call errors
+// out, AND the source message is still present afterward (nothing was
+// consumed before the symlink was rejected).
+func TestArchiveInboxMessageRejectsSymlinkAtReadPathBeforeRemovingSource(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "review")
+	filename := "20260502-120000-r1111-from-a-to-b.md"
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+	if err := os.MkdirAll(filepath.Dir(inboxPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(inbox): %v", err)
+	}
+	if err := os.WriteFile(inboxPath, []byte("payload"), 0o600); err != nil {
+		t.Fatalf("WriteFile(inbox): %v", err)
+	}
+	readDir := filepath.Join(sessionDir, "read")
+	if err := os.MkdirAll(readDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(read): %v", err)
+	}
+	targetPath := filepath.Join(tmpDir, "outside", filename)
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll(outside): %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("attacker-controlled"), 0o600); err != nil {
+		t.Fatalf("WriteFile(outside target): %v", err)
+	}
+	readPath := filepath.Join(readDir, filename)
+	if err := os.Symlink(targetPath, readPath); err != nil {
+		t.Fatalf("Symlink(readPath): %v", err)
+	}
+
+	got, err := ArchiveInboxMessage(inboxPath, filename)
+	if got != "" {
+		t.Fatalf("ArchiveInboxMessage() readPath = %q, want empty on rejection", got)
+	}
+	if err == nil || !strings.Contains(err.Error(), "existing read path is symlink") {
+		t.Fatalf("ArchiveInboxMessage() error = %v, want existing read path is symlink", err)
+	}
+	if _, statErr := os.Stat(inboxPath); statErr != nil {
+		t.Fatalf("inbox source was removed despite the symlink rejection: stat error = %v", statErr)
+	}
+	if content, readErr := os.ReadFile(inboxPath); readErr != nil || string(content) != "payload" {
+		t.Fatalf("inbox source content changed: %q, %v", content, readErr)
 	}
 }
 
