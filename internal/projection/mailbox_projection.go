@@ -39,6 +39,12 @@ const (
 	MailboxProjectionDeliveredEventType    = "mailbox_projection_delivered"
 	MailboxProjectionReadEventType         = "mailbox_projection_read"
 	MailboxProjectionDeadLetteredEventType = "mailbox_projection_dead_lettered"
+
+	// MailboxProjectionPopVerificationFailedEventType records a daemon-submit
+	// pop archive-readiness verification failure (#755 F-013), appended once
+	// per failed verifyDaemonPopArchiveReadable call so
+	// CountPopVerificationFailures can bound retries per message.
+	MailboxProjectionPopVerificationFailedEventType = "mailbox_projection_pop_verification_failed"
 )
 
 var mailboxProjectionRoots = []string{"post", "inbox", "read", "dead-letter"}
@@ -154,6 +160,15 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 		case MailboxProjectionDeadLetteredEventType:
 			rememberManagedPost(projected.managedPost, payload.SourcePath)
 			delete(projected.Post, pathKey(payload.SourcePath))
+			// #762/F-013 is the first producer that can dead-letter a
+			// message still living in projected.Inbox (one whose pop never
+			// reached a Read event because verification failed before it).
+			// Without this delete, syncDesiredMailboxFiles would write the
+			// message back into inbox/ on the next sync, resurrecting an
+			// already-dead-lettered message as unread and re-consumable --
+			// the identical hazard the Read case above was hardened
+			// against, now reachable through this handler too.
+			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
 			if !setProjectedFile(projected.DeadLetter, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid dead-letter path %q", payload.Path)
 			}

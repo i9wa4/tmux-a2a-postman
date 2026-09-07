@@ -186,14 +186,14 @@ func PlanArchiveInboxMessage(absPath, filename string) (InboxArchivePlan, error)
 
 type archiveFileOps struct {
 	mkdirAll func(string, fs.FileMode) error
-	stat     func(string) (fs.FileInfo, error)
+	lstat    func(string) (fs.FileInfo, error)
 	remove   func(string) error
 	rename   func(string, string) error
 }
 
 var osArchiveFileOps = archiveFileOps{
 	mkdirAll: os.MkdirAll,
-	stat:     os.Stat,
+	lstat:    os.Lstat,
 	remove:   os.Remove,
 	rename:   os.Rename,
 }
@@ -211,7 +211,17 @@ func archiveInboxMessageWithOps(plan InboxArchivePlan, ops archiveFileOps) (stri
 	if err := ops.mkdirAll(plan.ReadDir, 0o700); err != nil {
 		return "", fmt.Errorf("creating read directory: %w", err)
 	}
-	if _, err := ops.stat(plan.ReadPath); err == nil {
+	// Lstat, not Stat: Stat follows symlinks, so a symlink planted at
+	// ReadPath would report success here (as long as its target exists)
+	// and fall into the "already archived, dedup" branch below, which
+	// removes SourcePath -- permanently discarding the source message
+	// without ever having verified the read/ entry is a real, trustworthy
+	// archive of it. Reject the symlink BEFORE any source removal.
+	info, err := ops.lstat(plan.ReadPath)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("archiving message: existing read path is symlink: %s", plan.ReadPath)
+		}
 		if err := ops.remove(plan.SourcePath); err != nil {
 			return "", fmt.Errorf("archiving message: %w", err)
 		}

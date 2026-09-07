@@ -2,11 +2,14 @@ package daemon
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/testfixture"
@@ -14,6 +17,10 @@ import (
 
 func benchmarkLoadedDaemonSubmitSession(b *testing.B) testfixture.LoadedSession {
 	b.Helper()
+
+	previousLogOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	b.Cleanup(func() { log.SetOutput(previousLogOutput) })
 
 	fixture := testfixture.BuildLoadedSession(b, testfixture.DefaultLoadedSessionConfig())
 	manager := journal.NewManager("ctx-loaded-submit", os.Getpid())
@@ -51,6 +58,103 @@ func BenchmarkProcessDaemonSubmitRequest_LoadedSessionSend(b *testing.B) {
 		_ = os.Remove(projection.DaemonSubmitResponsePath(fixture.SessionDir, requestID))
 		_ = os.Remove(filepath.Join(fixture.SessionDir, "post", filename))
 	}
+}
+
+func BenchmarkProcessDaemonSubmitRequest_LoadedSessionValidateSend(b *testing.B) {
+	fixture := benchmarkLoadedDaemonSubmitSession(b)
+	b.ReportAllocs()
+
+	b.ResetTimer()
+	reportLoadedDaemonSubmitMetrics(b, fixture)
+	for i := 0; i < b.N; i++ {
+		requestID := fmt.Sprintf("bench-validate-send-%d", i)
+		filename := fmt.Sprintf("20260521-100100-r%04x-from-orchestrator-to-worker.md", i%0xffff)
+		requestPath, err := projection.WriteDaemonSubmitRequest(fixture.SessionDir, projection.DaemonSubmitRequest{
+			RequestID: requestID,
+			Command:   projection.DaemonSubmitValidateSend,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			Filename:  filename,
+			Content:   "benchmark validate-send\n",
+		})
+		if err != nil {
+			b.Fatalf("WriteDaemonSubmitRequest: %v", err)
+		}
+		if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+			b.Fatalf("processDaemonSubmitRequest: %v", err)
+		}
+		_ = os.Remove(projection.DaemonSubmitResponsePath(fixture.SessionDir, requestID))
+		if _, err := os.Stat(filepath.Join(fixture.SessionDir, "post", filename)); !os.IsNotExist(err) {
+			b.Fatalf("validate-send wrote post file: %v", err)
+		}
+	}
+}
+
+func BenchmarkProcessDaemonSubmitRequest_MinimalSessionSend(b *testing.B) {
+	sessionDir := benchmarkMinimalDaemonSubmitSession(b)
+	b.ReportAllocs()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		requestID := fmt.Sprintf("bench-min-send-%d", i)
+		filename := fmt.Sprintf("20260521-101000-r%04x-from-orchestrator-to-worker.md", i%0xffff)
+		requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: requestID,
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			Filename:  filename,
+			Content:   "benchmark minimal send\n",
+		})
+		if err != nil {
+			b.Fatalf("WriteDaemonSubmitRequest: %v", err)
+		}
+		if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+			b.Fatalf("processDaemonSubmitRequest: %v", err)
+		}
+		_ = os.Remove(projection.DaemonSubmitResponsePath(sessionDir, requestID))
+		_ = os.Remove(filepath.Join(sessionDir, "post", filename))
+	}
+}
+
+func BenchmarkProcessDaemonSubmitRequest_MinimalSessionValidateSend(b *testing.B) {
+	sessionDir := benchmarkMinimalDaemonSubmitSession(b)
+	b.ReportAllocs()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		requestID := fmt.Sprintf("bench-min-validate-send-%d", i)
+		filename := fmt.Sprintf("20260521-101100-r%04x-from-orchestrator-to-worker.md", i%0xffff)
+		requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: requestID,
+			Command:   projection.DaemonSubmitValidateSend,
+			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			Filename:  filename,
+			Content:   "benchmark minimal validate-send\n",
+		})
+		if err != nil {
+			b.Fatalf("WriteDaemonSubmitRequest: %v", err)
+		}
+		if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+			b.Fatalf("processDaemonSubmitRequest: %v", err)
+		}
+		_ = os.Remove(projection.DaemonSubmitResponsePath(sessionDir, requestID))
+		if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+			b.Fatalf("validate-send wrote post file: %v", err)
+		}
+	}
+}
+
+func benchmarkMinimalDaemonSubmitSession(b *testing.B) string {
+	b.Helper()
+
+	previousLogOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	b.Cleanup(func() { log.SetOutput(previousLogOutput) })
+
+	sessionDir := filepath.Join(b.TempDir(), "minimal-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		b.Fatalf("CreateSessionDirs: %v", err)
+	}
+	return sessionDir
 }
 
 func BenchmarkProcessDaemonSubmitRequest_LoadedSessionEmptyPop(b *testing.B) {

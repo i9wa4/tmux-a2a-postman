@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +57,8 @@ type sendOutput struct {
 	ReplyTo             string                `json:"reply_to,omitempty"`
 	InputRequestID      string                `json:"input_request_id,omitempty"`
 	FillsInputRequestID string                `json:"fills_input_request_id,omitempty"`
+	ThreadID            string                `json:"thread_id,omitempty"`
+	CommandHash         string                `json:"command_hash,omitempty"`
 	Fill                *sendFillOutput       `json:"fill,omitempty"`
 	RequiredInput       *sendRequiredInput    `json:"required_input,omitempty"`
 	Notice              string                `json:"notice,omitempty"`
@@ -158,6 +161,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	fillsInputRequestID := fs.String("fills-input-request-id", "", "input request id this message fills")
+	threadID := fs.String("thread-id", "", "command approval thread id for an exact reply")
+	commandHash := fs.String("command-hash", "", "command approval sha256 digest for an exact reply")
 	evidenceCommand := fs.String("evidence-command", "", "replay evidence command")
 	evidenceCWD := fs.String("evidence-cwd", "", "replay evidence working directory")
 	evidenceEnvAllowlist := fs.String("evidence-env-allowlist", "", "comma-separated replay evidence environment allowlist")
@@ -199,6 +204,9 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	if err := validateInputRequestFillFlag("--fills-input-request-id", *fillsInputRequestID); err != nil {
+		return err
+	}
+	if err := validateSendCommandApprovalCorrelation(*threadID, *commandHash); err != nil {
 		return err
 	}
 	evidenceFields := map[string]string{
@@ -383,6 +391,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"reply_to":                       *replyTo,
 		"input_request_id":               inputRequestIDMarker,
 		"fills_input_request_id":         *fillsInputRequestID,
+		"thread_id":                      *threadID,
+		"command_hash":                   *commandHash,
 		"input_request_set_id":           "",
 		"reply_arguments":                "",
 		"required_reply_completion_gate": "",
@@ -433,6 +443,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"replyTo":                    *replyTo,
 		"input_request_id":           inputRequestID,
 		"fills_input_request_id":     *fillsInputRequestID,
+		"thread_id":                  *threadID,
+		"command_hash":               *commandHash,
 		"evidence_command":           evidenceFields["evidence_command"],
 		"evidence_cwd":               evidenceFields["evidence_cwd"],
 		"evidence_env_allowlist":     evidenceFields["evidence_env_allowlist"],
@@ -465,47 +477,24 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		footerVars["reply_to"] = *replyTo
 		footerVars["input_request_id"] = inputRequestID
 		footerVars["fills_input_request_id"] = *fillsInputRequestID
+		footerVars["thread_id"] = *threadID
+		footerVars["command_hash"] = *commandHash
 		footerVars["reply_arguments"] = replyArgumentsForMessage(filename, inputRequestID)
 		footer = template.ExpandTemplate(cfg.MessageFooter, footerVars, timeout, cfg.AllowShellForMessageFooter())
 	}
 	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
-	if ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
-		response, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
-			Command:  projection.DaemonSubmitSend,
+	ownedLiveSession := ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) && ctx.contextHasLiveDaemon(baseDir, resolvedContextID)
+	if ownedLiveSession && replyPolicy == "required" {
+		if _, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
+			Command:  projection.DaemonSubmitValidateSend,
 			Filename: filename,
 			Sender:   sender,
 			Content:  content,
-		}, daemonSubmitTimeout(cfg.TmuxTimeout))
-		if err != nil {
-			return fmt.Errorf("daemon submit send: %w", err)
+		}, daemonSubmitTimeout(cfg.TmuxTimeout)); err != nil {
+			return fmt.Errorf("daemon validate-send: %w", err)
 		}
-		deliveredFilename := filename
-		if response.Filename != "" {
-			deliveredFilename = response.Filename
-		}
-		status, err := observeSendOutcomeWithContext(ctx, baseDir, resolvedContextID, sessionDir, deliveredFilename)
-		if err != nil {
-			return fmt.Errorf("send outcome: %w", err)
-		}
-		output := sendOutput{
-			Sent:                deliveredFilename,
-			Status:              string(status),
-			ContextID:           resolvedContextID,
-			Session:             sessionName,
-			From:                sender,
-			To:                  recipient,
-			ReplyPolicy:         replyPolicy,
-			ReplyTo:             *replyTo,
-			InputRequestID:      inputRequestID,
-			FillsInputRequestID: *fillsInputRequestID,
-			SubmitPath:          projection.SubmitPathDaemon,
-		}
-		attachSendInputRequestSummary(&output, sessionDir, sessionName, sender, recipient, *replyTo, *fillsInputRequestID, stripped, beforeInputRequests, beforeInputRequestsOK)
-		return writeSendOutput(ctx.stdout, output)
-	}
-
-	if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
+	} else if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
 		GraceSeconds:  cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
 		DebtCap:       cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
 		ExemptUINode:  cfg.UINode,
@@ -531,7 +520,10 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return fmt.Errorf("send outcome: %w", err)
 	}
 	var notifyStatus cliNotifyStatus
-	if status == sendStatusProcessed {
+	// Delivery owns recipient notification for a daemon-owned session. The CLI
+	// only owns the hint for non-owned direct delivery, avoiding a second pane
+	// notification after the daemon has already delivered the same post.
+	if status == sendStatusProcessed && !ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) {
 		freshNodes, _ := ctx.discoverNodes(baseDir, resolvedContextID, sessionName)
 		var paneID string
 		if freshNodes != nil {
@@ -565,6 +557,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		ReplyTo:             *replyTo,
 		InputRequestID:      inputRequestID,
 		FillsInputRequestID: *fillsInputRequestID,
+		ThreadID:            *threadID,
+		CommandHash:         *commandHash,
 		SubmitPath:          projection.SubmitPathPost,
 		Notify:              notifyOutputValue(notifyStatus),
 	}
@@ -972,6 +966,24 @@ func validateInputRequestFillFlag(flagName, inputRequestID string) error {
 	return nil
 }
 
+var commandHashPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// validateSendCommandApprovalCorrelation keeps send-heredoc's optional
+// command-approval correlation tuple safe for direct interpolation into
+// frontmatter. Ordinary replies omit both flags and retain their current path.
+func validateSendCommandApprovalCorrelation(threadID, commandHash string) error {
+	if err := validateCommandApprovalThreadID(threadID); err != nil {
+		return err
+	}
+	if (threadID == "") != (commandHash == "") {
+		return fmt.Errorf("--thread-id and --command-hash must be provided together")
+	}
+	if commandHash != "" && !commandHashPattern.MatchString(commandHash) {
+		return fmt.Errorf("--command-hash must use sha256:<64 lowercase hex>")
+	}
+	return nil
+}
+
 func validateSendEvidenceFlags(fields map[string]string) error {
 	any := false
 	for key, value := range fields {
@@ -1118,8 +1130,18 @@ func observeSendOutcomeWithContext(ctx commandContext, baseDir, contextID, sessi
 			return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
 		}
 
+		if observeSendOutcomeBeforePostStateCheckForTest != nil {
+			observeSendOutcomeBeforePostStateCheckForTest()
+		}
 		if _, err := os.Stat(postPath); err != nil {
 			if os.IsNotExist(err) {
+				// A post-to-dead-letter rename can race the scan above. Recheck after
+				// disappearance so a rejected send is never surfaced as processed.
+				if deadLetterBasename, ok, deadLetterErr := findMatchingDeadLetter(sessionDir, filename); deadLetterErr != nil {
+					return "", deadLetterErr
+				} else if ok {
+					return "", fmt.Errorf("message dead-lettered: %s", deadLetterBasename)
+				}
 				return sendStatusProcessed, nil
 			}
 			return "", fmt.Errorf("checking post queue state: %w", err)
@@ -1130,6 +1152,8 @@ func observeSendOutcomeWithContext(ctx commandContext, baseDir, contextID, sessi
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+var observeSendOutcomeBeforePostStateCheckForTest func()
 
 func findMatchingDeadLetter(sessionDir, filename string) (string, bool, error) {
 	deadLetterDir := filepath.Join(sessionDir, "dead-letter")

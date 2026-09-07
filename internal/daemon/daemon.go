@@ -24,8 +24,10 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 	"github.com/i9wa4/tmux-a2a-postman/internal/tui"
 	"github.com/i9wa4/tmux-a2a-postman/internal/uinode"
 	"github.com/i9wa4/tmux-a2a-postman/internal/verdictgate"
@@ -37,6 +39,14 @@ const (
 	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
 	defaultVerdictGraceSeconds                    = 3600
 	defaultVerdictDebtCap                         = 3
+
+	// popVerificationFailureDeadLetterThreshold is F-013's bounded-retry cap:
+	// once a message has accumulated this many pop archive-verification
+	// failures, handleDaemonSubmitPop gives up rolling it back to inbox for
+	// another attempt and dead-letters it instead, so a persistently
+	// unreadable archive (corruption, a permissions problem, disk pressure)
+	// cannot loop forever.
+	popVerificationFailureDeadLetterThreshold = 3
 )
 
 // daemonSubmitQueueWarnThresholdMs is the active queue wait WARNING threshold
@@ -200,22 +210,7 @@ func daemonSubmitSessionDir(requestPath string) (string, bool) {
 }
 
 func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
-	if request.RequestID == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing request_id")
-	}
-	if request.Filename == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing filename")
-	}
-	if strings.ContainsAny(request.Filename, "/\\") {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send filename must not contain path separators")
-	}
-	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send invalid filename: %w", err)
-	}
-	if request.Content == "" {
-		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit send missing content")
-	}
-	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
+	if err := validateDaemonSubmitSendRequest(sessionDir, request, "daemon submit send"); err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
 	postDir := filepath.Join(sessionDir, "post")
@@ -243,6 +238,40 @@ func handleDaemonSubmitSend(sessionDir string, request projection.DaemonSubmitRe
 	}, nil
 }
 
+func handleDaemonSubmitValidateSend(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
+	if err := validateDaemonSubmitSendRequest(sessionDir, request, "daemon submit validate-send"); err != nil {
+		return projection.DaemonSubmitResponse{}, err
+	}
+	return projection.DaemonSubmitResponse{
+		RequestID: request.RequestID,
+		Command:   request.Command,
+		HandledAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  request.Filename,
+	}, nil
+}
+
+func validateDaemonSubmitSendRequest(sessionDir string, request projection.DaemonSubmitRequest, commandName string) error {
+	if request.RequestID == "" {
+		return fmt.Errorf("%s missing request_id", commandName)
+	}
+	if request.Filename == "" {
+		return fmt.Errorf("%s missing filename", commandName)
+	}
+	if strings.ContainsAny(request.Filename, "/\\") {
+		return fmt.Errorf("%s filename must not contain path separators", commandName)
+	}
+	if _, err := message.ParseMessageFilename(request.Filename); err != nil {
+		return fmt.Errorf("%s invalid filename: %w", commandName, err)
+	}
+	if request.Content == "" {
+		return fmt.Errorf("%s missing content", commandName)
+	}
+	if err := enforceVerdictGate(sessionDir, request.Sender, request.Filename, request.Content); err != nil {
+		return err
+	}
+	return nil
+}
+
 func enforceVerdictGate(sessionDir, sender, filename, content string) error {
 	return verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
 		GraceSeconds: verdictGraceSeconds,
@@ -263,6 +292,95 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 	if cfg.UINode != "" {
 		verdictExemptUINode = cfg.UINode
 	}
+}
+
+// daemonPopArchiveVerify is a package-level indirection so tests can inject
+// a readiness failure without needing filesystem timing tricks (the
+// underlying rename is a same-host, same-filesystem atomic operation that
+// is not practical to race from a test). Production code always uses
+// verifyDaemonPopArchiveReadable; tests may temporarily replace this var to
+// prove handleDaemonSubmitPop blocks response publication when readiness
+// fails, then must restore it.
+var daemonPopArchiveVerify = verifyDaemonPopArchiveReadable
+
+// verifyDaemonPopArchiveReadable confirms readPath is a real, non-symlink
+// file whose contents match expectedContent, immediately after
+// message.ArchiveInboxMessage reports success. This is the producer-side
+// half of the #755 fix: validate before publishing a response containing
+// MarkdownPath, rather than publishing first and leaving detection to the
+// pop caller (internal/cli's validateDaemonPopArchive, which still runs
+// independently as defense in depth for legacy daemons that predate this
+// check, and should this producer-side check ever be bypassed or removed).
+func verifyDaemonPopArchiveReadable(readPath, expectedContent string) error {
+	info, err := os.Lstat(readPath)
+	if err != nil {
+		return fmt.Errorf("archived message not visible at %s: %w", readPath, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("archived message is symlink: %s", readPath)
+	}
+	data, err := os.ReadFile(readPath)
+	if err != nil {
+		return fmt.Errorf("archived message unreadable at %s: %w", readPath, err)
+	}
+	if string(data) != expectedContent {
+		return fmt.Errorf("archived message content mismatch at %s", readPath)
+	}
+	return nil
+}
+
+// writeFileAtomic writes data to path via a temp-file-then-rename, the same
+// pattern internal/projection's writeDaemonSubmitJSON uses: either the full
+// content lands at path, or path is left untouched -- no window where an
+// interrupted write (process death, this call's own goroutine crashing)
+// leaves it partially written. This does not fsync the file or its parent
+// directory, so it does not protect against power loss or a kernel panic
+// mid-write; that tradeoff is accepted here as local agent tooling.
+// MkdirAll is required here,
+// unlike a plain write to an already-populated directory: on
+// handleDaemonSubmitPop's dedup rollback path, the inbox/<node>/ directory
+// may have just been emptied and pruned by removeEmptyDirs as part of
+// archiving the very message being rolled back, so the destination
+// directory can genuinely be gone by the time this runs.
+func writeFileAtomic(path string, data []byte) error {
+	if err := writeFileAtomicOpsVar.mkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+	if err := writeFileAtomicOpsVar.writeFile(tmpPath, data, 0o600); err != nil {
+		return err
+	}
+	return writeFileAtomicOpsVar.rename(tmpPath, path)
+}
+
+// writeFileAtomicOps is the injectable-ops seam writeFileAtomic reads from
+// directly (via the package-level writeFileAtomicOpsVar, the same
+// swap-and-restore pattern this file already uses for
+// daemonPopArchiveVerify). It exists so tests can prove writeFileAtomic's
+// atomicity property itself -- that path is never left holding partial
+// content -- against the real production function, rather than only
+// exercising the happy path or a corrupted-byte path, neither of which
+// distinguishes this implementation from a plain, non-atomic os.WriteFile.
+//
+// This seam by itself does NOT prevent a call site from bypassing
+// writeFileAtomic entirely (e.g. calling os.WriteFile directly instead).
+// B1 (see TestHandleDaemonSubmitPop_RollbackCallSiteConsultsWriteFileAtomicOpsSeam)
+// closes that gap: helper-level tests call writeFileAtomic directly and
+// therefore cannot observe a call site that bypasses it entirely. (For
+// comparison, internal/store/mailbox_store.go's archiveFileOps uses the
+// opposite shape -- a parallel function taking an ops struct as a
+// parameter -- which does not close a call-site bypass either; neither
+// shape substitutes for a test that exercises the actual call site.)
+type writeFileAtomicOps struct {
+	mkdirAll  func(string, os.FileMode) error
+	writeFile func(string, []byte, os.FileMode) error
+	rename    func(string, string) error
+}
+
+var writeFileAtomicOpsVar = writeFileAtomicOps{
+	mkdirAll:  os.MkdirAll,
+	writeFile: os.WriteFile,
+	rename:    os.Rename,
 }
 
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -316,6 +434,56 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	if err != nil {
 		return projection.DaemonSubmitResponse{}, err
 	}
+	// Producer-side readiness barrier: verify the just-archived file is
+	// actually readable, non-symlink, and byte-identical to the content
+	// already read into memory above, BEFORE this function ever constructs
+	// a response containing MarkdownPath. This is the ordering #755
+	// requires -- validate, then publish -- rather than publishing first
+	// and leaving the caller to discover a not-yet-visible file on its own.
+	// On failure this returns an error and no response is ever built or
+	// handed to a caller. Critically, this also ROLLS BACK the archive: on
+	// its own, handleDaemonSubmitPop only discovers messages via
+	// ScanInboxMessages on the inbox directory, and ArchiveInboxMessage has
+	// already moved the file OUT of inbox by this point. Without a
+	// rollback, a verification failure would leave this pop's content
+	// unrecoverable -- gone from inbox on either of ArchiveInboxMessage's
+	// branches (they leave read/ in different states; see below), with
+	// nothing scanning read/ for undelivered mail -- so a retry pop would
+	// simply never find it again: the message would silently and
+	// permanently leave the unread set, the same consequence class this
+	// whole fix exists to prevent.
+	//
+	// The rollback recreates abs by writing `data` -- the exact bytes
+	// already read from inbox before archiving -- rather than renaming
+	// readPath back. This is deliberate: ArchiveInboxMessage has two
+	// internal branches, a normal rename (inbox -> read/) and a dedup
+	// remove (when read/<filename> already existed, in which case only the
+	// inbox copy is deleted and read/<filename> is left as it was). On the
+	// dedup branch, readPath was NOT created by this call and does not
+	// necessarily hold this pop's content at all -- a mismatch there is
+	// exactly what would trigger a readiness failure in the first place.
+	// Renaming it into inbox in that case would both erase a legitimate
+	// pre-existing archive record and, if the two copies genuinely
+	// differed, replace the original inbox content with the wrong bytes.
+	// Writing back the known-good in-memory `data` is correct for both
+	// branches and never touches readPath, so a pre-existing archive record
+	// is preserved untouched either way.
+	//
+	// The write itself goes through writeFileAtomic (temp-file-then-rename,
+	// the same pattern writeDaemonSubmitJSON already uses elsewhere in this
+	// repo) rather than a direct os.WriteFile: on the dedup branch the
+	// inbox original has already been removed, so an interrupted write
+	// would otherwise leave the message existing nowhere in complete form.
+	// See writeFileAtomic's own doc comment for what this protects against
+	// and what it doesn't (process death, not power loss).
+	//
+	// See handleDaemonSubmitPopVerificationFailure for what happens next:
+	// either this same rollback so a retry can re-discover the message, or
+	// (after enough repeated failures) a bounded dead-letter -- #761's
+	// bound on what was, before this branch, an unbounded retry.
+	if verifyErr := daemonPopArchiveVerify(readPath, string(data)); verifyErr != nil {
+		return handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, msgs[0].Filename, data, verifyErr)
+	}
 	fields := msgtrace.FromContent(msgs[0].Filename, filepath.Join("read", msgs[0].Filename), filepath.Base(sessionDir), string(data))
 	fields.DaemonSubmitRequestID = request.RequestID
 	fields.DaemonSubmitCommand = string(request.Command)
@@ -331,6 +499,251 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 		MarkdownPath: readPath,
 		UnreadBefore: len(msgs),
 	}, nil
+}
+
+// handleDaemonSubmitPopVerificationFailure decides what happens after
+// daemonPopArchiveVerify rejects a just-archived message: filename is the
+// popped message's bare filename (the counting key -- see
+// projection.CountPopVerificationFailures for why filename alone, not
+// filename+node), abs is the inbox path ArchiveInboxMessage already moved
+// the message out of, readPath is where it now lives, and data is the exact
+// bytes already read from inbox before archiving (the only known-good copy
+// once this function is called, since ArchiveInboxMessage has already
+// mutated the filesystem on either of its two branches).
+//
+// It first appends a MailboxProjectionPopVerificationFailedEventType event
+// and projects the cumulative failure count for filename (#755 F-013): on
+// its own, handleDaemonSubmitPop only discovers messages via
+// ScanInboxMessages on the inbox directory, and nothing scans read/ for
+// undelivered mail, so a verification failure that did nothing else would
+// leave the message permanently unreachable -- gone from inbox, unusably
+// archived in read/. Below popVerificationFailureDeadLetterThreshold
+// failures it rolls the message back to inbox so a retry pop can
+// rediscover and re-verify it. At or above the threshold it gives up
+// retrying and dead-letters the message instead, so a persistently
+// unreadable archive (corruption, a permissions problem, disk pressure)
+// cannot loop forever.
+//
+// If CountPopVerificationFailures itself fails (a damaged journal record,
+// a read error), the count is treated as unknown rather than fabricated as
+// 0: journal.Replay is all-or-nothing, so one damaged record would
+// otherwise permanently pin the count at 0 for every message in the
+// session, silently switching the bound off exactly during the
+// corruption/permissions/disk-pressure scenarios this feature exists to
+// handle. An unknown count always takes the rollback path (fail-open --
+// failing closed here would destroy a healthy message the daemon merely
+// can't read history for) and is reported as "unknown" rather than a
+// fabricated "0/3" in the returned error.
+//
+// The chosen primary recovery (rollback below threshold, dead-letter at/
+// above it) falls back to the OTHER recovery if its own write fails, so a
+// local write failure on one arm doesn't discard the only known-good copy
+// of the message when the other arm might still succeed. Both writes
+// reconstruct the message from `data` rather than moving or renaming
+// readPath: ArchiveInboxMessage has two internal branches, a normal rename
+// (inbox -> read/) and a dedup remove (when read/<filename> already
+// existed, in which case only the inbox copy is deleted and
+// read/<filename> is left as it was); on the dedup branch, readPath was
+// NOT created by this call and does not necessarily hold this pop's
+// content at all, so moving or renaming it would risk erasing a legitimate
+// pre-existing archive record or propagating the wrong bytes. Using the
+// known-good in-memory `data` is correct for both branches and never
+// touches readPath, so a pre-existing archive record is preserved
+// untouched either way.
+func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filename string, data []byte, verifyErr error) (projection.DaemonSubmitResponse, error) {
+	sessionName := filepath.Base(sessionDir)
+	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionPopVerificationFailedEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID:     filename,
+		Path:          filepath.Join("read", filename),
+		FailureReason: verifyErr.Error(),
+	})
+
+	failureCount, countErr := projection.CountPopVerificationFailures(sessionDir, filename)
+	countKnown := countErr == nil
+	if !countKnown {
+		log.Printf("postman: WARNING: component=daemon-submit event=pop_verification_failure_count_unknown session=%s file=%s err=%v\n", sessionName, filename, countErr)
+	}
+	exhausted := countKnown && failureCount >= popVerificationFailureDeadLetterThreshold
+
+	rollback := func() error {
+		// See writeFileAtomic's own doc comment for what its atomicity
+		// protects against and what it doesn't (process death, not power
+		// loss).
+		return writeFileAtomic(abs, data)
+	}
+	deadLetter := func() error {
+		// B-3: this description must be honest on BOTH paths that can reach
+		// dead-lettering -- the normal exhausted-threshold path (where
+		// failureCount genuinely reached the threshold) and the fallback
+		// path (rollback itself failed to write, so dead-letter is
+		// attempted regardless of failureCount -- which can be as low as 1
+		// on the very first failure). A single hardcoded "after N
+		// verification attempts" using the threshold constant would be
+		// false on the fallback path.
+		var attemptsDescription string
+		switch {
+		case exhausted:
+			attemptsDescription = fmt.Sprintf("after %d verification attempts (threshold %d)", failureCount, popVerificationFailureDeadLetterThreshold)
+		case countKnown:
+			attemptsDescription = fmt.Sprintf("after the rollback recovery attempt itself failed (this message had failed verification %d time(s), below the %d-failure threshold)", failureCount, popVerificationFailureDeadLetterThreshold)
+		default:
+			attemptsDescription = "after the rollback recovery attempt itself failed (the prior verification-failure count is unknown)"
+		}
+		return handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename, data, attemptsDescription)
+	}
+
+	primary, fallback, primaryLabel, fallbackLabel := rollback, deadLetter, "rollback to inbox", "dead-letter"
+	if exhausted {
+		primary, fallback, primaryLabel, fallbackLabel = deadLetter, rollback, "dead-letter", "rollback to inbox"
+	}
+
+	if primaryErr := primary(); primaryErr != nil {
+		log.Printf("postman: WARNING: component=daemon-submit event=pop_recovery_primary_failed primary=%q session=%s file=%s err=%v\n", primaryLabel, sessionName, filename, primaryErr)
+		if fallbackErr := fallback(); fallbackErr != nil {
+			// Wraps all three errors (primary, fallback, verifyErr) via %w so
+			// errors.Is finds any of them -- a single %v would hide the
+			// injected/underlying errors from callers and tests that need to
+			// confirm which specific failure surfaced.
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: both %s and %s failed, message may be lost: %w; %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, fallbackErr, verifyErr)
+		}
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: %s failed, fell back to %s: %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, verifyErr)
+	}
+
+	if exhausted {
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready after %d verification failures, moved to dead-letter: %w", failureCount, verifyErr)
+	}
+	countDesc := "unknown"
+	if countKnown {
+		countDesc = fmt.Sprintf("%d/%d", failureCount, popVerificationFailureDeadLetterThreshold)
+	}
+	return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s, rolled back to inbox (failure %s): %w", readPath, countDesc, verifyErr)
+}
+
+// handleDaemonSubmitPopDeadLetter writes the message's known-good in-memory
+// bytes to dead-letter/ (never MoveToDeadLetter: there is no single live
+// file to move -- abs may already be gone, and readPath is the very file
+// that just failed verification), records the same
+// MailboxProjectionDeadLetteredEventType the post-to-inbox delivery
+// pipeline in internal/message uses for every other dead-letter reason so
+// this shows up identically to an operator, and sends an accurate
+// operator-visible notification (#755 F-013).
+func handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename string, data []byte, attemptsDescription string) error {
+	dst := store.PlanDeadLetterMessage(sessionDir, filename, message.DlSuffixPopVerificationExhausted).DestinationPath
+	if err := writeDeadLetterFileAtomic(dst, data); err != nil {
+		return err
+	}
+	payload := mailboxProjectionPayloadForFile(filename, filepath.Join("read", filename), string(data))
+	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+		MessageID:     filename,
+		From:          payload.From,
+		To:            payload.To,
+		ThreadID:      payload.ThreadID,
+		Path:          filepath.Join("dead-letter", filepath.Base(dst)),
+		SourcePath:    filepath.Join("read", filename),
+		FailureReason: message.DeadLetterReasonPopVerificationExhausted,
+		Content:       string(data),
+	})
+	// payload.From falls back to an unvalidated envelope value when
+	// filename parsing fails; validating before use here is required
+	// because notifyPopVerificationDeadLetter joins it into a filesystem
+	// path and MkdirAlls it -- every other dead-letter notification call
+	// site in internal/message only ever passes a value that already came
+	// from a successful parse, so this is the first path that could
+	// otherwise carry body-controlled data into that sink unchecked.
+	if err := nodeaddr.Validate(payload.From); err != nil {
+		if payload.From != "" {
+			log.Printf("postman: WARNING: component=daemon-submit event=dead_letter_notify_skipped reason=invalid_sender sender=%q err=%v\n", payload.From, err)
+		}
+		return nil
+	}
+	var contextID string
+	if metadata, err := message.ParseEnvelopeMetadata(string(data)); err == nil {
+		contextID = metadata.ContextID
+	}
+	notifyPopVerificationDeadLetterFn(sessionDir, contextID, payload.From, filename, filepath.Base(dst), attemptsDescription)
+	return nil
+}
+
+// writeDeadLetterFileAtomic first MkdirAlls dst's parent directory, THEN
+// validates dst via store.ValidateDeadLetterTarget (rejecting a symlinked
+// dead-letter directory or target), THEN writes through writeFileAtomic
+// (temp-file-then-rename) -- rather than store.WriteDeadLetterFile's plain
+// os.WriteFile with no MkdirAll. This order is load-bearing in the opposite
+// direction from what it might look like: ValidateDeadLetterTarget lstats
+// the parent directory and errors on ENOENT if it doesn't exist yet, so
+// MkdirAll must run first, or every first-ever dead-letter write in a fresh
+// session would fail validation before it had a chance to succeed. This
+// matters specifically here because dead-lettering is the LAST chance for
+// this message -- unlike the rollback path, which is re-poppable if it
+// fails, a non-atomic or ENOENT-prone dead-letter write has no further
+// recovery path of its own (handleDaemonSubmitPopVerificationFailure's
+// fallback to rollback exists precisely to cover that case, but the write
+// itself should still be as safe as the rollback write it may fall back
+// to).
+func writeDeadLetterFileAtomic(dst string, data []byte) error {
+	if err := writeFileAtomicOpsVar.mkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return fmt.Errorf("creating dead-letter directory: %w", err)
+	}
+	if err := store.ValidateDeadLetterTarget(dst); err != nil {
+		return err
+	}
+	return writeFileAtomic(dst, data)
+}
+
+// notifyPopVerificationDeadLetter writes an operator-visible notification
+// into senderNode's inbox once nodeaddr.Validate(senderNode) has already
+// succeeded (checked by the only caller, handleDaemonSubmitPopDeadLetter).
+// Deliberately NOT internal/message's shared sendDeadLetterNotification:
+// that function's generic text ("was not delivered ... send a corrected
+// message") is accurate for routing/parse/session-disabled failures, but
+// actively misleading here -- this message WAS delivered and archived;
+// what failed is reading it back afterward, and resending fixes neither
+// corruption nor a permissions/disk-pressure problem on the receiving
+// session's own storage. contextID is read from the archived message's own
+// frontmatter (via message.ParseEnvelopeMetadata) since handleDaemonSubmitPop
+// has no contextID of its own to thread through.
+// notifyPopVerificationDeadLetterFn is a package-level indirection (the same
+// swap-and-restore pattern this file already uses for daemonPopArchiveVerify
+// and writeFileAtomicOpsVar) so tests can directly observe whether the
+// MAJ-3 sender-validation gate in handleDaemonSubmitPopDeadLetter actually
+// suppressed this call, rather than inferring it from filesystem side
+// effects -- filepath.Join cleans ".." segments internally, so a crafted
+// traversal sender does not land at a predictable, test-assertable path
+// under the session directory; it can escape arbitrarily far up the real
+// filesystem, which a filesystem-side-effect assertion cannot reliably
+// pin down across environments.
+var notifyPopVerificationDeadLetterFn = notifyPopVerificationDeadLetter
+
+func notifyPopVerificationDeadLetter(sessionDir, contextID, senderNode, originalFilename, deadLetterBasename, attemptsDescription string) {
+	senderSimpleName := nodeaddr.Simple(senderNode)
+	senderInbox := filepath.Join(sessionDir, "inbox", senderSimpleName)
+	if err := os.MkdirAll(senderInbox, 0o700); err != nil {
+		log.Printf("postman: WARNING: failed to create dead-letter notification inbox for %s: %v\n", senderNode, err)
+		return
+	}
+	now := time.Now()
+	notifFilename := fmt.Sprintf("%s-from-postman-to-%s.md", now.Format("20060102-150405"), senderSimpleName)
+	deadLetterPath := filepath.Join(sessionDir, "dead-letter", deadLetterBasename)
+	// B-3: attemptsDescription is supplied by the caller rather than
+	// hardcoded here, because dead-lettering is reachable via two paths
+	// with very different attempt counts -- the normal exhausted-threshold
+	// path and the rollback-write-failure fallback, which can dead-letter a
+	// message after just its first failure. A single hardcoded "after N
+	// verification attempts" using the threshold constant would be false on
+	// the fallback path.
+	content := fmt.Sprintf(
+		"---\nparams:\n  contextId: %s\n  from: postman\n  to: %s\n  timestamp: %s\n  messageType: dead_letter_notification\n---\n\n## Dead-letter Notification\n\nYour message %q was delivered and archived, but could not be read back reliably %s, so it has been moved to dead-letter/ rather than retried indefinitely.\n\nThis is a storage or environment problem on the RECEIVING session (corruption, a permissions issue, or disk pressure), not a routing or delivery failure -- resending will not fix it.\n\nDead-letter path: %s\n\nRecovery: inspect the dead-letter file above and the daemon logs around this timestamp on the receiving session. Once the underlying storage issue is resolved, resend only if the content is still needed.\n",
+		contextID,
+		senderSimpleName,
+		now.Format(time.RFC3339),
+		originalFilename,
+		attemptsDescription,
+		deadLetterPath,
+	)
+	notifPath := filepath.Join(senderInbox, notifFilename)
+	if err := os.WriteFile(notifPath, []byte(content), 0o600); err != nil {
+		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, err)
+	}
 }
 
 func handleDaemonSubmitRuntimeProfile(_ string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
@@ -505,6 +918,8 @@ func processDaemonSubmitRequest(requestPath string) (daemonSubmitProcessResult, 
 			result.Filename = response.Filename
 			result.PostPath = filepath.Join(sessionDir, "post", response.Filename)
 		}
+	case projection.DaemonSubmitValidateSend:
+		response, err = handleDaemonSubmitValidateSend(sessionDir, request)
 	case projection.DaemonSubmitPop:
 		response, err = handleDaemonSubmitPop(sessionDir, request)
 		if err == nil && !response.Empty {

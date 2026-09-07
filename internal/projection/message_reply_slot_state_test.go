@@ -302,10 +302,337 @@ func TestProjectMessageInputRequestState_CommandApprovalDeadLetterRequiresAccept
 	}, journal.AppendOptions{ThreadID: threadID}, now.Add(6*time.Second)); err != nil {
 		t.Fatalf("AppendEventWithOptions(reversed decision) error = %v", err)
 	}
-	assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, true)
+	assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, false)
 
 	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeadLetteredEventType, reversedMessageID, "approver", "worker", reversedReply, now.Add(7*time.Second))
 	assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, false)
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalReplyResolutionIsGatedAcrossMailboxEvents(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	for _, eventType := range []string{MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionDeadLetteredEventType} {
+		for _, decision := range []journal.ApprovalDecision{journal.ApprovalDecisionApproved, journal.ApprovalDecisionRejected} {
+			for _, variant := range []string{"accepted", "wrong-decision-hash", "missing-message-id", "wrong-message-id", "wrong-decision-input", "reviewer-mismatch", "requester-mismatch", "missing-reply-input", "wrong-reply-input", "missing-reply-hash", "wrong-reply-hash", "participant-mismatch", "reply-before-decision"} {
+				name := eventType + "/" + string(decision) + "/" + variant
+				t.Run(name, func(t *testing.T) {
+					sessionDir := t.TempDir()
+					writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+					if err != nil {
+						t.Fatalf("OpenShadowWriter() error = %v", err)
+					}
+					threadID, inputRequestID, commandHash := "command-approval-gated", "ireq_gated", "sha256:gated"
+					request := commandApprovalInputContent("worker", "approver", "request.md", "required", threadID, inputRequestID, "", commandHash, "approval requested")
+					if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+						Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+					}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+						t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+					}
+					appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "request.md", "worker", "approver", request, now.Add(2*time.Second))
+
+					replyID, decisionID, decisionHash, decisionInput := "decision.md", "decision.md", commandHash, inputRequestID
+					if variant == "wrong-decision-hash" {
+						decisionHash = "sha256:wrong"
+					}
+					if variant == "missing-message-id" {
+						decisionID = ""
+					}
+					if variant == "wrong-message-id" {
+						decisionID = "other-decision.md"
+					}
+					if variant == "wrong-decision-input" {
+						decisionInput = "ireq_other"
+					}
+					reviewerAddress, requesterAddress := "review:approver", "review:worker"
+					if variant == "reviewer-mismatch" {
+						reviewerAddress = "review:other"
+					}
+					if variant == "requester-mismatch" {
+						requesterAddress = "review:other"
+					}
+					replyFrom, replyTo, replyInput, replyHash := "approver", "worker", inputRequestID, commandHash
+					if variant == "participant-mismatch" {
+						replyFrom = "worker"
+					}
+					if variant == "missing-reply-input" {
+						replyInput = ""
+					}
+					if variant == "wrong-reply-input" {
+						replyInput = "ireq_other"
+					}
+					if variant == "missing-reply-hash" {
+						replyHash = ""
+					}
+					if variant == "wrong-reply-hash" {
+						replyHash = "sha256:wrong"
+					}
+					reply := commandApprovalInputContent(replyFrom, replyTo, replyID, "none", threadID, "", replyInput, replyHash, "decision")
+					appendDecision := func(at time.Time) {
+						t.Helper()
+						if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+							Reviewer: "approver", ReviewerAddress: reviewerAddress, RequesterAddress: requesterAddress, Decision: decision, Reason: "test", MessageID: decisionID, InputRequestID: decisionInput, CommandHash: decisionHash,
+						}, journal.AppendOptions{ThreadID: threadID}, at); err != nil {
+							t.Fatalf("AppendEventWithOptions(decision) error = %v", err)
+						}
+					}
+					if variant == "reply-before-decision" {
+						appendInputRequestMailboxEvent(t, writer, eventType, replyID, replyFrom, replyTo, reply, now.Add(3*time.Second))
+						appendDecision(now.Add(4 * time.Second))
+					} else {
+						appendDecision(now.Add(3 * time.Second))
+						appendInputRequestMailboxEvent(t, writer, eventType, replyID, replyFrom, replyTo, reply, now.Add(4*time.Second))
+						// Replay the same reply event to prove the shared resolver is exact-once.
+						appendInputRequestMailboxEvent(t, writer, eventType, replyID, replyFrom, replyTo, reply, now.Add(5*time.Second))
+					}
+
+					state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+					if err != nil || !ok {
+						t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+					}
+					stats := state.RequestSatisfaction["approver"]
+					if variant == "accepted" || variant == "reply-before-decision" {
+						assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, false)
+						wantLatency := 1
+						if variant == "reply-before-decision" {
+							wantLatency = 2
+						}
+						if stats.OpenedCount != 1 || stats.FilledCount != 1 || stats.OpenCount != 0 || stats.StaleOpenCount != 0 || stats.TotalTimeToFillSeconds != wantLatency || stats.AverageTimeToFillSeconds != wantLatency {
+							t.Fatalf("accepted %s satisfaction = %#v, want one exact fill", eventType, stats)
+						}
+					} else {
+						assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, true)
+						if stats.OpenedCount != 1 || stats.FilledCount != 0 || stats.OpenCount != 1 || stats.StaleOpenCount != 1 || stats.TotalTimeToFillSeconds != 0 || stats.AverageTimeToFillSeconds != 0 {
+							t.Fatalf("rejected %s satisfaction = %#v, want open stale request", eventType, stats)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalOpeningRejectsUntrustedReplyThreadAcrossMailboxEvents(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	for _, eventType := range []string{MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionDeadLetteredEventType} {
+		for _, threadID := range []string{"", "ordinary-thread", "command-approval-other"} {
+			t.Run(eventType+"/thread="+threadID, func(t *testing.T) {
+				sessionDir := t.TempDir()
+				writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+				if err != nil {
+					t.Fatalf("OpenShadowWriter() error = %v", err)
+				}
+				const commandThread = "command-approval-opening-bound"
+				const inputRequestID = "ireq_opening_bound"
+				const commandHash = "sha256:opening-bound"
+				request := commandApprovalInputContent("worker", "approver", "request.md", "required", commandThread, inputRequestID, "", commandHash, "approval requested")
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+					Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+				}, journal.AppendOptions{ThreadID: commandThread}, now.Add(time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+				}
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "request.md", "worker", "approver", request, now.Add(2*time.Second))
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+					Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionRejected, Reason: "test", MessageID: "decision.md", InputRequestID: inputRequestID, CommandHash: commandHash,
+				}, journal.AppendOptions{ThreadID: commandThread}, now.Add(3*time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(decision) error = %v", err)
+				}
+				reply := commandApprovalInputContent("approver", "worker", "decision.md", "none", threadID, "", inputRequestID, commandHash, "decision")
+				appendInputRequestMailboxEvent(t, writer, eventType, "decision.md", "approver", "worker", reply, now.Add(4*time.Second))
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+				if err != nil || !ok {
+					t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+				}
+				assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, true)
+				stats := state.RequestSatisfaction["approver"]
+				if stats.OpenedCount != 1 || stats.FilledCount != 0 || stats.OpenCount != 1 || stats.StaleOpenCount != 1 || stats.TotalTimeToFillSeconds != 0 || stats.AverageTimeToFillSeconds != 0 {
+					t.Fatalf("untrusted %s thread %q satisfaction = %#v, want unchanged open request", eventType, threadID, stats)
+				}
+			})
+		}
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalDecisionBeforeOpeningEventuallyResolves(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	for _, eventType := range []string{MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionDeadLetteredEventType} {
+		for _, decision := range []journal.ApprovalDecision{journal.ApprovalDecisionApproved, journal.ApprovalDecisionRejected} {
+			t.Run(eventType+"/"+string(decision), func(t *testing.T) {
+				sessionDir := t.TempDir()
+				writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+				if err != nil {
+					t.Fatalf("OpenShadowWriter() error = %v", err)
+				}
+				const threadID = "command-approval-decision-first"
+				const inputRequestID = "ireq_decision_first"
+				const commandHash = "sha256:decision-first"
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+					Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+				}
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+					Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: decision, Reason: "test", MessageID: "decision.md", InputRequestID: inputRequestID, CommandHash: commandHash,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(2*time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(decision) error = %v", err)
+				}
+				reply := commandApprovalInputContent("approver", "worker", "decision.md", "none", threadID, "", inputRequestID, commandHash, "decision")
+				appendInputRequestMailboxEvent(t, writer, eventType, "decision.md", "approver", "worker", reply, now.Add(3*time.Second))
+				request := commandApprovalInputContent("worker", "approver", "request.md", "required", threadID, inputRequestID, "", commandHash, "approval requested")
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "request.md", "worker", "approver", request, now.Add(4*time.Second))
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+				if err != nil || !ok {
+					t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+				}
+				assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, false)
+				stats := state.RequestSatisfaction["approver"]
+				if stats.OpenedCount != 1 || stats.FilledCount != 1 || stats.OpenCount != 0 || stats.StaleOpenCount != 0 || stats.TotalTimeToFillSeconds != 0 || stats.AverageTimeToFillSeconds != 0 {
+					t.Fatalf("decision-before-opening %s satisfaction = %#v, want exact fill", eventType, stats)
+				}
+			})
+		}
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalReplyBeforeOpeningEventuallyResolves(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	for _, eventType := range []string{MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionDeadLetteredEventType} {
+		for _, decision := range []journal.ApprovalDecision{journal.ApprovalDecisionApproved, journal.ApprovalDecisionRejected} {
+			t.Run(eventType+"/"+string(decision), func(t *testing.T) {
+				sessionDir := t.TempDir()
+				writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+				if err != nil {
+					t.Fatalf("OpenShadowWriter() error = %v", err)
+				}
+				const threadID = "command-approval-reply-first"
+				const inputRequestID = "ireq_reply_first"
+				const commandHash = "sha256:reply-first"
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+					Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+				}
+				reply := commandApprovalInputContent("approver", "worker", "decision.md", "none", threadID, "", inputRequestID, commandHash, "decision")
+				appendInputRequestMailboxEvent(t, writer, eventType, "decision.md", "approver", "worker", reply, now.Add(3*time.Second))
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+					Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: decision, Reason: "test", MessageID: "decision.md", InputRequestID: inputRequestID, CommandHash: commandHash,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(4*time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(decision) error = %v", err)
+				}
+				request := commandApprovalInputContent("worker", "approver", "request.md", "required", threadID, inputRequestID, "", commandHash, "approval requested")
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "request.md", "worker", "approver", request, now.Add(5*time.Second))
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+				if err != nil || !ok {
+					t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+				}
+				assertCommandApprovalReplySlotForProjection(t, sessionDir, inputRequestID, false)
+				stats := state.RequestSatisfaction["approver"]
+				if stats.OpenedCount != 1 || stats.FilledCount != 1 || stats.OpenCount != 0 || stats.StaleOpenCount != 0 || stats.TotalTimeToFillSeconds != 0 || stats.AverageTimeToFillSeconds != 0 {
+					t.Fatalf("reply-before-opening %s satisfaction = %#v, want exact-once fill", eventType, stats)
+				}
+			})
+		}
+	}
+}
+
+func TestProjectMessageInputRequestState_MalformedCommandOpeningCannotFallBackToOrdinaryResolution(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	for _, eventType := range []string{MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionDeadLetteredEventType} {
+		for _, malformed := range []string{"missing-thread", "wrong-thread", "missing-hash", "wrong-hash", "wrong-participant", "wrong-input"} {
+			t.Run(eventType+"/"+malformed, func(t *testing.T) {
+				sessionDir := t.TempDir()
+				writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+				if err != nil {
+					t.Fatalf("OpenShadowWriter() error = %v", err)
+				}
+				const threadID = "command-approval-authoritative"
+				const inputRequestID = "ireq_authoritative"
+				const commandHash = "sha256:authoritative"
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+					Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(request) error = %v", err)
+				}
+				openingThread, openingInput, openingHash, openingFrom := threadID, inputRequestID, commandHash, "worker"
+				switch malformed {
+				case "missing-thread":
+					openingThread = ""
+				case "wrong-thread":
+					openingThread = "command-approval-other"
+				case "missing-hash":
+					openingHash = ""
+				case "wrong-hash":
+					openingHash = "sha256:wrong"
+				case "wrong-participant":
+					openingFrom = "other"
+				case "wrong-input":
+					openingInput = "ireq_other"
+				}
+				opening := commandApprovalInputContent(openingFrom, "approver", "request.md", "required", openingThread, openingInput, "", openingHash, "approval requested")
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "request.md", openingFrom, "approver", opening, now.Add(2*time.Second))
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+					Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionRejected, Reason: "test", MessageID: "decision.md", InputRequestID: inputRequestID, CommandHash: commandHash,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(3*time.Second)); err != nil {
+					t.Fatalf("AppendEventWithOptions(decision) error = %v", err)
+				}
+				reply := commandApprovalInputContent("approver", "worker", "decision.md", "none", threadID, "", openingInput, commandHash, "decision")
+				appendInputRequestMailboxEvent(t, writer, eventType, "decision.md", "approver", "worker", reply, now.Add(4*time.Second))
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(3700*time.Second), 3600)
+				if err != nil || !ok {
+					t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+				}
+				stats := state.RequestSatisfaction["approver"]
+				if stats.OpenedCount != 1 || stats.FilledCount != 0 || stats.OpenCount != 1 || stats.StaleOpenCount != 1 || stats.TotalTimeToFillSeconds != 0 || stats.AverageTimeToFillSeconds != 0 {
+					t.Fatalf("malformed opening %s/%s satisfaction = %#v, want unchanged", eventType, malformed, stats)
+				}
+				if len(state.InputRequired) != 1 || state.InputRequiredCounts["approver"] != 1 {
+					t.Fatalf("malformed opening %s/%s inbound = %#v, want one open slot", eventType, malformed, state)
+				}
+			})
+		}
+	}
+}
+
+func TestProjectMessageInputRequestState_OrdinaryReplyResolutionRemainsBranchSpecific(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	t.Run("post-consumed does not resolve outbound", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+		if err != nil {
+			t.Fatalf("OpenShadowWriter() error = %v", err)
+		}
+		request := inputRequestContentWithExact("worker", "approver", "outbound.md", "required", "", "ireq_outbound", "", "request")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "outbound.md", "worker", "approver", request, now.Add(time.Second))
+		reply := inputRequestContentWithExact("approver", "worker", "reply.md", "none", "", "", "ireq_outbound", "reply")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "reply.md", "approver", "worker", reply, now.Add(2*time.Second))
+		state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(10*time.Second), 3600)
+		if err != nil || !ok {
+			t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+		}
+		if !hasInputRequest(state.WaitingOnInput, "ireq_outbound") || state.WaitingOnInputCounts["worker"] != 1 {
+			t.Fatalf("post-consumed changed outbound ordinary slot: %#v", state)
+		}
+	})
+	t.Run("delivered does not resolve inbound", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+		if err != nil {
+			t.Fatalf("OpenShadowWriter() error = %v", err)
+		}
+		request := inputRequestContentWithExact("worker", "approver", "inbound.md", "required", "", "ireq_inbound", "", "request")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "inbound.md", "worker", "approver", request, now.Add(time.Second))
+		reply := inputRequestContentWithExact("approver", "worker", "reply.md", "none", "", "", "ireq_inbound", "reply")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "reply.md", "approver", "worker", reply, now.Add(2*time.Second))
+		state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(10*time.Second), 3600)
+		if err != nil || !ok {
+			t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+		}
+		if !hasInputRequest(state.InputRequired, "ireq_inbound") || state.InputRequiredCounts["approver"] != 1 {
+			t.Fatalf("delivered changed inbound ordinary slot: %#v", state)
+		}
+		stats := state.RequestSatisfaction["approver"]
+		if stats.OpenedCount != 1 || stats.FilledCount != 1 || stats.OpenCount != 0 || stats.TotalTimeToFillSeconds != 1 || stats.AverageTimeToFillSeconds != 1 {
+			t.Fatalf("delivered ordinary satisfaction = %#v, want original delivered behavior", stats)
+		}
+	})
 }
 
 func assertCommandApprovalReplySlotForProjection(t *testing.T, sessionDir, inputRequestID string, wantOpen bool) {
@@ -323,11 +650,15 @@ func assertCommandApprovalReplySlotForProjection(t *testing.T, sessionDir, input
 	if got := hasInputRequest(state.WaitingOnInput, inputRequestID); got != wantOpen {
 		t.Fatalf("WaitingOnInput has %q = %v, want %v; state=%#v", inputRequestID, got, wantOpen, state.WaitingOnInput)
 	}
-	if got := state.InputRequiredCounts["approver"]; (got > 0) != wantOpen {
-		t.Fatalf("InputRequiredCounts[approver] = %d, want open=%v", got, wantOpen)
+	wantCount := 0
+	if wantOpen {
+		wantCount = 1
 	}
-	if got := state.WaitingOnInputCounts["worker"]; (got > 0) != wantOpen {
-		t.Fatalf("WaitingOnInputCounts[worker] = %d, want open=%v", got, wantOpen)
+	if got := state.InputRequiredCounts["approver"]; got != wantCount {
+		t.Fatalf("InputRequiredCounts[approver] = %d, want %d", got, wantCount)
+	}
+	if got := state.WaitingOnInputCounts["worker"]; got != wantCount {
+		t.Fatalf("WaitingOnInputCounts[worker] = %d, want %d", got, wantCount)
 	}
 }
 
