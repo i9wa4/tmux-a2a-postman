@@ -1645,7 +1645,7 @@ func assertLifecycleDeadLetters(t *testing.T, sessionDir, suffix string, want in
 	}
 }
 
-func TestResolveCommandApprovalPolicy_DefaultsToBlocking(t *testing.T) {
+func TestRunExecuteBashDefaultsToBlocking(t *testing.T) {
 	policy, err := resolveCommandApprovalPolicy(&config.Config{}, "worker", "protected", "release", "", "", 0)
 	if err != nil {
 		t.Fatalf("resolveCommandApprovalPolicy() error = %v", err)

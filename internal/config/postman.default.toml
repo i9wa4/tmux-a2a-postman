@@ -149,7 +149,9 @@ auto_enable_new_sessions = true    # Required default: auto-claim configured nod
 # unsupported.
 
 # Command approval policies for execute-bash (Issue #484/#625/#626/#629). Optional; no policies means every
-# execute-bash invocation uses the advisory default.
+# execute-bash invocation defaults to blocking when a valid command approver is
+# configured. Without a configured approver it falls through as
+# auto_approved_no_reviewer; callers may request advisory explicitly.
 # [[postman.command_approval]]
 # requester = "worker"
 # label = "nix-build"
