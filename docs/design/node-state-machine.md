@@ -53,17 +53,17 @@ input-request identity belongs to daemon status and reply projection.
 
 ## 2. State Surfaces
 
-| Surface                                   | Values                                                           | Meaning                                                   |
-| ----------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
-| `nodes[*].pane_state`                     | empty, `active`, `idle`, `stale`                                 | Pane availability and activity fact                       |
-| `nodes[*].visible_state`                  | `initial`, `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
-| `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`                       | Non-content pane progress evidence                        |
-| `nodes[*].node_local.state`               | `unknown`, `live`, `working`, `stale`, `conflict`                | Pane-local lifecycle before message-flow overlay          |
-| `nodes[*].node_local.freshness`           | `unknown`, `fresh`, `aging`, `stale`, `conflict`                 | Age class for pane-local progress evidence                |
-| `nodes[*].flow.state`                     | `idle`, `expected_wait`, `needs_action`, `blocked`               | Input-request and blocked-report lifecycle                |
-| session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session status |
-| `severity`                                | See contextual severity table                                    | Additive triage severity for operators                    |
-| `compact_severity`                        | ASCII token                                                      | One-line severity summary for opt-in compact scans        |
+| Surface                                   | Values                                                           | Meaning                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- |
+| `nodes[*].pane_state`                     | empty, `active`, `idle`, `stale`                                 | Pane availability and activity fact                            |
+| `nodes[*].visible_state`                  | `initial`, `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                     |
+| `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`                       | Non-content pane progress evidence                             |
+| `nodes[*].node_local.state`               | `unknown`, `live`, `working`, `stale`, `conflict`                | Pane-local lifecycle before message-flow overlay               |
+| `nodes[*].node_local.freshness`           | `unknown`, `fresh`, `aging`, `stale`, `conflict`                 | Capture-observation age class for pane-local progress evidence |
+| `nodes[*].flow.state`                     | `idle`, `expected_wait`, `needs_action`, `blocked`               | Input-request and blocked-report lifecycle                     |
+| session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session status      |
+| `severity`                                | See contextual severity table                                    | Additive triage severity for operators                         |
+| `compact_severity`                        | ASCII token                                                      | One-line severity summary for opt-in compact scans             |
 
 `active` and `idle` pane facts normalize to `ready` unless input requests
 override them. A live pane that has not changed for a long time remains `idle`
@@ -81,19 +81,22 @@ tell whether the pane is still changing without reading raw pane text.
 `last_screen_change_at` when both timestamps are known and the latest capture is
 after the latest change. `node_local.age_seconds` is separate: it is the
 observation age of `last_capture_at` relative to the status collection time.
-`node_local.unchanged_seconds` preserves the unchanged duration. These values
-feed `node_local.freshness`; they do not directly affect legacy visible-state
+`node_local.unchanged_seconds` preserves the unchanged duration. A fresh quiet
+capture is live/idle even when its content has been unchanged for a long time:
+unchanged duration is observation context, not daemon lag or stale capture
+evidence. Capture age, explicit stale evidence, and incoherent timestamps feed
+`node_local.freshness`; they do not directly affect legacy visible-state
 ranking.
 
 Pane-local freshness classes are intentionally coarse:
 
-| Freshness  | Meaning                                                               |
-| ---------- | --------------------------------------------------------------------- |
-| `unknown`  | Progress evidence is missing or cannot be timestamped                 |
-| `fresh`    | The capture is within 30 seconds and shows a coherent latest change   |
-| `aging`    | Capture or unchanged evidence is older than 30s but younger than 180s |
-| `stale`    | Pane state is stale, capture is stale, or unchanged for at least 180s |
-| `conflict` | Reserved for contradictory pane evidence                              |
+| Freshness  | Meaning                                                                         |
+| ---------- | ------------------------------------------------------------------------------- |
+| `unknown`  | Progress evidence is missing or cannot be timestamped                           |
+| `fresh`    | The capture is within 30 seconds and shows a coherent latest change             |
+| `aging`    | Capture or unchanged evidence is older than 30s but younger than 180s           |
+| `stale`    | Pane state is stale, capture is stale, or progress evidence is explicitly stale |
+| `conflict` | Reserved for contradictory pane evidence                                        |
 
 `node_local.state` is derived before workflow facts:
 
@@ -117,6 +120,12 @@ being reported as definitive active work.
 `unavailable` is a session-level fallback, not a per-node state. It means this
 daemon cannot provide canonical status for that tmux session. It is displayed
 with the same neutral compact mark as `initial`.
+
+`current_command` is observational context, not mutually exclusive evidence:
+a shell command with a changed screen is normal activity (for example prompt
+redraws, typing, hooks, or shell output). Conflict is reserved for impossible
+timestamps, contradictory progress timestamps, or changed evidence from an
+explicitly idle or stale pane.
 
 `schema_version: 5` reports contextual severity and per-node convention-meter
 figures alongside `visible_state` and `compact`. Consumers that only need the
@@ -236,7 +245,35 @@ Grouped input-request fields are reserved for the next protocol layer:
 carried as metadata but do not affect L1 status counts until grouped
 completion rules are implemented.
 
-## 7. Status Projection
+## 7. Review And Acceptance Projections
+
+`get-status --tasks` adds two task-owner surfaces without changing transport
+or node-flow state. Both join on the exact external `(task_id, run_id)` pair;
+they never join by thread alone, recipient, or an input-request ID. A task with
+multiple thread IDs is `unknown` and cannot pass a gate.
+
+| Surface              | Closed `state` vocabulary               | Evidence                                                        | Does not mean                                        |
+| -------------------- | --------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
+| `review_approvals[]` | `pending`, `review_approved`, `unknown` | Exact first-line `APPROVED` convention on the matching task/run | an input request was filled or the task was accepted |
+| `acceptances[]`      | `pending_review`, `accepted`, `unknown` | Exact first-line `ACCEPTED` convention on the matching task/run | a transport terminal message alone is acceptance     |
+
+`acceptances[].gate_passed` is true only for the same task/run when both an
+explicit review approval and explicit acceptance exist. `terminal_validation`
+is `no_terminal_convention`, `transport_terminal_not_acceptance`,
+`accepted_convention`, or `ambiguous_task_run`; it makes terminal handling
+auditable rather than allowing a filled request to silently become acceptance.
+The projections are additive JSON in schema version 6. Protocol/request
+counts, node `flow`, pane-local freshness, and severity retain their existing
+owners and precedence; review/acceptance facts do not alter them.
+
+| Fact family                 | Owner                 | Join key                                    | Precedence / non-bleeding rule                                                                                                             |
+| --------------------------- | --------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Protocol and requests       | mailbox projection    | `message_id`, then exact `input_request_id` | A fill closes only its matching request slot; it never creates review or acceptance facts.                                                 |
+| Task-run transport terminal | task-run projection   | `(task_id, run_id)`                         | A terminal message is reported as `transport_terminal_not_acceptance` unless an explicit acceptance convention exists.                     |
+| Review approval             | task-owner projection | `(task_id, run_id)`                         | `APPROVED` is explicit; a different run, thread-only match, or ambiguous run cannot supply approval.                                       |
+| Acceptance and gate         | task-owner projection | `(task_id, run_id)`                         | `ACCEPTED` stays `pending_review` without matching approval; only matching explicit approval plus acceptance produces `gate_passed: true`. |
+
+## 8. Status Projection
 
 The canonical contract is shared by `get-status`, `get-status-oneline`, and the
 default TUI. Per-node state is exposed as `nodes[*].visible_state`.
@@ -252,7 +289,7 @@ Queue facts are reported separately in `queues.post_count`,
 `queues.inbox_count`, and `queues.dead_letter_count`. Input-request facts are
 reported per node.
 
-## 8. Contextual Severity
+## 9. Contextual Severity
 
 Contextual severity is additive. It answers what an operator should triage
 first without changing the visible-state model.
@@ -316,7 +353,7 @@ cannot remain a definitive green idle signal. The opt-in `--severity` flag
 prints `compact_severity` instead. A `?` suffix marks inferred evidence, such as
 `blocked?:node=worker`.
 
-## 9. Severity Examples
+## 10. Severity Examples
 
 | Scenario              | Primary evidence                                                                | Severity           |
 | --------------------- | ------------------------------------------------------------------------------- | ------------------ |

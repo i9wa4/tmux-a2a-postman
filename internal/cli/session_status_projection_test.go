@@ -376,14 +376,24 @@ func TestSessionStatusClassifiesNodeLocalFreshnessMatrix(t *testing.T) {
 			wantUnchanged: 15,
 		},
 		{
-			name:          "aging unchanged remains live",
+			name:          "fresh capture with aging unchanged content remains live",
 			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -70*time.Second, -5*time.Second)},
 			wantState:     "live",
 			wantSeverity:  "ok",
 			wantEvidence:  "observed",
-			wantFreshness: "aging",
+			wantFreshness: "fresh",
 			wantAge:       5,
 			wantUnchanged: 65,
+		},
+		{
+			name:          "fresh quiet capture remains live beyond unchanged boundary",
+			node:          status.NodeStatus{Name: "worker", PaneState: "active", ScreenProgress: progress("unchanged", -4*time.Minute, -5*time.Second)},
+			wantState:     "live",
+			wantSeverity:  "ok",
+			wantEvidence:  "observed",
+			wantFreshness: "fresh",
+			wantAge:       5,
+			wantUnchanged: 235,
 		},
 		{
 			name:             "old but changed is stale",
@@ -474,14 +484,14 @@ func TestSessionStatusClassifiesNodeLocalFreshnessMatrix(t *testing.T) {
 			wantReasonSubstr: "contradicts",
 		},
 		{
-			name:             "changed screen with shell command is conflict",
+			name:             "changed screen with shell command is working",
 			node:             status.NodeStatus{Name: "worker", PaneState: "active", CurrentCommand: "bash", ScreenProgress: progress("changed", -5*time.Second, -5*time.Second)},
-			wantState:        "conflict",
-			wantSeverity:     "attention_stale",
+			wantState:        "working",
+			wantSeverity:     "working",
 			wantEvidence:     "observed",
-			wantFreshness:    "conflict",
+			wantFreshness:    "fresh",
 			wantAge:          5,
-			wantReasonSubstr: "current command is a shell",
+			wantReasonSubstr: "changed in the latest capture",
 		},
 		{
 			name:             "changed screen with idle pane is conflict",
@@ -612,15 +622,15 @@ func TestSessionStatusBuildsDefaultCompactAfterNodeLocalEnrichment(t *testing.T)
 			wantReasonSubstr: "future",
 		},
 		{
-			name:             "shell command contradiction is red not skipped green",
+			name:             "shell command with changed screen is working blue",
 			paneState:        "active",
 			currentCommand:   "bash",
 			screenProgress:   progress("changed", -5*time.Second, -5*time.Second),
-			wantCompact:      "🔴",
-			wantNodeLocal:    "conflict",
-			wantSeverity:     "attention_stale",
-			wantOneline:      "🔴",
-			wantReasonSubstr: "current command is a shell",
+			wantCompact:      "🔵",
+			wantNodeLocal:    "working",
+			wantSeverity:     "working",
+			wantOneline:      "🔵",
+			wantReasonSubstr: "changed in the latest capture",
 		},
 		{
 			name:             "idle pane with changed screen is red conflict",
@@ -852,8 +862,8 @@ func TestSessionStatusAddsSchemaV4SeverityForInputRequests(t *testing.T) {
 		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	if health.SchemaVersion != 5 {
-		t.Fatalf("SchemaVersion = %d, want 5", health.SchemaVersion)
+	if health.SchemaVersion != 6 {
+		t.Fatalf("SchemaVersion = %d, want 6", health.SchemaVersion)
 	}
 	if health.VisibleState != "pending" || health.Compact != "🔷🟡" {
 		t.Fatalf("legacy visible fields changed: visible_state=%q compact=%q", health.VisibleState, health.Compact)

@@ -1104,3 +1104,23 @@ func TestBuildCommandApprovalStatus_DeprecatedCommandApprovers(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusTaskOutcomeProjections_RequireExplicitApprovalAndAcceptancePerTaskRun(t *testing.T) {
+	tasks := []status.TaskRunProjection{
+		{TaskID: "TASK-1", RunID: "run-a", ThreadID: "thread-a", ReviewApprovalMessageID: "review-a", AcceptanceMessageID: "accept-a"},
+		{TaskID: "TASK-1", RunID: "run-b", ThreadID: "thread-b", TerminalMessageID: "transport-only"},
+	}
+	reviews, acceptances := statusTaskOutcomeProjections(tasks)
+	if len(reviews) != 2 || len(acceptances) != 2 {
+		t.Fatalf("outcome lengths = %d/%d, want 2/2", len(reviews), len(acceptances))
+	}
+	if reviews[0].State != "review_approved" || reviews[0].ApprovalMessageID != "review-a" {
+		t.Fatalf("review[0] = %#v, want explicit approval", reviews[0])
+	}
+	if acceptances[0].State != "accepted" || !acceptances[0].GatePassed || acceptances[0].TerminalValidation != "accepted_convention" {
+		t.Fatalf("acceptance[0] = %#v, want accepted gate", acceptances[0])
+	}
+	if reviews[1].State != "pending" || acceptances[1].State != "pending_review" || acceptances[1].GatePassed || acceptances[1].TerminalValidation != "transport_terminal_not_acceptance" {
+		t.Fatalf("run-b must not inherit run-a approval/acceptance: review=%#v acceptance=%#v", reviews[1], acceptances[1])
+	}
+}

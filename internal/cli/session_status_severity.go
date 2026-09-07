@@ -370,12 +370,6 @@ func evaluateNodeLocalProgress(node status.NodeStatus, now time.Time) nodeLocalP
 		result.reason = "unchanged screen progress has no elapsed unchanged duration"
 		return result
 	}
-	if progress.EvidenceState == "changed" && isShellCommand(node.CurrentCommand) {
-		result.state = nodeLocalProgressConflict
-		result.freshness = "conflict"
-		result.reason = "screen progress changed while current command is a shell"
-		return result
-	}
 	if progress.EvidenceState == "changed" && node.PaneState == "idle" {
 		result.state = nodeLocalProgressConflict
 		result.freshness = "conflict"
@@ -398,15 +392,9 @@ func evaluateNodeLocalProgress(node status.NodeStatus, now time.Time) nodeLocalP
 
 	result.state = nodeLocalProgressState(progress.EvidenceState)
 	switch {
-	case result.unchangedSeconds >= status.NodeLocalStaleAfterSeconds:
-		result.freshness = "stale"
-		result.reason = "screen has not changed within the pane-local freshness window"
 	case result.observationAgeSeconds > status.NodeLocalFreshAfterSeconds:
 		result.freshness = "aging"
 		result.reason = "screen progress capture is aging"
-	case result.unchangedSeconds > status.NodeLocalFreshAfterSeconds:
-		result.freshness = "aging"
-		result.reason = "screen has not changed within the fresh pane-local window"
 	default:
 		result.freshness = "fresh"
 		result.reason = "screen progress evidence is fresh"

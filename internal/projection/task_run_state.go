@@ -2,6 +2,7 @@ package projection
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
@@ -12,17 +13,19 @@ type TaskRunState struct {
 }
 
 type TaskRunDetail struct {
-	TaskID               string
-	RunID                string
-	OriginatingMessageID string
-	ThreadID             string
-	AssignedNode         string
-	LatestMessageID      string
-	OpenInputRequestIDs  []string
-	State                string
-	TerminalMessageID    string
-	Ambiguous            bool
-	AmbiguityReason      string
+	TaskID                  string
+	RunID                   string
+	OriginatingMessageID    string
+	ThreadID                string
+	AssignedNode            string
+	LatestMessageID         string
+	OpenInputRequestIDs     []string
+	State                   string
+	TerminalMessageID       string
+	Ambiguous               bool
+	AmbiguityReason         string
+	ReviewApprovalMessageID string
+	AcceptanceMessageID     string
 }
 
 type taskRunAccumulator struct {
@@ -119,6 +122,12 @@ func ProjectTaskRunState(sessionDir, sessionName string) (TaskRunState, bool, er
 			delete(acc.openRequests, meta.FillsInputRequestID)
 			acc.detail.TerminalMessageID = meta.MessageID
 		}
+		switch terminalConvention(meta.Body) {
+		case "APPROVED":
+			acc.detail.ReviewApprovalMessageID = meta.MessageID
+		case "ACCEPTED":
+			acc.detail.AcceptanceMessageID = meta.MessageID
+		}
 	}
 
 	if !sawLease || !sawResolution || !sawTaskMetadata {
@@ -152,6 +161,11 @@ func ProjectTaskRunState(sessionDir, sessionName string) (TaskRunState, bool, er
 		return projected.Tasks[i].OriginatingMessageID < projected.Tasks[j].OriginatingMessageID
 	})
 	return projected, true, nil
+}
+
+func terminalConvention(body string) string {
+	firstLine, _, _ := strings.Cut(strings.TrimSpace(body), "\n")
+	return strings.TrimSpace(firstLine)
 }
 
 func taskRunMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {

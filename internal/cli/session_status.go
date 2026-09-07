@@ -168,6 +168,7 @@ func collectResolvedSessionStatusWithContext(ctx commandContext, contextIDFlag, 
 	if options.IncludeTasks {
 		sessionDir := filepath.Join(target.baseDir, target.contextID, target.sessionName)
 		result.Tasks = statusTaskRunProjection(sessionDir, target.sessionName)
+		result.ReviewApprovals, result.Acceptances = statusTaskOutcomeProjections(result.Tasks)
 	}
 	return result, true, nil
 }
@@ -180,20 +181,55 @@ func statusTaskRunProjection(sessionDir, sessionName string) []status.TaskRunPro
 	result := make([]status.TaskRunProjection, 0, len(projected.Tasks))
 	for _, task := range projected.Tasks {
 		result = append(result, status.TaskRunProjection{
-			TaskID:               task.TaskID,
-			RunID:                task.RunID,
-			OriginatingMessageID: task.OriginatingMessageID,
-			ThreadID:             task.ThreadID,
-			AssignedNode:         task.AssignedNode,
-			LatestMessageID:      task.LatestMessageID,
-			OpenInputRequestIDs:  task.OpenInputRequestIDs,
-			State:                task.State,
-			TerminalMessageID:    task.TerminalMessageID,
-			Ambiguous:            task.Ambiguous,
-			AmbiguityReason:      task.AmbiguityReason,
+			TaskID:                  task.TaskID,
+			RunID:                   task.RunID,
+			OriginatingMessageID:    task.OriginatingMessageID,
+			ThreadID:                task.ThreadID,
+			AssignedNode:            task.AssignedNode,
+			LatestMessageID:         task.LatestMessageID,
+			OpenInputRequestIDs:     task.OpenInputRequestIDs,
+			State:                   task.State,
+			TerminalMessageID:       task.TerminalMessageID,
+			Ambiguous:               task.Ambiguous,
+			AmbiguityReason:         task.AmbiguityReason,
+			ReviewApprovalMessageID: task.ReviewApprovalMessageID,
+			AcceptanceMessageID:     task.AcceptanceMessageID,
 		})
 	}
 	return result
+}
+
+func statusTaskOutcomeProjections(tasks []status.TaskRunProjection) ([]status.ReviewApprovalStatus, []status.AcceptanceStatus) {
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	reviews := make([]status.ReviewApprovalStatus, 0, len(tasks))
+	acceptances := make([]status.AcceptanceStatus, 0, len(tasks))
+	for _, task := range tasks {
+		review := status.ReviewApprovalStatus{TaskID: task.TaskID, RunID: task.RunID, ThreadID: task.ThreadID, State: "pending"}
+		acceptance := status.AcceptanceStatus{TaskID: task.TaskID, RunID: task.RunID, ThreadID: task.ThreadID, State: "pending_review", TerminalValidation: "no_terminal_convention"}
+		switch {
+		case task.Ambiguous:
+			review.State, review.Reason = "unknown", task.AmbiguityReason
+			acceptance.State, acceptance.TerminalValidation, acceptance.Reason = "unknown", "ambiguous_task_run", task.AmbiguityReason
+		case task.ReviewApprovalMessageID != "":
+			review.State, review.ApprovalMessageID = "review_approved", task.ReviewApprovalMessageID
+		}
+		if task.AcceptanceMessageID != "" {
+			acceptance.AcceptanceMessageID = task.AcceptanceMessageID
+			acceptance.TerminalValidation = "accepted_convention"
+			if review.State == "review_approved" {
+				acceptance.State, acceptance.GatePassed = "accepted", true
+			} else {
+				acceptance.State = "pending_review"
+			}
+		} else if task.TerminalMessageID != "" {
+			acceptance.TerminalValidation = "transport_terminal_not_acceptance"
+		}
+		reviews = append(reviews, review)
+		acceptances = append(acceptances, acceptance)
+	}
+	return reviews, acceptances
 }
 
 func collectRuntimeDiagnosticsFromDaemonWithContext(ctx commandContext, target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {
