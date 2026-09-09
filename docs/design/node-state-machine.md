@@ -252,26 +252,29 @@ or node-flow state. Both join on the exact external `(task_id, run_id)` pair;
 they never join by thread alone, recipient, or an input-request ID. A task with
 multiple thread IDs is `unknown` and cannot pass a gate.
 
-| Surface              | Closed `state` vocabulary               | Evidence                                                        | Does not mean                                        |
-| -------------------- | --------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------- |
-| `review_approvals[]` | `pending`, `review_approved`, `unknown` | Exact first-line `APPROVED` convention on the matching task/run | an input request was filled or the task was accepted |
-| `acceptances[]`      | `pending_review`, `accepted`, `unknown` | Exact first-line `ACCEPTED` convention on the matching task/run | a transport terminal message alone is acceptance     |
+| Surface              | Closed `state` vocabulary                            | Evidence                                                                          | Does not mean                                                                        |
+| -------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `review_approvals[]` | `none`, `pending`, `approved`, `rejected`, `unknown` | Exact first-line `APPROVED:` or `NOT APPROVED:` terminal on the matching task/run | an input request was filled or a bare marker appeared                                |
+| `acceptances[]`      | `none`, `accepted`, `rejected`, `unknown`            | Exact first-line `DONE` or `BLOCKED` terminal on the matching task/run            | a transport terminal, bare `APPROVED`/`ACCEPTED` marker, or a different run's review |
 
-`acceptances[].gate_passed` is true only for the same task/run when both an
-explicit review approval and explicit acceptance exist. `terminal_validation`
-is `no_terminal_convention`, `transport_terminal_not_acceptance`,
-`accepted_convention`, or `ambiguous_task_run`; it makes terminal handling
-auditable rather than allowing a filled request to silently become acceptance.
-The projections are additive JSON in schema version 6. Protocol/request
+`acceptances[].gate_passed` is true only for the same task/run when an
+`APPROVED:` review and `DONE` completion both exist and completion supplies
+`Task artifact`, `Original checklist: PASS`, concrete `Evidence`, and
+`Remaining blockers: none`. `terminal_validation` reports
+`completion_evidence_complete`, `missing_completion_fields`, `blocked_terminal`,
+`transport_terminal_not_completion`, `no_terminal_convention`, or
+`ambiguous_task_run`, and `missing_completion_fields` names each absent
+requirement. A positive review is required for every completion gate. The
+projections are additive JSON in schema version 7. Protocol/request
 counts, node `flow`, pane-local freshness, and severity retain their existing
 owners and precedence; review/acceptance facts do not alter them.
 
-| Fact family                 | Owner                 | Join key                                    | Precedence / non-bleeding rule                                                                                                             |
-| --------------------------- | --------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Protocol and requests       | mailbox projection    | `message_id`, then exact `input_request_id` | A fill closes only its matching request slot; it never creates review or acceptance facts.                                                 |
-| Task-run transport terminal | task-run projection   | `(task_id, run_id)`                         | A terminal message is reported as `transport_terminal_not_acceptance` unless an explicit acceptance convention exists.                     |
-| Review approval             | task-owner projection | `(task_id, run_id)`                         | `APPROVED` is explicit; a different run, thread-only match, or ambiguous run cannot supply approval.                                       |
-| Acceptance and gate         | task-owner projection | `(task_id, run_id)`                         | `ACCEPTED` stays `pending_review` without matching approval; only matching explicit approval plus acceptance produces `gate_passed: true`. |
+| Fact family                 | Owner                 | Join key                                    | Precedence / non-bleeding rule                                                                                                                       |
+| --------------------------- | --------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Protocol and requests       | mailbox projection    | `message_id`, then exact `input_request_id` | A fill closes only its matching request slot; it never creates review or acceptance facts.                                                           |
+| Task-run transport terminal | task-run projection   | `(task_id, run_id)`                         | A filled request is reported as `transport_terminal_not_completion` unless a `DONE`/`BLOCKED` terminal exists.                                       |
+| Review approval             | task-owner projection | `(task_id, run_id)`                         | Only `APPROVED:` is positive and `NOT APPROVED:` is rejected; bare markers, a different run, thread-only match, or ambiguity cannot supply approval. |
+| Acceptance and gate         | task-owner projection | `(task_id, run_id)`                         | `DONE` validates all four completion fields and still cannot pass without matching `APPROVED:`; `BLOCKED` is rejected and never passes.              |
 
 ## 8. Status Projection
 

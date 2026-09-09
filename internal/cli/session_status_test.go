@@ -1105,22 +1105,30 @@ func TestBuildCommandApprovalStatus_DeprecatedCommandApprovers(t *testing.T) {
 	}
 }
 
-func TestStatusTaskOutcomeProjections_RequireExplicitApprovalAndAcceptancePerTaskRun(t *testing.T) {
+func TestStatusTaskOutcomeProjections_RequireGuardianTerminalsAndCompletionEvidence(t *testing.T) {
 	tasks := []status.TaskRunProjection{
-		{TaskID: "TASK-1", RunID: "run-a", ThreadID: "thread-a", ReviewApprovalMessageID: "review-a", AcceptanceMessageID: "accept-a"},
-		{TaskID: "TASK-1", RunID: "run-b", ThreadID: "thread-b", TerminalMessageID: "transport-only"},
+		{TaskID: "TASK-1", RunID: "run-a", ThreadID: "thread-a", ReviewState: "approved", ReviewMessageID: "review-a", CompletionState: "done", CompletionMessageID: "done-a", CompletionHasTaskArtifact: true, CompletionChecklistPassed: true, CompletionHasEvidence: true, CompletionNoRemainingBlockers: true},
+		{TaskID: "TASK-1", RunID: "run-b", ThreadID: "thread-b", ReviewState: "none", CompletionState: "done", CompletionMessageID: "done-b", CompletionHasTaskArtifact: true, CompletionChecklistPassed: true, CompletionHasEvidence: true, CompletionNoRemainingBlockers: true},
+		{TaskID: "TASK-1", RunID: "run-c", ThreadID: "thread-c", ReviewState: "approved", ReviewMessageID: "marker-only", CompletionState: "done", CompletionMessageID: "done-c", CompletionHasTaskArtifact: true, CompletionChecklistPassed: false, CompletionHasEvidence: true, CompletionNoRemainingBlockers: true},
+		{TaskID: "TASK-1", RunID: "run-d", ThreadID: "thread-d", ReviewState: "rejected", ReviewMessageID: "review-d", CompletionState: "blocked", CompletionMessageID: "blocked-d"},
 	}
 	reviews, acceptances := statusTaskOutcomeProjections(tasks)
-	if len(reviews) != 2 || len(acceptances) != 2 {
-		t.Fatalf("outcome lengths = %d/%d, want 2/2", len(reviews), len(acceptances))
+	if len(reviews) != 4 || len(acceptances) != 4 {
+		t.Fatalf("outcome lengths = %d/%d, want 4/4", len(reviews), len(acceptances))
 	}
-	if reviews[0].State != "review_approved" || reviews[0].ApprovalMessageID != "review-a" {
-		t.Fatalf("review[0] = %#v, want explicit approval", reviews[0])
+	if reviews[0].State != "approved" || reviews[0].ReviewMessageID != "review-a" {
+		t.Fatalf("review[0] = %#v, want Guardian approval", reviews[0])
 	}
-	if acceptances[0].State != "accepted" || !acceptances[0].GatePassed || acceptances[0].TerminalValidation != "accepted_convention" {
-		t.Fatalf("acceptance[0] = %#v, want accepted gate", acceptances[0])
+	if acceptances[0].State != "accepted" || !acceptances[0].GatePassed || acceptances[0].TerminalValidation != "completion_evidence_complete" {
+		t.Fatalf("acceptance[0] = %#v, want evidence-gated acceptance", acceptances[0])
 	}
-	if reviews[1].State != "pending" || acceptances[1].State != "pending_review" || acceptances[1].GatePassed || acceptances[1].TerminalValidation != "transport_terminal_not_acceptance" {
-		t.Fatalf("run-b must not inherit run-a approval/acceptance: review=%#v acceptance=%#v", reviews[1], acceptances[1])
+	if reviews[1].State != "pending" || acceptances[1].State != "accepted" || acceptances[1].GatePassed || acceptances[1].Reason != "positive_review_required" {
+		t.Fatalf("run-b must require its own positive review: review=%#v acceptance=%#v", reviews[1], acceptances[1])
+	}
+	if acceptances[2].GatePassed || acceptances[2].TerminalValidation != "missing_completion_fields" || len(acceptances[2].MissingCompletionFields) != 1 || acceptances[2].MissingCompletionFields[0] != "original_checklist_pass" {
+		t.Fatalf("marker-only bypass must fail completion validation: %#v", acceptances[2])
+	}
+	if reviews[3].State != "rejected" || acceptances[3].State != "rejected" || acceptances[3].GatePassed || acceptances[3].TerminalValidation != "blocked_terminal" {
+		t.Fatalf("rejected Guardian/block terminal = review %#v acceptance %#v", reviews[3], acceptances[3])
 	}
 }

@@ -862,8 +862,8 @@ func TestSessionStatusAddsSchemaV4SeverityForInputRequests(t *testing.T) {
 		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	if health.SchemaVersion != 6 {
-		t.Fatalf("SchemaVersion = %d, want 6", health.SchemaVersion)
+	if health.SchemaVersion != 7 {
+		t.Fatalf("SchemaVersion = %d, want 7", health.SchemaVersion)
 	}
 	if health.VisibleState != "pending" || health.Compact != "🔷🟡" {
 		t.Fatalf("legacy visible fields changed: visible_state=%q compact=%q", health.VisibleState, health.Compact)

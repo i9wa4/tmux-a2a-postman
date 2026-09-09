@@ -181,19 +181,27 @@ func statusTaskRunProjection(sessionDir, sessionName string) []status.TaskRunPro
 	result := make([]status.TaskRunProjection, 0, len(projected.Tasks))
 	for _, task := range projected.Tasks {
 		result = append(result, status.TaskRunProjection{
-			TaskID:                  task.TaskID,
-			RunID:                   task.RunID,
-			OriginatingMessageID:    task.OriginatingMessageID,
-			ThreadID:                task.ThreadID,
-			AssignedNode:            task.AssignedNode,
-			LatestMessageID:         task.LatestMessageID,
-			OpenInputRequestIDs:     task.OpenInputRequestIDs,
-			State:                   task.State,
-			TerminalMessageID:       task.TerminalMessageID,
-			Ambiguous:               task.Ambiguous,
-			AmbiguityReason:         task.AmbiguityReason,
-			ReviewApprovalMessageID: task.ReviewApprovalMessageID,
-			AcceptanceMessageID:     task.AcceptanceMessageID,
+			TaskID:                        task.TaskID,
+			RunID:                         task.RunID,
+			OriginatingMessageID:          task.OriginatingMessageID,
+			ThreadID:                      task.ThreadID,
+			AssignedNode:                  task.AssignedNode,
+			LatestMessageID:               task.LatestMessageID,
+			OpenInputRequestIDs:           task.OpenInputRequestIDs,
+			State:                         task.State,
+			TerminalMessageID:             task.TerminalMessageID,
+			Ambiguous:                     task.Ambiguous,
+			AmbiguityReason:               task.AmbiguityReason,
+			ReviewApprovalMessageID:       task.ReviewApprovalMessageID,
+			AcceptanceMessageID:           task.AcceptanceMessageID,
+			ReviewState:                   task.ReviewState,
+			ReviewMessageID:               task.ReviewMessageID,
+			CompletionState:               task.CompletionState,
+			CompletionMessageID:           task.CompletionMessageID,
+			CompletionHasTaskArtifact:     task.CompletionHasTaskArtifact,
+			CompletionChecklistPassed:     task.CompletionChecklistPassed,
+			CompletionHasEvidence:         task.CompletionHasEvidence,
+			CompletionNoRemainingBlockers: task.CompletionNoRemainingBlockers,
 		})
 	}
 	return result
@@ -206,30 +214,67 @@ func statusTaskOutcomeProjections(tasks []status.TaskRunProjection) ([]status.Re
 	reviews := make([]status.ReviewApprovalStatus, 0, len(tasks))
 	acceptances := make([]status.AcceptanceStatus, 0, len(tasks))
 	for _, task := range tasks {
-		review := status.ReviewApprovalStatus{TaskID: task.TaskID, RunID: task.RunID, ThreadID: task.ThreadID, State: "pending"}
-		acceptance := status.AcceptanceStatus{TaskID: task.TaskID, RunID: task.RunID, ThreadID: task.ThreadID, State: "pending_review", TerminalValidation: "no_terminal_convention"}
+		review := status.ReviewApprovalStatus{TaskID: task.TaskID, RunID: task.RunID, ThreadID: task.ThreadID, State: task.ReviewState, ReviewMessageID: task.ReviewMessageID}
+		acceptance := status.AcceptanceStatus{TaskID: task.TaskID, RunID: task.RunID, ThreadID: task.ThreadID, State: task.CompletionState, AcceptanceMessageID: task.CompletionMessageID, PositiveReviewRequired: true}
+		if review.State == "" {
+			review.State = "none"
+		}
+		if acceptance.State == "" {
+			acceptance.State = "none"
+		}
 		switch {
 		case task.Ambiguous:
 			review.State, review.Reason = "unknown", task.AmbiguityReason
 			acceptance.State, acceptance.TerminalValidation, acceptance.Reason = "unknown", "ambiguous_task_run", task.AmbiguityReason
-		case task.ReviewApprovalMessageID != "":
-			review.State, review.ApprovalMessageID = "review_approved", task.ReviewApprovalMessageID
+		case review.State == "approved":
+			review.ApprovalMessageID = review.ReviewMessageID
+		case review.State == "rejected":
+			review.Reason = "not_approved_terminal"
 		}
-		if task.AcceptanceMessageID != "" {
-			acceptance.AcceptanceMessageID = task.AcceptanceMessageID
-			acceptance.TerminalValidation = "accepted_convention"
-			if review.State == "review_approved" {
-				acceptance.State, acceptance.GatePassed = "accepted", true
+		if acceptance.State == "done" {
+			acceptance.State = "accepted"
+			acceptance.MissingCompletionFields = missingCompletionFields(task)
+			if len(acceptance.MissingCompletionFields) > 0 {
+				acceptance.TerminalValidation = "missing_completion_fields"
 			} else {
-				acceptance.State = "pending_review"
+				acceptance.TerminalValidation = "completion_evidence_complete"
 			}
+			if review.State == "none" {
+				review.State = "pending"
+			}
+			if review.State != "approved" {
+				acceptance.Reason = "positive_review_required"
+			} else if len(acceptance.MissingCompletionFields) == 0 {
+				acceptance.GatePassed = true
+			}
+		} else if acceptance.State == "blocked" {
+			acceptance.State, acceptance.TerminalValidation, acceptance.Reason = "rejected", "blocked_terminal", "blocked_terminal"
 		} else if task.TerminalMessageID != "" {
-			acceptance.TerminalValidation = "transport_terminal_not_acceptance"
+			acceptance.TerminalValidation = "transport_terminal_not_completion"
+		} else {
+			acceptance.TerminalValidation = "no_terminal_convention"
 		}
 		reviews = append(reviews, review)
 		acceptances = append(acceptances, acceptance)
 	}
 	return reviews, acceptances
+}
+
+func missingCompletionFields(task status.TaskRunProjection) []string {
+	missing := make([]string, 0, 4)
+	if !task.CompletionHasTaskArtifact {
+		missing = append(missing, "task_artifact")
+	}
+	if !task.CompletionChecklistPassed {
+		missing = append(missing, "original_checklist_pass")
+	}
+	if !task.CompletionHasEvidence {
+		missing = append(missing, "evidence")
+	}
+	if !task.CompletionNoRemainingBlockers {
+		missing = append(missing, "remaining_blockers_none")
+	}
+	return missing
 }
 
 func collectRuntimeDiagnosticsFromDaemonWithContext(ctx commandContext, target sessionStatusTarget) (*status.RuntimeDiagnostics, error) {

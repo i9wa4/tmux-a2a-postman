@@ -13,19 +13,27 @@ type TaskRunState struct {
 }
 
 type TaskRunDetail struct {
-	TaskID                  string
-	RunID                   string
-	OriginatingMessageID    string
-	ThreadID                string
-	AssignedNode            string
-	LatestMessageID         string
-	OpenInputRequestIDs     []string
-	State                   string
-	TerminalMessageID       string
-	Ambiguous               bool
-	AmbiguityReason         string
-	ReviewApprovalMessageID string
-	AcceptanceMessageID     string
+	TaskID                        string
+	RunID                         string
+	OriginatingMessageID          string
+	ThreadID                      string
+	AssignedNode                  string
+	LatestMessageID               string
+	OpenInputRequestIDs           []string
+	State                         string
+	TerminalMessageID             string
+	Ambiguous                     bool
+	AmbiguityReason               string
+	ReviewApprovalMessageID       string
+	AcceptanceMessageID           string
+	ReviewState                   string
+	ReviewMessageID               string
+	CompletionState               string
+	CompletionMessageID           string
+	CompletionHasTaskArtifact     bool
+	CompletionChecklistPassed     bool
+	CompletionHasEvidence         bool
+	CompletionNoRemainingBlockers bool
 }
 
 type taskRunAccumulator struct {
@@ -92,6 +100,8 @@ func ProjectTaskRunState(sessionDir, sessionName string) (TaskRunState, bool, er
 					AssignedNode:         meta.To,
 					LatestMessageID:      meta.MessageID,
 					State:                "active",
+					ReviewState:          "none",
+					CompletionState:      "none",
 				},
 				firstOccurredAt: event.OccurredAt,
 				threadIDs:       make(map[string]bool),
@@ -122,11 +132,26 @@ func ProjectTaskRunState(sessionDir, sessionName string) (TaskRunState, bool, er
 			delete(acc.openRequests, meta.FillsInputRequestID)
 			acc.detail.TerminalMessageID = meta.MessageID
 		}
-		switch terminalConvention(meta.Body) {
-		case "APPROVED":
+		terminal := taskTerminalFromBody(meta.Body)
+		switch terminal.kind {
+		case "approved":
+			acc.detail.ReviewState = "approved"
+			acc.detail.ReviewMessageID = meta.MessageID
 			acc.detail.ReviewApprovalMessageID = meta.MessageID
-		case "ACCEPTED":
+		case "rejected":
+			acc.detail.ReviewState = "rejected"
+			acc.detail.ReviewMessageID = meta.MessageID
+		case "done":
+			acc.detail.CompletionState = "done"
+			acc.detail.CompletionMessageID = meta.MessageID
 			acc.detail.AcceptanceMessageID = meta.MessageID
+			acc.detail.CompletionHasTaskArtifact = terminal.hasTaskArtifact
+			acc.detail.CompletionChecklistPassed = terminal.checklistPassed
+			acc.detail.CompletionHasEvidence = terminal.hasEvidence
+			acc.detail.CompletionNoRemainingBlockers = terminal.noRemainingBlockers
+		case "blocked":
+			acc.detail.CompletionState = "blocked"
+			acc.detail.CompletionMessageID = meta.MessageID
 		}
 	}
 
@@ -163,9 +188,49 @@ func ProjectTaskRunState(sessionDir, sessionName string) (TaskRunState, bool, er
 	return projected, true, nil
 }
 
-func terminalConvention(body string) string {
-	firstLine, _, _ := strings.Cut(strings.TrimSpace(body), "\n")
-	return strings.TrimSpace(firstLine)
+type taskTerminal struct {
+	kind                string
+	hasTaskArtifact     bool
+	checklistPassed     bool
+	hasEvidence         bool
+	noRemainingBlockers bool
+}
+
+func taskTerminalFromBody(body string) taskTerminal {
+	trimmed := strings.TrimSpace(body)
+	firstLine, _, _ := strings.Cut(trimmed, "\n")
+	firstLine = strings.TrimSpace(firstLine)
+	terminal := taskTerminal{}
+	switch {
+	case strings.HasPrefix(firstLine, "APPROVED:"):
+		terminal.kind = "approved"
+	case strings.HasPrefix(firstLine, "NOT APPROVED:"):
+		terminal.kind = "rejected"
+	case firstLine == "DONE" || strings.HasPrefix(firstLine, "DONE:"):
+		terminal.kind = "done"
+	case firstLine == "BLOCKED" || strings.HasPrefix(firstLine, "BLOCKED:"):
+		terminal.kind = "blocked"
+	default:
+		return terminal
+	}
+	for _, line := range strings.Split(trimmed, "\n") {
+		key, value, found := strings.Cut(line, ":")
+		if !found {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "task artifact":
+			terminal.hasTaskArtifact = value != ""
+		case "original checklist":
+			terminal.checklistPassed = strings.EqualFold(value, "PASS")
+		case "evidence":
+			terminal.hasEvidence = value != ""
+		case "remaining blockers":
+			terminal.noRemainingBlockers = strings.EqualFold(value, "none")
+		}
+	}
+	return terminal
 }
 
 func taskRunMetadataFromPayload(payload journal.MailboxEventPayload) envelope.Metadata {
