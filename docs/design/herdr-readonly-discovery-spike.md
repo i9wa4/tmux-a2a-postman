@@ -45,24 +45,27 @@ unavailable backend instead of a tmux failure.
 
 ## 4. Compatibility Authority
 
-The compatibility source of truth is the Herdr server reached through
-`HERDR_SOCKET_PATH`, corroborated by the `herdr api schema --json` command from
-the same Herdr installation on `PATH`. Postman does not treat either source as
-authoritative by itself:
+The compatibility source of truth is the protocol/schema pair observed from the
+Herdr server reached through `HERDR_SOCKET_PATH` and corroborated by the
+`herdr api schema --json` command visible on `PATH`. Postman does not treat
+either source as authoritative by itself:
 
 - `ping` must return the supported socket protocol before any response fields
   are consumed;
 - `herdr api schema --json` must return the same protocol and a supported
-  schema version;
+  schema version, but its executable path and release string are not compared to
+  the socket server process;
 - unsupported, missing, zero, unparsable, or same-protocol-but-newer schema
   evidence fails closed as `ErrHerdrBackendUnavailable`;
 - the multiplexer read gate still validates the negotiated envelope against
   local allowlists before discovery, capture, or process information is used.
 
-The first supported production boundary is Herdr `0.8.2` socket protocol `20`
-with schema version `1`. Expanding either value requires updating this design
-record, the socket-client compatibility constants, and the socket harness
-regression tests together.
+The supported production compatibility boundary is socket protocol `20` with
+schema version `1`. The server release string from `ping` must be nonempty so
+operators have provenance evidence, but it is informational and is not part of
+the runtime compatibility decision. Expanding either protocol or schema value
+requires updating this design record, the socket-client compatibility constants,
+and the socket harness regression tests together.
 
 ## 5. Identity Mapping
 

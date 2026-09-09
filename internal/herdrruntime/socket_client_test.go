@@ -25,8 +25,8 @@ var herdr082SchemaEnvelope = multiplexer.HerdrResponseEnvelope{
 	SchemaVersion:   herdr082SchemaVersion,
 }
 
-// Fixtures are redacted from Herdr v0.8.2's generated API schema and source
-// contract: commit 9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c.
+// Fixtures preserve the first captured supported response shape. The release
+// string is provenance evidence; protocol/schema are the compatibility boundary.
 const (
 	herdr082PongFixture = `{"id":"postman:1","result":{"type":"pong","version":"0.8.2","protocol":20,"capabilities":{"live_handoff":true}}}` + "\n"
 	herdr082SchemaJSON  = `{"protocol":20,"schema_version":1,"schemas":{}}`
@@ -84,6 +84,25 @@ func TestSocketClientRejectsUnsupportedCompatibilityEvidence(t *testing.T) {
 				t.Fatal("Ping() error = nil, want compatibility rejection")
 			}
 		})
+	}
+}
+
+func TestSocketClientAcceptsSupportedProtocolSchemaAcrossServerReleaseVersions(t *testing.T) {
+	socketPath := testSocketPath(t)
+	serveHerdrSocketSequence(t, socketPath, `{"id":"postman:1","result":{"type":"pong","version":"9.9.9","protocol":20}}`+"\n")
+	client := &socketClient{
+		socketPath: socketPath,
+		schema: func(context.Context) (multiplexer.HerdrResponseEnvelope, error) {
+			return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "20", SchemaVersion: 1}, nil
+		},
+	}
+
+	envelope, err := client.Ping(context.Background())
+	if err != nil {
+		t.Fatalf("Ping() error = %v, want protocol/schema compatibility accepted across release versions", err)
+	}
+	if envelope != herdr082SchemaEnvelope {
+		t.Fatalf("Ping() envelope = %#v, want supported protocol/schema boundary", envelope)
 	}
 }
 
