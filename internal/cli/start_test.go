@@ -1378,9 +1378,10 @@ func cliHerdrSnapshotWithPanes(paneIDs ...string) multiplexer.HerdrSessionSnapsh
 	for _, paneID := range paneIDs {
 		panes = append(panes, multiplexer.HerdrPaneSnapshot{
 			ID:          paneID,
+			TerminalID:  paneID + ":terminal",
 			WorkspaceID: "workspace-1",
 			TabID:       "workspace-1:tab-1",
-			PostmanNode: "worker",
+			Metadata:    map[string]string{"postman.node": "worker"},
 			ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		})
 	}

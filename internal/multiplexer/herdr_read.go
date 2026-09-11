@@ -77,6 +77,7 @@ type HerdrTabSnapshot struct {
 
 type HerdrPaneSnapshot struct {
 	ID             string
+	TerminalID     string
 	WorkspaceID    string
 	TabID          string
 	Label          string
@@ -94,6 +95,7 @@ type HerdrPaneSnapshot struct {
 }
 
 type HerdrPaneProcessInfo struct {
+	PaneID              string
 	ShellPID            int
 	ForegroundProcessID int
 	ForegroundProcesses []HerdrProcessInfo
@@ -159,7 +161,7 @@ func (b HerdrBackend) Discover(ctx context.Context, sessionName string) (HerdrDi
 	if err != nil {
 		return HerdrDiscoveryResult{}, err
 	}
-	return b.discoveryFromSnapshot(sessionName, snapshot)
+	return b.discoveryFromSnapshot(ctx, sessionName, snapshot)
 }
 
 func (b HerdrBackend) CapturePane(ctx context.Context, pane ResourceID, opts CaptureOptions) (string, error) {
@@ -285,13 +287,17 @@ func (b HerdrBackend) validatePaneContainment(snapshot HerdrSessionSnapshot, tab
 		if pane.Stale {
 			return fmt.Errorf("%w: pane %q is stale: %s", ErrHerdrSnapshotInvalid, pane.ID, pane.StaleReason)
 		}
+		if strings.TrimSpace(pane.TerminalID) == "" {
+			return fmt.Errorf("%w: pane %q has no usable terminal_id", ErrHerdrSnapshotInvalid, pane.ID)
+		}
 		return nil
 	}
 	return fmt.Errorf("%w: pane %q is not in configured workspace %q tab %q", ErrHerdrSnapshotInvalid, paneID, b.Config.Runtime.WorkspaceID, tabID)
 }
 
-func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSessionSnapshot) (HerdrDiscoveryResult, error) {
-	focusedWorkspace, focusedTab, focusedPane := validatedFocusedIDs(snapshot, b.Config.Runtime.WorkspaceID)
+func (b HerdrBackend) discoveryFromSnapshot(ctx context.Context, sessionName string, snapshot HerdrSessionSnapshot) (HerdrDiscoveryResult, error) {
+	usablePanes := make(map[string]bool)
+	focusedWorkspace, focusedTab, focusedPane := validatedFocusedIDs(snapshot, b.Config.Runtime.WorkspaceID, nil)
 	layout := SessionLayout{
 		Backend:     BackendKindHerdr,
 		SessionName: sessionName,
@@ -327,6 +333,19 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 			stalePanes = append(stalePanes, HerdrPaneID(pane.ID))
 			continue
 		}
+		if strings.TrimSpace(pane.TerminalID) == "" {
+			stalePanes = append(stalePanes, HerdrPaneID(pane.ID))
+			continue
+		}
+		usable, err := b.paneUsable(ctx, pane)
+		if err != nil {
+			return HerdrDiscoveryResult{}, err
+		}
+		usablePanes[pane.ID] = usable
+		if !usable {
+			stalePanes = append(stalePanes, HerdrPaneID(pane.ID))
+			continue
+		}
 		groupIndex, ok := groupByTabID[pane.TabID]
 		if !ok {
 			return HerdrDiscoveryResult{}, fmt.Errorf("%w: pane %q references missing tab %q", ErrHerdrSnapshotInvalid, pane.ID, pane.TabID)
@@ -353,6 +372,10 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 		return layout.Groups[left].ID.Native < layout.Groups[right].ID.Native
 	})
 
+	focusedWorkspace, focusedTab, focusedPane = validatedFocusedIDs(snapshot, b.Config.Runtime.WorkspaceID, usablePanes)
+	layout.NativeIDs["focused_workspace_id"] = focusedWorkspace
+	layout.NativeIDs["focused_tab_id"] = focusedTab
+	layout.NativeIDs["focused_pane_id"] = focusedPane
 	return HerdrDiscoveryResult{
 		Layout:                  layout,
 		Collisions:              herdrIdentityCollisions(nodeClaims),
@@ -361,7 +384,27 @@ func (b HerdrBackend) discoveryFromSnapshot(sessionName string, snapshot HerdrSe
 	}, nil
 }
 
-func validatedFocusedIDs(snapshot HerdrSessionSnapshot, workspaceID string) (string, string, string) {
+func (b HerdrBackend) paneUsable(ctx context.Context, pane HerdrPaneSnapshot) (bool, error) {
+	result, err := b.Client.PaneProcessInfo(ctx, pane.ID)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false, err
+		}
+		return false, nil
+	}
+	probe := b
+	probe.Config.Runtime.TabID = pane.TabID
+	probe.Config.Runtime.PaneID = pane.ID
+	if err := probe.validateEnvelope(HerdrReadScopePane, result.Envelope); err != nil {
+		return false, nil
+	}
+	if result.ProcessInfo.PaneID != "" && result.ProcessInfo.PaneID != pane.ID {
+		return false, nil
+	}
+	return true, nil
+}
+
+func validatedFocusedIDs(snapshot HerdrSessionSnapshot, workspaceID string, usablePanes map[string]bool) (string, string, string) {
 	workspaceOK := false
 	for _, workspace := range snapshot.Workspaces {
 		if workspace.ID != workspaceID {
@@ -386,9 +429,13 @@ func validatedFocusedIDs(snapshot HerdrSessionSnapshot, workspaceID string) (str
 		return snapshot.FocusedWorkspaceID, "", ""
 	}
 	for _, pane := range snapshot.Panes {
-		if pane.ID == snapshot.FocusedPaneID && pane.WorkspaceID == workspaceID && pane.TabID == snapshot.FocusedTabID && !pane.Stale {
-			return snapshot.FocusedWorkspaceID, snapshot.FocusedTabID, snapshot.FocusedPaneID
+		if pane.ID != snapshot.FocusedPaneID || pane.WorkspaceID != workspaceID || pane.TabID != snapshot.FocusedTabID || pane.Stale || strings.TrimSpace(pane.TerminalID) == "" {
+			continue
 		}
+		if usablePanes != nil && !usablePanes[pane.ID] {
+			continue
+		}
+		return snapshot.FocusedWorkspaceID, snapshot.FocusedTabID, snapshot.FocusedPaneID
 	}
 	return snapshot.FocusedWorkspaceID, snapshot.FocusedTabID, ""
 }
@@ -422,6 +469,7 @@ func herdrLayoutItem(pane HerdrPaneSnapshot, nodeName string) LayoutItem {
 		"workspace_id": pane.WorkspaceID,
 		"tab_id":       pane.TabID,
 		"pane_id":      pane.ID,
+		"terminal_id":  pane.TerminalID,
 		"pane_label":   pane.Label,
 	}
 	if pane.AgentStatus != "" {
@@ -448,14 +496,8 @@ func herdrLayoutItem(pane HerdrPaneSnapshot, nodeName string) LayoutItem {
 }
 
 func herdrPostmanNodeName(pane HerdrPaneSnapshot) string {
-	if pane.PostmanNode != "" {
-		return pane.PostmanNode
-	}
 	for _, key := range []string{"postman.node", "POSTMAN_NODE", "TMUX_A2A_POSTMAN_NODE"} {
 		if value := strings.TrimSpace(pane.Metadata[key]); value != "" {
-			return value
-		}
-		if value := strings.TrimSpace(pane.Env[key]); value != "" {
 			return value
 		}
 	}
