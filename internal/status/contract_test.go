@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-func TestSchemaVersionIsV5StatusContract(t *testing.T) {
-	if SchemaVersion != 5 {
-		t.Fatalf("SchemaVersion = %d, want 5", SchemaVersion)
+func TestSchemaVersionIsV7StatusContract(t *testing.T) {
+	if SchemaVersion != 7 {
+		t.Fatalf("SchemaVersion = %d, want 7", SchemaVersion)
 	}
 
 	payload := SessionStatus{
@@ -17,7 +17,7 @@ func TestSchemaVersionIsV5StatusContract(t *testing.T) {
 		SessionName:   "review",
 		Nodes:         []NodeStatus{{Name: "worker", VisibleState: "ready"}},
 	}
-	if payload.SchemaVersion != 5 || payload.Nodes[0].Name != "worker" {
+	if payload.SchemaVersion != 7 || payload.Nodes[0].Name != "worker" {
 		t.Fatalf("unexpected status payload: %#v", payload)
 	}
 }

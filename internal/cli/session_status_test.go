@@ -329,8 +329,8 @@ func TestRunGetSessionStatus_IncludesVisibleStateAndTopology(t *testing.T) {
 	if got := payload["visible_state"]; got != "pending" {
 		t.Fatalf("visible_state = %#v, want %q", got, "pending")
 	}
-	if got := payload["compact"]; got != "🔷🟢" {
-		t.Fatalf("compact = %#v, want %q", got, "🔷🟢")
+	if got := payload["compact"]; got != "🔷⚫" {
+		t.Fatalf("compact = %#v, want %q", got, "🔷⚫")
 	}
 	if _, ok := payload["runtime_diagnostics"]; ok {
 		t.Fatalf("runtime_diagnostics present without --debug: %#v", payload["runtime_diagnostics"])
@@ -794,8 +794,8 @@ func TestRunGetSessionStatus_UsesConfigEdgeOrderForNodesAndTMUXOrderForWindows(t
 	if payload.Nodes[0].Name != "worker" || payload.Nodes[1].Name != "critic" {
 		t.Fatalf("nodes order = %#v, want worker then critic", payload.Nodes)
 	}
-	if payload.Compact != "🟢:🟢" {
-		t.Fatalf("compact = %q, want %q", payload.Compact, "🟢:🟢")
+	if payload.Compact != "⚫:⚫" {
+		t.Fatalf("compact = %q, want %q", payload.Compact, "⚫:⚫")
 	}
 
 	if len(payload.Windows) != 2 {
@@ -928,11 +928,11 @@ func TestCollectAllSessionStatus_ReturnsAggregateCanonicalPayloadInSessionIDOrde
 	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "review" {
 		t.Fatalf("session order = %#v, want main then review to match numeric tmux session_id order", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🔷🟢:🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷🟢:🟢")
+	if payload.Sessions[0].Compact != "🔷⚫:⚫" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🔷⚫:⚫")
 	}
-	if payload.Sessions[1].Compact != "🟢🔷" {
-		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "🟢🔷")
+	if payload.Sessions[1].Compact != "⚫🔷" {
+		t.Fatalf("review compact = %q, want %q", payload.Sessions[1].Compact, "⚫🔷")
 	}
 }
 
@@ -1025,8 +1025,8 @@ func TestCollectAllSessionStatus_IncludesSessionsWithoutCanonicalPanesInSessionI
 	if payload.Sessions[0].SessionName != "main" || payload.Sessions[1].SessionName != "ghost" {
 		t.Fatalf("session order = %#v, want main then ghost", payload.Sessions)
 	}
-	if payload.Sessions[0].Compact != "🟢🟢" {
-		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "🟢🟢")
+	if payload.Sessions[0].Compact != "⚫⚫" {
+		t.Fatalf("main compact = %q, want %q", payload.Sessions[0].Compact, "⚫⚫")
 	}
 	if payload.Sessions[1].VisibleState != "initial" {
 		t.Fatalf("ghost visible_state = %q, want %q", payload.Sessions[1].VisibleState, "initial")
@@ -1102,5 +1102,33 @@ func TestBuildCommandApprovalStatus_DeprecatedCommandApprovers(t *testing.T) {
 		if !strings.Contains(entry.Message, "ignored") || !strings.Contains(entry.Message, "fail open") {
 			t.Fatalf("deprecated command approver message = %q, want ignored/fail-open guidance", entry.Message)
 		}
+	}
+}
+
+func TestStatusTaskOutcomeProjections_RequireGuardianTerminalsAndCompletionEvidence(t *testing.T) {
+	tasks := []status.TaskRunProjection{
+		{TaskID: "TASK-1", RunID: "run-a", ThreadID: "thread-a", ReviewState: "approved", ReviewMessageID: "review-a", CompletionState: "done", CompletionMessageID: "done-a", CompletionHasTaskArtifact: true, CompletionChecklistPassed: true, CompletionHasEvidence: true, CompletionNoRemainingBlockers: true},
+		{TaskID: "TASK-1", RunID: "run-b", ThreadID: "thread-b", ReviewState: "none", CompletionState: "done", CompletionMessageID: "done-b", CompletionHasTaskArtifact: true, CompletionChecklistPassed: true, CompletionHasEvidence: true, CompletionNoRemainingBlockers: true},
+		{TaskID: "TASK-1", RunID: "run-c", ThreadID: "thread-c", ReviewState: "approved", ReviewMessageID: "marker-only", CompletionState: "done", CompletionMessageID: "done-c", CompletionHasTaskArtifact: true, CompletionChecklistPassed: false, CompletionHasEvidence: true, CompletionNoRemainingBlockers: true},
+		{TaskID: "TASK-1", RunID: "run-d", ThreadID: "thread-d", ReviewState: "rejected", ReviewMessageID: "review-d", CompletionState: "blocked", CompletionMessageID: "blocked-d"},
+	}
+	reviews, acceptances := statusTaskOutcomeProjections(tasks)
+	if len(reviews) != 4 || len(acceptances) != 4 {
+		t.Fatalf("outcome lengths = %d/%d, want 4/4", len(reviews), len(acceptances))
+	}
+	if reviews[0].State != "approved" || reviews[0].ReviewMessageID != "review-a" {
+		t.Fatalf("review[0] = %#v, want Guardian approval", reviews[0])
+	}
+	if acceptances[0].State != "accepted" || !acceptances[0].GatePassed || acceptances[0].TerminalValidation != "completion_evidence_complete" {
+		t.Fatalf("acceptance[0] = %#v, want evidence-gated acceptance", acceptances[0])
+	}
+	if reviews[1].State != "pending" || acceptances[1].State != "accepted" || acceptances[1].GatePassed || acceptances[1].Reason != "positive_review_required" {
+		t.Fatalf("run-b must require its own positive review: review=%#v acceptance=%#v", reviews[1], acceptances[1])
+	}
+	if acceptances[2].GatePassed || acceptances[2].TerminalValidation != "missing_completion_fields" || len(acceptances[2].MissingCompletionFields) != 1 || acceptances[2].MissingCompletionFields[0] != "original_checklist_pass" {
+		t.Fatalf("marker-only bypass must fail completion validation: %#v", acceptances[2])
+	}
+	if reviews[3].State != "rejected" || acceptances[3].State != "rejected" || acceptances[3].GatePassed || acceptances[3].TerminalValidation != "blocked_terminal" {
+		t.Fatalf("rejected Guardian/block terminal = review %#v acceptance %#v", reviews[3], acceptances[3])
 	}
 }

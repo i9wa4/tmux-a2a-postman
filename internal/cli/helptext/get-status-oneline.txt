@@ -20,7 +20,8 @@ Marks:
   🔴 stale     previously known pane/session is stale
   🔷 pending   action-required inbound message is open
   🟡 waiting   outbound reply-required message is open
-  🟢 ready     pane is live with no open action or wait
+  🟢 ready     pane has positive live evidence with no open action or wait
 
 Screen progress fingerprints stay out of this compact view; use get-status
-for nodes[*].screen_progress JSON evidence.
+for nodes[*].screen_progress JSON evidence. Missing or malformed pane-local
+evidence remains neutral instead of green.

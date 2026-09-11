@@ -44,13 +44,13 @@ input-request identifiers parsed from the message metadata.
 get-status, get-status-oneline, and the default TUI are three views over the
 same canonical contract.
 
-| State     | Meaning                                       | Compact mark     |
-| --------- | --------------------------------------------- | ---------------- |
-| `initial` | No positive live evidence has arrived yet     | `⚫` black circle |
-| `ready`   | Pane is live with no open action or wait      | `🟢` green mark   |
-| `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark  |
-| `pending` | Node has inbound reply-required action        | `🔷` blue diamond |
-| `stale`   | Previously known pane/session is stale        | `🔴` red mark     |
+| State     | Meaning                                                    | Compact mark     |
+| --------- | ---------------------------------------------------------- | ---------------- |
+| `initial` | No positive live evidence has arrived yet                  | `⚫` black circle |
+| `ready`   | Pane has positive live evidence and no open action or wait | `🟢` green mark   |
+| `waiting` | Node is waiting for a reply-required response              | `🟡` yellow mark  |
+| `pending` | Node has inbound reply-required action                     | `🔷` blue diamond |
+| `stale`   | Previously known pane/session is stale                     | `🔴` red mark     |
 
 A live pane that simply has not changed for a long time is internally `idle`
 and remains `ready` in the visible status model.
@@ -58,7 +58,8 @@ and remains `ready` in the visible status model.
 `initial` is neutral. Non-AI panes, unreachable or unclassified sessions, and
 configured or expected AI panes with no positive response or activity remain
 `initial` until evidence moves them to `ready`, `waiting`, `pending`, or
-`stale`.
+`stale`. Missing or malformed pane-local progress evidence remains neutral and
+does not render as ready green.
 
 Session fallback may report `unavailable` when this daemon cannot provide
 canonical status for a tmux session. It is displayed with the neutral `⚫`
@@ -95,11 +96,11 @@ See [Schema and Event Terminology](schema-event-terminology.md).
 
 `get-status-oneline` keeps compact operator marks by default. Pending, waiting,
 stale, and initial visible states keep their legacy marks; ready nodes also
-consult contextual node severity so active local work renders as `🔵` and
-blocked or stale attention renders as `🔴` instead of plain green. Use the
-`--severity` flag when the operator needs an ASCII severity token. Tokens with
-`?` are inferred, for example a `BLOCKED:` first line without structured
-blocked-report metadata.
+consult contextual node severity and pane-local evidence, so active local work
+renders as `🔵`, unknown evidence remains neutral `⚫`, and blocked or stale
+attention renders as `🔴` instead of plain green. Use the `--severity` flag when
+the operator needs an ASCII severity token. Tokens with `?` are inferred, for
+example a `BLOCKED:` first line without structured blocked-report metadata.
 
 ## 4. Configuration
 
