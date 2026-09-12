@@ -1133,6 +1133,16 @@ func TestRunExecuteBashRecordDecisionAndInspectCommandApprovals(t *testing.T) {
 	if entry.Requester != "worker" || entry.DecisionReviewer != "orchestrator" || entry.CommandApproverNode != "orchestrator" {
 		t.Fatalf("decision history identities = %#v", entry)
 	}
+	if entry.DecisionMessageID == "" {
+		t.Fatal("recorded decision message id is empty; exact reply-slot reconciliation cannot close the originating input request")
+	}
+	decisionInfo, err := message.ParseMessageFilename(entry.DecisionMessageID)
+	if err != nil {
+		t.Fatalf("ParseMessageFilename(decision message id) error = %v", err)
+	}
+	if decisionInfo.From != "orchestrator" || decisionInfo.To != "worker" {
+		t.Fatalf("decision message identity = %s -> %s, want orchestrator -> worker", decisionInfo.From, decisionInfo.To)
+	}
 	if entry.Label != "protected" || entry.CommandHash == "" || entry.DecisionReason != "digest reviewed" {
 		t.Fatalf("decision history command metadata = %#v", entry)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
@@ -308,6 +309,10 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if thread.InputRequestID == "" || thread.CommandHash == "" {
 		return fmt.Errorf("--record-decision refused: thread %q is missing exact command approval correlation metadata", opts.threadID)
 	}
+	decisionMessageID, err := message.GenerateFilename(ctx.now().Format("20060102-150405"), authenticatedCaller, thread.Requester, opts.sessionName)
+	if err != nil {
+		return fmt.Errorf("generating command approval decision message id: %w", err)
+	}
 
 	payload := journal.CommandApprovalDecisionPayload{
 		Reviewer:         authenticatedCaller,
@@ -315,6 +320,7 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 		RequesterAddress: thread.RequesterAddress,
 		Decision:         journal.ApprovalDecision(decision),
 		Reason:           opts.reason,
+		MessageID:        decisionMessageID,
 		InputRequestID:   thread.InputRequestID,
 		CommandHash:      thread.CommandHash,
 	}
