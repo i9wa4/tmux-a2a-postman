@@ -19,6 +19,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 const (
@@ -996,7 +997,7 @@ func (t *IdleTracker) StartPaneCaptureCheck(ctx context.Context, cfg *config.Con
 				if err != nil {
 					continue
 				}
-				nodes = filterPaneCaptureNodes(nodes, config.GetEdgeNodeNames(cfg.Edges))
+				nodes = filterPaneCaptureNodes(nodes, workspacetree.EligibleNodeNames(cfg))
 
 				// Perform pane capture check
 				compactionTargets := t.checkPaneCapture(cfg, nodes)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 func TestUpdateActivity(t *testing.T) {
@@ -393,6 +394,27 @@ func TestFilterPaneCaptureNodes_PreservesBareKeys(t *testing.T) {
 	}
 	if _, ok := filtered["review:critic"]; ok {
 		t.Fatal("unexpected unrelated node remained after edge filtering")
+	}
+}
+
+func TestFilterPaneCaptureNodes_AdmitsDerivedDiplomatCompactionTarget(t *testing.T) {
+	cfg := &config.Config{WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+	}}
+	filtered := filterPaneCaptureNodes(map[string]discovery.NodeInfo{
+		"root:orchestrator": {},
+		"api:worker":        {PaneID: "%11", SessionName: "api"},
+		"api:unrelated":     {},
+	}, workspacetree.EligibleNodeNames(cfg))
+	if _, ok := filtered["api:worker"]; !ok {
+		t.Fatal("derived diplomat node was excluded before compaction discovery")
+	}
+	if _, ok := filtered["root:orchestrator"]; !ok {
+		t.Fatal("derived parent diplomat was excluded before compaction discovery")
+	}
+	if _, ok := filtered["api:unrelated"]; ok {
+		t.Fatal("unrelated node was admitted to compaction discovery")
 	}
 }
 
