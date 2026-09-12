@@ -576,7 +576,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 				Label:       "advisory-label",
 				Order:       0,
 				Metadata: map[string]string{
-					"postman.node": "worker",
+					HerdrPostmanNodeMetadataKey: "worker",
 				},
 				ProcessInfo: HerdrPaneProcessInfo{
 					ForegroundProcesses: []HerdrProcessInfo{{Name: "codex"}},
@@ -598,7 +598,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 				WorkspaceID: "workspace-2",
 				TabID:       "workspace-2:tab-1",
 				Metadata: map[string]string{
-					"postman.node": "foreign",
+					HerdrPostmanNodeMetadataKey: "foreign",
 				},
 			},
 		},
