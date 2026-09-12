@@ -260,6 +260,33 @@ func TestDispatch_InspectCommandApprovalsPrependsContextAndConfig(t *testing.T) 
 	}
 }
 
+func TestDispatch_ReconcileCommandApprovalReplySlotPrependsContextAndConfig(t *testing.T) {
+	var gotArgs []string
+
+	result := Dispatch(
+		"reconcile-command-approval-reply-slot",
+		[]string{"--input-request-id", "ireq_123"},
+		Config{ContextID: "ctx-123", ConfigPath: "/tmp/postman.toml"},
+		Handlers{
+			ReconcileCommandApprovalReplySlot: func(args []string) error {
+				gotArgs = append([]string(nil), args...)
+				return nil
+			},
+		},
+	)
+
+	if result.Err != nil {
+		t.Fatalf("Dispatch returned error: %v", result.Err)
+	}
+	if result.Label != "postman reconcile-command-approval-reply-slot" {
+		t.Fatalf("label = %q, want %q", result.Label, "postman reconcile-command-approval-reply-slot")
+	}
+	wantArgs := []string{"--config", "/tmp/postman.toml", "--context-id", "ctx-123", "--input-request-id", "ireq_123"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("reconcile-command-approval-reply-slot args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
 func TestDispatch_BackfillVerdictEventsDoesNotPrependRuntimeContext(t *testing.T) {
 	var gotArgs []string
 

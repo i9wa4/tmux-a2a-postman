@@ -35,6 +35,8 @@ Default operator surface:
   backfill-verdict-events    Emit verdict_event JSONL rows from read archives
   execute-bash               Run bash through command approval choreography
   inspect-command-approvals  Inspect command approval threads
+  reconcile-command-approval-reply-slot
+                             Reconcile a proven terminal command-approval slot
   version                    Print the build version JSON
 
 Lifecycle and recovery:
@@ -57,6 +59,7 @@ Messaging Protocol:
   execute-bash --label <label> --command <bash>
                                            Run bash through approval choreography
   inspect-command-approvals                 Inspect command approval threads
+  reconcile-command-approval-reply-slot     Reconcile proven terminal approval slot
   version                                   Print the build version JSON
 
 Topics:
@@ -78,6 +81,7 @@ Topics:
   backfill-verdict-events tmux-a2a-postman help backfill-verdict-events
   execute-bash         tmux-a2a-postman help execute-bash
   inspect-command-approvals tmux-a2a-postman help inspect-command-approvals
+  reconcile-command-approval-reply-slot tmux-a2a-postman help reconcile-command-approval-reply-slot
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help
 

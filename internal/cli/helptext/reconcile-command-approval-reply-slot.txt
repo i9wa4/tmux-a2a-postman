@@ -1,0 +1,31 @@
+reconcile-command-approval-reply-slot - reconcile a proven terminal command-approval reply slot
+
+Usage:
+  tmux-a2a-postman reconcile-command-approval-reply-slot \
+    --input-request-id <ireq> \
+    --thread-id <command-approval-thread> \
+    --command-hash <sha256:...> \
+    --requester <node> \
+    --requester-address <session:node> \
+    --approver <node> \
+    --approver-address <session:node> \
+    --decision-event-id <event_id>
+
+Dry-run is the default. Add --apply only after the JSON plan reports
+status=ready.
+
+This command appends one operator-visible reconciliation event. It does not
+write mailbox messages, move archive files, or impersonate the approver.
+
+Required evidence:
+  --input-request-id       Open command approval reply slot to reconcile
+  --thread-id              Command approval thread id
+  --command-hash           Command digest recorded by the request and decision
+  --requester              Original requester node name
+  --requester-address      Fully-qualified requester address
+  --approver               Config-resolved approver node name
+  --approver-address       Fully-qualified approver address
+  --decision-event-id      Recorded terminal decision event id
+
+Rejection is default. Missing, mismatched, pending, ambiguous, wrong-principal,
+post-expiry, non-command, and already-closed slots are rejected.
