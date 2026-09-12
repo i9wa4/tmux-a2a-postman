@@ -371,7 +371,7 @@ func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category
 	policy := resolvedCommandApprovalPolicy{
 		Requester: requester,
 		Reviewer:  "unassigned",
-		Mode:      commandApprovalModeAdvisory,
+		Mode:      commandApprovalModeBlocking,
 		Label:     label,
 		Category:  category,
 		TTL:       defaultCommandApprovalTTL,
