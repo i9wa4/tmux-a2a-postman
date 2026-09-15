@@ -532,6 +532,7 @@ Detailed configuration references:
 - [evidence replay contract](docs/design/evidence-replay-contract.md)
 - [PING event timing](docs/ping-events.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
+- [Herdr read-only compatibility policy](docs/design/herdr-readonly-discovery-spike.md#4-compatibility-authority)
 
 Command help lives in the binary: `tmux-a2a-postman help`,
 `tmux-a2a-postman help commands`, and `tmux-a2a-postman help config`. Claude

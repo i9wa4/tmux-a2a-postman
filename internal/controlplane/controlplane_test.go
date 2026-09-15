@@ -1036,6 +1036,7 @@ func validHerdrControlplaneSnapshot() multiplexer.HerdrSessionSnapshot {
 		}},
 		Panes: []multiplexer.HerdrPaneSnapshot{{
 			ID:          "workspace-1:pane-1",
+			TerminalID:  "terminal-1",
 			WorkspaceID: "workspace-1",
 			TabID:       "workspace-1:tab-1",
 		}},
