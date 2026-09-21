@@ -71,6 +71,20 @@ type DaemonSubmitResponse struct {
 	Error              string                     `json:"error,omitempty"`
 }
 
+// DaemonSubmitEvictedResponse is a bounded tombstone left behind when a late
+// daemon-submit response file is evicted past its retention window (#796).
+// Without this, a client-timeout lookup after eviction returns a bare
+// not_found indistinguishable from a wrong id or wrong-context lookup.
+type DaemonSubmitEvictedResponse struct {
+	SchemaVersion    int                 `json:"schema_version"`
+	RequestID        string              `json:"request_id"`
+	Command          DaemonSubmitCommand `json:"command,omitempty"`
+	HandledAtOrMTime string              `json:"handled_at_or_mtime,omitempty"`
+	AgeSeconds       int                 `json:"age_seconds"`
+	EvictedAt        string              `json:"evicted_at"`
+	Reason           string              `json:"reason"`
+}
+
 type DaemonSubmitResponseTimeoutError struct {
 	RequestID string
 	Timeout   time.Duration
@@ -94,6 +108,14 @@ func DaemonSubmitRequestPath(sessionDir, requestID string) string {
 
 func DaemonSubmitResponsePath(sessionDir, requestID string) string {
 	return filepath.Join(DaemonSubmitResponsesDir(sessionDir), requestID+".json")
+}
+
+func DaemonSubmitEvictedDir(sessionDir string) string {
+	return filepath.Join(sessionDir, "snapshot", string(SubmitPathDaemon), "evicted")
+}
+
+func DaemonSubmitEvictedPath(sessionDir, requestID string) string {
+	return filepath.Join(DaemonSubmitEvictedDir(sessionDir), requestID+".json")
 }
 
 func EnsureDaemonSubmitDirs(sessionDir string) error {
@@ -133,6 +155,26 @@ func WriteDaemonSubmitResponse(sessionDir string, response DaemonSubmitResponse)
 		return "", err
 	}
 	return responsePath, nil
+}
+
+func WriteDaemonSubmitEvicted(sessionDir string, evicted DaemonSubmitEvictedResponse) (string, error) {
+	if err := ensureMailboxDir(DaemonSubmitEvictedDir(sessionDir)); err != nil {
+		return "", err
+	}
+	evicted.SchemaVersion = daemonSubmitSchemaVersion
+	path := DaemonSubmitEvictedPath(sessionDir, evicted.RequestID)
+	if err := writeDaemonSubmitJSON(path, evicted); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func ReadDaemonSubmitEvicted(path string) (DaemonSubmitEvictedResponse, error) {
+	var evicted DaemonSubmitEvictedResponse
+	if err := readDaemonSubmitJSON(path, &evicted); err != nil {
+		return DaemonSubmitEvictedResponse{}, err
+	}
+	return evicted, nil
 }
 
 func ReadDaemonSubmitRequest(path string) (DaemonSubmitRequest, error) {

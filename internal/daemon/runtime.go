@@ -404,19 +404,24 @@ func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 }
 
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
-	status := rt.dispatchDaemonSubmitRequest(requestPath)
-	if status == daemonSubmitDispatchSaturated {
-		request, _ := projection.ReadDaemonSubmitRequest(requestPath)
-		fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
-		fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
-		fields.DaemonSubmitRequestID = request.RequestID
-		fields.DaemonSubmitCommand = string(request.Command)
-		fields.SubmitPath = string(projection.SubmitPathDaemon)
-		fields.Result = "saturated"
-		msgtrace.Log("daemon_submit_saturate", fields)
-		log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s request=%s\n",
-			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(requestPath))
-	}
+	rt.dispatchDaemonSubmitRequest(requestPath)
+}
+
+// logDaemonSubmitSaturation records a saturated dispatch with the session's
+// semaphore/slot state, so a recurrence is diagnosable from logs alone
+// without a live investigation (see #796).
+func (rt *daemonRuntime) logDaemonSubmitSaturation(requestPath, sessionKey string, sem chan struct{}) {
+	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
+	fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
+	fields.Result = "saturated"
+	msgtrace.Log("daemon_submit_saturate", fields)
+	log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s session=%s command=%s request=%s occupied_slots=%d worker_limit=%d active_daemon_submit_sessions=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionKey), request.Command, filepath.Base(requestPath),
+		len(sem), cap(sem), rt.activeDaemonSubmitSessions[sessionKey])
 }
 
 func (rt *daemonRuntime) recordDaemonSubmitSaturation() {
@@ -455,6 +460,7 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	case sem <- struct{}{}:
 	default:
 		rt.recordDaemonSubmitSaturation()
+		rt.logDaemonSubmitSaturation(requestPath, sessionKey, sem)
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
@@ -754,26 +760,127 @@ func scanDaemonSubmitResponses(sessionDir string, now time.Time, diagnostics *st
 	if err != nil {
 		return
 	}
+	retentionSeconds := int(daemonSubmitLateResponseRetentionSeconds)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		responsePath := filepath.Join(projection.DaemonSubmitResponsesDir(sessionDir), entry.Name())
-		response, err := projection.ReadDaemonSubmitResponse(responsePath)
-		if err == nil && response.Command == projection.DaemonSubmitRuntimeDiagnostics {
+		response, readErr := projection.ReadDaemonSubmitResponse(responsePath)
+		if readErr == nil && response.Command == projection.DaemonSubmitRuntimeDiagnostics {
 			continue
 		}
 
-		diagnostics.LateResponseCount++
-		if err == nil {
-			diagnostics.OldestLateResponseAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestLateResponseAgeSeconds, response.HandledAt, now)
-			continue
+		ageSeconds, effectiveTime, ageKnown := daemonSubmitEffectiveAge(response, readErr, entry, now)
+		if ageKnown && retentionSeconds > 0 && ageSeconds >= retentionSeconds {
+			if evictDaemonSubmitResponse(sessionDir, entry.Name(), responsePath, response, readErr, effectiveTime, ageSeconds, retentionSeconds, now) {
+				continue
+			}
 		}
-		info, infoErr := entry.Info()
-		if infoErr == nil {
-			diagnostics.OldestLateResponseAgeSeconds = oldestDaemonSubmitAgeSecondsFromTime(diagnostics.OldestLateResponseAgeSeconds, info.ModTime(), now)
+
+		diagnostics.LateResponseCount++
+		if ageKnown && ageSeconds > diagnostics.OldestLateResponseAgeSeconds {
+			diagnostics.OldestLateResponseAgeSeconds = ageSeconds
 		}
 	}
+	pruneDaemonSubmitEvictedTombstones(sessionDir, now, retentionSeconds)
+}
+
+// daemonSubmitEffectiveAge computes ONE age value that drives both the
+// eviction decision and the reported diagnostics age: the parsed
+// response.HandledAt when it is present, parses cleanly, and is not in the
+// future; otherwise the response file's mtime. Using two different notions
+// of "age" in different branches (as an earlier version of this function
+// did) let a malformed or future HandledAt skip both branches and become
+// immortal -- see #796 rework F-006.
+func daemonSubmitEffectiveAge(response projection.DaemonSubmitResponse, readErr error, entry os.DirEntry, now time.Time) (ageSeconds int, effectiveTime time.Time, ok bool) {
+	if readErr == nil && response.HandledAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, response.HandledAt); err == nil && parsed.Before(now) {
+			return ageSecondsFromTime(parsed, now), parsed, true
+		}
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return 0, time.Time{}, false
+	}
+	mtime := info.ModTime()
+	return ageSecondsFromTime(mtime, now), mtime, true
+}
+
+func ageSecondsFromTime(t time.Time, now time.Time) int {
+	if t.IsZero() || !t.Before(now) {
+		return 0
+	}
+	return int(now.Sub(t).Seconds())
+}
+
+// evictDaemonSubmitResponse persists a bounded tombstone before removing the
+// response file, so a client-timeout lookup after eviction can report
+// evicted_late_response instead of an indistinguishable not_found (#796
+// rework F-007). If the tombstone write fails, the response file is left in
+// place (falls through to being counted as an ordinary late response this
+// scan) rather than destroying evidence with no inspectable successor.
+func evictDaemonSubmitResponse(sessionDir, filename, responsePath string, response projection.DaemonSubmitResponse, readErr error, effectiveTime time.Time, ageSeconds, retentionSeconds int, now time.Time) bool {
+	command := response.Command
+	if readErr != nil {
+		command = ""
+	}
+	tombstone := projection.DaemonSubmitEvictedResponse{
+		RequestID:        strings.TrimSuffix(filename, ".json"),
+		Command:          command,
+		HandledAtOrMTime: effectiveTime.UTC().Format(time.RFC3339Nano),
+		AgeSeconds:       ageSeconds,
+		EvictedAt:        now.UTC().Format(time.RFC3339Nano),
+		Reason:           "retention_exceeded",
+	}
+	if _, err := projection.WriteDaemonSubmitEvicted(sessionDir, tombstone); err != nil {
+		return false
+	}
+	if removeErr := os.Remove(responsePath); removeErr != nil {
+		return false
+	}
+	logLateResponseEvicted(sessionDir, filename, ageSeconds, retentionSeconds)
+	return true
+}
+
+// pruneDaemonSubmitEvictedTombstones keeps the tombstone store bounded by
+// reusing the same retention window: a tombstone older than the retention
+// threshold (measured from its own EvictedAt) is removed. retentionSeconds
+// <= 0 (retention disabled) means responses are never evicted either, so
+// there is nothing to prune.
+func pruneDaemonSubmitEvictedTombstones(sessionDir string, now time.Time, retentionSeconds int) {
+	if retentionSeconds <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(projection.DaemonSubmitEvictedDir(sessionDir))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(projection.DaemonSubmitEvictedDir(sessionDir), entry.Name())
+		evicted, err := projection.ReadDaemonSubmitEvicted(path)
+		if err != nil {
+			continue
+		}
+		evictedAt, err := time.Parse(time.RFC3339Nano, evicted.EvictedAt)
+		if err != nil {
+			continue
+		}
+		if ageSecondsFromTime(evictedAt, now) >= retentionSeconds {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+// logLateResponseEvicted records eviction of a daemon-submit response file
+// that has sat unclaimed past daemonSubmitLateResponseRetentionSeconds.
+// Without this, late responses accumulate indefinitely (see #796).
+func logLateResponseEvicted(sessionDir, filename string, ageSeconds, retentionSeconds int) {
+	log.Printf("postman: component=%s event=late_response_evicted submit_path=%s session=%s file=%s age_seconds=%d retention_seconds=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), filename, ageSeconds, retentionSeconds)
 }
 
 func oldestDaemonSubmitAgeSeconds(current int, timestamp string, now time.Time) int {
