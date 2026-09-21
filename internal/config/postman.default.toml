@@ -149,8 +149,8 @@ auto_enable_new_sessions = true    # Required default: auto-claim configured nod
 # blocking approval fail closed. The approver is global; per-policy routing is
 # unsupported.
 
-# Command approval policies for execute-bash (Issue #484/#625/#626/#629). Optional; no policies means every
-# execute-bash invocation uses the advisory default.
+# Command approval policies for execute-bash (Issue #484/#625/#626/#629/#753). Optional; no policies means every
+# execute-bash invocation uses the blocking default.
 # [[postman.command_approval]]
 # requester = "worker"
 # label = "nix-build"

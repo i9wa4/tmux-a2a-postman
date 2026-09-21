@@ -98,6 +98,55 @@ thread has a non-expired approved decision from the configured reviewer for the
 exact command digest. Missing, stale, rejected, expired, wrong-reviewer, and
 changed-digest approvals do not run.
 
+`blocking` is the default mode (#753) when neither a matching policy nor
+`--mode` sets one explicitly. A configured `command_approver_node` that never
+answers now halts the calling agent's work by default, where it previously
+only produced an `advisory` warning; see
+[3.1. Recovering when a blocking approval never lands](#31-recovering-when-a-blocking-approval-never-lands-753)
+for how to get unstuck.
+
+### 3.1. Recovering when a blocking approval never lands (#753)
+
+A `blocking` command that has requested approval but received no decision
+leaves a `pending` thread and refuses to run. To recover:
+
+1. Inspect the pending thread without re-running the command:
+
+   ```sh
+   tmux-a2a-postman inspect-command-approvals
+   ```
+
+   This shows the thread id, requester, reviewer, label, category, digest,
+   reason, expiry, and current status for every outstanding request.
+2. If the configured `command_approver_node` is reachable, have it record a
+   decision through the normal path — either by replying `APPROVED: <reason>`
+   or `NOT APPROVED: <reason>` to the delivered approval request (see
+   [4.1](#41-delivery-to-a-valid-command_approver_node-626)), or by running
+   `--record-decision` directly from that node's own pane:
+
+   ```sh
+   tmux-a2a-postman execute-bash \
+     --thread-id command-approval-... \
+     --record-decision approved \
+     --reason "digest reviewed"
+   ```
+
+3. If the approver is unavailable and the command genuinely needs to proceed
+   without it, rerun with an explicit, deliberate mode override rather than
+   waiting indefinitely — only where the requester is willing to accept
+   non-blocking semantics for that one invocation:
+   - `--mode advisory` records the request and audit metadata, then runs
+     anyway.
+   - `--mode warn-only --override-approval` records the request, and the
+     override is captured in the audit event.
+   Both leave a distinct, auditable trail (`advisory_unapproved` or
+   `warn_override`) so the deviation from `blocking` is never silently lost.
+4. As a last resort, running the command directly in the shell (bypassing
+   `execute-bash` entirely) is the explicit, documented escape boundary
+   described in [7. Boundary](#7-boundary): the wrapper coordinates review, it
+   is not a sandbox, so nothing prevents this — but it also means no approval
+   thread, decision, or audit record is created for that run.
+
 ## 4. Decisions
 
 When `execute-bash` requests approval, it prints the approval thread id in the
