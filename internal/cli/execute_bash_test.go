@@ -458,6 +458,130 @@ func TestRunExecuteBashWarnOnlyOverrideRunsAndAudits(t *testing.T) {
 	}
 }
 
+// TestRunExecuteBashDefaultModeIsBlockingWithoutOverride pins #753: with no
+// --mode flag and no policy override, a valid resolvable reviewer must fail
+// closed on an unapproved command rather than fall through to the old
+// advisory default that ran the command unconditionally. It asserts the
+// recorded Mode/Decision explicitly (guardian F-018) because an
+// error+runCount==0 assertion alone cannot distinguish the new blocking
+// default from a warn-only default, which also refuses without
+// --override-approval; and it covers the --override-approval case
+// separately (guardian F-018) because warn-only, unlike blocking, would
+// let --override-approval run the command.
+func TestRunExecuteBashDefaultModeIsBlockingWithoutOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "no override flag"},
+		{name: "with override-approval flag", args: []string{"--override-approval"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newExecuteBashFixture(t)
+
+			err := runExecuteBashWithContext(fixture.context(), fixture.args(append([]string{
+				"--label", "unset-mode",
+				"--command", "printf default-mode",
+			}, tc.args...)...))
+			if err == nil {
+				t.Fatal("runExecuteBashWithContext() error = nil, want default-blocking refusal")
+			}
+			if !strings.Contains(err.Error(), "approval is absent") {
+				t.Fatalf("error = %v, want approval-absent diagnostic", err)
+			}
+			if fixture.runCount != 0 {
+				t.Fatalf("runCount = %d, want 0 (command must not run without approval)", fixture.runCount)
+			}
+			decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+			if decision.Mode != commandApprovalModeBlocking {
+				t.Fatalf("decision.Mode = %q, want %q", decision.Mode, commandApprovalModeBlocking)
+			}
+			if decision.Decision != "blocked" {
+				t.Fatalf("decision.Decision = %q, want %q", decision.Decision, "blocked")
+			}
+		})
+	}
+}
+
+// TestRunExecuteBashDefaultModeStillFailsOpenWithoutCommandApproverNode pins
+// the other half of #753: the unified fail-open rule (#626) must keep
+// applying to the new blocking default exactly as it does to an explicit
+// --mode blocking, so topologies without a configured command_approver_node
+// don't deadlock.
+func TestRunExecuteBashDefaultModeStillFailsOpenWithoutCommandApproverNode(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = ""
+	fixture.nodes = nil
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "unset-mode-no-approver",
+		"--command", "printf default-mode-fail-open",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != commandApprovalDecisionAutoApprovedNoReviewer {
+		t.Fatalf("decision = %q, want %q", decision.Decision, commandApprovalDecisionAutoApprovedNoReviewer)
+	}
+}
+
+// TestRunExecuteBashDefaultModeFailsClosedWhenCommandApproverNodeUnresolvable
+// pins the newly-reachable fail-closed edge at the default (guardian
+// F-019): a configured-but-unresolvable command_approver_node now fails
+// closed under the blocking default exactly as it does under an explicit
+// --mode blocking (see
+// TestRunExecuteBashBlockingFailsClosedWhenCommandApproverNodeUnresolvable),
+// with no policy or --mode flag setting the mode explicitly.
+func TestRunExecuteBashDefaultModeFailsClosedWhenCommandApproverNodeUnresolvable(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = "typo-reviewer"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{
+		"test-session:typo-reviewer": {
+			PaneID:      "%9",
+			SessionName: "test-session",
+			SessionDir:  fixture.sessionDir,
+		},
+	}
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "unset-mode-unresolvable",
+		"--command", "printf default-mode-unresolvable",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want unresolved approver block")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Mode != commandApprovalModeBlocking {
+		t.Fatalf("decision.Mode = %q, want %q", decision.Mode, commandApprovalModeBlocking)
+	}
+	if decision.Decision != "blocked" {
+		t.Fatalf("decision.Decision = %q, want %q", decision.Decision, "blocked")
+	}
+	if !strings.Contains(decision.Reason, "not resolvable") {
+		t.Fatalf("decision reason = %q, want unresolved approver diagnostic", decision.Reason)
+	}
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			t.Fatalf("unexpected trusted pending approval event: %#v", event)
+		}
+	}
+	postEntries, err := os.ReadDir(filepath.Join(fixture.sessionDir, "post"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("ReadDir(post) error = %v", err)
+	}
+	if len(postEntries) != 0 {
+		t.Fatalf("post/ has %d entries, want no invalid-approver delivery", len(postEntries))
+	}
+}
+
 func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -1132,6 +1256,16 @@ func TestRunExecuteBashRecordDecisionAndInspectCommandApprovals(t *testing.T) {
 	}
 	if entry.Requester != "worker" || entry.DecisionReviewer != "orchestrator" || entry.CommandApproverNode != "orchestrator" {
 		t.Fatalf("decision history identities = %#v", entry)
+	}
+	if entry.DecisionMessageID == "" {
+		t.Fatal("recorded decision message id is empty; exact reply-slot reconciliation cannot close the originating input request")
+	}
+	decisionInfo, err := message.ParseMessageFilename(entry.DecisionMessageID)
+	if err != nil {
+		t.Fatalf("ParseMessageFilename(decision message id) error = %v", err)
+	}
+	if decisionInfo.From != "orchestrator" || decisionInfo.To != "worker" {
+		t.Fatalf("decision message identity = %s -> %s, want orchestrator -> worker", decisionInfo.From, decisionInfo.To)
 	}
 	if entry.Label != "protected" || entry.CommandHash == "" || entry.DecisionReason != "digest reviewed" {
 		t.Fatalf("decision history command metadata = %#v", entry)
