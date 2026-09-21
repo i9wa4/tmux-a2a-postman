@@ -327,6 +327,51 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if err := appendCommandEvent(opts.sessionDir, opts.contextID, opts.sessionName, journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, payload, opts.threadID, ctx.now()); err != nil {
 		return err
 	}
+	// Auto-fill the paired mailbox input_request directly instead of requiring a
+	// separate --fills-input-request-id mail reply from the approver. The
+	// caller's tmux pane identity checked above is already stronger
+	// authentication than a mail reply's spoofable envelope `from:` field, so
+	// routing this through the mail-reply trust check
+	// (isTrustedCommandApprovalDecision) would add no security while making
+	// approver's ability to close a decision depend on having a postman.md
+	// topology edge to every possible requester. This synthesizes a
+	// same-session mailbox-projection event in opts.sessionDir, which is
+	// correct wherever approver and the requester share one tmux session
+	// (this fleet's current topology); a genuinely cross-session requester
+	// (future diplomat_node relay) is out of scope until that feature exists.
+	fillContent := fmt.Sprintf(`---
+params:
+  messageId: %s
+  from: %s
+  to: %s
+  thread_id: %s
+  command_hash: %s
+  fills_input_request_id: %s
+---
+
+# Message
+`, decisionMessageID, authenticatedCaller, thread.Requester, opts.threadID, thread.CommandHash, thread.InputRequestID)
+	fillPayload := journal.MailboxEventPayload{
+		MessageID:           decisionMessageID,
+		From:                authenticatedCaller,
+		To:                  thread.Requester,
+		ThreadID:            opts.threadID,
+		FillsInputRequestID: thread.InputRequestID,
+		Content:             fillContent,
+	}
+	fillEquivalent := func(event journal.Event) (bool, error) {
+		if event.Type != projection.MailboxProjectionPostConsumedEventType {
+			return false, nil
+		}
+		var got journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &got); err != nil {
+			return false, err
+		}
+		return got.FillsInputRequestID == fillPayload.FillsInputRequestID, nil
+	}
+	if _, err := journal.RecordMailboxPayloadIfAbsentUsingCurrentSessionWriter(opts.sessionDir, opts.contextID, opts.sessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, fillPayload, fillEquivalent, ctx.now()); err != nil {
+		return fmt.Errorf("recording auto-fill for input request %q: %w", thread.InputRequestID, err)
+	}
 	if err := journal.SyncCommandApprovalDecisionHistory(opts.sessionDir); err != nil {
 		_, _ = fmt.Fprintf(ctx.stderr, "postman: warning: command approval decision history sync failed after recording decision: %v\n", err)
 	}

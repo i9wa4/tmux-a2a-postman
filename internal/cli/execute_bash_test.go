@@ -14,6 +14,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -1272,6 +1273,68 @@ func TestRunExecuteBashRecordDecisionAndInspectCommandApprovals(t *testing.T) {
 	}
 	if entry.CommandText != "" {
 		t.Fatalf("decision history stored command text by default: %#v", entry)
+	}
+}
+
+func TestRunExecuteBashRecordDecisionAutoFillsPairedInputRequest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf autofill-me"
+	threadID := fixture.appendCommandApprovalRequest(t, policy, commandText, time.Now().Add(time.Hour))
+	wantInputRequestID := "ireq_" + strings.TrimPrefix(threadID, "command-approval-")
+
+	for i := 0; i < 2; i++ {
+		if err := runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
+			"--thread-id", threadID,
+			"--record-decision", "approved",
+			"--reason", "digest reviewed",
+		)); err != nil {
+			t.Fatalf("runExecuteBashWithContext(record decision, attempt %d) error = %v", i, err)
+		}
+	}
+
+	events, err := journal.Replay(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	var fills []journal.MailboxEventPayload
+	for _, event := range events {
+		if event.Type != projection.MailboxProjectionPostConsumedEventType {
+			continue
+		}
+		var payload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("Unmarshal(mailbox_projection_post_consumed payload): %v", err)
+		}
+		if payload.FillsInputRequestID == wantInputRequestID {
+			fills = append(fills, payload)
+		}
+	}
+	if len(fills) != 1 {
+		t.Fatalf("auto-fill events for input request %q = %d, want exactly 1 (idempotent across %d --record-decision calls): %#v", wantInputRequestID, len(fills), 2, fills)
+	}
+	fill := fills[0]
+	if fill.From != "orchestrator" || fill.To != "worker" || fill.ThreadID != threadID {
+		t.Fatalf("auto-fill payload = %#v, want from=orchestrator to=worker thread_id=%s", fill, threadID)
+	}
+	meta, err := envelope.ParseMetadata(fill.Content)
+	if err != nil {
+		t.Fatalf("ParseMetadata(auto-fill content) error = %v; content:\n%s", err, fill.Content)
+	}
+	if meta.ThreadID != threadID || meta.CommandHash == "" || meta.FillsInputRequestID != wantInputRequestID {
+		t.Fatalf("parsed auto-fill metadata = %#v, want thread_id=%s fills_input_request_id=%s", meta, threadID, wantInputRequestID)
 	}
 }
 
