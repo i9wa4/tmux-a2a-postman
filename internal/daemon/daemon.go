@@ -34,11 +34,12 @@ import (
 )
 
 const (
-	inboxCheckInterval                            = 30 * time.Second
-	runtimeDiagnosticsLogInterval                 = 10 * time.Minute
-	defaultDaemonSubmitQueueWarnThresholdMs int64 = 30_000
-	defaultVerdictGraceSeconds                    = 3600
-	defaultVerdictDebtCap                         = 3
+	inboxCheckInterval                                    = 30 * time.Second
+	runtimeDiagnosticsLogInterval                         = 10 * time.Minute
+	defaultDaemonSubmitQueueWarnThresholdMs         int64 = 30_000
+	defaultDaemonSubmitLateResponseRetentionSeconds int64 = 3600
+	defaultVerdictGraceSeconds                            = 3600
+	defaultVerdictDebtCap                                 = 3
 
 	// popVerificationFailureDeadLetterThreshold is F-013's bounded-retry cap:
 	// once a message has accumulated this many pop archive-verification
@@ -53,10 +54,11 @@ const (
 // in milliseconds. Initialized from config at daemon startup; tests may
 // override it directly. Defaults to defaultDaemonSubmitQueueWarnThresholdMs.
 var (
-	daemonSubmitQueueWarnThresholdMs int64 = defaultDaemonSubmitQueueWarnThresholdMs
-	verdictGraceSeconds                    = defaultVerdictGraceSeconds
-	verdictDebtCap                         = defaultVerdictDebtCap
-	verdictExemptUINode                    = "messenger"
+	daemonSubmitQueueWarnThresholdMs         int64 = defaultDaemonSubmitQueueWarnThresholdMs
+	daemonSubmitLateResponseRetentionSeconds int64 = defaultDaemonSubmitLateResponseRetentionSeconds
+	verdictGraceSeconds                            = defaultVerdictGraceSeconds
+	verdictDebtCap                                 = defaultVerdictDebtCap
+	verdictExemptUINode                            = "messenger"
 )
 
 type filesystemWatcher interface {
@@ -1222,6 +1224,9 @@ func runDaemonLoopWithWatcherEvents(
 	// Apply configurable queue warning threshold before any workers start.
 	if cfg != nil && cfg.DaemonSubmitQueueWarnThresholdMs > 0 {
 		daemonSubmitQueueWarnThresholdMs = cfg.DaemonSubmitQueueWarnThresholdMs
+	}
+	if cfg != nil && cfg.DaemonSubmitLateResponseRetentionSeconds > 0 {
+		daemonSubmitLateResponseRetentionSeconds = cfg.DaemonSubmitLateResponseRetentionSeconds
 	}
 	configureVerdictGateFromConfig(cfg)
 
