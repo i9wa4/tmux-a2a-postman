@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -518,11 +519,39 @@ func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
 	notifier.capture = func(paneID string) (string, error) {
 		return "unchanged", nil
 	}
-	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
-		t.Fatalf("SendToPane: %v", err)
+	err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2)
+	if !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (snapshot never changed)", err)
 	}
 	if sendKeys != 3 {
 		t.Fatalf("send-keys calls = %d, want initial send plus 2 verify retries", sendKeys)
+	}
+}
+
+func TestSendToPane_VerifyRetryReturnsNilWhenSnapshotChanges(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifier, _ := paneNotifierForTest(now, 0)
+	captureCalls := 0
+	notifier.capture = func(paneID string) (string, error) {
+		captureCalls++
+		if captureCalls >= 2 {
+			return "changed", nil
+		}
+		return "unchanged", nil
+	}
+	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane() error = %v, want nil once a snapshot change is observed", err)
+	}
+}
+
+func TestSendToPane_VerifyRetryReturnsNilOnCaptureError(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifier, _ := paneNotifierForTest(now, 0)
+	notifier.capture = func(paneID string) (string, error) {
+		return "", fmt.Errorf("capture-pane failed")
+	}
+	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane() error = %v, want nil when verification cannot run (capture error means unknown, not unresponsive)", err)
 	}
 }
 
@@ -743,8 +772,8 @@ esac
 	}()
 
 	err = SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1, true, 1*time.Millisecond, 2)
-	if err != nil {
-		t.Fatalf("SendToPane failed: %v", err)
+	if !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (fake tmux capture-pane always reports unchanged)", err)
 	}
 	if err := stderrW.Close(); err != nil {
 		t.Fatalf("stderrW.Close failed: %v", err)
