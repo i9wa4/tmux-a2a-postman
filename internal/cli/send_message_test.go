@@ -3422,6 +3422,328 @@ role = "worker"
 	}
 }
 
+// TestRunSendHeredoc_VerdictFlagsClearDebtAndAllowOtherwiseBlockedSend pins
+// #757: before --verdict/--verdict-of existed, an agent had no CLI-flag way
+// to legitimately clear its own verdict debt, so a reply-required send that
+// would otherwise be rejected by the debt-cap check (verdictgate.Enforce)
+// stayed blocked until the grace-period timeout fired. Stamping the same
+// outgoing reply-required message with --verdict and --verdict-of naming
+// the debt-owning input request now clears that debt item before the cap
+// check runs, letting the send through under a cap of 0.
+func TestRunSendHeredoc_VerdictFlagsClearDebtAndAllowOtherwiseBlockedSend(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`, tmpDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-flags-clear-debt", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-verdict-flags-clear-debt", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_verdict_flags", time.Now().Add(-10*time.Second).UTC())
+
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new work, verdict on the earlier fill attached"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.loadConfig = config.LoadConfig
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-flags-clear-debt",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: fill was correct",
+		"--verdict-of", "ireq_verdict_flags",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want nil (verdict clears debt before the cap check)", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err != nil {
+		t.Fatalf("ReadDir(post) error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post/ has %d entries, want exactly 1 sent message", len(entries))
+	}
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	meta, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata sent message: %v", err)
+	}
+	if meta.Verdict != "APPROVED: fill was correct" {
+		t.Fatalf("meta.Verdict = %q, want the --verdict value", meta.Verdict)
+	}
+	if meta.VerdictOf != "ireq_verdict_flags" {
+		t.Fatalf("meta.VerdictOf = %q, want the --verdict-of value", meta.VerdictOf)
+	}
+}
+
+func TestRunSendHeredoc_VerdictAndVerdictOfMustBeProvidedTogether(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	var stdoutVerdictOnly strings.Builder
+	ctxVerdictOnly := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdoutVerdictOnly)
+	if err := runSendHeredocWithContext(ctxVerdictOnly, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--verdict", "APPROVED: ok",
+	}); err == nil || !strings.Contains(err.Error(), "--verdict and --verdict-of must be provided together") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a paired-flag rejection", err)
+	}
+
+	var stdoutVerdictOfOnly strings.Builder
+	ctxVerdictOfOnly := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdoutVerdictOfOnly)
+	if err := runSendHeredocWithContext(ctxVerdictOfOnly, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--verdict-of", "ireq_orphan",
+	}); err == nil || !strings.Contains(err.Error(), "--verdict and --verdict-of must be provided together") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a paired-flag rejection", err)
+	}
+}
+
+// TestRunSendHeredoc_VerdictRejectsWhitespaceOnlyText pins guardian F-025:
+// a whitespace-only --verdict must be treated as absent (trimmed before the
+// paired-flag check), not silently written while failing to clear debt.
+func TestRunSendHeredoc_VerdictRejectsWhitespaceOnlyText(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdout)
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--verdict", "   ",
+		"--verdict-of", "ireq_x",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--verdict and --verdict-of must be provided together") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a paired-flag rejection for whitespace-only --verdict", err)
+	}
+}
+
+// TestRunSendHeredoc_VerdictRejectsUnsafeText pins guardian F-024: --verdict
+// is interpolated into a single unescaped frontmatter line
+// (message.EnsureEnvelopeParams -> envelope.EnsureParams), so a newline
+// could inject arbitrary params or, combined with a literal "---" line,
+// terminate the frontmatter block outright; a control character is
+// likewise unsafe. All three must be rejected before any file is written.
+func TestRunSendHeredoc_VerdictRejectsUnsafeText(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict string
+	}{
+		{name: "embedded newline", verdict: "APPROVED: ok\ninjected: yes"},
+		{name: "carriage return", verdict: "APPROVED: ok\rinjected: yes"},
+		{name: "frontmatter terminator injection", verdict: "APPROVED: ok\n---\nreplyPolicy: none"},
+		{name: "control character", verdict: "APPROVED: ok\x01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			sessionDir := filepath.Join(tmpDir, "ctx-verdict-unsafe", "test-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+			var stdout strings.Builder
+			ctx := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdout)
+
+			err := runSendHeredocWithContext(ctx, []string{
+				"--to", "worker",
+				"--no-reply",
+				"--context-id", "ctx-verdict-unsafe",
+				"--verdict", tc.verdict,
+				"--verdict-of", "ireq_unsafe",
+			})
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want unsafe --verdict text rejection")
+			}
+			if !strings.Contains(err.Error(), "--verdict") {
+				t.Fatalf("runSendHeredocWithContext() error = %v, want a --verdict-specific rejection", err)
+			}
+			postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+			if readErr == nil && len(postEntries) != 0 {
+				t.Fatalf("post/ has %d entries, want no file written for rejected unsafe --verdict text", len(postEntries))
+			}
+		})
+	}
+}
+
+// TestRunSendHeredoc_VerdictOfMalformedRejectedBeforeWrite confirms a
+// malformed --verdict-of token is rejected by the same validator
+// --fills-input-request-id uses, before any post/ file is written.
+func TestRunSendHeredoc_VerdictOfMalformedRejectedBeforeWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-malformed", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdout)
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--context-id", "ctx-verdict-malformed",
+		"--verdict", "APPROVED: ok",
+		"--verdict-of", "not/a-valid-token",
+	})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want malformed --verdict-of rejection")
+	}
+	if !strings.Contains(err.Error(), "--verdict-of") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a --verdict-of-specific rejection", err)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("post/ has %d entries, want no file written for rejected malformed --verdict-of", len(postEntries))
+	}
+}
+
+// TestRunSendHeredoc_VerdictWrongInputRequestIDLeavesDebtAndBlocks confirms
+// a well-formed but non-matching --verdict-of cannot clear someone else's
+// (or a made-up) debt item: the send stays blocked under a zero debt cap
+// exactly as it would with no verdict flags at all.
+func TestRunSendHeredoc_VerdictWrongInputRequestIDLeavesDebtAndBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`, tmpDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-wrong-id", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-verdict-wrong-id", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_real", time.Now().Add(-10*time.Second).UTC())
+
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new work"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.loadConfig = config.LoadConfig
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-wrong-id",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: unrelated",
+		"--verdict-of", "ireq_not_the_real_one",
+	})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want debt-cap rejection for a non-matching --verdict-of")
+	}
+	if !strings.Contains(err.Error(), "verdict debt 1 above verdict_debt_cap=0") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want debt-cap verdict gate rejection", err)
+	}
+}
+
+// TestRunSendHeredoc_VerdictRepeatedSendIsIdempotent confirms clearing the
+// same debt item twice is a harmless no-op the second time, rather than an
+// error: applyOutgoingVerdict simply finds nothing left to remove.
+func TestRunSendHeredoc_VerdictRepeatedSendIsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`, tmpDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-repeat", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-verdict-repeat", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_repeat", time.Now().Add(-10*time.Second).UTC())
+
+	ctxFor := func(body string) commandContext {
+		var stdout strings.Builder
+		ctx := testSendCommandContext(tmpDir, strings.NewReader(body), &stdout)
+		ctx.getTmuxPaneName = func() string { return "orchestrator" }
+		ctx.getTmuxSessionName = func() string { return "test-session" }
+		ctx.loadConfig = config.LoadConfig
+		return ctx
+	}
+
+	firstErr := runSendHeredocWithContext(ctxFor("first send"), []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-repeat",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: first",
+		"--verdict-of", "ireq_repeat",
+	})
+	if firstErr != nil {
+		t.Fatalf("first send error = %v, want nil (clears debt)", firstErr)
+	}
+
+	secondErr := runSendHeredocWithContext(ctxFor("second send"), []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-repeat",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: second",
+		"--verdict-of", "ireq_repeat",
+	})
+	if secondErr != nil {
+		t.Fatalf("second send error = %v, want nil (idempotent no-op clear)", secondErr)
+	}
+}
+
 func TestRunSendHeredoc_LiveOwnedDirectPathUsesDaemonVerdictGate(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate-daemon", "test-session")
