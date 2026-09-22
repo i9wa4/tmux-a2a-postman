@@ -202,7 +202,11 @@ role = "orchestrator"
 			deliverDone := make(chan error, 1)
 			go func() {
 				postDir := filepath.Join(sessionDir, "post")
-				filename := awaitMarkdownFile(t, postDir, time.Second)
+				filename, err := awaitMarkdownFile(t, postDir, time.Second)
+				if err != nil {
+					deliverDone <- fmt.Errorf("awaitMarkdownFile: %w", err)
+					return
+				}
 				postPath := filepath.Join(postDir, filename)
 				content, err := os.ReadFile(postPath)
 				if err != nil {
