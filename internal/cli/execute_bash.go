@@ -15,6 +15,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
@@ -263,6 +264,13 @@ type executeBashDecisionOptions struct {
 	commandText      string
 }
 
+// recordCommandApprovalAutoFillFn is a seam over
+// journal.RecordMailboxPayloadIfAbsentUsingCurrentSessionWriter: tests
+// override this var to inject a failure on one call and restore it via
+// t.Cleanup, so the F-034 already-decided-retry path can be exercised without
+// needing a real journal write failure.
+var recordCommandApprovalAutoFillFn = journal.RecordMailboxPayloadIfAbsentUsingCurrentSessionWriter
+
 func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptions) error {
 	if strings.TrimSpace(opts.threadID) == "" {
 		return fmt.Errorf("--thread-id is required with --record-decision")
@@ -309,23 +317,49 @@ func recordExecuteBashDecision(ctx commandContext, opts executeBashDecisionOptio
 	if thread.InputRequestID == "" || thread.CommandHash == "" {
 		return fmt.Errorf("--record-decision refused: thread %q is missing exact command approval correlation metadata", opts.threadID)
 	}
-	decisionMessageID, err := message.GenerateFilename(ctx.now().Format("20060102-150405"), authenticatedCaller, thread.Requester, opts.sessionName)
-	if err != nil {
-		return fmt.Errorf("generating command approval decision message id: %w", err)
-	}
 
-	payload := journal.CommandApprovalDecisionPayload{
-		Reviewer:         authenticatedCaller,
-		ReviewerAddress:  authenticatedCallerAddress,
-		RequesterAddress: thread.RequesterAddress,
-		Decision:         journal.ApprovalDecision(decision),
-		Reason:           opts.reason,
-		MessageID:        decisionMessageID,
-		InputRequestID:   thread.InputRequestID,
-		CommandHash:      thread.CommandHash,
-	}
-	if err := appendCommandEvent(opts.sessionDir, opts.contextID, opts.sessionName, journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, payload, opts.threadID, ctx.now()); err != nil {
-		return err
+	// #786/F-034: once a thread is Approved/Rejected,
+	// applyCommandApprovalDecision (projection/command_approval.go) ignores
+	// every later decision event for it and keeps thread.DecisionMessageID
+	// fixed at the FIRST accepted decision's message id. The reply-slot
+	// resolver only accepts a fill whose MessageID equals that fixed
+	// DecisionMessageID. A freshly minted decisionMessageID on every call
+	// therefore can never match after the first decision: if the very first
+	// auto-fill append below failed (e.g. a transient journal write error)
+	// after the decision event itself had already landed, every retry would
+	// mint a new id that could never resolve the slot, permanently stranding
+	// it -- worse than the pre-fix bug, since the old manual mail-reply
+	// escape hatch mints its own new message id too and has the identical
+	// problem. Detecting an already-decided thread and reusing its recorded
+	// DecisionMessageID (rather than deciding again) makes retries actually
+	// converge.
+	alreadyDecided := thread.Status == projection.CommandApprovalStatusApproved || thread.Status == projection.CommandApprovalStatusRejected
+	var decisionMessageID string
+	if alreadyDecided {
+		if thread.DecisionMessageID == "" {
+			return fmt.Errorf("--record-decision refused: thread %q is already decided but has no recorded decision message id; cannot safely retry the auto-fill", opts.threadID)
+		}
+		decisionMessageID = thread.DecisionMessageID
+		decision = string(thread.Status)
+	} else {
+		decisionMessageID, err = message.GenerateFilename(ctx.now().Format("20060102-150405"), authenticatedCaller, thread.Requester, opts.sessionName)
+		if err != nil {
+			return fmt.Errorf("generating command approval decision message id: %w", err)
+		}
+
+		payload := journal.CommandApprovalDecisionPayload{
+			Reviewer:         authenticatedCaller,
+			ReviewerAddress:  authenticatedCallerAddress,
+			RequesterAddress: thread.RequesterAddress,
+			Decision:         journal.ApprovalDecision(decision),
+			Reason:           opts.reason,
+			MessageID:        decisionMessageID,
+			InputRequestID:   thread.InputRequestID,
+			CommandHash:      thread.CommandHash,
+		}
+		if err := appendCommandEvent(opts.sessionDir, opts.contextID, opts.sessionName, journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, payload, opts.threadID, ctx.now()); err != nil {
+			return err
+		}
 	}
 	// Auto-fill the paired mailbox input_request directly instead of requiring a
 	// separate --fills-input-request-id mail reply from the approver. The
@@ -359,6 +393,15 @@ params:
 		FillsInputRequestID: thread.InputRequestID,
 		Content:             fillContent,
 	}
+	// #786/F-035: match on the full correlation the reply-slot resolver
+	// actually keys on (message id, thread id, command hash, from, to, fills
+	// id), not just FillsInputRequestID alone. A narrower predicate could
+	// make AppendCurrentSessionEventIfAbsent wrongly treat an unrelated
+	// stale/mismatched event that happens to share only the fill id as
+	// equivalent, silently skipping the one fill that would actually have
+	// resolved the slot. Command hash isn't a MailboxEventPayload struct
+	// field, so it's compared via the parsed envelope Content, same as the
+	// resolver itself does.
 	fillEquivalent := func(event journal.Event) (bool, error) {
 		if event.Type != projection.MailboxProjectionPostConsumedEventType {
 			return false, nil
@@ -367,13 +410,26 @@ params:
 		if err := json.Unmarshal(event.Payload, &got); err != nil {
 			return false, err
 		}
-		return got.FillsInputRequestID == fillPayload.FillsInputRequestID, nil
+		if got.MessageID != fillPayload.MessageID ||
+			got.ThreadID != fillPayload.ThreadID ||
+			got.From != fillPayload.From ||
+			got.To != fillPayload.To ||
+			got.FillsInputRequestID != fillPayload.FillsInputRequestID {
+			return false, nil
+		}
+		gotMeta, err := envelope.ParseMetadata(got.Content)
+		if err != nil {
+			return false, nil
+		}
+		return gotMeta.CommandHash == thread.CommandHash, nil
 	}
-	if _, err := journal.RecordMailboxPayloadIfAbsentUsingCurrentSessionWriter(opts.sessionDir, opts.contextID, opts.sessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, fillPayload, fillEquivalent, ctx.now()); err != nil {
+	if _, err := recordCommandApprovalAutoFillFn(opts.sessionDir, opts.contextID, opts.sessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, fillPayload, fillEquivalent, ctx.now()); err != nil {
 		return fmt.Errorf("recording auto-fill for input request %q: %w", thread.InputRequestID, err)
 	}
-	if err := journal.SyncCommandApprovalDecisionHistory(opts.sessionDir); err != nil {
-		_, _ = fmt.Fprintf(ctx.stderr, "postman: warning: command approval decision history sync failed after recording decision: %v\n", err)
+	if !alreadyDecided {
+		if err := journal.SyncCommandApprovalDecisionHistory(opts.sessionDir); err != nil {
+			_, _ = fmt.Fprintf(ctx.stderr, "postman: warning: command approval decision history sync failed after recording decision: %v\n", err)
+		}
 	}
 	result := executeBashResult{
 		Status:         "decision_recorded",

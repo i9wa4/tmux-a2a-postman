@@ -1276,33 +1276,71 @@ func TestRunExecuteBashRecordDecisionAndInspectCommandApprovals(t *testing.T) {
 	}
 }
 
+// newOpenApprovalFixture sets up a fixture and issues a real execute-bash
+// approval request (through the real request-and-notify machinery, not a
+// hand-crafted journal event) so the resulting thread's mailbox input_request
+// is genuinely open — required for assertApprovalReplySlot to mean anything
+// (guardian F-036: counting fill events proves an event was written, not that
+// the request actually closed).
+func newOpenApprovalFixture(t *testing.T, commandText string) (*executeBashFixture, string, projection.CommandApprovalThread) {
+	t.Helper()
+
+	policy := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policy)
+	manager := journal.NewManager(fixture.contextID, os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	fixture.commandApproverNode = "approver"
+	fixture.notificationTemplate = "notice {from_node}->{node} {filename}"
+	fixture.nodes = map[string]config.NodeConfig{
+		"worker":       {},
+		"orchestrator": {},
+		"approver":     {},
+	}
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{
+		"test-session:worker":       {PaneID: "%1", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+		"test-session:orchestrator": {PaneID: "%2", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+		"test-session:approver":     {PaneID: "%3", SessionName: fixture.sessionName, SessionDir: fixture.sessionDir},
+	}
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--reviewer", "orchestrator",
+		"--reason", "auto-fill regression setup",
+		"--command", commandText,
+	))
+	if err == nil || !strings.Contains(err.Error(), "approval is absent") {
+		t.Fatalf("runExecuteBashWithContext(request) error = %v, want pending blocking approval", err)
+	}
+
+	threadID, thread := onlyApprovalThread(t, fixture.sessionDir, fixture.now)
+	if thread.Status != projection.CommandApprovalStatusPending {
+		t.Fatalf("initial status = %q, want pending", thread.Status)
+	}
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, true)
+	return fixture, threadID, thread
+}
+
 func TestRunExecuteBashRecordDecisionAutoFillsPairedInputRequest(t *testing.T) {
-	policyConfig := config.CommandApprovalPolicy{
-		Requester: "worker",
-		Reviewer:  "orchestrator",
-		Label:     "protected",
-		Mode:      "blocking",
-	}
-	fixture := newExecuteBashFixture(t, policyConfig)
-	policy := resolvedCommandApprovalPolicy{
-		Requester: "worker",
-		Reviewer:  "orchestrator",
-		Mode:      "blocking",
-		Label:     "protected",
-		TTL:       defaultCommandApprovalTTL,
-	}
-	commandText := "printf autofill-me"
-	threadID := fixture.appendCommandApprovalRequest(t, policy, commandText, time.Now().Add(time.Hour))
-	wantInputRequestID := "ireq_" + strings.TrimPrefix(threadID, "command-approval-")
+	fixture, threadID, thread := newOpenApprovalFixture(t, "printf autofill-me")
 
 	for i := 0; i < 2; i++ {
-		if err := runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), fixture.args(
+		if err := runExecuteBashWithContext(fixture.contextAsPane("approver"), fixture.args(
 			"--thread-id", threadID,
 			"--record-decision", "approved",
 			"--reason", "digest reviewed",
 		)); err != nil {
 			t.Fatalf("runExecuteBashWithContext(record decision, attempt %d) error = %v", i, err)
 		}
+		// The user-visible outcome, not just "an event was written" (F-036):
+		// after either the first decision or an idempotent retry, the
+		// request must actually be closed.
+		assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, false)
 	}
 
 	events, err := journal.Replay(fixture.sessionDir)
@@ -1318,23 +1356,131 @@ func TestRunExecuteBashRecordDecisionAutoFillsPairedInputRequest(t *testing.T) {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			t.Fatalf("Unmarshal(mailbox_projection_post_consumed payload): %v", err)
 		}
-		if payload.FillsInputRequestID == wantInputRequestID {
+		if payload.FillsInputRequestID == thread.InputRequestID {
 			fills = append(fills, payload)
 		}
 	}
 	if len(fills) != 1 {
-		t.Fatalf("auto-fill events for input request %q = %d, want exactly 1 (idempotent across %d --record-decision calls): %#v", wantInputRequestID, len(fills), 2, fills)
+		t.Fatalf("auto-fill events for input request %q = %d, want exactly 1 (idempotent across 2 --record-decision calls): %#v", thread.InputRequestID, len(fills), fills)
 	}
 	fill := fills[0]
-	if fill.From != "orchestrator" || fill.To != "worker" || fill.ThreadID != threadID {
-		t.Fatalf("auto-fill payload = %#v, want from=orchestrator to=worker thread_id=%s", fill, threadID)
+	if fill.From != "approver" || fill.To != "worker" || fill.ThreadID != threadID {
+		t.Fatalf("auto-fill payload = %#v, want from=approver to=worker thread_id=%s", fill, threadID)
 	}
 	meta, err := envelope.ParseMetadata(fill.Content)
 	if err != nil {
 		t.Fatalf("ParseMetadata(auto-fill content) error = %v; content:\n%s", err, fill.Content)
 	}
-	if meta.ThreadID != threadID || meta.CommandHash == "" || meta.FillsInputRequestID != wantInputRequestID {
-		t.Fatalf("parsed auto-fill metadata = %#v, want thread_id=%s fills_input_request_id=%s", meta, threadID, wantInputRequestID)
+	if meta.ThreadID != threadID || meta.CommandHash == "" || meta.FillsInputRequestID != thread.InputRequestID {
+		t.Fatalf("parsed auto-fill metadata = %#v, want thread_id=%s fills_input_request_id=%s", meta, threadID, thread.InputRequestID)
+	}
+}
+
+// TestRunExecuteBashRecordDecisionRetriesAutoFillAfterInjectedFailure pins
+// F-034: if the auto-fill append fails on the first --record-decision call
+// (after the decision event itself already landed), a retry must still be
+// able to close the request. Before the fix, the retry would mint a fresh
+// decision message id that the reply-slot resolver's fixed
+// thread.DecisionMessageID could never match again, permanently stranding
+// the request.
+func TestRunExecuteBashRecordDecisionRetriesAutoFillAfterInjectedFailure(t *testing.T) {
+	fixture, threadID, thread := newOpenApprovalFixture(t, "printf autofill-retry-me")
+
+	original := recordCommandApprovalAutoFillFn
+	injectedErr := fmt.Errorf("injected auto-fill failure")
+	recordCommandApprovalAutoFillFn = func(sessionDir, contextID, tmuxSessionName, eventType string, visibility journal.Visibility, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc, now time.Time) (bool, error) {
+		return false, injectedErr
+	}
+	t.Cleanup(func() { recordCommandApprovalAutoFillFn = original })
+
+	err := runExecuteBashWithContext(fixture.contextAsPane("approver"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+		"--reason", "first attempt, auto-fill will fail",
+	))
+	if err == nil || !strings.Contains(err.Error(), "injected auto-fill failure") {
+		t.Fatalf("runExecuteBashWithContext(first attempt) error = %v, want injected auto-fill failure", err)
+	}
+	// The decision itself must still have landed durably even though the
+	// fill failed -- this is exactly the "worse than the pre-fix bug"
+	// scenario guardian described: an already-decided, still-open request.
+	_, decidedThread := onlyApprovalThread(t, fixture.sessionDir, fixture.now)
+	if decidedThread.Status != projection.CommandApprovalStatusApproved {
+		t.Fatalf("thread status after failed auto-fill = %q, want approved (decision must land even if the fill fails)", decidedThread.Status)
+	}
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, true)
+
+	recordCommandApprovalAutoFillFn = original
+	if err := runExecuteBashWithContext(fixture.contextAsPane("approver"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+		"--reason", "retry after auto-fill recovers",
+	)); err != nil {
+		t.Fatalf("runExecuteBashWithContext(retry) error = %v, want the retry to succeed by reusing the existing decision message id", err)
+	}
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, false)
+}
+
+// TestRunExecuteBashRecordDecisionAutoFillNotSuppressedByStaleFillIDEvent
+// pins F-035: a pre-existing mailbox_projection_post_consumed event that
+// shares only the FillsInputRequestID with the real fill, but differs in
+// message id/thread id/from/to, must not make the idempotency guard skip
+// the fill that would actually resolve the slot.
+func TestRunExecuteBashRecordDecisionAutoFillNotSuppressedByStaleFillIDEvent(t *testing.T) {
+	fixture, threadID, thread := newOpenApprovalFixture(t, "printf autofill-stale-me")
+
+	staleContent := fmt.Sprintf(`---
+params:
+  messageId: stale-unrelated.md
+  from: someone-else
+  to: worker
+  thread_id: command-approval-unrelated
+  command_hash: sha256:unrelated
+  fills_input_request_id: %s
+---
+
+# Message
+`, thread.InputRequestID)
+	stalePayload := journal.MailboxEventPayload{
+		MessageID:           "stale-unrelated.md",
+		From:                "someone-else",
+		To:                  "worker",
+		ThreadID:            "command-approval-unrelated",
+		FillsInputRequestID: thread.InputRequestID,
+		Content:             staleContent,
+	}
+	if _, err := recordCommandApprovalAutoFillFn(fixture.sessionDir, fixture.contextID, fixture.sessionName, projection.MailboxProjectionPostConsumedEventType, journal.VisibilityMailboxProjection, stalePayload, func(journal.Event) (bool, error) { return false, nil }, fixture.now); err != nil {
+		t.Fatalf("seeding stale fill event: %v", err)
+	}
+
+	if err := runExecuteBashWithContext(fixture.contextAsPane("approver"), fixture.args(
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+		"--reason", "real decision despite stale unrelated fill",
+	)); err != nil {
+		t.Fatalf("runExecuteBashWithContext(record decision) error = %v", err)
+	}
+	assertApprovalReplySlot(t, fixture.sessionDir, fixture.sessionName, thread.InputRequestID, false)
+
+	events, err := journal.Replay(fixture.sessionDir)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	matchingFillCount := 0
+	for _, event := range events {
+		if event.Type != projection.MailboxProjectionPostConsumedEventType {
+			continue
+		}
+		var payload journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("Unmarshal(mailbox_projection_post_consumed payload): %v", err)
+		}
+		if payload.FillsInputRequestID == thread.InputRequestID {
+			matchingFillCount++
+		}
+	}
+	if matchingFillCount != 2 {
+		t.Fatalf("mailbox_projection_post_consumed events sharing fills_input_request_id %q = %d, want 2 (stale + real, proving the real fill wasn't wrongly suppressed)", thread.InputRequestID, matchingFillCount)
 	}
 }
 
