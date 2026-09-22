@@ -1377,7 +1377,12 @@ func TestRunPop_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
 
 	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
 	go func() {
-		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
+		requestPath, request, err := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitDaemonSubmitRequest: %v", err)
+			requestSeen <- projection.DaemonSubmitRequest{}
+			return
+		}
 		requestSeen <- request
 		responseContent := messageFixture("orchestrator", "worker", "daemon submit pop payload")
 		readPath := filepath.Join(sessionDir, "read", filename)
