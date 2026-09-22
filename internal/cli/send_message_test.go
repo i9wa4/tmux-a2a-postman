@@ -2136,7 +2136,12 @@ role = "worker"
 
 	delivered := make(chan string, 1)
 	go func() {
-		filename := awaitMarkdownFile(t, filepath.Join(sessionDir, "post"), time.Second)
+		filename, err := awaitMarkdownFile(t, filepath.Join(sessionDir, "post"), time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			delivered <- ""
+			return
+		}
 		content, err := os.ReadFile(filepath.Join(sessionDir, "post", filename))
 		if err != nil {
 			t.Errorf("ReadFile post: %v", err)
@@ -3060,7 +3065,11 @@ role = "worker"
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			return
+		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
@@ -3139,7 +3148,11 @@ role = "worker"
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			return
+		}
 		deadLetterDir := filepath.Join(sessionDir, "dead-letter")
 		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
 			t.Errorf("MkdirAll deadLetterDir: %v", err)
@@ -3237,7 +3250,11 @@ role = "worker"
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			return
+		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
@@ -3895,7 +3912,13 @@ func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetricsComparesLegacyValidati
 		deliveredAt := make(chan time.Time, 1)
 		go func() {
 			postDir := filepath.Join(sessionDir, "post")
-			filename := awaitMarkdownFile(t, postDir, time.Second)
+			filename, err := awaitMarkdownFile(t, postDir, time.Second)
+			if err != nil {
+				t.Errorf("awaitMarkdownFile: %v", err)
+				postedAt <- time.Time{}
+				deliveredAt <- time.Time{}
+				return
+			}
 			postPath := filepath.Join(postDir, filename)
 			postedAt <- time.Now()
 			inboxDir := filepath.Join(sessionDir, "inbox", "worker")
@@ -4037,7 +4060,12 @@ role = "worker"
 	delivered := make(chan string, 1)
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			delivered <- ""
+			return
+		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
@@ -4410,7 +4438,15 @@ role = "worker"
 	}, 1)
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			delivered <- struct {
+				filename string
+				content  string
+			}{}
+			return
+		}
 		postPath := filepath.Join(postDir, filename)
 		content, err := os.ReadFile(postPath)
 		if err != nil {
