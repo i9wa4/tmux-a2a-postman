@@ -360,6 +360,14 @@ while `queued` means the local handoff succeeded but consumption was not yet
 observed. Do not blindly resend a queued message; inspect status, inbox/read
 state, archived message evidence, or recipient-side confirmation first.
 
+To legitimately clear verdict debt through the normal CLI interface instead of
+waiting for the grace-period timeout fallback, stamp `--verdict <text>` and
+`--verdict-of <input_request_id>` (provided together) on an outgoing message
+addressed to the filler; this clears the matching debt item before that same
+send's own debt-cap check runs. `--verdict` must be a single line with no
+control characters. The verdict text is an operator-recorded stamp for the
+debt gate, not evidence that the filled request was actually re-checked.
+
 `pop` still uses daemon-submit when the running daemon owns the session and
 otherwise uses direct filesystem access. Its `submit_path` identifies that
 route, including on empty results. If daemon-submit `pop` times out, treat the
