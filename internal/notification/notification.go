@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 )
+
+// ErrPaneUnresponsive indicates the post-Enter verify-retry loop exhausted
+// maxRetries without ever observing a pane content change: the tmux command
+// itself did not error, but there is no evidence the target pane processed
+// the delivered input (#816).
+var ErrPaneUnresponsive = errors.New("pane unresponsive: no content change observed after verify retries")
 
 var defaultPaneNotifier = NewPaneNotifier(10 * time.Minute)
 
@@ -183,24 +190,35 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 		}
 	}
 
-	// 6. Post-Enter verify: capture-compare-retry to detect swallowed Enter
+	// 6. Post-Enter verify: capture-compare-retry to detect swallowed Enter.
+	// unresponsive stays true only when every retry ran to completion and
+	// found the pane unchanged; a capture error or an observed change means
+	// verification could not confirm (or did confirm) delivery, not that the
+	// pane is unresponsive.
 	if verifyDelay > 0 && maxRetries > 0 {
+		unresponsive := true
 		for retry := 0; retry < maxRetries; retry++ {
 			n.sleepFor(verifyDelay)
 			snapA, errA := n.capturePane(paneID)
 			if errA != nil {
-				break // cannot verify; skip
+				unresponsive = false // cannot verify; skip
+				break
 			}
 			n.sleepFor(verifyDelay)
 			snapB, errB := n.capturePane(paneID)
 			if errB != nil {
+				unresponsive = false
 				break
 			}
 			if snapA != snapB {
-				break // pane content changed; Enter was accepted
+				unresponsive = false // pane content changed; Enter was accepted
+				break
 			}
 			// Pane unchanged — retry C-m silently so alt-screen TUI panes stay clean.
 			_ = n.run("send-keys", "-t", paneID, "C-m")
+		}
+		if unresponsive {
+			return fmt.Errorf("%w: pane %s unchanged after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
 		}
 	}
 
