@@ -9,22 +9,23 @@ type Config struct {
 }
 
 type Handlers struct {
-	Start                   func(contextID, configPath, logFilePath string) error
-	Pop                     func(args []string) error
-	CaptureProfile          func(args []string) error
-	GetSessionStatus        func(args []string) error
-	GetSessionStatusOneline func(args []string) error
-	InspectInput            func(args []string) error
-	InspectMessage          func(args []string) error
-	InspectCommandApprovals func(args []string) error
-	InspectDaemonSubmit     func(args []string) error
-	BackfillVerdictEvents   func(args []string) error
-	ExecuteBash             func(args []string) error
-	SendMessage             func(args []string) error
-	SendHeredoc             func(args []string) error
-	Stop                    func(args []string) error
-	Version                 func(args []string) error
-	Help                    func(args []string)
+	Start                             func(contextID, configPath, logFilePath string) error
+	Pop                               func(args []string) error
+	CaptureProfile                    func(args []string) error
+	GetSessionStatus                  func(args []string) error
+	GetSessionStatusOneline           func(args []string) error
+	InspectInput                      func(args []string) error
+	InspectMessage                    func(args []string) error
+	InspectCommandApprovals           func(args []string) error
+	InspectDaemonSubmit               func(args []string) error
+	ReconcileCommandApprovalReplySlot func(args []string) error
+	BackfillVerdictEvents             func(args []string) error
+	ExecuteBash                       func(args []string) error
+	SendMessage                       func(args []string) error
+	SendHeredoc                       func(args []string) error
+	Stop                              func(args []string) error
+	Version                           func(args []string) error
+	Help                              func(args []string)
 }
 
 type Result struct {
@@ -90,6 +91,11 @@ func Dispatch(command string, args []string, cfg Config, handlers Handlers) Resu
 		return Result{
 			Label: "postman inspect-daemon-submit",
 			Err:   handlers.InspectDaemonSubmit(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
+		}
+	case "reconcile-command-approval-reply-slot":
+		return Result{
+			Label: "postman reconcile-command-approval-reply-slot",
+			Err:   handlers.ReconcileCommandApprovalReplySlot(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
 		}
 	case "backfill-verdict-events":
 		return Result{

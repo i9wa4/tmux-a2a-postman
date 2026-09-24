@@ -197,10 +197,11 @@ func TestRunExecuteBashStoreCommandTextOptIn(t *testing.T) {
 
 func TestRunExecuteBashStoreCommandTextDoesNotLeakToApprovalMailbox(t *testing.T) {
 	policy := config.CommandApprovalPolicy{
-		Requester: "worker",
-		Reviewer:  "orchestrator",
-		Label:     "protected",
-		Mode:      "blocking",
+		Requester:          "worker",
+		Reviewer:           "orchestrator",
+		Label:              "protected",
+		Mode:               "blocking",
+		ApprovalTTLSeconds: 1e8,
 	}
 	fixture := newExecuteBashFixture(t, policy)
 	approverInfo := discovery.NodeInfo{SessionName: fixture.sessionName, SessionDir: fixture.sessionDir}
@@ -300,6 +301,7 @@ func TestRunExecuteBashCommandApprovalABCLifecycleRejectsWithoutExecution(t *tes
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "protected",
 		"--reviewer", "orchestrator",
+		"--approval-ttl-seconds", "100000000",
 		"--reason", "F006 lifecycle request",
 		"--command", commandText,
 	))

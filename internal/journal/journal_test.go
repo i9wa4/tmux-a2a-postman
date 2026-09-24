@@ -151,6 +151,47 @@ func TestAppendCurrentSessionEventIfAbsentDedupesUnderAppendFence(t *testing.T) 
 	}
 }
 
+func TestAppendCurrentSessionEventIfAbsentValidatedRejectsBeforeAppend(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.April, 14, 17, 2, 45, 0, time.UTC)
+
+	writer, err := OpenShadowWriter(sessionDir, "ctx-main", "main", 4242, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
+	}
+	payload := MailboxEventPayload{
+		MessageID: "m1.verdict-none",
+		From:      "orchestrator",
+		To:        "worker",
+		Content:   "verdictOf: ireq_1",
+	}
+	validateErr := errors.New("validation stopped append")
+	_, appended, err := writer.AppendCurrentSessionEventIfAbsentValidated(
+		"verdict_none_timeout",
+		VisibilityOperatorVisible,
+		payload,
+		AppendOptions{},
+		now.Add(time.Second),
+		func() error { return validateErr },
+		nil,
+	)
+	if !errors.Is(err, validateErr) {
+		t.Fatalf("AppendCurrentSessionEventIfAbsentValidated() error = %v, want %v", err, validateErr)
+	}
+	if appended {
+		t.Fatal("AppendCurrentSessionEventIfAbsentValidated() appended = true, want false")
+	}
+	events, err := Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("Replay() error = %v", err)
+	}
+	for _, event := range events {
+		if event.Type == "verdict_none_timeout" {
+			t.Fatalf("validation failure appended event: %#v", event)
+		}
+	}
+}
+
 func TestRecordProcessHelpers_NoManagerNoop(t *testing.T) {
 	ClearProcessManager()
 	t.Cleanup(ClearProcessManager)

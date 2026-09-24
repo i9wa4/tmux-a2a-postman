@@ -88,6 +88,10 @@ type AppendOptions struct {
 
 type EventEquivalenceFunc func(Event) (bool, error)
 
+// AppendFenceValidationFunc runs inside the append-authority fence after
+// duplicate detection and before a new event is written.
+type AppendFenceValidationFunc func() error
+
 type Writer struct {
 	sessionDir string
 	session    SessionState
@@ -446,6 +450,13 @@ func (w *Writer) AppendEventWithOptions(eventType string, visibility Visibility,
 }
 
 func (w *Writer) AppendCurrentSessionEventIfAbsent(eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time, equivalent EventEquivalenceFunc) (Event, bool, error) {
+	return w.AppendCurrentSessionEventIfAbsentValidated(eventType, visibility, payload, options, now, nil, equivalent)
+}
+
+// AppendCurrentSessionEventIfAbsentValidated appends an event only when no
+// equivalent current-session event already exists and the in-fence validation
+// still accepts the append.
+func (w *Writer) AppendCurrentSessionEventIfAbsentValidated(eventType string, visibility Visibility, payload interface{}, options AppendOptions, now time.Time, validate AppendFenceValidationFunc, equivalent EventEquivalenceFunc) (Event, bool, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -481,9 +492,14 @@ func (w *Writer) AppendCurrentSessionEventIfAbsent(eventType string, visibility 
 			}); err != nil {
 				return err
 			}
-			if event.EventID != "" {
-				return nil
+		}
+		if validate != nil {
+			if err := validate(); err != nil {
+				return err
 			}
+		}
+		if event.EventID != "" {
+			return nil
 		}
 
 		payloadBytes, err := json.Marshal(payload)
