@@ -557,6 +557,60 @@ func TestSendToPane_VerifyRetryReturnsNilWhenSnapshotChanges(t *testing.T) {
 	}
 }
 
+func TestSendToPane_VerifyRetryDetectsNotificationLeftInComposer(t *testing.T) {
+	const filename = "20260924-171131-s711b-r407e-from-orchestrator-to-worker.md"
+	message := "Hello, worker! You've got mail: " + filename + ". Run tmux-a2a-postman pop."
+	for _, prompt := range []string{"❯", "›"} {
+		t.Run(prompt, func(t *testing.T) {
+			notifier, _ := paneNotifierForTest(time.Now(), 0)
+			captureCalls := 0
+			sendKeys := 0
+			notifier.capture = func(string) (string, error) {
+				captureCalls++
+				return "previous output\n" + prompt + " " + message + "\nfooter " + fmt.Sprint(captureCalls), nil
+			}
+			notifier.runTmux = func(args ...string) error {
+				if slices.Contains(args, "send-keys") {
+					sendKeys++
+				}
+				return nil
+			}
+			err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2)
+			if !errors.Is(err, ErrPaneUnresponsive) {
+				t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive while notification remains in composer", err)
+			}
+			if sendKeys != 3 {
+				t.Fatalf("send-keys calls = %d, want initial send plus 2 retries", sendKeys)
+			}
+		})
+	}
+}
+
+func TestSendToPane_VerifyRetryChecksAfterFinalEnter(t *testing.T) {
+	const filename = "20260924-171131-s711b-r407e-from-orchestrator-to-worker.md"
+	message := "Hello, worker! You've got mail: " + filename + ". Run tmux-a2a-postman pop."
+	notifier, _ := paneNotifierForTest(time.Now(), 0)
+	sendKeys := 0
+	notifier.runTmux = func(args ...string) error {
+		if slices.Contains(args, "send-keys") {
+			sendKeys++
+		}
+		return nil
+	}
+	notifier.capture = func(string) (string, error) {
+		if sendKeys < 3 {
+			return "❯ " + message + "\n──────────────────", nil
+		}
+		return "❯ " + message + "\nprocessed\n──────────────────\n❯ \n──────────────────", nil
+	}
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane error = %v, want nil after final Enter clears composer", err)
+	}
+	if sendKeys != 3 {
+		t.Fatalf("send-keys calls = %d, want initial send plus 2 retries", sendKeys)
+	}
+}
+
 func TestSendToPane_VerifyRetryReturnsNilOnCaptureError(t *testing.T) {
 	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
 	notifier, _ := paneNotifierForTest(now, 0)

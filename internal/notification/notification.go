@@ -20,10 +20,9 @@ import (
 )
 
 // ErrPaneUnresponsive indicates the post-Enter verify-retry loop exhausted
-// maxRetries without ever observing a pane content change: the tmux command
-// itself did not error, but there is no evidence the target pane processed
-// the delivered input (#816).
-var ErrPaneUnresponsive = errors.New("pane unresponsive: no content change observed after verify retries")
+// maxRetries without evidence that the target pane processed the delivered
+// input (#816). The notification may still be visible in the input composer.
+var ErrPaneUnresponsive = errors.New("pane unresponsive: notification not submitted after verify retries")
 
 var defaultPaneNotifier = NewPaneNotifier(10 * time.Minute)
 
@@ -117,8 +116,9 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // Error handling: Logs errors but does not fail (graceful degradation).
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 // bypassCooldown skips the per-pane rate limit; direct message delivery passes true.
-// verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
-// captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
+// verifyDelay > 0 enables post-Enter verification: it checks the visible input
+// composer for the notification, falling back to capture comparison when the
+// composer cannot be identified, and retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
 	return TmuxPaneSender{}.DeliverPane(PaneDelivery{
 		PaneID:         paneID,
@@ -190,39 +190,82 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 		}
 	}
 
-	// 6. Post-Enter verify: capture-compare-retry to detect swallowed Enter.
-	// unresponsive stays true only when every retry ran to completion and
-	// found the pane unchanged; a capture error or an observed change means
-	// verification could not confirm (or did confirm) delivery, not that the
-	// pane is unresponsive.
+	// 6. Post-Enter verify: the input composer is stronger evidence than an
+	// arbitrary screen change. A spinner or footer can change while the
+	// notification remains unsent in the composer. Check after the final retry
+	// too, rather than reporting on the state before its Enter was sent.
 	if verifyDelay > 0 && maxRetries > 0 {
-		unresponsive := true
-		for retry := 0; retry < maxRetries; retry++ {
+		filename := notificationFilename(message)
+		for retry := 0; retry <= maxRetries; retry++ {
 			n.sleepFor(verifyDelay)
 			snapA, errA := n.capturePane(paneID)
 			if errA != nil {
-				unresponsive = false // cannot verify; skip
-				break
+				return nil // cannot verify
 			}
 			n.sleepFor(verifyDelay)
 			snapB, errB := n.capturePane(paneID)
 			if errB != nil {
-				unresponsive = false
-				break
+				return nil // cannot verify
 			}
-			if snapA != snapB {
-				unresponsive = false // pane content changed; Enter was accepted
-				break
+			if pending, known := composerHasNotification(snapB, filename); known {
+				if !pending {
+					return nil
+				}
+			} else if snapA != snapB {
+				return nil // no recognizable composer; retain the existing heuristic
 			}
-			// Pane unchanged — retry C-m silently so alt-screen TUI panes stay clean.
-			_ = n.run("send-keys", "-t", paneID, "C-m")
-		}
-		if unresponsive {
-			return fmt.Errorf("%w: pane %s unchanged after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
+			if retry == maxRetries {
+				return fmt.Errorf("%w: pane %s unchanged or notification still in composer after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
+			}
+			if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
+				return fmt.Errorf("failed to retry C-m for pane %s: %w", paneID, err)
+			}
 		}
 	}
 
 	return nil
+}
+
+func notificationFilename(message string) string {
+	const prefix = "You've got mail: "
+	start := strings.Index(message, prefix)
+	if start < 0 {
+		return ""
+	}
+	fields := strings.Fields(message[start+len(prefix):])
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], "`.,;: ")
+}
+
+// composerHasNotification examines only the last Claude or Codex input prompt
+// on the visible screen. An older submitted prompt may still appear in the
+// transcript while the current composer at the bottom is empty.
+func composerHasNotification(snapshot, filename string) (pending, known bool) {
+	if filename == "" {
+		return false, false
+	}
+	lines := strings.Split(snapshot, "\n")
+	lastPrompt := -1
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "❯") || strings.HasPrefix(trimmed, "›") {
+			lastPrompt = i
+		}
+	}
+	if lastPrompt < 0 {
+		return false, false
+	}
+	for _, line := range lines[lastPrompt:] {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "─") {
+			break
+		}
+		if strings.Contains(line, filename) {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // bufferSeq generates unique tmux buffer names for atomicFirstEnterArgs.
