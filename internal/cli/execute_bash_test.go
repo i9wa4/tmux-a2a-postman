@@ -111,6 +111,10 @@ func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
 			f.runCount++
 			f.commands = append(f.commands, command)
 			_, _ = fmt.Fprint(stdout, "ran\n")
+			// #823 F-009: the stub also writes to stderr, so tests can
+			// assert stderr capture is wired all the way through
+			// ctx.runBash, not just stdout.
+			_, _ = fmt.Fprint(stderr, "ran-stderr-9f2c\n")
 			return f.runStatus, f.runErr
 		},
 	}
@@ -610,29 +614,37 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 			wantReason: "approval is absent",
 		},
 		{
+			// #823 rework-2 (F-012): a stale terminal thread is now
+			// eligible for retry -- the call atomically mints a fresh
+			// request and reports "approval is pending" instead of
+			// resurfacing the stale diagnosis, so the deterministic thread
+			// id never permanently blocks a future retry of the identical
+			// command.
 			name: "stale",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 				threadID := commandApprovalThreadID(policy, commandDigest(commandText))
 				fixture.appendCommandApprovalDecisionOnly(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
 			},
 			command:    "printf stale",
-			wantReason: "approval decision is stale",
+			wantReason: "approval is pending",
 		},
 		{
+			// #823 rework-2 (F-012): ditto for a rejected thread.
 			name: "rejected",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 				fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionRejected, "orchestrator", fixture.now.Add(15*time.Minute))
 			},
 			command:    "printf rejected",
-			wantReason: "approval is rejected",
+			wantReason: "approval is pending",
 		},
 		{
+			// #823 rework-2 (F-012): ditto for an expired thread.
 			name: "expired",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 				fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(-time.Second))
 			},
 			command:    "printf expired",
-			wantReason: "approval is expired",
+			wantReason: "approval is pending",
 		},
 		{
 			name: "wrong reviewer remains pending",
@@ -995,6 +1007,15 @@ func TestRunExecuteBashBlockingRejectsLegacyAddresslessApprovedAuditOnly(t *test
 		t.Fatalf("legacy history = %#v, want approved historical-only audit entry", history)
 	}
 
+	// #823 rework-2 (F-012): a historical-only legacy approval is also
+	// eligible for retry -- guardian's frozen decision set explicitly
+	// includes historical_only among the terminal states an atomic mint
+	// supersedes, so the call mints a fresh request (reported "approval is
+	// pending") instead of resurfacing the historical-only diagnosis. The
+	// original safety property this test guards -- a legacy address-less
+	// approval must never itself authorize live execution -- still holds:
+	// runCount stays 0, and only a genuinely NEW decision on the fresh
+	// request could ever authorize a run.
 	err = runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "protected",
 		"--category", "release",
@@ -1002,17 +1023,17 @@ func TestRunExecuteBashBlockingRejectsLegacyAddresslessApprovedAuditOnly(t *test
 		"--command", commandText,
 	))
 	if err == nil {
-		t.Fatal("runExecuteBashWithContext() error = nil, want historical-only approval block")
+		t.Fatal("runExecuteBashWithContext() error = nil, want a pending blocking refusal for the freshly minted request")
 	}
-	if !strings.Contains(err.Error(), "historical audit-only") {
-		t.Fatalf("error = %v, want historical-only diagnostic", err)
+	if !strings.Contains(err.Error(), "approval is pending") {
+		t.Fatalf("error = %v, want approval-is-pending diagnostic (fresh mint over the historical-only thread)", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want 0; legacy address-less approval must not authorize live execution", fixture.runCount)
 	}
 	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
-	if decision.Decision != "blocked" || !strings.Contains(decision.Reason, "historical audit-only") {
-		t.Fatalf("execution decision = %#v, want blocked historical-only reason", decision)
+	if decision.Decision != "blocked" || !strings.Contains(decision.Reason, "approval is pending") {
+		t.Fatalf("execution decision = %#v, want blocked pending reason", decision)
 	}
 }
 
@@ -1709,6 +1730,9 @@ func TestRunExecuteBashBlockingWaitsForDecisionThenRuns(t *testing.T) {
 	}
 	if !strings.Contains(fixture.stdout.String(), "ran") {
 		t.Fatalf("stdout = %q, want the executed command's stdout to be captured (#823 F-009)", fixture.stdout.String())
+	}
+	if !strings.Contains(fixture.stderr.String(), "ran-stderr-9f2c") {
+		t.Fatalf("stderr = %q, want the executed command's stderr to be captured too (#823 F-009)", fixture.stderr.String())
 	}
 }
 
@@ -2631,6 +2655,523 @@ func TestRunExecuteBashNoWaitReturnsImmediatelyWithoutPolling(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "approval is absent") {
 		t.Fatalf("error = %v, want immediate approval-absent diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingConcurrentFirstCallsMintExactlyOneRequest pins
+// #823 rework-2's F-002 closure: two concurrent FIRST calls (no pre-existing
+// thread) must converge on exactly one command_approval_requested event and
+// the same input_request_id, via atomicCreateOrReplaceRequest's journal
+// append-authority fence — never two competing requests for the same
+// deterministic thread id.
+func TestRunExecuteBashBlockingConcurrentFirstCallsMintExactlyOneRequest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf concurrent-first-callers"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+
+	// Force the session-state.json bootstrap to happen once, up front,
+	// before the two goroutines race. journal.OpenShadowWriter's first-time
+	// session creation (ResolveSession) is not itself fenced the way
+	// AppendCurrentSessionEventIfAbsent's event append is, so two goroutines
+	// racing to create the session file from scratch is a distinct,
+	// pre-existing race in session bootstrap -- unrelated to, and out of
+	// scope for, the atomic request-mint race this test actually targets.
+	_ = fixture.openWriter(t)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = runExecuteBashWithContext(fixture.context(), args)
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err == nil {
+			t.Fatalf("call %d error = nil, want a pending blocking refusal", i)
+		}
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Fatalf("command_approval_requested events = %d, want exactly 1 (two concurrent first calls must converge on one request)", requestCount)
+	}
+	state, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.Threads[threadID].InputRequestID == "" {
+		t.Fatal("thread has no input_request_id after concurrent first calls")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitSessionChangeAndApprovalSameTickEndsWait
+// re-confirms #823 F-004's closure after rework-2 refactored the
+// cancellation/deadline/session-identity checks into the shared
+// commandApprovalWaitInterruption helper: a session-generation bump that
+// lands in the same tick as a late approval must still end the wait with
+// "session_changed" and never run the command.
+func TestRunExecuteBashBlockingWaitSessionChangeAndApprovalSameTickEndsWait(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf session-change-plus-late-approval"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+
+	ctx := fixture.context()
+	done := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if done {
+			return
+		}
+		done = true
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+		path := journal.SessionStatePath(fixture.sessionDir)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(session state) error = %v", err)
+		}
+		var state journal.SessionState
+		if err := json.Unmarshal(data, &state); err != nil {
+			t.Fatalf("Unmarshal(session state) error = %v", err)
+		}
+		state.Generation++
+		newData, err := json.Marshal(state)
+		if err != nil {
+			t.Fatalf("Marshal(session state) error = %v", err)
+		}
+		if err := os.WriteFile(path, newData, 0o644); err != nil {
+			t.Fatalf("WriteFile(session state) error = %v", err)
+		}
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want session_changed refusal even though an approval was recorded in the same tick")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "session_changed" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: session_changed}", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0 (a same-tick approval must never beat a session change)", fixture.runCount)
+	}
+}
+
+// TestCommandApprovalWaitInterruption pins #823 F-005's exact ordering
+// contract at the unit level: commandApprovalWaitInterruption must report
+// cancellation, then the deadline, then a session-identity change, and
+// report nothing when none apply. waitForCommandApprovalDecision calls this
+// helper both at the top of every poll and again immediately before
+// accepting an approval or claiming (see runExecuteBashWithContext), so its
+// exact ordering guarantee is what makes a same-instant approval never beat
+// cancellation/deadline/session-change; there is no real timing hook to
+// inject a race into that razor-thin window end-to-end, so this pins the
+// guarantee directly.
+func TestCommandApprovalWaitInterruption(t *testing.T) {
+	baseCtx := commandContext{now: func() time.Time { return time.Date(2026, time.June, 1, 10, 0, 0, 0, time.UTC) }}.withDefaults()
+	deadline := baseCtx.now().Add(time.Minute)
+	params := commandApprovalWaitParams{deadline: deadline}
+
+	t.Run("nothing fired", func(t *testing.T) {
+		waitCtx := context.Background()
+		if got := commandApprovalWaitInterruption(waitCtx, baseCtx, params, "", 0, false); got != nil {
+			t.Fatalf("commandApprovalWaitInterruption() = %#v, want nil", got)
+		}
+	})
+	t.Run("cancelled", func(t *testing.T) {
+		waitCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		got := commandApprovalWaitInterruption(waitCtx, baseCtx, params, "", 0, false)
+		if got == nil || got.Decision != "wait_cancelled" {
+			t.Fatalf("commandApprovalWaitInterruption() = %#v, want Decision=wait_cancelled", got)
+		}
+	})
+	t.Run("deadline passed", func(t *testing.T) {
+		pastCtx := commandContext{now: func() time.Time { return deadline.Add(time.Second) }}.withDefaults()
+		got := commandApprovalWaitInterruption(context.Background(), pastCtx, params, "", 0, false)
+		if got == nil || got.Decision != "wait_timeout" {
+			t.Fatalf("commandApprovalWaitInterruption() = %#v, want Decision=wait_timeout", got)
+		}
+	})
+	t.Run("session changed", func(t *testing.T) {
+		got := commandApprovalWaitInterruption(context.Background(), baseCtx, params, "some-other-session-key", 0, true)
+		if got == nil || got.Decision != "session_changed" {
+			t.Fatalf("commandApprovalWaitInterruption() = %#v, want Decision=session_changed", got)
+		}
+	})
+	t.Run("cancellation takes priority over deadline", func(t *testing.T) {
+		pastCtx := commandContext{now: func() time.Time { return deadline.Add(time.Second) }}.withDefaults()
+		waitCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		got := commandApprovalWaitInterruption(waitCtx, pastCtx, params, "", 0, false)
+		if got == nil || got.Decision != "wait_cancelled" {
+			t.Fatalf("commandApprovalWaitInterruption() = %#v, want cancellation to take priority over an also-passed deadline", got)
+		}
+	})
+}
+
+// TestRunExecuteBashBlockingRetryAfterRejectedMintsFreshRequest pins #823
+// rework-2's F-012 closure: a retry against a REJECTED thread must mint a
+// fresh input_request_id (the deterministic thread id would otherwise
+// permanently block every future retry of the identical command).
+func TestRunExecuteBashBlockingRetryAfterRejectedMintsFreshRequest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf retry-after-rejected"
+	threadID := fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionRejected, "orchestrator", fixture.now.Add(15*time.Minute))
+	state0, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state0, ok, err)
+	}
+	rejectedInputRequestID := state0.Threads[threadID].InputRequestID
+
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+	err = runExecuteBashWithContext(fixture.context(), args)
+	if err == nil {
+		t.Fatal("retry error = nil, want a pending blocking refusal (fresh request minted, awaiting decision)")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if errors.As(err, &outcomeErr) && outcomeErr.status == "rejected" {
+		t.Fatalf("retry error = %#v, want the fresh request's pending status, not the stale rejected one", outcomeErr)
+	}
+	state1, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (after retry) = (%#v, %v, %v)", state1, ok, err)
+	}
+	got := state1.Threads[threadID].InputRequestID
+	if got == "" || got == rejectedInputRequestID {
+		t.Fatalf("retry input_request_id = %q, want a fresh id distinct from the rejected one %q", got, rejectedInputRequestID)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingRetryAfterExpiredMintsFreshRequest is F-012's
+// expired-terminal closure, the same shape as the rejected case above.
+func TestRunExecuteBashBlockingRetryAfterExpiredMintsFreshRequest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf retry-after-expired"
+	// A request whose own ExpiresAt is already in the past projects as
+	// "expired" without any decision ever having been recorded.
+	threadID := fixture.appendCommandApprovalRequest(t, policy, commandText, fixture.now.Add(-time.Minute))
+	state0, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state0, ok, err)
+	}
+	if state0.Threads[threadID].Status != projection.CommandApprovalStatusExpired {
+		t.Fatalf("precondition: thread status = %v, want Expired", state0.Threads[threadID].Status)
+	}
+	expiredInputRequestID := state0.Threads[threadID].InputRequestID
+
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+	if err := runExecuteBashWithContext(fixture.context(), args); err == nil {
+		t.Fatal("retry error = nil, want a pending blocking refusal")
+	}
+	state1, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (after retry) = (%#v, %v, %v)", state1, ok, err)
+	}
+	got := state1.Threads[threadID].InputRequestID
+	if got == "" || got == expiredInputRequestID {
+		t.Fatalf("retry input_request_id = %q, want a fresh id distinct from the expired one %q", got, expiredInputRequestID)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingRetryAfterClaimedStaysAlreadyExecutedUntilTTL
+// pins F-012's approved-and-claimed closure: a retry must keep reporting
+// already_executed while the original approval's TTL has not yet elapsed,
+// and only mint a fresh request once it has expired.
+func TestRunExecuteBashBlockingRetryAfterClaimedStaysAlreadyExecutedUntilTTL(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf retry-after-claimed"
+	expiresAt := fixture.now.Add(5 * time.Minute)
+	threadID := fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", expiresAt)
+	state0, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state0, ok, err)
+	}
+	claimedInputRequestID := state0.Threads[threadID].InputRequestID
+
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+	if err := runExecuteBashWithContext(fixture.context(), args); err != nil {
+		t.Fatalf("first call error = %v, want nil (approved command runs)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount after first call = %d, want 1", fixture.runCount)
+	}
+
+	// Still within TTL: must stay already_executed, no new request minted.
+	err = runExecuteBashWithContext(fixture.context(), args)
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "already_executed" {
+		t.Fatalf("retry (within TTL) error = %#v, want commandApprovalOutcomeError{status: already_executed}", err)
+	}
+	stateWithinTTL, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (within TTL) = (%#v, %v, %v)", stateWithinTTL, ok, err)
+	}
+	if got := stateWithinTTL.Threads[threadID].InputRequestID; got != claimedInputRequestID {
+		t.Fatalf("input_request_id (within TTL) = %q, want unchanged %q", got, claimedInputRequestID)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount (within TTL retry) = %d, want still 1", fixture.runCount)
+	}
+
+	// Past TTL: the approval has expired, so a retry must mint a fresh
+	// request instead of staying stuck on already_executed forever.
+	fixture.now = expiresAt.Add(time.Minute)
+	err = runExecuteBashWithContext(fixture.context(), args)
+	if err == nil {
+		t.Fatal("retry (past TTL) error = nil, want a pending blocking refusal for the fresh request")
+	}
+	if errors.As(err, &outcomeErr) && outcomeErr.status == "already_executed" {
+		t.Fatalf("retry (past TTL) error = %#v, want a fresh mint, not already_executed forever", outcomeErr)
+	}
+	statePastTTL, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (past TTL) = (%#v, %v, %v)", statePastTTL, ok, err)
+	}
+	if got := statePastTTL.Threads[threadID].InputRequestID; got == "" || got == claimedInputRequestID {
+		t.Fatalf("input_request_id (past TTL) = %q, want a fresh id distinct from the claimed one %q", got, claimedInputRequestID)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount (past TTL retry) = %d, want still 1 (the fresh request is not yet approved)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingMismatchRetryDoesNotOverwriteThread pins F-012's
+// refusal-side guarantee: a retry that hits requester_mismatch or
+// digest_mismatch must never mint a new request or otherwise mutate the
+// existing thread's correlation.
+func TestRunExecuteBashBlockingMismatchRetryDoesNotOverwriteThread(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "*",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	otherPolicy := resolvedCommandApprovalPolicy{
+		Requester: "other-worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf mismatch-no-overwrite"
+	foreignThreadID := fixture.appendCommandApprovalRequest(t, otherPolicy, commandText, fixture.now.Add(15*time.Minute))
+	state0, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state0, ok, err)
+	}
+	originalInputRequestID := state0.Threads[foreignThreadID].InputRequestID
+	originalRequester := state0.Threads[foreignThreadID].Requester
+
+	for i := 0; i < 2; i++ {
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--label", "protected",
+			"--category", "release",
+			"--thread-id", foreignThreadID,
+			"--command", commandText,
+		))
+		var outcomeErr commandApprovalOutcomeError
+		if !errors.As(err, &outcomeErr) || outcomeErr.status != "requester_mismatch" {
+			t.Fatalf("call %d error = %#v, want commandApprovalOutcomeError{status: requester_mismatch}", i, err)
+		}
+	}
+
+	state1, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (after retries) = (%#v, %v, %v)", state1, ok, err)
+	}
+	if got := state1.Threads[foreignThreadID].InputRequestID; got != originalInputRequestID {
+		t.Fatalf("input_request_id after mismatch retries = %q, want unchanged %q", got, originalInputRequestID)
+	}
+	if got := state1.Threads[foreignThreadID].Requester; got != originalRequester {
+		t.Fatalf("requester after mismatch retries = %q, want unchanged %q", got, originalRequester)
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Fatalf("command_approval_requested events = %d, want still 1 (mismatch retries must never mint)", requestCount)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingFailedDeliveryRecoversOnRetryWithoutNewRequest
+// pins #823 rework-2's F-013 closure: a request whose FIRST delivery
+// attempt fails (e.g. the approver was transiently undiscoverable) must
+// still be recoverable by a plain retry once the approver becomes
+// discoverable again — reusing the exact same request/input_request_id,
+// never minting a second one.
+func TestRunExecuteBashBlockingFailedDeliveryRecoversOnRetryWithoutNewRequest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf failed-delivery-recovers"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+
+	// First call: the approver is undiscoverable, so a request is journaled
+	// (evaluateCommandApproval saw "absent") but delivery fails fast.
+	discoveredBackup := fixture.discoveredNodes
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{}
+	err := runExecuteBashWithContext(fixture.context(), args)
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "delivery_failed" {
+		t.Fatalf("first call error = %#v, want commandApprovalOutcomeError{status: delivery_failed}", err)
+	}
+	state0, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state0, ok, err)
+	}
+	firstInputRequestID := state0.Threads[threadID].InputRequestID
+	if firstInputRequestID == "" {
+		t.Fatal("first call did not record a request despite delivery failing")
+	}
+
+	// Approver recovers; retry must re-deliver the SAME request, not mint a
+	// new one.
+	fixture.discoveredNodes = discoveredBackup
+	err = runExecuteBashWithContext(fixture.context(), args)
+	if err == nil {
+		t.Fatal("retry error = nil, want a pending blocking refusal (delivery recovered, awaiting decision)")
+	}
+	if errors.As(err, &outcomeErr) && outcomeErr.status == "delivery_failed" {
+		t.Fatalf("retry error = %#v, want re-delivery to succeed now that the approver is discoverable again", outcomeErr)
+	}
+	state1, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (after retry) = (%#v, %v, %v)", state1, ok, err)
+	}
+	if got := state1.Threads[threadID].InputRequestID; got != firstInputRequestID {
+		t.Fatalf("retry input_request_id = %q, want unchanged %q (retry must reuse, not overwrite, the pending correlation)", got, firstInputRequestID)
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Fatalf("command_approval_requested events = %d, want exactly 1 (recovery must not mint a new request)", requestCount)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want 0", fixture.runCount)

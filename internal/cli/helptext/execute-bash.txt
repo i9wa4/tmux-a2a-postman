@@ -44,15 +44,24 @@ Modes:
              decision from the configured reviewer for the exact command
              digest, AND only once: an approval is single-use, so a
              concurrent or repeated call after execution gets
-             "already_executed" instead of running again. Rejection,
-             expiry, a wait timeout, cancellation (SIGINT/SIGTERM), a
-             requester mismatch, delivery failure, mid-wait approver loss,
-             and a context/session-generation change each produce a
-             distinct --json "status" and process exit code (10-22).
-             These exit codes can numerically collide with the executed
-             command's own exit status (0-255) -- the --json "status"
-             field is the authoritative way to tell them apart, not the
-             bare exit code. See docs/command-approvals.md.
+             "already_executed" instead of running again -- until that
+             approval's own TTL expires, at which point a retry mints a
+             fresh request automatically. Rejection, expiry, a wait
+             timeout, cancellation (SIGINT/SIGTERM), a requester mismatch,
+             delivery failure, mid-wait approver loss, and a
+             context/session-generation change each produce a distinct
+             --json "status" and process exit code (10-22). These exit
+             codes can numerically collide with the executed command's own
+             exit status (0-255) -- the --json "status" field is the
+             authoritative way to tell them apart, not the bare exit code.
+             Retrying the identical command always converges instead of
+             sticking forever: no request yet creates one; a still-pending
+             request is reused and re-delivered (recovering a failed
+             delivery without duplicating the request); a rejected,
+             expired, stale, historical-only, or wrong-reviewer thread is
+             superseded by a freshly minted request on the next call. A
+             requester mismatch, digest mismatch, or unresolvable approver
+             is a refusal and never mints. See docs/command-approvals.md.
 
 Fail-open rule (command_approver_node):
   When no command_approver_node is configured by marking a real node in

@@ -96,7 +96,12 @@ present, and continues.
 `blocking` refuses wrapper-mediated execution unless the matching approval
 thread has a non-expired approved decision from the configured reviewer for the
 exact command digest. Missing, stale, rejected, expired, wrong-reviewer, and
-changed-digest approvals do not run.
+changed-digest approvals do not run. Missing, stale, rejected, expired, and
+wrong-reviewer threads are retryable (#823 F-012): repeating the identical
+command mints a fresh request instead of resurfacing the old terminal
+diagnosis forever — see
+[3.1](#31-waiting-for-the-decision-synchronously-823) below. A changed-digest
+mismatch is a refusal, not a retryable state: it never mints a new request.
 
 `blocking` is the default mode (#753) when neither a matching policy nor
 `--mode` sets one explicitly. A configured `command_approver_node` that never
@@ -174,14 +179,32 @@ tmux-a2a-postman execute-bash \
   (`auto_approved_no_reviewer`) and non-blocking-mode executions are not
   claimed — there is no scarce human decision to consume there.
 - The wait binds itself to its starting correlation and re-checks it on
-  every poll (#823 F-002/F-004): a retry against a still-pending thread
-  reuses the thread's existing request instead of overwriting its
+  every poll, and again immediately before accepting an approval or
+  claiming it (#823 F-002/F-004/F-005): a retry against a still-pending
+  thread reuses the thread's existing request instead of overwriting its
   correlation (which used to be able to strand the first waiter's approval
   reply), a decision on a thread belonging to a different requester is
   never accepted even when `--thread-id` and the command digest both
-  match, and a context or session-generation change ends the wait with a
-  distinct `session_changed` outcome instead of silently polling toward a
-  generic timeout.
+  match, and a context or session-generation change — even one landing in
+  the narrow window right before the command is claimed and run — ends the
+  wait with a distinct `session_changed` outcome instead of silently
+  polling toward a generic timeout or claiming anyway.
+- Retrying the identical command is safe and converges instead of
+  permanently sticking on an old outcome (#823 rework-2, F-012/F-013). One
+  unified rule governs every call: no request yet → a fresh one is created
+  (two truly concurrent first callers still converge on exactly one
+  request); a still-pending request → the exact same request is reused and
+  re-delivered (this also recovers a request whose earlier delivery
+  attempt failed, #823 F-013, without minting a duplicate); a request that
+  ended rejected, expired, stale, historical-only, or wrong-reviewer → the
+  next call atomically mints a fresh request superseding it, so none of
+  those outcomes can block a future retry forever; a requester mismatch,
+  digest mismatch, or unresolvable approver is a refusal and never mints
+  anything; and an approved-and-already-executed thread stays
+  `already_executed` until its own TTL expires, only then becoming
+  retryable like any other expired thread. See
+  [3.2](#32-recovering-when-a-blocking-approval-never-lands-753) for how to
+  recover `already_executed` sooner than the TTL, if needed.
 - Cancellation and the deadline always win over a late approval (#823
   F-005): both are checked before the wait loop accepts any decision on
   each iteration, so an approval recorded after SIGINT/SIGTERM or after the
@@ -235,6 +258,13 @@ by the time `--wait-timeout-seconds` elapses (or immediately, with
    described in [7. Boundary](#7-boundary): the wrapper coordinates review, it
    is not a sandbox, so nothing prevents this — but it also means no approval
    thread, decision, or audit record is created for that run.
+
+If instead a call reports `already_executed` (#823 F-001) for a command that
+genuinely needs to run again, the approval that already ran it is single-use
+and cannot be reused. Either wait for that approval's own TTL to expire —
+the next call then mints a brand-new request automatically (#823 F-012) — or
+pass an explicit `--thread-id` naming a fresh, not-yet-used thread id to
+start an independent approval cycle right away.
 
 ## 4. Decisions
 

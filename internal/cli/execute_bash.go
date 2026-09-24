@@ -259,43 +259,103 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	if err != nil {
 		return err
 	}
-	// #823 F-002 (retry): only mint a brand-new request + input_request_id
-	// when NO request exists for this thread yet (Decision == "absent"). A
-	// retry against an already-pending thread must reuse its existing
-	// correlation instead of overwriting it: applyCommandApprovalRequest
-	// (projection) replaces the projected thread's InputRequestID on every
-	// new request event with the same thread id, which then makes
-	// applyCommandApprovalDecision silently reject a decision reply that
-	// still names the ORIGINAL input_request_id, permanently stranding the
-	// first invocation's wait.
+	// #823 rework-2 (F-002/F-012/F-013): one unified request lifecycle for
+	// every non-allowed, valid-reviewer decision evaluateCommandApproval can
+	// return:
+	//   - "absent": no request exists yet for this deterministic thread id;
+	//     atomically create one (only a config-resolved reviewer may
+	//     receive a trusted request; a configured-but-unresolvable blocking
+	//     reviewer never reaches here and stays locally blocked below).
+	//   - "pending": a request already exists and is undecided; reuse its
+	//     exact correlation and idempotently re-deliver it. This recovers a
+	//     request whose original delivery failed (#823 F-013) without
+	//     minting a second request event, and is harmless to repeat when
+	//     the original delivery actually succeeded.
+	//   - "rejected"/"expired"/"stale"/"historical_only"/"wrong_reviewer":
+	//     the thread id is deterministic (requester+reviewer+label+
+	//     category+command_hash), so without this branch any of these
+	//     terminal outcomes would permanently block every future retry of
+	//     the identical command (#823 F-012 regression). Atomically mint a
+	//     fresh request that supersedes the SPECIFIC terminal request this
+	//     call observed.
+	// Every other decision (digest_mismatch, requester_mismatch,
+	// unresolved_command_approver, approved) falls through unchanged: those
+	// are refusals, or an already-decided approval that F-001's claim below
+	// governs, and this lifecycle must never mint a new request over them.
 	originalInputRequestID := ""
 	if evaluation.Thread != nil {
 		originalInputRequestID = evaluation.Thread.InputRequestID
 	}
-	if !evaluation.Allowed && validReviewer && evaluation.Decision == "absent" {
-		// Only a config-resolved reviewer may receive a trusted approval request.
-		// A configured but unresolvable blocking reviewer remains locally blocked
-		// below, without recording or delivering a request that names the raw
-		// configuration value.
-		inputRequestID, err := generateInputRequestID()
-		if err != nil {
-			return fmt.Errorf("generating command approval input request id: %w", err)
+	if !evaluation.Allowed && validReviewer {
+		mint := false
+		supersedes := ""
+		redeliver := false
+		// needsPendingRelabel is true only when the PRIOR decision was a
+		// stale terminal one (rejected/expired/stale/historical_only/
+		// wrong_reviewer) that a fresh mint has now superseded: leaving
+		// evaluation as that stale terminal decision would both misreport
+		// the outcome (a fresh request is now pending, not still rejected)
+		// and, for "rejected"/etc., fail to satisfy shouldWaitForCommandApproval's
+		// switch, which only treats "absent"/"pending" as engageable. The
+		// plain first-time "absent" case is deliberately left untouched
+		// (evaluation keeps reporting "absent") to preserve every existing
+		// caller's exact status/reason text for that path -- "absent" is
+		// already engageable, so no relabel is needed there either.
+		needsPendingRelabel := false
+		switch evaluation.Decision {
+		case "absent":
+			mint = true
+		case "pending":
+			redeliver = true
+		case "rejected", "expired", "stale", "historical_only", "wrong_reviewer":
+			mint = true
+			supersedes = originalInputRequestID
+			needsPendingRelabel = true
 		}
-		originalInputRequestID = inputRequestID
-		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, inputRequestID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
-			return err
+		if mint {
+			outcome, err := atomicCreateOrReplaceRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, supersedes, ctx.now())
+			if err != nil {
+				return err
+			}
+			originalInputRequestID = outcome.inputRequestID
+			redeliver = true
 		}
-		if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, inputRequestID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
-			// #823 F-003: delivery failure fails fast with a distinct
-			// outcome instead of silently overwriting the reason and then
-			// wasting the full wait timeout on a request the approver never
-			// saw.
-			evaluation = commandApprovalEvaluation{Decision: "delivery_failed", Reason: err.Error()}
+		if redeliver {
+			if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, originalInputRequestID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
+				// #823 F-003/F-013: delivery failure fails fast with a
+				// distinct outcome instead of silently overwriting the
+				// reason and then wasting the full wait timeout on a
+				// request the approver never saw. A later call against this
+				// same still-pending correlation retries delivery without
+				// minting a new request event.
+				evaluation = commandApprovalEvaluation{Decision: "delivery_failed", Reason: err.Error()}
+			} else if needsPendingRelabel {
+				evaluation = commandApprovalEvaluation{Decision: "pending", Reason: "approval is pending"}
+			}
 		}
 	}
 
+	// #823 F-004/F-005: waitCtx and the starting session identity/deadline
+	// are kept in outer scope, and cancelWait is deliberately NOT called
+	// right after the wait returns — it stays alive through the F-001 claim
+	// below via waitInterruption's re-check there, so a SIGINT/SIGTERM,
+	// deadline expiry, or session/context change landing in the gap between
+	// the wait's return and the claim can still be observed instead of
+	// silently claiming and running anyway.
+	var (
+		waitCtx                  context.Context
+		cancelWait               = func() {}
+		waited                   bool
+		waitStartSessionKey      string
+		waitStartGeneration      int
+		waitSessionIdentityKnown bool
+		waitDeadline             time.Time
+	)
 	if evaluation.Decision != "delivery_failed" && shouldWaitForCommandApproval(policy.Mode, evaluation, validReviewer, approverConfigured, *noWait, *waitTimeoutSeconds) {
-		waitCtx, cancelWait := ctx.newInterruptContext()
+		waited = true
+		waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown = projection.CurrentSessionIdentity(sessionDir)
+		waitDeadline = ctx.now().Add(time.Duration(*waitTimeoutSeconds * float64(time.Second)))
+		waitCtx, cancelWait = ctx.newInterruptContext()
 		waitedEvaluation, err := waitForCommandApprovalDecision(waitCtx, ctx, commandApprovalWaitParams{
 			sessionDir:             sessionDir,
 			baseDir:                baseDir,
@@ -310,10 +370,10 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 			policyLabel:            policy.Label,
 			policyCategory:         policy.Category,
 			policyMode:             policy.Mode,
-			deadline:               ctx.now().Add(time.Duration(*waitTimeoutSeconds * float64(time.Second))),
+			deadline:               waitDeadline,
 		})
-		cancelWait()
 		if err != nil {
+			cancelWait()
 			return err
 		}
 		evaluation = waitedEvaluation
@@ -363,8 +423,22 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	// and non-blocking modes are unaffected: there is no scarce human
 	// decision to consume there.
 	if policy.Mode == commandApprovalModeBlocking && evaluation.Decision == "approved" && evaluation.Thread != nil {
+		if waited {
+			// #823 F-004/F-005: one more re-check, using the SAME waitCtx
+			// (still alive) and the SAME starting session identity/deadline
+			// the wait itself used, immediately before claiming.
+			if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
+				cancelWait()
+				status := commandApprovalBlockedStatus(interruption.Decision)
+				result.Status = status
+				result.Reason = interruption.Reason
+				_ = writeExecuteBashMetadata(ctx.stderr, result)
+				return commandApprovalOutcomeError{status: status, reason: interruption.Reason}
+			}
+		}
 		claimInputRequestID := evaluation.Thread.InputRequestID
 		claimed, claimErr := claimCommandExecution(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, claimInputRequestID, commandHash, policy.Requester, ctx.now())
+		cancelWait()
 		if claimErr != nil {
 			return claimErr
 		}
@@ -374,6 +448,8 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 			_ = writeExecuteBashMetadata(ctx.stderr, result)
 			return commandApprovalOutcomeError{status: result.Status, reason: result.Reason}
 		}
+	} else {
+		cancelWait()
 	}
 
 	if *jsonOutput {
@@ -860,6 +936,50 @@ type commandApprovalWaitParams struct {
 // a lost approver within a few seconds.
 const approverLivenessCheckEveryNPolls = 4
 
+// commandApprovalWaitInterruption checks, in order, whether waitCtx has been
+// cancelled, whether the deadline has passed, and whether the session's
+// context/generation has changed since the wait started. It returns a
+// non-nil terminal evaluation the instant any of these fired, and nil
+// otherwise. waitForCommandApprovalDecision calls this both at the top of
+// every poll iteration and again immediately before accepting an approved
+// decision (#823 F-004/F-005), so a cancellation, deadline, or session
+// change landing in the narrow window between reading the projection and
+// returning can never be raced by a same-instant approval — and the second
+// call site is reused verbatim, right before claimCommandExecution, in
+// runExecuteBashWithContext.
+func commandApprovalWaitInterruption(waitCtx context.Context, ctx commandContext, p commandApprovalWaitParams, startSessionKey string, startGeneration int, sessionIdentityKnown bool) *commandApprovalEvaluation {
+	select {
+	case <-waitCtx.Done():
+		return &commandApprovalEvaluation{
+			Decision: "wait_cancelled",
+			Reason:   fmt.Sprintf("approval wait was cancelled: %v", waitCtx.Err()),
+		}
+	default:
+	}
+	if !ctx.now().Before(p.deadline) {
+		return &commandApprovalEvaluation{
+			Decision: "wait_timeout",
+			Reason:   "approval wait timed out before a decision was recorded",
+		}
+	}
+	// A context or session-generation change ends the wait with a distinct
+	// terminal status. Without this, projection.ProjectCommandApprovalState
+	// silently filters out every event from the OLD generation once the
+	// current session state moves to a new one, so `ok` would just go false
+	// and the loop would poll on, uninformatively, toward a generic timeout
+	// that masks what actually happened.
+	if sessionIdentityKnown {
+		curKey, curGeneration, curOK := projection.CurrentSessionIdentity(p.sessionDir)
+		if !curOK || curKey != startSessionKey || curGeneration != startGeneration {
+			return &commandApprovalEvaluation{
+				Decision: "session_changed",
+				Reason:   "the session's context or generation changed while waiting for approval",
+			}
+		}
+	}
+	return nil
+}
+
 // waitForCommandApprovalDecision polls the command approval projection until
 // the thread reaches a terminal decision, the deadline passes, or waitCtx is
 // cancelled (SIGINT/SIGTERM via ctx.newInterruptContext, or a caller-injected
@@ -871,39 +991,13 @@ func waitForCommandApprovalDecision(waitCtx context.Context, ctx commandContext,
 	startSessionKey, startGeneration, sessionIdentityKnown := projection.CurrentSessionIdentity(p.sessionDir)
 	pollCount := 0
 	for {
-		// #823 F-005: cancellation and the deadline are checked BEFORE
-		// accepting any approval discovered this iteration, so an approval
-		// that lands after cancellation (or after the deadline has already
-		// passed) is never honored — a late approval must never beat
-		// cancellation or the deadline.
-		select {
-		case <-waitCtx.Done():
-			return commandApprovalEvaluation{
-				Decision: "wait_cancelled",
-				Reason:   fmt.Sprintf("approval wait was cancelled: %v", waitCtx.Err()),
-			}, nil
-		default:
-		}
-		if !ctx.now().Before(p.deadline) {
-			return commandApprovalEvaluation{
-				Decision: "wait_timeout",
-				Reason:   "approval wait timed out before a decision was recorded",
-			}, nil
-		}
-		// #823 F-004: a context or session-generation change ends the wait
-		// with a distinct terminal status. Without this, projection.ProjectCommandApprovalState
-		// silently filters out every event from the OLD generation once the
-		// current session state moves to a new one, so `ok` would just go
-		// false and the loop would poll on, uninformatively, toward a
-		// generic timeout that masks what actually happened.
-		if sessionIdentityKnown {
-			curKey, curGeneration, curOK := projection.CurrentSessionIdentity(p.sessionDir)
-			if !curOK || curKey != startSessionKey || curGeneration != startGeneration {
-				return commandApprovalEvaluation{
-					Decision: "session_changed",
-					Reason:   "the session's context or generation changed while waiting for approval",
-				}, nil
-			}
+		// #823 F-004/F-005: cancellation, the deadline, and session identity
+		// are checked BEFORE accepting any approval discovered this
+		// iteration, so an approval that lands after cancellation, after
+		// the deadline has already passed, or after the session/context
+		// changed is never honored.
+		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, p, startSessionKey, startGeneration, sessionIdentityKnown); interruption != nil {
+			return *interruption, nil
 		}
 		state, ok, err := projection.ProjectCommandApprovalState(p.sessionDir, ctx.now())
 		if err != nil {
@@ -978,6 +1072,16 @@ func waitForCommandApprovalDecision(waitCtx context.Context, ctx commandContext,
 					}, nil
 				}
 				if evaluation := evaluationForThread(thread); evaluation.Decision != "pending" {
+					if evaluation.Decision == "approved" {
+						// #823 F-005: re-check immediately before accepting
+						// the approval too, not only at the top of this
+						// iteration — a cancellation, deadline, or session
+						// change landing between the top-of-loop check and
+						// this projection read must still win.
+						if interruption := commandApprovalWaitInterruption(waitCtx, ctx, p, startSessionKey, startGeneration, sessionIdentityKnown); interruption != nil {
+							return *interruption, nil
+						}
+					}
 					return evaluation, nil
 				}
 			}
@@ -1083,7 +1187,44 @@ func blockedCommandApprovalReason(mode string, evaluation commandApprovalEvaluat
 	}
 }
 
-func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID, inputRequestID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, now time.Time) error {
+// atomicRequestOutcome reports which input_request_id ended up recorded for
+// a thread after atomicCreateOrReplaceRequest, and whether THIS call is the
+// one that actually created it (as opposed to losing a create/replace race
+// and adopting another caller's request).
+type atomicRequestOutcome struct {
+	inputRequestID string
+	created        bool
+}
+
+// atomicCreateOrReplaceRequest is the single request-minting primitive for
+// the #823 rework-2 request lifecycle (F-002, F-012). It reuses the same
+// journal.Writer.AppendCurrentSessionEventIfAbsent fence claimCommandExecution
+// relies on for F-001, so two processes racing to mint a request for the
+// same thread can never both succeed — exactly one request event lands, and
+// every other racer adopts its correlation instead of creating a duplicate.
+//
+// supersedesInputRequestID distinguishes the two cases this lifecycle needs:
+//   - "" (the "absent" case): no request exists for this thread yet, so ANY
+//     request event found for it during replay is a race winner to defer to.
+//   - non-empty (the terminal-retryable case: rejected/expired/stale/
+//     historical_only/wrong_reviewer, #823 F-012): the specific terminal
+//     request being replaced. Only a request whose InputRequestID differs
+//     from that one counts as "already superseded" — a freshly minted,
+//     randomly generated id can never collide with it, so exactly one racer
+//     wins the replace and the rest adopt that winner's new request instead
+//     of each minting their own.
+func atomicCreateOrReplaceRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, supersedesInputRequestID string, now time.Time) (atomicRequestOutcome, error) {
+	writer, err := journal.OpenCurrentWriter(sessionDir)
+	if err != nil {
+		writer, err = journal.OpenShadowWriter(sessionDir, contextID, sessionName, os.Getpid(), now)
+		if err != nil {
+			return atomicRequestOutcome{}, err
+		}
+	}
+	candidateInputRequestID, err := generateInputRequestID()
+	if err != nil {
+		return atomicRequestOutcome{}, fmt.Errorf("generating command approval input request id: %w", err)
+	}
 	payload := journal.CommandApprovalRequestPayload{
 		Requester:              policy.Requester,
 		RequesterAddress:       nodeaddr.Full(policy.Requester, sessionName),
@@ -1094,14 +1235,38 @@ func recordCommandApprovalRequest(sessionDir, contextID, sessionName, threadID, 
 		Label:                  policy.Label,
 		Category:               policy.Category,
 		CommandHash:            commandHash,
-		InputRequestID:         inputRequestID,
+		InputRequestID:         candidateInputRequestID,
 		Reason:                 reason,
 		ExpiresAt:              expiresAt,
 	}
 	if storeCommandText {
 		payload.CommandText = commandText
 	}
-	return appendCommandEvent(sessionDir, contextID, sessionName, journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, payload, threadID, now)
+	equivalent := func(event journal.Event) (bool, error) {
+		if event.Type != journal.CommandApprovalRequestedEventType || event.ThreadID != threadID {
+			return false, nil
+		}
+		var existing journal.CommandApprovalRequestPayload
+		if err := json.Unmarshal(event.Payload, &existing); err != nil {
+			return false, err
+		}
+		if supersedesInputRequestID == "" {
+			return true, nil
+		}
+		return existing.InputRequestID != supersedesInputRequestID, nil
+	}
+	writtenEvent, appended, err := writer.AppendCurrentSessionEventIfAbsent(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, payload, journal.AppendOptions{ThreadID: threadID}, now, equivalent)
+	if err != nil {
+		return atomicRequestOutcome{}, err
+	}
+	if appended {
+		return atomicRequestOutcome{inputRequestID: candidateInputRequestID, created: true}, nil
+	}
+	var existing journal.CommandApprovalRequestPayload
+	if err := json.Unmarshal(writtenEvent.Payload, &existing); err != nil {
+		return atomicRequestOutcome{}, err
+	}
+	return atomicRequestOutcome{inputRequestID: existing.InputRequestID, created: false}, nil
 }
 
 func recordCommandExecutionDecision(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandHash, decision, reason string, override bool, commandText string, storeCommandText bool, now time.Time) error {
