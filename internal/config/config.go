@@ -194,6 +194,7 @@ type WorkspaceTreeNodeConfig struct {
 	Label             string `toml:"label"`
 	ParentSessionName string `toml:"parent"`
 	Representative    string `toml:"representative"`
+	DiplomatNode      string `toml:"diplomat_node"`
 	Order             int    `toml:"order"`
 }
 

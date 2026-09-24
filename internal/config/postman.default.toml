@@ -126,6 +126,7 @@ edges = []
 # label = "repo"
 # id = "repo-root"
 # representative = "orchestrator"
+# diplomat_node = "orchestrator" # optional cross-session authorization node
 # order = 10
 #
 # [[postman.workspace_tree]]
@@ -133,6 +134,7 @@ edges = []
 # label = "api"
 # parent = "repo"
 # representative = "worker"
+# diplomat_node = "worker"       # parent/child diplomats may communicate
 # order = 20
 
 # Global settings
