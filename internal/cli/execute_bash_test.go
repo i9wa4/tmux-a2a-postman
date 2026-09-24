@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
@@ -45,6 +46,28 @@ type executeBashFixture struct {
 }
 
 func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
+	t.Helper()
+
+	fixture := newExecuteBashFixtureRaw(t, policies...)
+	// #823 rework-3 (F-002): blocking mode now refuses to shadow-mint or
+	// shadow-claim when journal.OpenCurrentWriter finds no current session
+	// (a genuine cold start with no live daemon session yet). Every
+	// existing fixture-driven test reflects ordinary usage INSIDE an
+	// already-established session, not that cold-start edge case, so this
+	// pre-bootstraps a real current session/lease once here -- exactly the
+	// same journal.OpenShadowWriter call any of this fixture's other
+	// helpers would eventually trigger anyway. Tests that specifically
+	// exercise the cold-start refusal build their own fixture with
+	// newExecuteBashFixtureRaw instead (see
+	// TestRunExecuteBashBlockingColdStartNoCurrentWriterFailsClosed).
+	_ = fixture.openWriter(t)
+	return fixture
+}
+
+// newExecuteBashFixtureRaw builds a fixture WITHOUT the F-002 current-writer
+// pre-bootstrap, for tests that specifically need a genuinely cold session
+// (no session-state.json / lease on disk yet).
+func newExecuteBashFixtureRaw(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
 	t.Helper()
 
 	baseDir := t.TempDir()
@@ -3172,6 +3195,341 @@ func TestRunExecuteBashBlockingFailedDeliveryRecoversOnRetryWithoutNewRequest(t 
 	}
 	if requestCount != 1 {
 		t.Fatalf("command_approval_requested events = %d, want exactly 1 (recovery must not mint a new request)", requestCount)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+
+	// #823 rework-3 (F-013): extend end-to-end -- the recovered request
+	// carries the ORIGINAL input_request_id, so an approval reply against
+	// it must still resolve and run the command exactly once.
+	fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+	err = runExecuteBashWithContext(fixture.context(), args)
+	if err != nil {
+		t.Fatalf("third call (after approval) error = %v, want nil", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount after approval = %d, want exactly 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingSecondTerminalCycleMintsFreshRequest pins
+// guardian's round-3 F-012 reproducer: a SECOND consecutive terminal
+// outcome (A rejected, retry mints B, B also rejected) must still mint a
+// THIRD fresh request C on the next retry, not silently adopt the
+// already-superseded A. Before the stateful-closure fix, the equivalence
+// check matched ANY same-thread request whose id != B (which includes the
+// older A), so the third call adopted stale A and redelivered it while the
+// projection thread actually held B, producing a permanent
+// requester_mismatch loop.
+func TestRunExecuteBashBlockingSecondTerminalCycleMintsFreshRequest(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf second-terminal-cycle"
+	threadID := fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionRejected, "orchestrator", fixture.now.Add(15*time.Minute)) // A: rejected
+	project := func() projection.CommandApprovalState {
+		state, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+		if err != nil || !ok {
+			t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", state, ok, err)
+		}
+		return state
+	}
+	idA := project().Threads[threadID].InputRequestID
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+
+	// Retry 1: mints B.
+	if err := runExecuteBashWithContext(fixture.context(), args); err == nil {
+		t.Fatal("retry 1 error = nil, want a pending blocking refusal (fresh request B minted)")
+	}
+	idB := project().Threads[threadID].InputRequestID
+	if idB == "" || idB == idA {
+		t.Fatalf("retry 1 input_request_id = %q, want a fresh id distinct from A %q", idB, idA)
+	}
+	fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionRejected) // B: rejected
+
+	// Retry 2: must mint C (not silently adopt stale A), wait, then run
+	// once C is approved.
+	ctx := fixture.context()
+	approved := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if approved {
+			return
+		}
+		approved = true
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+	}
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText, "--no-wait=false",
+	))
+	if err != nil {
+		t.Fatalf("retry 2 error = %v, want nil (fresh request C minted, waited, approved, and run)", err)
+	}
+	idC := project().Threads[threadID].InputRequestID
+	if idC == "" || idC == idA || idC == idB {
+		t.Fatalf("retry 2 input_request_id = %q, want a fresh id distinct from A %q and B %q", idC, idA, idB)
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 3 {
+		t.Fatalf("command_approval_requested events = %d, want exactly 3 (A, B, C)", requestCount)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingConcurrentExplicitThreadCollisionRefusesLoser
+// pins #823 rework-3's F-015 closure: two concurrent callers racing to mint
+// the SAME explicit --thread-id, with different policy labels but the same
+// command digest, must never let the losing caller deliver a prompt
+// describing its OWN (different) policy context under the winner's
+// correlation. Exactly one request event lands; the loser refuses with
+// requester_mismatch; the one delivered prompt carries only the winner's
+// label.
+func TestRunExecuteBashBlockingConcurrentExplicitThreadCollisionRefusesLoser(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "*",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf thread-collision"
+	sharedThreadID := "command-approval-shared-collision"
+
+	var deliveredBodies []string
+	var deliveredMu sync.Mutex
+	originalDeliver := deliverCommandApprovalSystemMessageFn
+	deliverCommandApprovalSystemMessageFn = func(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
+		deliveredMu.Lock()
+		deliveredBodies = append(deliveredBodies, content)
+		deliveredMu.Unlock()
+		return originalDeliver(filename, nodeInfo, recipient, sender, contextID, content, cfg, adjacency, knownNodes, livenessMap)
+	}
+	t.Cleanup(func() { deliverCommandApprovalSystemMessageFn = originalDeliver })
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	labels := []string{"label-a", "label-b"}
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = runExecuteBashWithContext(fixture.context(), fixture.args(
+				"--label", labels[i],
+				"--category", "release",
+				"--thread-id", sharedThreadID,
+				"--command", commandText,
+			))
+		}(i)
+	}
+	wg.Wait()
+
+	successCount, mismatchCount := 0, 0
+	for _, err := range errs {
+		if err == nil {
+			t.Fatalf("unexpected nil error from a --no-wait blocking call: %v", errs)
+		}
+		var outcomeErr commandApprovalOutcomeError
+		if errors.As(err, &outcomeErr) && outcomeErr.status == "requester_mismatch" {
+			mismatchCount++
+			continue
+		}
+		successCount++
+	}
+	if successCount != 1 || mismatchCount != 1 {
+		t.Fatalf("successCount=%d mismatchCount=%d, want exactly one winner (pending) and one requester_mismatch loser; errs=%v", successCount, mismatchCount, errs)
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Fatalf("command_approval_requested events = %d, want exactly 1", requestCount)
+	}
+	deliveredMu.Lock()
+	defer deliveredMu.Unlock()
+	if len(deliveredBodies) != 1 {
+		t.Fatalf("delivered prompts = %d, want exactly 1 (the loser must never deliver)", len(deliveredBodies))
+	}
+	if !strings.Contains(deliveredBodies[0], "label-a") && !strings.Contains(deliveredBodies[0], "label-b") {
+		t.Fatalf("delivered prompt = %q, want it to name one of the two labels", deliveredBodies[0])
+	}
+	if strings.Contains(deliveredBodies[0], "label-a") && strings.Contains(deliveredBodies[0], "label-b") {
+		t.Fatalf("delivered prompt = %q, want only the winner's single label, not both", deliveredBodies[0])
+	}
+}
+
+// TestRunExecuteBashBlockingCancelDuringClaimStopsRunBash pins #823
+// rework-3's F-005 closure: a SIGINT/SIGTERM caught precisely DURING the
+// F-001 claim (after the pre-claim recheck passed, but before runBash
+// starts) must still be observed -- the command must never run just
+// because it slipped in after the last explicit check before the claim.
+func TestRunExecuteBashBlockingCancelDuringClaimStopsRunBash(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf cancel-during-claim"
+	fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+
+	ctx := fixture.context()
+	waitCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx.newInterruptContext = func() (context.Context, func()) { return waitCtx, cancel }
+	original := appendEventBeforeClaimHookFn
+	appendEventBeforeClaimHookFn = func() { cancel() }
+	t.Cleanup(func() { appendEventBeforeClaimHookFn = original })
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText, "--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want cancellation to stop the command even though the claim already landed")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "cancelled" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: cancelled}", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0 (cancellation during the claim must stop runBash)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingColdStartNoCurrentWriterFailsClosed pins #823
+// rework-3's F-002 closure: blocking mode with NO live current session
+// writer (a genuine cold start -- no session-state.json/lease on disk yet)
+// must refuse outright with a distinct session_unavailable outcome,
+// never shadow-minting a request or shadow-claiming an approval.
+func TestRunExecuteBashBlockingColdStartNoCurrentWriterFailsClosed(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixtureRaw(t, policyConfig)
+	commandText := "printf cold-start"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("error = nil, want session_unavailable refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "session_unavailable" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: session_unavailable}", err)
+	}
+	if outcomeErr.ExitCode() != 23 {
+		t.Fatalf("ExitCode() = %d, want 23", outcomeErr.ExitCode())
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 0 {
+		t.Fatalf("command_approval_requested events = %d, want 0 (must never shadow-mint)", requestCount)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingSessionRotationBeforeClaimRefusesEvenWithoutWait
+// pins #823 rework-3's F-004 closure: the expected session identity is
+// captured at EVALUATION time -- not only when a call waits -- and checked
+// again from inside the claim's own fence. A generation rotation between
+// evaluation and the claim must refuse with session_changed even for a
+// call that never entered the wait loop at all (the approval was already
+// decided before this call started).
+func TestRunExecuteBashBlockingSessionRotationBeforeClaimRefusesEvenWithoutWait(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf rotate-before-claim-no-wait"
+	fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+
+	original := appendEventBeforeClaimHookFn
+	appendEventBeforeClaimHookFn = func() {
+		path := journal.SessionStatePath(fixture.sessionDir)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(session state) error = %v", err)
+		}
+		var state journal.SessionState
+		if err := json.Unmarshal(data, &state); err != nil {
+			t.Fatalf("Unmarshal(session state) error = %v", err)
+		}
+		state.Generation++
+		newData, err := json.Marshal(state)
+		if err != nil {
+			t.Fatalf("Marshal(session state) error = %v", err)
+		}
+		if err := os.WriteFile(path, newData, 0o644); err != nil {
+			t.Fatalf("WriteFile(session state) error = %v", err)
+		}
+	}
+	t.Cleanup(func() { appendEventBeforeClaimHookFn = original })
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("error = nil, want session_changed refusal even though this call never waited")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "session_changed" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: session_changed}", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want 0", fixture.runCount)

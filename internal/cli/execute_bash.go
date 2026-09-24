@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -120,6 +121,8 @@ func (e commandApprovalOutcomeError) ExitCode() int {
 		return 21
 	case "already_executed":
 		return 22
+	case "session_unavailable":
+		return 23
 	default:
 		return 1
 	}
@@ -134,7 +137,7 @@ func (e commandApprovalOutcomeError) ExitCode() int {
 func commandApprovalBlockedStatus(decision string) string {
 	switch decision {
 	case "rejected", "expired", "digest_mismatch", "wrong_reviewer", "stale", "historical_only",
-		"requester_mismatch", "delivery_failed", "approver_lost", "session_changed":
+		"requester_mismatch", "delivery_failed", "approver_lost", "session_changed", "session_unavailable":
 		return decision
 	case "wait_timeout":
 		return "wait_timeout"
@@ -259,6 +262,12 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	if err != nil {
 		return err
 	}
+	// #823 rework-3 (F-004): the expected session identity is captured
+	// once, here at evaluation time -- before any wait, and before a
+	// call that never waits at all -- so the F-001 claim below can refuse
+	// with session_changed if the session rotated between evaluation and
+	// the claim, not only for calls that happened to wait.
+	expectedSessionKey, expectedSessionGeneration, expectedSessionIdentityKnown := projection.CurrentSessionIdentity(sessionDir)
 	// #823 rework-2 (F-002/F-012/F-013): one unified request lifecycle for
 	// every non-allowed, valid-reviewer decision evaluateCommandApproval can
 	// return:
@@ -312,16 +321,50 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 			supersedes = originalInputRequestID
 			needsPendingRelabel = true
 		}
+		deliverReason := *reason
 		if mint {
-			outcome, err := atomicCreateOrReplaceRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, supersedes, ctx.now())
-			if err != nil {
-				return err
+			outcome, mintErr := atomicCreateOrReplaceRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, supersedes, ctx.now())
+			switch {
+			case errors.Is(mintErr, errNoCurrentWriter):
+				// #823 F-002: blocking mode with no live current session
+				// writer refuses outright instead of shadow-minting.
+				evaluation = commandApprovalEvaluation{
+					Decision: "session_unavailable",
+					Reason:   "no current session writer is available; blocking mode refuses to shadow-mint a request",
+				}
+			case mintErr != nil:
+				return mintErr
+			default:
+				// #823 F-015: the fence resolves which of possibly several
+				// concurrent racers' requests actually landed. A racer that
+				// lost (outcome.created == false) must never deliver a
+				// prompt built from ITS OWN policy/label/category/reason —
+				// that prompt would carry the winner's thread/input-request
+				// correlation but describe a DIFFERENT command's policy
+				// context, misleading whoever reviews it. Validate this
+				// invocation's own identity against the actually-stored
+				// winning payload before ever delivering or waiting; on any
+				// mismatch, refuse outright and send nothing.
+				won := outcome.winningPayload
+				if won.Requester != policy.Requester ||
+					won.CommandApproverNode != commandApproverNode ||
+					won.CommandHash != commandHash ||
+					won.Label != policy.Label ||
+					won.Category != policy.Category ||
+					won.Mode != policy.Mode {
+					evaluation = commandApprovalEvaluation{
+						Decision: "requester_mismatch",
+						Reason:   "a concurrent request for a different policy context won the race for this thread",
+					}
+				} else {
+					originalInputRequestID = outcome.inputRequestID
+					deliverReason = won.Reason
+					redeliver = true
+				}
 			}
-			originalInputRequestID = outcome.inputRequestID
-			redeliver = true
 		}
 		if redeliver {
-			if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, originalInputRequestID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
+			if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, originalInputRequestID, commandHash, deliverReason, *storeCommandText, ctx.now()); err != nil {
 				// #823 F-003/F-013: delivery failure fails fast with a
 				// distinct outcome instead of silently overwriting the
 				// reason and then wasting the full wait timeout on a
@@ -423,31 +466,78 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	// and non-blocking modes are unaffected: there is no scarce human
 	// decision to consume there.
 	if policy.Mode == commandApprovalModeBlocking && evaluation.Decision == "approved" && evaluation.Thread != nil {
-		if waited {
-			// #823 F-004/F-005: one more re-check, using the SAME waitCtx
-			// (still alive) and the SAME starting session identity/deadline
-			// the wait itself used, immediately before claiming.
-			if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
-				cancelWait()
-				status := commandApprovalBlockedStatus(interruption.Decision)
-				result.Status = status
-				result.Reason = interruption.Reason
-				_ = writeExecuteBashMetadata(ctx.stderr, result)
-				return commandApprovalOutcomeError{status: status, reason: interruption.Reason}
-			}
+		if !waited {
+			// #823 F-005: a call that never waited (the approval was
+			// already decided before this call started) still needs a
+			// live interrupt context spanning the claim, so a
+			// SIGINT/SIGTERM caught during the claim is still observable
+			// before runBash runs. There is no real wait deadline for a
+			// call that never waited, so waitDeadline is set far in the
+			// future -- only cancellation, not a timeout, is meaningful
+			// here. The starting session identity is the one captured at
+			// evaluation time (#823 F-004), the same one the claim itself
+			// is bound to below.
+			waitCtx, cancelWait = ctx.newInterruptContext()
+			waitDeadline = ctx.now().Add(24 * time.Hour)
+			waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown = expectedSessionKey, expectedSessionGeneration, expectedSessionIdentityKnown
+		}
+		// #823 F-004/F-005: one more re-check, using the SAME waitCtx
+		// (still alive) and the SAME starting session identity/deadline
+		// the wait (or the pre-claim bootstrap above) used, immediately
+		// before claiming.
+		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
+			cancelWait()
+			status := commandApprovalBlockedStatus(interruption.Decision)
+			result.Status = status
+			result.Reason = interruption.Reason
+			_ = writeExecuteBashMetadata(ctx.stderr, result)
+			return commandApprovalOutcomeError{status: status, reason: interruption.Reason}
 		}
 		claimInputRequestID := evaluation.Thread.InputRequestID
-		claimed, claimErr := claimCommandExecution(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, claimInputRequestID, commandHash, policy.Requester, ctx.now())
-		cancelWait()
+		appendEventBeforeClaimHookFn()
+		claimed, claimErr := claimCommandExecution(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, claimInputRequestID, commandHash, policy.Requester, expectedSessionKey, expectedSessionGeneration, expectedSessionIdentityKnown, ctx.now())
 		if claimErr != nil {
+			cancelWait()
+			switch {
+			case errors.Is(claimErr, errClaimSessionIdentityChanged):
+				status := commandApprovalBlockedStatus("session_changed")
+				result.Status = status
+				result.Reason = "the session's context or generation changed before the claim could be recorded"
+				_ = writeExecuteBashMetadata(ctx.stderr, result)
+				return commandApprovalOutcomeError{status: status, reason: result.Reason}
+			case errors.Is(claimErr, errNoCurrentWriter):
+				status := commandApprovalBlockedStatus("session_unavailable")
+				result.Status = status
+				result.Reason = "no current session writer is available; blocking mode refuses to shadow-claim this approval"
+				_ = writeExecuteBashMetadata(ctx.stderr, result)
+				return commandApprovalOutcomeError{status: status, reason: result.Reason}
+			}
 			return claimErr
 		}
 		if !claimed {
+			cancelWait()
 			result.Status = "already_executed"
 			result.Reason = "this approval has already been claimed and executed once; approvals are single-use"
 			_ = writeExecuteBashMetadata(ctx.stderr, result)
 			return commandApprovalOutcomeError{status: result.Status, reason: result.Reason}
 		}
+		// #823 F-005: one final interruption check, immediately AFTER
+		// the claim succeeds and BEFORE runBash, using the SAME waitCtx --
+		// kept alive through the claim, not cancelled until this check
+		// runs, for EVERY blocking-mode claim (whether or not this call
+		// waited). A SIGINT/SIGTERM caught precisely during the claim must
+		// still stop the command from running; the claim itself stays
+		// consumed (the approval is single-use either way), but the
+		// command never executes.
+		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
+			cancelWait()
+			status := commandApprovalBlockedStatus(interruption.Decision)
+			result.Status = status
+			result.Reason = interruption.Reason
+			_ = writeExecuteBashMetadata(ctx.stderr, result)
+			return commandApprovalOutcomeError{status: status, reason: interruption.Reason}
+		}
+		cancelWait()
 	} else {
 		cancelWait()
 	}
@@ -1188,12 +1278,17 @@ func blockedCommandApprovalReason(mode string, evaluation commandApprovalEvaluat
 }
 
 // atomicRequestOutcome reports which input_request_id ended up recorded for
-// a thread after atomicCreateOrReplaceRequest, and whether THIS call is the
-// one that actually created it (as opposed to losing a create/replace race
-// and adopting another caller's request).
+// a thread after atomicCreateOrReplaceRequest, whether THIS call is the one
+// that actually created it (as opposed to losing a create/replace race and
+// adopting another caller's request), and the full WINNING payload actually
+// stored in the journal (#823 F-015) — the caller must validate its own
+// requester/reviewer/digest/policy against this stored payload, not assume
+// its own values apply, since a race loser's own values can differ from the
+// winner's.
 type atomicRequestOutcome struct {
 	inputRequestID string
 	created        bool
+	winningPayload journal.CommandApprovalRequestPayload
 }
 
 // atomicCreateOrReplaceRequest is the single request-minting primitive for
@@ -1216,6 +1311,12 @@ type atomicRequestOutcome struct {
 func atomicCreateOrReplaceRequest(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandApproverNode, commandHash, reason, expiresAt, commandText string, storeCommandText bool, supersedesInputRequestID string, now time.Time) (atomicRequestOutcome, error) {
 	writer, err := journal.OpenCurrentWriter(sessionDir)
 	if err != nil {
+		if policy.Mode == commandApprovalModeBlocking {
+			// #823 F-002: blocking mode never shadow-mints. Advisory and
+			// warn-only keep the pre-existing shadow-writer fallback —
+			// this fail-closed rule is scoped to blocking mode only.
+			return atomicRequestOutcome{}, errNoCurrentWriter
+		}
 		writer, err = journal.OpenShadowWriter(sessionDir, contextID, sessionName, os.Getpid(), now)
 		if err != nil {
 			return atomicRequestOutcome{}, err
@@ -1242,6 +1343,18 @@ func atomicCreateOrReplaceRequest(sessionDir, contextID, sessionName, threadID s
 	if storeCommandText {
 		payload.CommandText = commandText
 	}
+	// #823 rework-3 (F-012 recurrence): the equivalence check must be
+	// STATEFUL in replay order, not a blanket "any request whose id !=
+	// supersedes" match. replayEachEvent keeps the LAST match it sees, in
+	// journal order. With a stateless check, a THIRD call (superseding B,
+	// which itself already superseded an earlier terminal A) would match
+	// BOTH A and B (both have ids != B... no: A != B is true, B != B is
+	// false, so only A matches) and incorrectly adopt the older, already-
+	// superseded A instead of minting a new request — permanently
+	// stranding the thread on the second retry cycle. Only a request seen
+	// AFTER the exact superseded one is a genuine "someone already
+	// replaced it" match.
+	sawSupersededEvent := supersedesInputRequestID == ""
 	equivalent := func(event journal.Event) (bool, error) {
 		if event.Type != journal.CommandApprovalRequestedEventType || event.ThreadID != threadID {
 			return false, nil
@@ -1253,20 +1366,31 @@ func atomicCreateOrReplaceRequest(sessionDir, contextID, sessionName, threadID s
 		if supersedesInputRequestID == "" {
 			return true, nil
 		}
-		return existing.InputRequestID != supersedesInputRequestID, nil
+		if existing.InputRequestID == supersedesInputRequestID {
+			sawSupersededEvent = true
+			return false, nil
+		}
+		return sawSupersededEvent, nil
 	}
 	writtenEvent, appended, err := writer.AppendCurrentSessionEventIfAbsent(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, payload, journal.AppendOptions{ThreadID: threadID}, now, equivalent)
 	if err != nil {
 		return atomicRequestOutcome{}, err
 	}
+	if !sawSupersededEvent {
+		// The specific terminal request this call observed and intended to
+		// supersede is not actually in the journal. Never blindly append
+		// or adopt another match in this state — refuse instead of
+		// guessing at a possibly-incorrect replacement.
+		return atomicRequestOutcome{}, fmt.Errorf("command approval request %q to supersede was not found in the journal; refusing to mint a replacement", supersedesInputRequestID)
+	}
 	if appended {
-		return atomicRequestOutcome{inputRequestID: candidateInputRequestID, created: true}, nil
+		return atomicRequestOutcome{inputRequestID: candidateInputRequestID, created: true, winningPayload: payload}, nil
 	}
 	var existing journal.CommandApprovalRequestPayload
 	if err := json.Unmarshal(writtenEvent.Payload, &existing); err != nil {
 		return atomicRequestOutcome{}, err
 	}
-	return atomicRequestOutcome{inputRequestID: existing.InputRequestID, created: false}, nil
+	return atomicRequestOutcome{inputRequestID: existing.InputRequestID, created: false, winningPayload: existing}, nil
 }
 
 func recordCommandExecutionDecision(sessionDir, contextID, sessionName, threadID string, policy resolvedCommandApprovalPolicy, commandHash, decision, reason string, override bool, commandText string, storeCommandText bool, now time.Time) error {
@@ -1308,6 +1432,35 @@ func recordCommandExecutionCompleted(sessionDir, contextID, sessionName, threadI
 	return appendCommandEvent(sessionDir, contextID, sessionName, journal.CommandExecutionCompletedEventType, journal.VisibilityOperatorVisible, payload, threadID, completedAt)
 }
 
+// errNoCurrentWriter is returned by atomicCreateOrReplaceRequest and
+// claimCommandExecution when journal.OpenCurrentWriter fails and blocking
+// mode refuses to fall back to a shadow writer (#823 rework-3 F-002): a
+// shadow writer's own session bootstrap (journal.OpenShadowWriter ->
+// ResolveSession) is not itself fenced against a concurrent bootstrap, so
+// two first-ever blocking-mode calls racing with no live current session
+// could otherwise land in two different generations, breaking the
+// single-request and single-claim guarantees. The caller maps this to the
+// distinct "session_unavailable" outcome instead of silently minting or
+// claiming through a shadow session.
+var errNoCurrentWriter = errors.New("no current session writer is available; blocking mode refuses to shadow-mint or shadow-claim")
+
+// errClaimSessionIdentityChanged is returned from claimCommandExecution's
+// equivalence closure -- running under the journal append-authority fence
+// during replay (#823 rework-3 F-004) -- when the session's current key or
+// generation no longer matches the identity expected at evaluation time.
+// Checking from inside the fence (rather than only immediately before
+// calling claimCommandExecution) closes the residual window between that
+// pre-claim check and the writer actually opening.
+var errClaimSessionIdentityChanged = errors.New("session identity changed before the claim could be recorded")
+
+// appendEventBeforeClaimHookFn is a test-only seam (#823 rework-3 F-004/
+// F-005): called immediately before claimCommandExecution, so tests can
+// inject a cancellation or a session-generation rotation at the exact
+// instant "during the claim" that the F-004/F-005 in-fence and post-claim
+// checks are meant to catch. Production code never overrides this; it
+// defaults to a no-op.
+var appendEventBeforeClaimHookFn = func() {}
+
 // claimCommandExecution atomically claims the right to run an approved
 // command exactly once (#823 F-001), keyed by (thread, input_request_id,
 // command_hash). It reuses journal.Writer.AppendCurrentSessionEventIfAbsent —
@@ -1317,13 +1470,18 @@ func recordCommandExecutionCompleted(sessionDir, contextID, sessionName, threadI
 // thread can never both win the claim. Returns claimed=false when an
 // equivalent claim already exists (someone else already ran, or is
 // running, this exact approval).
-func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRequestID, commandHash, requester string, now time.Time) (bool, error) {
+//
+// expectedSessionKey/expectedSessionGeneration/expectedSessionIdentityKnown
+// (#823 F-004) pin the session identity captured at evaluation time — not
+// only for calls that waited — and are re-checked from WITHIN the
+// equivalence closure, under the same fence the claim write itself uses, so
+// a session rotation landing in the gap between evaluation (or the wait's
+// return) and the claim's own writer-open is still caught.
+func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRequestID, commandHash, requester string, expectedSessionKey string, expectedSessionGeneration int, expectedSessionIdentityKnown bool, now time.Time) (bool, error) {
 	writer, err := journal.OpenCurrentWriter(sessionDir)
 	if err != nil {
-		writer, err = journal.OpenShadowWriter(sessionDir, contextID, sessionName, os.Getpid(), now)
-		if err != nil {
-			return false, err
-		}
+		// #823 F-002: blocking mode never shadow-claims.
+		return false, errNoCurrentWriter
 	}
 	payload := journal.CommandExecutionClaimPayload{
 		Requester:      requester,
@@ -1331,7 +1489,17 @@ func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRe
 		InputRequestID: inputRequestID,
 		CommandHash:    commandHash,
 	}
+	identityChecked := false
 	equivalent := func(event journal.Event) (bool, error) {
+		if !identityChecked {
+			identityChecked = true
+			if expectedSessionIdentityKnown {
+				curKey, curGeneration, ok := projection.CurrentSessionIdentity(sessionDir)
+				if !ok || curKey != expectedSessionKey || curGeneration != expectedSessionGeneration {
+					return false, errClaimSessionIdentityChanged
+				}
+			}
+		}
 		if event.Type != journal.CommandExecutionClaimedEventType {
 			return false, nil
 		}

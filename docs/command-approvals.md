@@ -148,15 +148,16 @@ tmux-a2a-postman execute-bash \
 - Rejection, expiry, a wait timeout, cancellation (SIGINT/SIGTERM), a
   requester mismatch on a reused `--thread-id`, a failed or lost delivery to
   the approver, a context/session-generation change mid-wait, a repeated
-  claim on an already-executed approval, a changed command digest, and a
-  few other terminal outcomes each surface a distinct `--json` `status`
-  field and a distinct process exit code (10-22: rejected=10, expired=11,
-  wait_timeout=12, cancelled=13, digest_mismatch=14, wrong_reviewer=15,
-  stale=16, historical_only=17, requester_mismatch=18,
+  claim on an already-executed approval, a changed command digest, no live
+  current session writer, and a few other terminal outcomes each surface a
+  distinct `--json` `status` field and a distinct process exit code (10-23:
+  rejected=10, expired=11, wait_timeout=12, cancelled=13, digest_mismatch=14,
+  wrong_reviewer=15, stale=16, historical_only=17, requester_mismatch=18,
   delivery_failed=19, approver_lost=20, session_changed=21,
-  already_executed=22), so a caller scripting against `execute-bash` can
-  distinguish "the approver said no" from "nobody answered in time" from
-  "I was interrupted" without parsing the reason string.
+  already_executed=22, session_unavailable=23), so a caller scripting
+  against `execute-bash` can distinguish "the approver said no" from
+  "nobody answered in time" from "I was interrupted" without parsing the
+  reason string.
 - **#823 F-006 — read this before scripting against exit codes.** These
   exit codes are NOT guaranteed distinct from an executed command's own
   exit status: a command that itself exits 10 is numerically
@@ -207,8 +208,29 @@ tmux-a2a-postman execute-bash \
   recover `already_executed` sooner than the TTL, if needed.
 - Cancellation and the deadline always win over a late approval (#823
   F-005): both are checked before the wait loop accepts any decision on
-  each iteration, so an approval recorded after SIGINT/SIGTERM or after the
-  deadline has already passed is never honored.
+  each iteration, again immediately before claiming, and again immediately
+  after the claim succeeds and before the command actually runs — so a
+  SIGINT/SIGTERM caught at any of these points, including precisely during
+  the claim itself, still stops the command; the approval stays consumed
+  (single-use either way) but never executes.
+- A concurrent race for the same thread never lets the loser deliver a
+  misleading prompt (#823 rework-3 F-015): when two callers race to mint or
+  replace a request for the same thread id (for example two concurrent
+  explicit `--thread-id` calls with different `--label`/`--category`), the
+  loser validates its own requester, trusted approver, command digest, and
+  policy against the request that actually won the race. On a mismatch it
+  refuses with `requester_mismatch` and sends no prompt at all, rather than
+  delivering a prompt built from its own policy under the winner's
+  thread/input-request correlation.
+- Blocking mode never falls back to a shadow-bootstrapped session for
+  minting a request or claiming an approval (#823 rework-3 F-002): if there
+  is no live current session writer yet (a genuine cold start, before this
+  session has any daemon-owned or previously-bootstrapped state), the call
+  refuses immediately with `session_unavailable` instead of racing a
+  session bootstrap that could otherwise land two first-ever calls in two
+  different generations. Advisory and warn-only modes are unaffected and
+  keep their prior behavior. A later call in the same, now-bootstrapped
+  session proceeds normally.
 - Delivery failure and mid-wait approver loss are distinct, fast outcomes
   (#823 F-003): a request that fails to deliver to the approver returns
   `delivery_failed` immediately rather than waiting out the full timeout on

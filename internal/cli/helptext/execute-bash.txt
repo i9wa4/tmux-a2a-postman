@@ -47,21 +47,28 @@ Modes:
              "already_executed" instead of running again -- until that
              approval's own TTL expires, at which point a retry mints a
              fresh request automatically. Rejection, expiry, a wait
-             timeout, cancellation (SIGINT/SIGTERM), a requester mismatch,
-             delivery failure, mid-wait approver loss, and a
-             context/session-generation change each produce a distinct
-             --json "status" and process exit code (10-22). These exit
-             codes can numerically collide with the executed command's own
-             exit status (0-255) -- the --json "status" field is the
-             authoritative way to tell them apart, not the bare exit code.
-             Retrying the identical command always converges instead of
-             sticking forever: no request yet creates one; a still-pending
-             request is reused and re-delivered (recovering a failed
-             delivery without duplicating the request); a rejected,
-             expired, stale, historical-only, or wrong-reviewer thread is
-             superseded by a freshly minted request on the next call. A
-             requester mismatch, digest mismatch, or unresolvable approver
-             is a refusal and never mints. See docs/command-approvals.md.
+             timeout, cancellation (SIGINT/SIGTERM, including precisely
+             during the approval claim), a requester mismatch, delivery
+             failure, mid-wait approver loss, a context/session-generation
+             change, and no live current session writer (session_unavailable,
+             a genuine cold start with no bootstrapped session yet) each
+             produce a distinct --json "status" and process exit code
+             (10-23). These exit codes can numerically collide with the
+             executed command's own exit status (0-255) -- the --json
+             "status" field is the authoritative way to tell them apart,
+             not the bare exit code. Retrying the identical command always
+             converges instead of sticking forever: no request yet creates
+             one; a still-pending request is reused and re-delivered
+             (recovering a failed delivery without duplicating the
+             request); a rejected, expired, stale, historical-only, or
+             wrong-reviewer thread is superseded by a freshly minted
+             request on the next call. A requester mismatch, digest
+             mismatch, or unresolvable approver is a refusal and never
+             mints -- including when a concurrent racer for the same
+             thread wins with a different policy context: the loser
+             refuses and never delivers a prompt describing its own,
+             different policy under the winner's correlation. See
+             docs/command-approvals.md.
 
 Fail-open rule (command_approver_node):
   When no command_approver_node is configured by marking a real node in
