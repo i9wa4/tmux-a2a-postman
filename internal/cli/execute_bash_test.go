@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -113,11 +116,20 @@ func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
 	}
 }
 
+// args builds the standard test invocation. It defaults to --no-wait: since
+// #823 made blocking mode wait by default, and these fixtures use a fixed
+// fake clock (ctx.now never advances on its own), a default-on wait loop
+// here would poll forever against a projection state that never reaches its
+// synthetic deadline. Tests that specifically exercise the default-on wait
+// behavior (TestRunExecuteBashBlockingWait*) override this back off with an
+// explicit trailing "--no-wait=false", relying on Go's flag package letting
+// a later flag occurrence win.
 func (f *executeBashFixture) args(extra ...string) []string {
 	base := []string{
 		"--context-id", f.contextID,
 		"--session", f.sessionName,
 		"--requester", "worker",
+		"--no-wait",
 	}
 	return append(base, extra...)
 }
@@ -1640,6 +1652,988 @@ func TestRunExecuteBashRecordDecisionWarnsWhenDecisionHistorySyncFailsAfterAppen
 	}
 	if got := state.Threads[threadID].Status; got != projection.CommandApprovalStatusApproved {
 		t.Fatalf("thread status = %q, want approved", got)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitsForDecisionThenRuns pins #823's core
+// behavior: blocking mode waits by default (no --wait flag needed) for a
+// trusted, resolvable reviewer's decision instead of returning "blocked"
+// while approval is merely pending, and runs the already-approved command in
+// the same invocation without the caller reconstructing or resubmitting it.
+// The injected ctx.sleep hook stands in for the approver's own
+// --record-decision call landing mid-wait.
+func TestRunExecuteBashBlockingWaitsForDecisionThenRuns(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf waited-then-ran"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+
+	ctx := fixture.context()
+	decided := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if decided {
+			return
+		}
+		decided = true
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want default-on wait to observe the approval and run", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	if got := fixture.commands[0]; got != commandText {
+		t.Fatalf("command = %q, want %q (no reconstruction/resubmission needed)", got, commandText)
+	}
+	if !strings.Contains(fixture.stdout.String(), "ran") {
+		t.Fatalf("stdout = %q, want the executed command's stdout to be captured (#823 F-009)", fixture.stdout.String())
+	}
+}
+
+// TestRunExecuteBashBlockingRetryReusesExistingRequestCorrelation pins
+// #823 F-002's retry closure: a retry against an already-pending thread
+// must reuse the existing request's input_request_id, never mint a new
+// one, so a decision reply naming the ORIGINAL id can still resolve it.
+func TestRunExecuteBashBlockingRetryReusesExistingRequestCorrelation(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf retry-reuse"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+
+	if err := runExecuteBashWithContext(fixture.context(), args); err == nil {
+		t.Fatal("first call error = nil, want pending blocking refusal")
+	}
+	state1, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (after first call) = (%#v, %v, %v)", state1, ok, err)
+	}
+	firstInputRequestID := state1.Threads[threadID].InputRequestID
+	if firstInputRequestID == "" {
+		t.Fatal("first call did not record an input_request_id")
+	}
+
+	if err := runExecuteBashWithContext(fixture.context(), args); err == nil {
+		t.Fatal("retry error = nil, want pending blocking refusal")
+	}
+	state2, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+	if err != nil || !ok {
+		t.Fatalf("ProjectCommandApprovalState() (after retry) = (%#v, %v, %v)", state2, ok, err)
+	}
+	if got := state2.Threads[threadID].InputRequestID; got != firstInputRequestID {
+		t.Fatalf("retry input_request_id = %q, want unchanged %q (retry must reuse, not overwrite, the pending correlation)", got, firstInputRequestID)
+	}
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Fatalf("command_approval_requested events = %d, want 1 (retry must not mint a new request)", requestCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitRejectsCrossRequesterThread pins #823
+// F-002's cross-requester closure: a thread reused via an explicit
+// --thread-id that belongs to a DIFFERENT requester must never authorize
+// this invocation, even with a matching command digest, and must be
+// refused immediately (no waiting).
+func TestRunExecuteBashBlockingWaitRejectsCrossRequesterThread(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "*",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	otherPolicy := resolvedCommandApprovalPolicy{
+		Requester: "other-worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf cross-requester"
+	foreignThreadID := fixture.appendCommandApprovalRequest(t, otherPolicy, commandText, fixture.now.Add(15*time.Minute))
+
+	ctx := fixture.context()
+	ctx.sleep = func(context.Context, time.Duration) {
+		t.Fatal("ctx.sleep called, want an immediate requester_mismatch without waiting")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--thread-id", foreignThreadID,
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want cross-requester refusal")
+	}
+	if !strings.Contains(err.Error(), "different requester") {
+		t.Fatalf("error = %v, want cross-requester diagnostic", err)
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "requester_mismatch" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: requester_mismatch}", err)
+	}
+	if outcomeErr.ExitCode() != 18 {
+		t.Fatalf("ExitCode() = %d, want 18", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitDeliveryFailureFailsFast pins #823 F-003's
+// delivery-failure closure: a request that cannot be delivered to the
+// approver must fail fast with a distinct outcome, never entering the wait
+// loop and wasting the full timeout on a request the approver never saw.
+func TestRunExecuteBashBlockingWaitDeliveryFailureFailsFast(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{}
+	commandText := "printf delivery-failure"
+
+	ctx := fixture.context()
+	ctx.sleep = func(context.Context, time.Duration) {
+		t.Fatal("ctx.sleep called, want delivery failure to fail fast without waiting")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want delivery_failed refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "delivery_failed" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: delivery_failed}", err)
+	}
+	if outcomeErr.ExitCode() != 19 {
+		t.Fatalf("ExitCode() = %d, want 19", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitDetectsApproverLostMidWait pins #823
+// F-003's mid-wait-loss closure: the approver becoming undiscoverable
+// while a wait is in progress must end the wait with a distinct outcome
+// instead of polling all the way to a generic timeout.
+func TestRunExecuteBashBlockingWaitDetectsApproverLostMidWait(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf approver-lost"
+
+	ctx := fixture.context()
+	lost := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if lost {
+			return
+		}
+		lost = true
+		delete(fixture.discoveredNodes, "test-session:orchestrator")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want approver_lost refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "approver_lost" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: approver_lost}", err)
+	}
+	if outcomeErr.ExitCode() != 20 {
+		t.Fatalf("ExitCode() = %d, want 20", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitSessionGenerationChangeEndsWait pins #823
+// F-004's closure: a context/session-generation change mid-wait must end
+// the wait with a distinct terminal outcome instead of silently polling
+// toward a generic timeout that masks what actually happened.
+func TestRunExecuteBashBlockingWaitSessionGenerationChangeEndsWait(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf session-changed"
+
+	ctx := fixture.context()
+	changed := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if changed {
+			return
+		}
+		changed = true
+		path := journal.SessionStatePath(fixture.sessionDir)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(session state) error = %v", err)
+		}
+		var state journal.SessionState
+		if err := json.Unmarshal(data, &state); err != nil {
+			t.Fatalf("Unmarshal(session state) error = %v", err)
+		}
+		state.Generation++
+		newData, err := json.Marshal(state)
+		if err != nil {
+			t.Fatalf("Marshal(session state) error = %v", err)
+		}
+		if err := os.WriteFile(path, newData, 0o644); err != nil {
+			t.Fatalf("WriteFile(session state) error = %v", err)
+		}
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want session_changed refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "session_changed" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: session_changed}", err)
+	}
+	if outcomeErr.ExitCode() != 21 {
+		t.Fatalf("ExitCode() = %d, want 21", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitCancellationBeatsLateApproval pins #823
+// F-005's ordering closure: cancellation and the deadline are checked
+// BEFORE the wait loop accepts any approval each iteration, so an approval
+// recorded in the same tick as cancellation must never be honored.
+func TestRunExecuteBashBlockingWaitCancellationBeatsLateApproval(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf cancel-beats-late-approval"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+
+	ctx := fixture.context()
+	waitCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx.newInterruptContext = func() (context.Context, func()) { return waitCtx, cancel }
+	done := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if done {
+			return
+		}
+		done = true
+		// Cancel AND record a late approval in the same tick: the next
+		// iteration must observe cancellation, not the approval.
+		cancel()
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want cancellation to win over the late approval")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "cancelled" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: cancelled} even though an approval was recorded in the same tick", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0 (a late approval must never run the command)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingApprovalIsSingleUseAcrossRepeatedCalls pins
+// #823 F-001's core guarantee: one approval executes the command at most
+// once. A second call after the command has already run against this
+// exact approval must observe the claim and refuse, not run again.
+func TestRunExecuteBashBlockingApprovalIsSingleUseAcrossRepeatedCalls(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf single-use"
+	fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+	args := fixture.args("--label", "protected", "--category", "release", "--command", commandText)
+
+	if err := runExecuteBashWithContext(fixture.context(), args); err != nil {
+		t.Fatalf("first call error = %v, want nil (approved command runs)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount after first call = %d, want 1", fixture.runCount)
+	}
+
+	err := runExecuteBashWithContext(fixture.context(), args)
+	if err == nil {
+		t.Fatal("second call error = nil, want already_executed refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "already_executed" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: already_executed}", err)
+	}
+	if outcomeErr.ExitCode() != 22 {
+		t.Fatalf("ExitCode() = %d, want 22", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount after repeated call = %d, want still 1 (approval is single-use)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingApprovalIsSingleUseAcrossConcurrentWaiters pins
+// the other half of #823 F-001's closure: real concurrent waiters (actual
+// goroutines racing against the same on-disk session, not a sequential
+// simulation) on the same pending thread must each observe the approval,
+// but the atomic claim (journal.Writer.AppendCurrentSessionEventIfAbsent,
+// cross-process-safe via its append-authority fence) must let exactly one
+// of them run the command.
+func TestRunExecuteBashBlockingApprovalIsSingleUseAcrossConcurrentWaiters(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf concurrent-waiters"
+	threadID := fixture.appendCommandApprovalRequest(t, policy, commandText, fixture.now.Add(15*time.Minute))
+
+	var runCount atomic.Int64
+	newRacingContext := func() commandContext {
+		base := fixture.context()
+		base.runBash = func(command string, stdout, stderr io.Writer) (int, error) {
+			runCount.Add(1)
+			_, _ = fmt.Fprint(stdout, "ran\n")
+			return 0, nil
+		}
+		return base
+	}
+
+	var approveOnce sync.Once
+	var approveErr error
+	sharedSleep := func(context.Context, time.Duration) {
+		approveOnce.Do(func() {
+			state, ok, err := projection.ProjectCommandApprovalState(fixture.sessionDir, fixture.now)
+			if err != nil || !ok {
+				approveErr = fmt.Errorf("ProjectCommandApprovalState() = (ok=%v, err=%v)", ok, err)
+				return
+			}
+			thread, found := state.Threads[threadID]
+			if !found {
+				approveErr = fmt.Errorf("missing thread %q", threadID)
+				return
+			}
+			writer, err := journal.OpenCurrentWriter(fixture.sessionDir)
+			if err != nil {
+				writer, err = journal.OpenShadowWriter(fixture.sessionDir, fixture.contextID, fixture.sessionName, os.Getpid(), fixture.now)
+			}
+			if err != nil {
+				approveErr = err
+				return
+			}
+			_, err = writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+				Reviewer:         "orchestrator",
+				ReviewerAddress:  nodeaddr.Full("orchestrator", fixture.sessionName),
+				RequesterAddress: thread.RequesterAddress,
+				Decision:         journal.ApprovalDecisionApproved,
+				Reason:           "reviewed",
+				InputRequestID:   thread.InputRequestID,
+				CommandHash:      thread.CommandHash,
+			}, journal.AppendOptions{ThreadID: threadID}, fixture.now)
+			approveErr = err
+		})
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ctx := newRacingContext()
+			ctx.sleep = sharedSleep
+			errs[i] = runExecuteBashWithContext(ctx, fixture.args(
+				"--label", "protected",
+				"--category", "release",
+				"--command", commandText,
+				"--no-wait=false",
+			))
+		}(i)
+	}
+	wg.Wait()
+
+	if approveErr != nil {
+		t.Fatalf("recording the shared approval decision failed: %v", approveErr)
+	}
+	successCount := 0
+	for _, err := range errs {
+		if err == nil {
+			successCount++
+			continue
+		}
+		var outcomeErr commandApprovalOutcomeError
+		if !errors.As(err, &outcomeErr) || outcomeErr.status != "already_executed" {
+			t.Fatalf("unexpected error from a concurrent waiter: %v", err)
+		}
+	}
+	if successCount != 1 {
+		t.Fatalf("successful (executing) concurrent waiters = %d, want exactly 1; errs=%v", successCount, errs)
+	}
+	if got := runCount.Load(); got != 1 {
+		t.Fatalf("runBash invocations across concurrent waiters = %d, want exactly 1", got)
+	}
+}
+
+// TestRunExecuteBashApprovedExitTenDistinguishableFromRejectedExitTen pins
+// #823 F-006's documented contract: an executed command's exit status and
+// an approval-outcome exit code are NOT guaranteed numerically distinct
+// (both can be 10) — the error TYPE / --json "status" field is the
+// authoritative discriminator, never the bare exit code. This test is the
+// "command ran" half of the pair; TestRunExecuteBashBlockingWaitObservesRejectionThenRefuses
+// is the "approval was rejected" half, and both produce exit code 10.
+func TestRunExecuteBashApprovedExitTenDistinguishableFromRejectedExitTen(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.runStatus = 10
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "exit 10"
+	fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText,
+	))
+	var exitErr commandExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("error = %T %v, want commandExitError (the command ran and exited 10)", err, err)
+	}
+	if exitErr.ExitCode() != 10 {
+		t.Fatalf("ExitCode() = %d, want 10", exitErr.ExitCode())
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if errors.As(err, &outcomeErr) {
+		t.Fatalf("error unexpectedly also matches commandApprovalOutcomeError: %#v - an executed command's exit status must never be confused with an approval-outcome status", outcomeErr)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1 (the command actually ran)", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitObservesExpiryDuringWait pins #823 F-009's
+// expiry-during-wait gap: a thread whose own approval TTL elapses while a
+// wait is in progress must report "expired" (a specific, informative
+// outcome), not a generic "wait_timeout" that would mask the real cause.
+func TestRunExecuteBashBlockingWaitObservesExpiryDuringWait(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf expire-during-wait"
+
+	ctx := fixture.context()
+	clock := fixture.now
+	ctx.now = func() time.Time { return clock }
+	ctx.sleep = func(_ context.Context, d time.Duration) { clock = clock.Add(d) }
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+		"--approval-ttl-seconds", "1",
+		"--wait-timeout-seconds", "300",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want expired refusal")
+	}
+	if !strings.Contains(err.Error(), "approval is expired") {
+		t.Fatalf("error = %v, want expiry diagnostic (not a generic wait_timeout)", err)
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "expired" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: expired}", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashDefaultWaitFailsOpenWithoutCommandApproverNode pins
+// #823 F-009's default-wait fail-open gap: the #626 fail-open rule must
+// still apply, and must never engage the wait loop, when the default-on
+// wait is in effect (no --no-wait passed).
+func TestRunExecuteBashDefaultWaitFailsOpenWithoutCommandApproverNode(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = ""
+	fixture.nodes = nil
+
+	ctx := fixture.context()
+	ctx.sleep = func(context.Context, time.Duration) {
+		t.Fatal("ctx.sleep called, want fail-open to run immediately without waiting")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "default-wait-fail-open",
+		"--command", "printf default-wait-fail-open",
+		"--no-wait=false",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashDefaultWaitFailsClosedWhenCommandApproverNodeUnresolvable
+// pins #823 F-009's default-wait fail-closed gap: an unresolvable approver
+// must still block immediately without ever engaging the wait loop.
+func TestRunExecuteBashDefaultWaitFailsClosedWhenCommandApproverNodeUnresolvable(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = "typo-reviewer"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{
+		"test-session:typo-reviewer": {PaneID: "%9", SessionName: "test-session", SessionDir: fixture.sessionDir},
+	}
+
+	ctx := fixture.context()
+	ctx.sleep = func(context.Context, time.Duration) {
+		t.Fatal("ctx.sleep called, want fail-closed to block immediately without waiting")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "default-wait-fail-closed",
+		"--command", "printf default-wait-fail-closed",
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want unresolved approver block")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitTimesOutWithoutDecision pins the bounded-wait
+// acceptance criterion: waiting must never be indefinite. ctx.now and
+// ctx.sleep are wired to the same fake clock so the deadline is reached
+// deterministically without a real delay.
+func TestRunExecuteBashBlockingWaitTimesOutWithoutDecision(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf wait-timeout"
+
+	ctx := fixture.context()
+	clock := fixture.now
+	ctx.now = func() time.Time { return clock }
+	ctx.sleep = func(_ context.Context, d time.Duration) { clock = clock.Add(d) }
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+		"--wait-timeout-seconds", "1",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want wait_timeout refusal")
+	}
+	if !strings.Contains(err.Error(), "approval wait timed out") {
+		t.Fatalf("error = %v, want wait-timeout diagnostic", err)
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "wait_timeout" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: wait_timeout}", err)
+	}
+	if outcomeErr.ExitCode() != 12 {
+		t.Fatalf("ExitCode() = %d, want 12", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitCancelledBySignal pins clean termination on
+// interruption (SIGINT/SIGTERM in production, an injected cancel here) as a
+// final outcome distinguishable from a timeout or a rejection.
+func TestRunExecuteBashBlockingWaitCancelledBySignal(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf wait-cancelled"
+
+	ctx := fixture.context()
+	waitCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx.newInterruptContext = func() (context.Context, func()) { return waitCtx, cancel }
+	cancelled := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if !cancelled {
+			cancelled = true
+			cancel()
+		}
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want cancellation refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "cancelled" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: cancelled}", err)
+	}
+	if outcomeErr.ExitCode() != 13 {
+		t.Fatalf("ExitCode() = %d, want 13", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitApprovedRunsCommandAndPropagatesExitStatus
+// covers the "approval, then command output/exit status" outcome: the
+// command's own non-zero exit status must still surface via
+// commandExitError after a default-on wait resolves to approved, exactly as
+// it does on the immediate-approval path (TestRunExecuteBashPropagatesExitStatus).
+func TestRunExecuteBashBlockingWaitApprovedRunsCommandAndPropagatesExitStatus(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	fixture.runStatus = 3
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "exit 3"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+
+	ctx := fixture.context()
+	decided := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if decided {
+			return
+		}
+		decided = true
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	var exitErr commandExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("error = %T %v, want commandExitError after default-on wait resolves to approved", err, err)
+	}
+	if exitErr.ExitCode() != 3 {
+		t.Fatalf("ExitCode() = %d, want 3", exitErr.ExitCode())
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	completed := findExecutionCompletedPayload(t, fixture.sessionDir)
+	if completed.ExitStatus != 3 {
+		t.Fatalf("completed exit status = %d, want 3", completed.ExitStatus)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitObservesRejectionThenRefuses covers the
+// "rejection" outcome: a decision recorded mid-wait must end the wait loop
+// immediately (not just at the timeout) with a distinguishable status/exit
+// code, and never run the command.
+func TestRunExecuteBashBlockingWaitObservesRejectionThenRefuses(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	commandText := "printf wait-rejected"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+
+	ctx := fixture.context()
+	decided := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		if decided {
+			return
+		}
+		decided = true
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionRejected)
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", commandText,
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want rejection refusal")
+	}
+	if !strings.Contains(err.Error(), "approval is rejected") {
+		t.Fatalf("error = %v, want rejection diagnostic", err)
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "rejected" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: rejected}", err)
+	}
+	if outcomeErr.ExitCode() != 10 {
+		t.Fatalf("ExitCode() = %d, want 10", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashBlockingWaitSkipsWaitingOnImmediateDigestMismatch covers
+// the "changed digest" outcome under the new default-on path: a thread
+// already carrying an approved decision for a DIFFERENT command digest is a
+// terminal, non-waitable state from the very first evaluation, so
+// shouldWaitForCommandApproval must never engage the poll loop for it (the
+// sleep spy fails the test if invoked) even though --no-wait is not passed.
+func TestRunExecuteBashBlockingWaitSkipsWaitingOnImmediateDigestMismatch(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	approvedThreadID := fixture.appendCommandApproval(t, policy, "printf original-digest-wait", journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+
+	ctx := fixture.context()
+	ctx.sleep = func(context.Context, time.Duration) {
+		t.Fatal("ctx.sleep called, want no waiting for an already-terminal digest_mismatch decision")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--thread-id", approvedThreadID,
+		"--command", "printf attack-command-wait",
+		"--no-wait=false",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want digest_mismatch block")
+	}
+	if !strings.Contains(err.Error(), "different command digest") {
+		t.Fatalf("error = %v, want reason containing \"different command digest\"", err)
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "digest_mismatch" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: digest_mismatch}", err)
+	}
+	if outcomeErr.ExitCode() != 14 {
+		t.Fatalf("ExitCode() = %d, want 14", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashNoWaitReturnsImmediatelyWithoutPolling pins the
+// "opt-out legacy behavior" outcome explicitly: --no-wait must return the
+// pending result immediately, never invoking ctx.sleep even once, exactly
+// matching pre-#823 behavior.
+func TestRunExecuteBashNoWaitReturnsImmediatelyWithoutPolling(t *testing.T) {
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	ctx := fixture.context()
+	ctx.sleep = func(context.Context, time.Duration) {
+		t.Fatal("ctx.sleep called, want --no-wait to return immediately without polling")
+	}
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf no-wait-legacy",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want immediate pending refusal")
+	}
+	if !strings.Contains(err.Error(), "approval is absent") {
+		t.Fatalf("error = %v, want immediate approval-absent diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
 	}
 }
 

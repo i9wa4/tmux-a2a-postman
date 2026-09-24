@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -27,6 +29,13 @@ const (
 	commandApprovalModeWarnOnly = "warn-only"
 	commandApprovalModeBlocking = "blocking"
 	defaultCommandApprovalTTL   = 15 * time.Minute
+
+	// defaultCommandApprovalWaitTimeoutSeconds bounds --wait when the caller
+	// does not pass --wait-timeout-seconds explicitly.
+	defaultCommandApprovalWaitTimeoutSeconds = 300.0
+	// commandApprovalPollInterval is how often --wait re-checks the approval
+	// projection while waiting for the approver's decision.
+	commandApprovalPollInterval = 500 * time.Millisecond
 )
 
 type executeBashResult struct {
@@ -55,6 +64,85 @@ func (e commandExitError) Error() string {
 
 func (e commandExitError) ExitCode() int {
 	return e.code
+}
+
+// commandApprovalOutcomeError carries a distinguishable status/exit code for
+// every way a blocking-mode call can end without running the command
+// (#823 acceptance criteria: "Rejection, expiry, cancellation, and approver
+// loss produce distinguishable final statuses, reasons, and exit codes").
+//
+// IMPORTANT (#823 F-006): these exit codes are NOT guaranteed distinct from
+// an executed command's own exit status. main.go forwards ExitCode()
+// directly as the process's exit code for both this type and
+// commandExitError (the executed command's own status, 0-255) — a command
+// that itself exits 10 is numerically indistinguishable, on the bare exit
+// code alone, from a rejected approval that also exits 10. The
+// authoritative way to tell "the approval was rejected/expired/..." apart
+// from "the command ran and happened to exit with that same number" is the
+// --json wrapper metadata's `status` field: one of the decision names below
+// (never running the command) versus "exited" with `exit_status` set (the
+// command ran). Do not rely on the bare numeric exit code alone when that
+// distinction matters; parse --json stderr output instead.
+type commandApprovalOutcomeError struct {
+	status string
+	reason string
+}
+
+func (e commandApprovalOutcomeError) Error() string {
+	return e.reason
+}
+
+func (e commandApprovalOutcomeError) ExitCode() int {
+	switch e.status {
+	case "rejected":
+		return 10
+	case "expired":
+		return 11
+	case "wait_timeout":
+		return 12
+	case "cancelled":
+		return 13
+	case "digest_mismatch":
+		return 14
+	case "wrong_reviewer":
+		return 15
+	case "stale":
+		return 16
+	case "historical_only":
+		return 17
+	case "requester_mismatch":
+		return 18
+	case "delivery_failed":
+		return 19
+	case "approver_lost":
+		return 20
+	case "session_changed":
+		return 21
+	case "already_executed":
+		return 22
+	default:
+		return 1
+	}
+}
+
+// commandApprovalBlockedStatus maps an evaluation's decision to the
+// executeBashResult.Status value reported for a blocked/non-executed
+// outcome. It is deliberately independent of decisionForPolicy's "blocked"
+// audit-trail decision label (recorded in the durable journal and asserted
+// by existing tests) — this only refines the JSON wrapper metadata surfaced
+// to the caller.
+func commandApprovalBlockedStatus(decision string) string {
+	switch decision {
+	case "rejected", "expired", "digest_mismatch", "wrong_reviewer", "stale", "historical_only",
+		"requester_mismatch", "delivery_failed", "approver_lost", "session_changed":
+		return decision
+	case "wait_timeout":
+		return "wait_timeout"
+	case "wait_cancelled":
+		return "cancelled"
+	default:
+		return "blocked"
+	}
 }
 
 type resolvedCommandApprovalPolicy struct {
@@ -97,6 +185,8 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	recordDecision := fs.String("record-decision", "", "record an approval decision for --thread-id: approved or rejected")
 	ttlSeconds := fs.Float64("approval-ttl-seconds", 0, "approval request expiry in seconds")
 	jsonOutput := fs.Bool("json", false, "write wrapper metadata as JSON")
+	noWait := fs.Bool("no-wait", false, "in blocking mode, return the current pending/blocked result immediately instead of waiting for the matching approval thread to resolve")
+	waitTimeoutSeconds := fs.Float64("wait-timeout-seconds", defaultCommandApprovalWaitTimeoutSeconds, "how long blocking mode waits for a decision before giving up, unless --no-wait is set")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -162,12 +252,27 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	expiresAt := ctx.now().Add(policy.TTL).UTC().Format(time.RFC3339Nano)
 	commandApproverNode, validReviewer := cfg.ResolveCommandApproverNode()
 	approverConfigured := strings.TrimSpace(cfg.CommandApproverNode) != ""
+	requesterAddress := nodeaddr.Full(policy.Requester, resolvedSessionName)
+	commandApproverAddress := nodeaddr.Full(commandApproverNode, resolvedSessionName)
 
-	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, approverConfigured, validReviewer, ctx.now())
+	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, requesterAddress, commandApproverAddress, approverConfigured, validReviewer, ctx.now())
 	if err != nil {
 		return err
 	}
-	if !evaluation.Allowed && validReviewer {
+	// #823 F-002 (retry): only mint a brand-new request + input_request_id
+	// when NO request exists for this thread yet (Decision == "absent"). A
+	// retry against an already-pending thread must reuse its existing
+	// correlation instead of overwriting it: applyCommandApprovalRequest
+	// (projection) replaces the projected thread's InputRequestID on every
+	// new request event with the same thread id, which then makes
+	// applyCommandApprovalDecision silently reject a decision reply that
+	// still names the ORIGINAL input_request_id, permanently stranding the
+	// first invocation's wait.
+	originalInputRequestID := ""
+	if evaluation.Thread != nil {
+		originalInputRequestID = evaluation.Thread.InputRequestID
+	}
+	if !evaluation.Allowed && validReviewer && evaluation.Decision == "absent" {
 		// Only a config-resolved reviewer may receive a trusted approval request.
 		// A configured but unresolvable blocking reviewer remains locally blocked
 		// below, without recording or delivering a request that names the raw
@@ -176,12 +281,42 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		if err != nil {
 			return fmt.Errorf("generating command approval input request id: %w", err)
 		}
+		originalInputRequestID = inputRequestID
 		if err := recordCommandApprovalRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, inputRequestID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, ctx.now()); err != nil {
 			return err
 		}
 		if err := deliverCommandApprovalRequest(cfg, baseDir, resolvedContextID, resolvedSessionName, policy, commandApproverNode, resolvedThreadID, inputRequestID, commandHash, *reason, *storeCommandText, ctx.now()); err != nil {
-			evaluation.Reason = err.Error()
+			// #823 F-003: delivery failure fails fast with a distinct
+			// outcome instead of silently overwriting the reason and then
+			// wasting the full wait timeout on a request the approver never
+			// saw.
+			evaluation = commandApprovalEvaluation{Decision: "delivery_failed", Reason: err.Error()}
 		}
+	}
+
+	if evaluation.Decision != "delivery_failed" && shouldWaitForCommandApproval(policy.Mode, evaluation, validReviewer, approverConfigured, *noWait, *waitTimeoutSeconds) {
+		waitCtx, cancelWait := ctx.newInterruptContext()
+		waitedEvaluation, err := waitForCommandApprovalDecision(waitCtx, ctx, commandApprovalWaitParams{
+			sessionDir:             sessionDir,
+			baseDir:                baseDir,
+			contextID:              resolvedContextID,
+			sessionName:            resolvedSessionName,
+			threadID:               resolvedThreadID,
+			commandHash:            commandHash,
+			requesterAddress:       requesterAddress,
+			commandApproverNode:    commandApproverNode,
+			commandApproverAddress: commandApproverAddress,
+			originalInputRequestID: originalInputRequestID,
+			policyLabel:            policy.Label,
+			policyCategory:         policy.Category,
+			policyMode:             policy.Mode,
+			deadline:               ctx.now().Add(time.Duration(*waitTimeoutSeconds * float64(time.Second))),
+		})
+		cancelWait()
+		if err != nil {
+			return err
+		}
+		evaluation = waitedEvaluation
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)
@@ -209,10 +344,10 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 
 	if blockReason := blockedCommandApprovalReason(policy.Mode, evaluation, *overrideApproval); blockReason != "" {
-		result.Status = "blocked"
+		result.Status = commandApprovalBlockedStatus(evaluation.Decision)
 		result.Reason = blockReason
 		_ = writeExecuteBashMetadata(ctx.stderr, result)
-		return fmt.Errorf("%s", blockReason)
+		return commandApprovalOutcomeError{status: result.Status, reason: blockReason}
 	}
 	if policy.Mode == commandApprovalModeWarnOnly && *overrideApproval && !evaluation.Allowed {
 		_, _ = fmt.Fprintf(ctx.stderr, "postman: warning: command approval absent; continuing because --override-approval was set (thread=%s)\n", resolvedThreadID)
@@ -220,6 +355,27 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	if policy.Mode == commandApprovalModeAdvisory && !evaluation.Allowed {
 		_, _ = fmt.Fprintf(ctx.stderr, "postman: advisory: command approval is not approved yet (thread=%s); continuing\n", resolvedThreadID)
 	}
+	// #823 F-001: a real, blocking-mode, thread-backed approval is single-use.
+	// Claim it atomically before running the command — concurrent waiters on
+	// the same thread, and a repeated call while the approval is still
+	// within its TTL, must each observe the claim and run the command at
+	// most once in total. Fail-open (auto_approved_no_reviewer, no Thread)
+	// and non-blocking modes are unaffected: there is no scarce human
+	// decision to consume there.
+	if policy.Mode == commandApprovalModeBlocking && evaluation.Decision == "approved" && evaluation.Thread != nil {
+		claimInputRequestID := evaluation.Thread.InputRequestID
+		claimed, claimErr := claimCommandExecution(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, claimInputRequestID, commandHash, policy.Requester, ctx.now())
+		if claimErr != nil {
+			return claimErr
+		}
+		if !claimed {
+			result.Status = "already_executed"
+			result.Reason = "this approval has already been claimed and executed once; approvals are single-use"
+			_ = writeExecuteBashMetadata(ctx.stderr, result)
+			return commandApprovalOutcomeError{status: result.Status, reason: result.Reason}
+		}
+	}
+
 	if *jsonOutput {
 		result.Status = "executing"
 		_ = writeExecuteBashMetadata(ctx.stderr, result)
@@ -560,7 +716,7 @@ func validateCommandApprovalThreadID(threadID string) error {
 // mode. This must never be conflated with an actual recorded approval.
 const commandApprovalDecisionAutoApprovedNoReviewer = "auto_approved_no_reviewer"
 
-func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash string, approverConfigured, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
+func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPolicy, threadID, commandHash, requesterAddress, commandApproverAddress string, approverConfigured, validReviewer bool, now time.Time) (commandApprovalEvaluation, error) {
 	if !validReviewer {
 		if approverConfigured && policy.Mode == "blocking" {
 			return commandApprovalEvaluation{Decision: "unresolved_command_approver", Allowed: false, Reason: "configured command_approver_node is not resolvable; blocking approval fails closed"}, nil
@@ -589,6 +745,48 @@ func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPo
 					Thread:   &thread,
 				}, nil
 			}
+			// #823 F-002: a thread found via an explicit --thread-id
+			// override may belong to a different requester, a different
+			// trusted approver, or a different policy even with a matching
+			// digest. Never let that thread's approval authorize THIS
+			// invocation unless the full correlation matches. Both sides
+			// are required to be non-empty here (unlike the stricter
+			// wait-loop check) because an empty thread.RequesterAddress/
+			// CommandApproverAddress is the deliberate legacy-addressless
+			// signal evaluationForThread's HistoricalOnly branch already
+			// handles distinctly (#626) — this is a single evaluation at
+			// call time, not a value that can regress mid-wait.
+			if thread.RequesterAddress != "" && requesterAddress != "" && thread.RequesterAddress != requesterAddress {
+				return commandApprovalEvaluation{
+					Decision: "requester_mismatch",
+					Allowed:  false,
+					Reason:   "approval thread belongs to a different requester",
+					Thread:   &thread,
+				}, nil
+			}
+			if thread.CommandApproverAddress != "" && commandApproverAddress != "" && thread.CommandApproverAddress != commandApproverAddress {
+				return commandApprovalEvaluation{
+					Decision: "requester_mismatch",
+					Allowed:  false,
+					Reason:   "approval thread was requested from a different trusted approver",
+					Thread:   &thread,
+				}, nil
+			}
+			// Guarded on thread.Mode != "" (always set for a real recorded
+			// request, never for a stale/legacy placeholder thread — see
+			// applyCommandApprovalDecision's decision-without-a-matching-
+			// request branch, which fills in only ThreadID/Reviewer/
+			// Status/Reason/DecidedAt): a stale placeholder must still
+			// reach evaluationForThread's "stale" diagnosis below, not get
+			// misclassified here as a policy mismatch.
+			if thread.Mode != "" && (thread.Label != policy.Label || thread.Category != policy.Category || thread.Mode != policy.Mode) {
+				return commandApprovalEvaluation{
+					Decision: "requester_mismatch",
+					Allowed:  false,
+					Reason:   "approval thread belongs to a different policy (label/category/mode)",
+					Thread:   &thread,
+				}, nil
+			}
 			return evaluationForThread(thread), nil
 		}
 		for _, thread := range state.Threads {
@@ -607,6 +805,208 @@ func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPo
 		Allowed:  false,
 		Reason:   "approval is absent",
 	}, nil
+}
+
+// shouldWaitForCommandApproval reports whether blocking mode should engage
+// the polling loop instead of returning the current blocked/pending result
+// immediately (#823: waiting is the default for blocking mode; --no-wait
+// opts back into the legacy immediate-return behavior). It only ever
+// applies to blocking mode with a trusted, resolvable reviewer (the same
+// gate evaluateCommandApproval uses to decide whether to deliver a request
+// at all) and only when the decision is not already terminal, so it never
+// changes fail-open (#626) or fail-closed (unresolvable reviewer) behavior,
+// and never re-waits on an already-rejected/expired/digest-mismatched
+// thread.
+func shouldWaitForCommandApproval(mode string, evaluation commandApprovalEvaluation, validReviewer, approverConfigured, noWait bool, waitTimeoutSeconds float64) bool {
+	if noWait || mode != commandApprovalModeBlocking || waitTimeoutSeconds <= 0 {
+		return false
+	}
+	if !validReviewer || !approverConfigured {
+		return false
+	}
+	switch evaluation.Decision {
+	case "absent", "pending":
+		return true
+	default:
+		return false
+	}
+}
+
+// commandApprovalWaitParams pins the correlation waitForCommandApprovalDecision
+// re-checks on every poll: the exact thread/command-digest/requester it
+// started with (#823 F-002), plus enough to detect mid-wait approver loss
+// (#823 F-003) and a context/session-generation change (#823 F-004).
+type commandApprovalWaitParams struct {
+	sessionDir             string
+	baseDir                string
+	contextID              string
+	sessionName            string
+	threadID               string
+	commandHash            string
+	requesterAddress       string
+	commandApproverNode    string
+	commandApproverAddress string
+	originalInputRequestID string
+	policyLabel            string
+	policyCategory         string
+	policyMode             string
+	deadline               time.Time
+}
+
+// approverLivenessCheckEveryNPolls bounds how often waitForCommandApprovalDecision
+// re-verifies the approver is still discoverable (#823 F-003): cheap enough
+// to run every poll would be fine, but checking every few polls keeps the
+// dominant cost the same lightweight projection read while still detecting
+// a lost approver within a few seconds.
+const approverLivenessCheckEveryNPolls = 4
+
+// waitForCommandApprovalDecision polls the command approval projection until
+// the thread reaches a terminal decision, the deadline passes, or waitCtx is
+// cancelled (SIGINT/SIGTERM via ctx.newInterruptContext, or a caller-injected
+// context in tests). It never re-executes or resubmits the command itself;
+// on a terminal "approved" result the caller falls through to the existing
+// ctx.runBash call in the same invocation, so the requester never has to
+// reconstruct the original command (#823).
+func waitForCommandApprovalDecision(waitCtx context.Context, ctx commandContext, p commandApprovalWaitParams) (commandApprovalEvaluation, error) {
+	startSessionKey, startGeneration, sessionIdentityKnown := projection.CurrentSessionIdentity(p.sessionDir)
+	pollCount := 0
+	for {
+		// #823 F-005: cancellation and the deadline are checked BEFORE
+		// accepting any approval discovered this iteration, so an approval
+		// that lands after cancellation (or after the deadline has already
+		// passed) is never honored — a late approval must never beat
+		// cancellation or the deadline.
+		select {
+		case <-waitCtx.Done():
+			return commandApprovalEvaluation{
+				Decision: "wait_cancelled",
+				Reason:   fmt.Sprintf("approval wait was cancelled: %v", waitCtx.Err()),
+			}, nil
+		default:
+		}
+		if !ctx.now().Before(p.deadline) {
+			return commandApprovalEvaluation{
+				Decision: "wait_timeout",
+				Reason:   "approval wait timed out before a decision was recorded",
+			}, nil
+		}
+		// #823 F-004: a context or session-generation change ends the wait
+		// with a distinct terminal status. Without this, projection.ProjectCommandApprovalState
+		// silently filters out every event from the OLD generation once the
+		// current session state moves to a new one, so `ok` would just go
+		// false and the loop would poll on, uninformatively, toward a
+		// generic timeout that masks what actually happened.
+		if sessionIdentityKnown {
+			curKey, curGeneration, curOK := projection.CurrentSessionIdentity(p.sessionDir)
+			if !curOK || curKey != startSessionKey || curGeneration != startGeneration {
+				return commandApprovalEvaluation{
+					Decision: "session_changed",
+					Reason:   "the session's context or generation changed while waiting for approval",
+				}, nil
+			}
+		}
+		state, ok, err := projection.ProjectCommandApprovalState(p.sessionDir, ctx.now())
+		if err != nil {
+			return commandApprovalEvaluation{}, err
+		}
+		if ok {
+			if thread, found := state.Threads[p.threadID]; found {
+				if thread.CommandHash != "" && thread.CommandHash != p.commandHash {
+					return commandApprovalEvaluation{
+						Decision: "digest_mismatch",
+						Reason:   "approval exists for a different command digest",
+						Thread:   &thread,
+					}, nil
+				}
+				// #823 F-002: bind every poll to the FULL original
+				// correlation this wait started with — requester, the
+				// trusted config-resolved approver address, and the policy
+				// identity (label/category/mode) — not just requesterAddress.
+				// A thread that matches the threadID and command digest but
+				// diverges on any of these belongs to a different
+				// request/policy and must never release this waiter, even
+				// via an explicit --thread-id reuse.
+				// Each check below compares against the ORIGINAL value this
+				// wait started with only when that original was known
+				// (non-empty); once known, ANY divergence is a mismatch —
+				// including the current field going empty. Guarding only on
+				// "both sides non-empty" would let a field that regresses to
+				// empty silently pass as a non-mismatch and fall through to
+				// evaluationForThread, which could then accept an approval
+				// that no longer carries the correlation this waiter
+				// actually started with.
+				if p.requesterAddress != "" && thread.RequesterAddress != p.requesterAddress {
+					return commandApprovalEvaluation{
+						Decision: "requester_mismatch",
+						Reason:   "approval thread belongs to a different requester",
+						Thread:   &thread,
+					}, nil
+				}
+				if p.commandApproverAddress != "" && thread.CommandApproverAddress != p.commandApproverAddress {
+					return commandApprovalEvaluation{
+						Decision: "requester_mismatch",
+						Reason:   "approval thread was requested from a different trusted approver",
+						Thread:   &thread,
+					}, nil
+				}
+				// Guarded on thread.Mode != "" for the same reason as the
+				// immediate-path check: a stale placeholder thread has no
+				// recorded policy fields and must reach evaluationForThread's
+				// "stale" diagnosis instead of being misclassified here.
+				if thread.Mode != "" && (thread.Label != p.policyLabel || thread.Category != p.policyCategory || thread.Mode != p.policyMode) {
+					return commandApprovalEvaluation{
+						Decision: "requester_mismatch",
+						Reason:   "approval thread belongs to a different policy (label/category/mode)",
+						Thread:   &thread,
+					}, nil
+				}
+				// #823 F-002: the ORIGINAL input_request_id this wait
+				// started with must still match. A retry (whether from this
+				// process or another) that somehow changed the thread's
+				// InputRequestID mid-wait means the correlation this waiter
+				// began with is no longer the one a decision could resolve —
+				// treat that as a distinct mismatch rather than silently
+				// waiting on, or accepting a decision against, a
+				// correlation that moved out from under it. This also
+				// catches the field going empty, not only changing to a
+				// different value.
+				if p.originalInputRequestID != "" && thread.InputRequestID != p.originalInputRequestID {
+					return commandApprovalEvaluation{
+						Decision: "requester_mismatch",
+						Reason:   "approval thread's input_request_id changed since this wait started",
+						Thread:   &thread,
+					}, nil
+				}
+				if evaluation := evaluationForThread(thread); evaluation.Decision != "pending" {
+					return evaluation, nil
+				}
+			}
+		}
+		pollCount++
+		if p.commandApproverNode != "" && pollCount%approverLivenessCheckEveryNPolls == 0 {
+			if !commandApproverStillReachable(p.baseDir, p.contextID, p.sessionName, p.commandApproverNode) {
+				return commandApprovalEvaluation{
+					Decision: "approver_lost",
+					Reason:   "the configured command approver is no longer discoverable",
+				}, nil
+			}
+		}
+		ctx.sleep(waitCtx, commandApprovalPollInterval)
+	}
+}
+
+// commandApproverStillReachable reuses the exact discovery seam
+// deliverCommandApprovalRequest already relies on (discoverNodesForCommandApprovalDeliveryFn,
+// overridden in tests) so mid-wait approver-loss detection exercises the
+// same node-resolution path as the original delivery, not a parallel one.
+func commandApproverStillReachable(baseDir, contextID, sessionName, commandApproverNode string) bool {
+	nodes, _, err := discoverNodesForCommandApprovalDeliveryFn(baseDir, contextID, sessionName)
+	if err != nil {
+		return false
+	}
+	resolved := discovery.ResolveNodeName(commandApproverNode, sessionName, nodes)
+	_, ok := nodes[resolved]
+	return ok
 }
 
 func sameCommandApprovalKey(thread projection.CommandApprovalThread, policy resolvedCommandApprovalPolicy) bool {
@@ -741,6 +1141,43 @@ func recordCommandExecutionCompleted(sessionDir, contextID, sessionName, threadI
 		payload.CommandText = commandText
 	}
 	return appendCommandEvent(sessionDir, contextID, sessionName, journal.CommandExecutionCompletedEventType, journal.VisibilityOperatorVisible, payload, threadID, completedAt)
+}
+
+// claimCommandExecution atomically claims the right to run an approved
+// command exactly once (#823 F-001), keyed by (thread, input_request_id,
+// command_hash). It reuses journal.Writer.AppendCurrentSessionEventIfAbsent —
+// the same cross-process idempotent-append primitive
+// recordCommandApprovalAutoFillFn already relies on for exactly-once
+// mailbox fills — so two processes racing to execute the same approved
+// thread can never both win the claim. Returns claimed=false when an
+// equivalent claim already exists (someone else already ran, or is
+// running, this exact approval).
+func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRequestID, commandHash, requester string, now time.Time) (bool, error) {
+	writer, err := journal.OpenCurrentWriter(sessionDir)
+	if err != nil {
+		writer, err = journal.OpenShadowWriter(sessionDir, contextID, sessionName, os.Getpid(), now)
+		if err != nil {
+			return false, err
+		}
+	}
+	payload := journal.CommandExecutionClaimPayload{
+		Requester:      requester,
+		ApprovalThread: threadID,
+		InputRequestID: inputRequestID,
+		CommandHash:    commandHash,
+	}
+	equivalent := func(event journal.Event) (bool, error) {
+		if event.Type != journal.CommandExecutionClaimedEventType {
+			return false, nil
+		}
+		var got journal.CommandExecutionClaimPayload
+		if err := json.Unmarshal(event.Payload, &got); err != nil {
+			return false, err
+		}
+		return got.ApprovalThread == threadID && got.InputRequestID == inputRequestID && got.CommandHash == commandHash, nil
+	}
+	_, claimed, err := writer.AppendCurrentSessionEventIfAbsent(journal.CommandExecutionClaimedEventType, journal.VisibilityOperatorVisible, payload, journal.AppendOptions{ThreadID: threadID}, now, equivalent)
+	return claimed, err
 }
 
 func appendCommandEvent(sessionDir, contextID, sessionName, eventType string, visibility journal.Visibility, payload interface{}, threadID string, now time.Time) error {

@@ -17,6 +17,11 @@ Execution flags:
   --override-approval          Continue in warn-only mode without approval
   --store-command-text         Store full command text in audit events
   --json                       Emit wrapper metadata as JSON on stderr
+  --no-wait                    In blocking mode, return the current pending/
+                                blocked result immediately instead of waiting
+                                for the approval thread to resolve
+  --wait-timeout-seconds <n>   How long blocking mode waits for a decision
+                                before giving up; default is 300 (5 minutes)
 
 Decision flags:
   --thread-id <thread>         Approval thread id to decide or reuse
@@ -29,8 +34,25 @@ Decision flags:
 Modes:
   advisory   Records request and audit metadata, then runs even without approval.
   warn-only  Records request and blocks unless --override-approval is supplied.
-  blocking   Runs only when the matching thread has a non-expired approved decision
-             from the configured reviewer for the exact command digest.
+  blocking   With a trusted, resolvable reviewer, waits (bounded by
+             --wait-timeout-seconds, default 300s) for the matching thread's
+             decision and then runs the command in the same invocation --
+             pass --no-wait to return the current pending/blocked result
+             immediately instead of waiting (status/exit-code contract is
+             the same either way; --no-wait only skips the polling).
+             Runs only when the resolved decision is a non-expired approved
+             decision from the configured reviewer for the exact command
+             digest, AND only once: an approval is single-use, so a
+             concurrent or repeated call after execution gets
+             "already_executed" instead of running again. Rejection,
+             expiry, a wait timeout, cancellation (SIGINT/SIGTERM), a
+             requester mismatch, delivery failure, mid-wait approver loss,
+             and a context/session-generation change each produce a
+             distinct --json "status" and process exit code (10-22).
+             These exit codes can numerically collide with the executed
+             command's own exit status (0-255) -- the --json "status"
+             field is the authoritative way to tell them apart, not the
+             bare exit code. See docs/command-approvals.md.
 
 Fail-open rule (command_approver_node):
   When no command_approver_node is configured by marking a real node in

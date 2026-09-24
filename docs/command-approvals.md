@@ -102,13 +102,102 @@ changed-digest approvals do not run.
 `--mode` sets one explicitly. A configured `command_approver_node` that never
 answers now halts the calling agent's work by default, where it previously
 only produced an `advisory` warning; see
-[3.1. Recovering when a blocking approval never lands](#31-recovering-when-a-blocking-approval-never-lands-753)
+[3.2. Recovering when a blocking approval never lands](#32-recovering-when-a-blocking-approval-never-lands-753)
 for how to get unstuck.
 
-### 3.1. Recovering when a blocking approval never lands (#753)
+### 3.1. Waiting for the decision synchronously (#823)
+
+With a trusted, resolvable `command_approver_node`, `blocking` mode keeps the
+`execute-bash` call open by default and polls the local approval projection
+(every 500ms) until the matching thread reaches a decision, a bounded
+deadline passes, or the process is interrupted. On approval it runs the
+command in the *same invocation* — the requester never has to inspect a
+separate decision message and reconstruct or resubmit the original command.
+
+```sh
+tmux-a2a-postman execute-bash \
+  --label nix-build \
+  --category verification \
+  --reason "verify release build" \
+  --command "nix build"
+# blocks here, polling, until the reviewer decides (or the wait times out)
+```
+
+- `--wait-timeout-seconds <n>` bounds how long the wait can run; the default
+  is 300 (5 minutes). Waiting is never indefinite.
+- `--no-wait` opts back into the SAME IMMEDIACY guarantee `execute-bash` had
+  before #823: it returns the current pending/blocked result right away,
+  never polling. It is not otherwise identical to pre-#823 behavior (#823
+  F-007): a blocked outcome's `--json` `status` and process exit code now
+  follow the same distinguishable-outcomes contract described below
+  (`rejected`/`expired`/... and exit codes 10+) instead of the old generic
+  `"blocked"` status and exit code 1. This status/exit-code change is
+  intentional and applies whether or not `--no-wait` is set — `--no-wait`
+  only controls whether the call waits, not which status/exit code a given
+  outcome reports.
+- Fail-open (#626, no `command_approver_node` configured) and fail-closed (a
+  configured but unresolvable `command_approver_node`) are unaffected by
+  waiting — those decisions are made before the wait loop is ever
+  considered, so an absent or unresolvable approver still behaves exactly as
+  in [1.1. Fail-open rule](#11-fail-open-rule-626).
+- Rejection, expiry, a wait timeout, cancellation (SIGINT/SIGTERM), a
+  requester mismatch on a reused `--thread-id`, a failed or lost delivery to
+  the approver, a context/session-generation change mid-wait, a repeated
+  claim on an already-executed approval, a changed command digest, and a
+  few other terminal outcomes each surface a distinct `--json` `status`
+  field and a distinct process exit code (10-22: rejected=10, expired=11,
+  wait_timeout=12, cancelled=13, digest_mismatch=14, wrong_reviewer=15,
+  stale=16, historical_only=17, requester_mismatch=18,
+  delivery_failed=19, approver_lost=20, session_changed=21,
+  already_executed=22), so a caller scripting against `execute-bash` can
+  distinguish "the approver said no" from "nobody answered in time" from
+  "I was interrupted" without parsing the reason string.
+- **#823 F-006 — read this before scripting against exit codes.** These
+  exit codes are NOT guaranteed distinct from an executed command's own
+  exit status: a command that itself exits 10 is numerically
+  indistinguishable, on the bare exit code alone, from a rejected approval
+  (also exit 10). The wrapper does not remap or reserve a code range the
+  target command can never produce. The authoritative way to tell the two
+  apart is the `--json` wrapper metadata's `status` field — one of the
+  decision names above (the command never ran) versus `"exited"` with
+  `exit_status` set (the command ran and exited with that status). Do not
+  rely on the bare numeric exit code alone when that distinction matters.
+- One approval is single-use (#823 F-001): once a real, thread-backed
+  blocking-mode approval executes the command, an atomic claim event
+  (`command_execution_claimed`) is journaled for that exact
+  thread/input-request/command-digest. Every other invocation racing for
+  the same approval — concurrent waiters, or a repeated call while the
+  approval is still within its TTL — observes the existing claim and
+  refuses with `already_executed` instead of running the command again.
+  This changes the pre-#823 semantics, where a still-valid approved thread
+  could authorize the command any number of times within its TTL. Fail-open
+  (`auto_approved_no_reviewer`) and non-blocking-mode executions are not
+  claimed — there is no scarce human decision to consume there.
+- The wait binds itself to its starting correlation and re-checks it on
+  every poll (#823 F-002/F-004): a retry against a still-pending thread
+  reuses the thread's existing request instead of overwriting its
+  correlation (which used to be able to strand the first waiter's approval
+  reply), a decision on a thread belonging to a different requester is
+  never accepted even when `--thread-id` and the command digest both
+  match, and a context or session-generation change ends the wait with a
+  distinct `session_changed` outcome instead of silently polling toward a
+  generic timeout.
+- Cancellation and the deadline always win over a late approval (#823
+  F-005): both are checked before the wait loop accepts any decision on
+  each iteration, so an approval recorded after SIGINT/SIGTERM or after the
+  deadline has already passed is never honored.
+- Delivery failure and mid-wait approver loss are distinct, fast outcomes
+  (#823 F-003): a request that fails to deliver to the approver returns
+  `delivery_failed` immediately rather than waiting out the full timeout on
+  a request the approver never saw, and the wait periodically re-verifies
+  the approver is still discoverable, returning `approver_lost` if it
+  disappears mid-wait.
+
+### 3.2. Recovering when a blocking approval never lands (#753)
 
 A `blocking` command that has requested approval but received no decision
-leaves a `pending` thread and refuses to run. To recover:
+by the time `--wait-timeout-seconds` elapses (or immediately, with
+`--no-wait`) leaves a `pending` thread and refuses to run. To recover:
 
 1. Inspect the pending thread without re-running the command:
 
