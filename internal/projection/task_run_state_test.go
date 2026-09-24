@@ -151,3 +151,41 @@ func TestProjectTaskRunState_DuplicateExternalTaskReportsAmbiguous(t *testing.T)
 		t.Fatalf("ambiguous task = %#v", task)
 	}
 }
+
+func TestProjectTaskRunState_SeparatesExplicitReviewAndAcceptanceConventions(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.June, 17, 12, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter: %v", err)
+	}
+	for index, item := range []struct{ id, run, body string }{
+		{"m1.md", "run-a", "start"},
+		{"m2.md", "run-a", "APPROVED:\nreview evidence"},
+		{"m3.md", "run-a", "DONE\nTask artifact: local.md\nOriginal checklist: PASS\nEvidence: focused test\nRemaining blockers: none"},
+		{"m4.md", "run-b", "DONE\nTask artifact: local.md\nOriginal checklist: PASS\nEvidence: other run\nRemaining blockers: none"},
+		{"m5.md", "run-c", "APPROVED\nmarker-only bypass"},
+		{"m6.md", "run-c", "DONE\nTask artifact: local.md\nOriginal checklist: PASS\nEvidence: marker attempt\nRemaining blockers: none"},
+		{"m7.md", "run-d", "NOT APPROVED:\nGuardian rejection"},
+		{"m8.md", "run-d", "BLOCKED\nRemaining blockers: review rejected"},
+	} {
+		content := taskRunContent("guardian", "orchestrator", item.id, map[string]string{"task_id": "TASK-123", "run_id": item.run, "thread_id": "thr-" + item.run}, item.body)
+		appendTaskRunMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, item.id, "guardian", "orchestrator", content, now.Add(time.Duration(index+1)*time.Second))
+	}
+	projected, ok, err := ProjectTaskRunState(sessionDir, "review")
+	if err != nil || !ok || len(projected.Tasks) != 4 {
+		t.Fatalf("ProjectTaskRunState = %#v ok=%v err=%v", projected, ok, err)
+	}
+	if projected.Tasks[0].RunID != "run-a" || projected.Tasks[0].ReviewState != "approved" || projected.Tasks[0].ReviewMessageID != "m2.md" || projected.Tasks[0].CompletionState != "done" || projected.Tasks[0].CompletionMessageID != "m3.md" || !projected.Tasks[0].CompletionHasTaskArtifact || !projected.Tasks[0].CompletionChecklistPassed || !projected.Tasks[0].CompletionHasEvidence || !projected.Tasks[0].CompletionNoRemainingBlockers {
+		t.Fatalf("run-a projection = %#v", projected.Tasks[0])
+	}
+	if projected.Tasks[1].RunID != "run-b" || projected.Tasks[1].ReviewState != "none" || projected.Tasks[1].CompletionState != "done" || projected.Tasks[1].CompletionMessageID != "m4.md" {
+		t.Fatalf("run-b projection bled review state: %#v", projected.Tasks[1])
+	}
+	if projected.Tasks[2].RunID != "run-c" || projected.Tasks[2].ReviewState != "none" || projected.Tasks[2].CompletionState != "done" {
+		t.Fatalf("bare APPROVED marker must not grant review: %#v", projected.Tasks[2])
+	}
+	if projected.Tasks[3].RunID != "run-d" || projected.Tasks[3].ReviewState != "rejected" || projected.Tasks[3].CompletionState != "blocked" {
+		t.Fatalf("Guardian NOT APPROVED/BLOCKED terminals = %#v", projected.Tasks[3])
+	}
+}

@@ -1,8 +1,12 @@
 package status
 
-const SchemaVersion = 5
+const SchemaVersion = 7
 
-const DeliveryStuckAfterSeconds = 180
+const (
+	DeliveryStuckAfterSeconds  = 180
+	NodeLocalFreshAfterSeconds = 30
+	NodeLocalStaleAfterSeconds = 180
+)
 
 type NodeStatus struct {
 	Name                string                      `json:"name"`
@@ -40,6 +44,7 @@ type ConventionMeterStatus struct {
 
 type ScreenProgressEvidence struct {
 	EvidenceState        string `json:"evidence_state"`
+	Reason               string `json:"reason,omitempty"`
 	LastCaptureAt        string `json:"last_capture_at,omitempty"`
 	LastScreenChangeAt   string `json:"last_screen_change_at,omitempty"`
 	StaleDurationSeconds int    `json:"stale_duration_seconds,omitempty"`
@@ -122,14 +127,18 @@ type NodeFlowStatus struct {
 }
 
 type NodeLocalStatus struct {
-	State          string                  `json:"state"`
-	Severity       string                  `json:"severity"`
-	EvidenceLevel  string                  `json:"evidence_level"`
-	EvidenceSource string                  `json:"evidence_source,omitempty"`
-	Reason         string                  `json:"reason,omitempty"`
-	PaneState      string                  `json:"pane_state,omitempty"`
-	CurrentCommand string                  `json:"current_command,omitempty"`
-	ScreenProgress *ScreenProgressEvidence `json:"screen_progress,omitempty"`
+	State            string                  `json:"state"`
+	Severity         string                  `json:"severity"`
+	EvidenceLevel    string                  `json:"evidence_level"`
+	EvidenceSource   string                  `json:"evidence_source,omitempty"`
+	Freshness        string                  `json:"freshness,omitempty"`
+	AgeSeconds       int                     `json:"age_seconds,omitempty"`
+	ObservedAt       string                  `json:"observed_at,omitempty"`
+	UnchangedSeconds int                     `json:"unchanged_seconds,omitempty"`
+	Reason           string                  `json:"reason,omitempty"`
+	PaneState        string                  `json:"pane_state,omitempty"`
+	CurrentCommand   string                  `json:"current_command,omitempty"`
+	ScreenProgress   *ScreenProgressEvidence `json:"screen_progress,omitempty"`
 }
 
 type DeliveryStatus struct {
@@ -247,6 +256,8 @@ type SessionStatus struct {
 	Delivery           *DeliveryStatus        `json:"delivery,omitempty"`
 	RuntimeDiagnostics *RuntimeDiagnostics    `json:"runtime_diagnostics,omitempty"`
 	Tasks              []TaskRunProjection    `json:"tasks,omitempty"`
+	ReviewApprovals    []ReviewApprovalStatus `json:"review_approvals,omitempty"`
+	Acceptances        []AcceptanceStatus     `json:"acceptances,omitempty"`
 	WorkspaceTree      *WorkspaceTreeStatus   `json:"workspace_tree,omitempty"`
 	CommandApproval    *CommandApprovalStatus `json:"command_approval,omitempty"`
 	Nodes              []NodeStatus           `json:"nodes"`
@@ -255,17 +266,54 @@ type SessionStatus struct {
 }
 
 type TaskRunProjection struct {
-	TaskID               string   `json:"task_id,omitempty"`
-	RunID                string   `json:"run_id,omitempty"`
-	OriginatingMessageID string   `json:"originating_message_id,omitempty"`
-	ThreadID             string   `json:"thread_id,omitempty"`
-	AssignedNode         string   `json:"assigned_node,omitempty"`
-	LatestMessageID      string   `json:"latest_message_id,omitempty"`
-	OpenInputRequestIDs  []string `json:"open_input_request_ids,omitempty"`
-	State                string   `json:"state"`
-	TerminalMessageID    string   `json:"terminal_message_id,omitempty"`
-	Ambiguous            bool     `json:"ambiguous,omitempty"`
-	AmbiguityReason      string   `json:"ambiguity_reason,omitempty"`
+	TaskID                        string   `json:"task_id,omitempty"`
+	RunID                         string   `json:"run_id,omitempty"`
+	OriginatingMessageID          string   `json:"originating_message_id,omitempty"`
+	ThreadID                      string   `json:"thread_id,omitempty"`
+	AssignedNode                  string   `json:"assigned_node,omitempty"`
+	LatestMessageID               string   `json:"latest_message_id,omitempty"`
+	OpenInputRequestIDs           []string `json:"open_input_request_ids,omitempty"`
+	State                         string   `json:"state"`
+	TerminalMessageID             string   `json:"terminal_message_id,omitempty"`
+	Ambiguous                     bool     `json:"ambiguous,omitempty"`
+	AmbiguityReason               string   `json:"ambiguity_reason,omitempty"`
+	ReviewApprovalMessageID       string   `json:"review_approval_message_id,omitempty"`
+	AcceptanceMessageID           string   `json:"acceptance_message_id,omitempty"`
+	ReviewState                   string   `json:"review_state,omitempty"`
+	ReviewMessageID               string   `json:"review_message_id,omitempty"`
+	CompletionState               string   `json:"completion_state,omitempty"`
+	CompletionMessageID           string   `json:"completion_message_id,omitempty"`
+	CompletionHasTaskArtifact     bool     `json:"completion_has_task_artifact,omitempty"`
+	CompletionChecklistPassed     bool     `json:"completion_checklist_passed,omitempty"`
+	CompletionHasEvidence         bool     `json:"completion_has_evidence,omitempty"`
+	CompletionNoRemainingBlockers bool     `json:"completion_no_remaining_blockers,omitempty"`
+}
+
+// ReviewApprovalStatus is an explicit reviewer outcome keyed by the external
+// task/run identity. It is deliberately independent from transport closure.
+type ReviewApprovalStatus struct {
+	TaskID            string `json:"task_id,omitempty"`
+	RunID             string `json:"run_id,omitempty"`
+	ThreadID          string `json:"thread_id,omitempty"`
+	State             string `json:"state"`
+	ApprovalMessageID string `json:"approval_message_id,omitempty"`
+	ReviewMessageID   string `json:"review_message_id,omitempty"`
+	Reason            string `json:"reason,omitempty"`
+}
+
+// AcceptanceStatus is a separate task-owner decision. gate_passed is true
+// only when explicit approval and explicit acceptance share one task/run key.
+type AcceptanceStatus struct {
+	TaskID                  string   `json:"task_id,omitempty"`
+	RunID                   string   `json:"run_id,omitempty"`
+	ThreadID                string   `json:"thread_id,omitempty"`
+	State                   string   `json:"state"`
+	GatePassed              bool     `json:"gate_passed"`
+	AcceptanceMessageID     string   `json:"acceptance_message_id,omitempty"`
+	TerminalValidation      string   `json:"terminal_validation"`
+	PositiveReviewRequired  bool     `json:"positive_review_required"`
+	MissingCompletionFields []string `json:"missing_completion_fields,omitempty"`
+	Reason                  string   `json:"reason,omitempty"`
 }
 
 type DaemonOwner struct {

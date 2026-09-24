@@ -61,6 +61,10 @@ func compactNodeStatusMark(node status.NodeStatus) string {
 		return compactStatusMark(node.VisibleState)
 	}
 
+	if node.NodeLocal != nil && node.NodeLocal.State == "unknown" && status.SeverityRank(node.Severity) == status.SeverityRank("ok") {
+		return "⚫"
+	}
+
 	switch node.Severity {
 	case "working":
 		return "🔵"
@@ -207,8 +211,8 @@ func buildSessionStatusSnapshot(inputs sessionStatusInputs) status.SessionStatus
 	result.Windows = buildSessionWindows(result.LayoutGroups)
 	result.WorkspaceTree = buildWorkspaceTreeStatus(inputs.cfg, inputs.sessionName)
 	result.CommandApproval = buildCommandApprovalStatus(inputs.cfg)
+	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode, inputs.now)
 	result.Compact = buildSessionCompact(result, inputs.panes)
-	applySessionStatusEnrichment(&result, inputs.delivery, inputs.blockedByNode)
 	return result
 }
 
@@ -520,13 +524,16 @@ func missingScreenProgressEvidence() *status.ScreenProgressEvidence {
 func screenProgressEvidence(paneState, lastChangeAt, lastCaptureAt, screenFingerprint string) *status.ScreenProgressEvidence {
 	progress := missingScreenProgressEvidence()
 
-	lastChangeText, lastChangeTime, hasLastChange := normalizeProgressTimestamp(lastChangeAt)
-	lastCaptureText, lastCaptureTime, hasLastCapture := normalizeProgressTimestamp(lastCaptureAt)
+	lastChangeText, lastChangeTime, hasLastChange, invalidLastChange := normalizeProgressTimestamp(lastChangeAt)
+	lastCaptureText, lastCaptureTime, hasLastCapture, invalidLastCapture := normalizeProgressTimestamp(lastCaptureAt)
 	if hasLastChange {
 		progress.LastScreenChangeAt = lastChangeText
 	}
 	if hasLastCapture {
 		progress.LastCaptureAt = lastCaptureText
+	}
+	if hasLastChange && hasLastCapture && lastCaptureTime.After(lastChangeTime) {
+		progress.StaleDurationSeconds = int(lastCaptureTime.Sub(lastChangeTime).Seconds())
 	}
 	if fingerprint := normalizeScreenFingerprint(screenFingerprint); fingerprint != "" {
 		progress.ScreenFingerprint = fingerprint
@@ -535,29 +542,39 @@ func screenProgressEvidence(paneState, lastChangeAt, lastCaptureAt, screenFinger
 	switch {
 	case paneState == "stale":
 		progress.EvidenceState = "stale"
+	case invalidLastChange || invalidLastCapture:
+		progress.EvidenceState = "missing"
+		progress.Reason = "screen progress timestamp is malformed"
 	case !hasLastCapture || progress.ScreenFingerprint == "":
 		progress.EvidenceState = "missing"
+		if !hasLastCapture {
+			progress.Reason = "screen progress capture timestamp is missing"
+		} else {
+			progress.Reason = "screen progress fingerprint is missing"
+		}
 	case hasLastChange && !lastCaptureTime.After(lastChangeTime):
 		progress.EvidenceState = "changed"
 	case hasLastChange:
 		progress.EvidenceState = "unchanged"
 	default:
 		progress.EvidenceState = "missing"
+		progress.Reason = "screen progress change timestamp is missing"
 	}
 
 	return progress
 }
 
-func normalizeProgressTimestamp(value string) (string, time.Time, bool) {
+func normalizeProgressTimestamp(value string) (string, time.Time, bool, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "", time.Time{}, false
+		return "", time.Time{}, false, false
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil || parsed.IsZero() {
-		return "", time.Time{}, false
+		return "", time.Time{}, false, true
 	}
-	return parsed.UTC().Format(time.RFC3339Nano), parsed, true
+	parsed = parsed.UTC()
+	return parsed.Format(time.RFC3339Nano), parsed, true, false
 }
 
 func normalizeScreenFingerprint(value string) string {
@@ -682,7 +699,7 @@ func buildSessionCompact(health status.SessionStatus, panes []sessionPane) strin
 	for _, windowIndex := range windowOrder {
 		var marks strings.Builder
 		for _, node := range windowNodes[windowIndex] {
-			if isShellCommand(node.CurrentCommand) {
+			if shouldSkipCompactNode(node) {
 				continue
 			}
 			marks.WriteString(compactNodeStatusMark(node))
@@ -698,6 +715,16 @@ func buildSessionCompact(health status.SessionStatus, panes []sessionPane) strin
 	}
 
 	return strings.Join(windowMarks, ":")
+}
+
+func shouldSkipCompactNode(node status.NodeStatus) bool {
+	if !isShellCommand(node.CurrentCommand) {
+		return false
+	}
+	if node.Severity != "ok" {
+		return false
+	}
+	return node.NodeLocal == nil || node.NodeLocal.State != "unknown"
 }
 
 func buildSessionLayoutGroups(nodes []status.NodeStatus, panes []sessionPane) []status.LayoutGroup {
