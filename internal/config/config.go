@@ -32,8 +32,8 @@ type Config struct {
 	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
 	EnterDelay          float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout         float64 `toml:"tmux_timeout_seconds"`
-	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
-	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
+	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter input verification (0 = disabled)
+	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries when input remains pending (0 = disabled)
 
 	// Node state thresholds.
 	NodeActiveSeconds                        float64 `toml:"node_active_seconds"`                           // 0-N seconds since pane change: active
