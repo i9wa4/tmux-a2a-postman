@@ -113,7 +113,7 @@ func TestRuntimeReconcileKeepsSamePaneIDInDifferentTabsRoutable(t *testing.T) {
 		ID:             paneID,
 		WorkspaceID:    "workspace-1",
 		TabID:          tabTwo,
-		Metadata:       map[string]string{"postman.node": "critic", multiplexer.HerdrPaneContextIDMetadataKey: "ctx-tab-2"},
+		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "critic", multiplexer.HerdrPaneContextIDMetadataKey: "ctx-tab-2"},
 		Env:            map[string]string{},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		PostmanNode:    "critic",
@@ -600,7 +600,7 @@ func TestRuntimeReconcileFinalNodesIgnoresOlderSuccessfulDiscoveryAfterNewerSucc
 		ID:             "workspace-1:pane-old-2",
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-old",
-		Metadata:       map[string]string{"postman.node": "worker-2"},
+		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker-2"},
 		Env:            map[string]string{},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		PostmanNode:    "worker-2",
@@ -1824,7 +1824,7 @@ func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 	if _, err := writeClient.WritePaneText(context.Background(), "workspace-1:pane-1", "body"); err != nil {
 		t.Fatalf("WritePaneText() error = %v", err)
 	}
-	if _, err := writeClient.SetWorkspaceMetadata(context.Background(), "workspace-1", "postman.session_owner.work", "ctx:123"); err != nil {
+	if _, err := writeClient.SetWorkspaceMetadata(context.Background(), "workspace-1", multiplexer.HerdrSessionOwnerMetadataKey, "ctx:123"); err != nil {
 		t.Fatalf("SetWorkspaceMetadata() error = %v", err)
 	}
 
@@ -1885,7 +1885,7 @@ func validRuntimeHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
 func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwner string) multiplexer.HerdrSessionSnapshot {
 	workspaceMetadata := map[string]string{}
 	if sessionOwner != "" {
-		workspaceMetadata["postman.session_owner."+sessionName] = sessionOwner
+		workspaceMetadata[multiplexer.HerdrSessionOwnerMetadataKey] = sessionOwner
 	}
 	return multiplexer.HerdrSessionSnapshot{
 		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
@@ -1902,7 +1902,7 @@ func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwn
 			ID:             paneID,
 			WorkspaceID:    workspaceID,
 			TabID:          tabID,
-			Metadata:       map[string]string{"postman.node": "worker"},
+			Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 			Env:            map[string]string{},
 			ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 			PostmanNode:    "worker",
@@ -1960,7 +1960,7 @@ func handleFakeHerdrSocketConn(conn net.Conn, methods chan<- string) {
 			"id":           "workspace-1:pane-1",
 			"workspace_id": "workspace-1",
 			"tab_id":       "workspace-1:tab-1",
-			"metadata":     map[string]string{"postman.node": "worker"},
+			"metadata":     map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 			"process_info": map[string]interface{}{"foreground_processes": []map[string]string{{"name": "codex"}}},
 		}}
 	}

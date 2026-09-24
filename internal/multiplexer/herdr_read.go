@@ -451,7 +451,7 @@ func herdrPostmanNodeName(pane HerdrPaneSnapshot) string {
 	if pane.PostmanNode != "" {
 		return pane.PostmanNode
 	}
-	for _, key := range []string{"postman.node", "POSTMAN_NODE", "TMUX_A2A_POSTMAN_NODE"} {
+	for _, key := range []string{HerdrPostmanNodeMetadataKey, "POSTMAN_NODE", "TMUX_A2A_POSTMAN_NODE"} {
 		if value := strings.TrimSpace(pane.Metadata[key]); value != "" {
 			return value
 		}
