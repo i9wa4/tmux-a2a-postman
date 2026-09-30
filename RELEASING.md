@@ -71,5 +71,5 @@ completion. A successful release has:
 After release, confirm install discovery works:
 
 ```bash
-gh skill preview i9wa4/tmux-a2a-postman postman-send-message@vX.Y.Z
+gh skill preview i9wa4/tmux-a2a-postman postman-usage@vX.Y.Z
 ```
