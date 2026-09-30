@@ -251,10 +251,10 @@ func TestConfiguredEdgesDeduplicatesStaticChainDiplomatRelations(t *testing.T) {
 			}}
 			if tc.child == "api" {
 				cfg.WorkspaceTree = cfg.WorkspaceTree[:2]
-			} else {
-				// Keep the api parent without a diplomat so only docs/root? no: docs
-				// must retain api's diplomat for its derived adjacent pair.
 			}
+			// For "docs" (and its reversed variant), keep the full three-entry
+			// WorkspaceTree unchanged: docs must retain api's diplomat for its
+			// derived adjacent pair.
 			got := ConfiguredEdges(cfg)
 			if len(got) != 1 || got[0] != tc.edge {
 				t.Fatalf("ConfiguredEdges() = %#v, want unchanged static chain %#v", got, tc.edge)
