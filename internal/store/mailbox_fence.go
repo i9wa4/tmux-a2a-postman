@@ -196,6 +196,14 @@ func validateRecipient(recipient string) error {
 // caller's duty, because this primitive creates admission state for any
 // valid path segment regardless of whether it names a real node.
 //
+// Lock order (P2-1R item 2): callers must hold the session-level mailbox
+// roots gate SHARED (WithMailboxRootsShared) before acquiring this fence.
+// Never acquire this fence while holding the roots gate exclusively, and
+// never call WithMailboxRootsShared, WithMailboxRootsExclusive, or start a
+// generation transition while already holding this fence in the same
+// process (flock is scoped to the open file description, not the
+// goroutine, so that self-deadlocks). See mailbox_roots.go.
+//
 // fn runs while the fence is held; the fence is released once fn returns,
 // regardless of its error. The AdmissionHandle passed to fn is invalidated
 // as soon as fn returns. The returned AdmissionOutcome is valid even when
@@ -322,12 +330,8 @@ func ensureAdmissionDir(sessionDir, recipient string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	root := filepath.Dir(lockDir)
-
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", fmt.Errorf("ensuring admission root dir: %w", err)
-	}
-	if err := validateRealOwnerOnlyDir(root); err != nil {
+	root, err := ensureMailboxLocksRoot(sessionDir)
+	if err != nil {
 		return "", err
 	}
 

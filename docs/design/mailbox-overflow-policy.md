@@ -127,8 +127,16 @@ already addressed by moving from one global semaphore to one per session).
   linearization point, not the order messages were created or sent. An
   operator replay (above) gets a new admission position, not its
   original one.
-- The generation quarantine acquires every affected recipient's fence, in
-  sorted recipient order, before moving the inbox root.
+- A session-level mailbox roots gate (`mailbox-locks/.roots.lock`)
+  serializes generation transitions against all mailbox activity: every
+  writer and claim path holds it shared before taking its recipient
+  fence, and a generation transition holds it exclusive from re-reading
+  the marker through moving every mailbox root and writing the new
+  marker. Quarantine never deletes or overwrites an existing snapshot
+  destination; a repeat or retried move goes to the next free
+  `<root>.<k>` destination. Lock order is roots gate, then recipient
+  fence; holding either while starting a transition or calling projection
+  sync is forbidden.
 
 ### 2.2. Proactive saturation notification
 
