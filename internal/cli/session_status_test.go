@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/status"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 func TestRunGetSessionStatus_UsesTMUXSessionWhenSessionFlagMissing(t *testing.T) {
@@ -429,6 +431,45 @@ func TestCollectLiveSessionStatus_IncludesWorkspaceTree(t *testing.T) {
 
 	if _, err := json.Marshal(health); err != nil {
 		t.Fatalf("Marshal health: %v", err)
+	}
+}
+
+func TestBuildWorkspaceTreeStatus_ExposesDerivedDiplomatAuthorization(t *testing.T) {
+	cfg := &config.Config{WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+	}}
+	got := buildWorkspaceTreeStatus(cfg, "api")
+	if got == nil || len(got.DiplomatEdges) != 1 || got.DiplomatEdges[0] != "api:worker --- root:orchestrator" {
+		t.Fatalf("workspace status diplomat edges = %#v, want derived api/root authorization", got)
+	}
+}
+
+func TestBuildSessionStatusSnapshot_RanksDerivedDiplomatNodesWithoutStaticEdges(t *testing.T) {
+	cfg := &config.Config{WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+		{SessionName: "root", DiplomatNode: "orchestrator"},
+		{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+	}}
+	ordered := orderedEdgeNodeNames(workspacetree.ConfiguredEdges(cfg), "api")
+	ranks := make(map[string]int, len(ordered))
+	for index, name := range ordered {
+		ranks[name] = index
+	}
+	got := buildSessionStatusSnapshot(sessionStatusInputs{
+		sessionName:      "api",
+		cfg:              cfg,
+		orderedEdgeNodes: ordered,
+		edgeNodeRank:     ranks,
+		nodes: map[string]discovery.NodeInfo{
+			"api:worker":        {SessionName: "api"},
+			"api:unrelated":     {SessionName: "api"},
+			"root:orchestrator": {SessionName: "root"},
+		},
+		inboxCounts:  map[string]int{},
+		paneActivity: map[string]paneActivityEvidence{},
+	})
+	if len(got.Nodes) != 1 || got.Nodes[0].Name != "worker" {
+		t.Fatalf("status nodes = %#v, want only derived api diplomat", got.Nodes)
 	}
 }
 

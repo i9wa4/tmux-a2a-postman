@@ -203,10 +203,11 @@ type WorkspaceTreeDiagnostic struct {
 }
 
 type WorkspaceTreeStatus struct {
-	Current     *WorkspaceTreeNodeStatus  `json:"current,omitempty"`
-	Parent      *WorkspaceTreeRef         `json:"parent,omitempty"`
-	Children    []WorkspaceTreeRef        `json:"children,omitempty"`
-	Diagnostics []WorkspaceTreeDiagnostic `json:"diagnostics,omitempty"`
+	Current       *WorkspaceTreeNodeStatus  `json:"current,omitempty"`
+	Parent        *WorkspaceTreeRef         `json:"parent,omitempty"`
+	Children      []WorkspaceTreeRef        `json:"children,omitempty"`
+	DiplomatEdges []string                  `json:"diplomat_edges,omitempty"`
+	Diagnostics   []WorkspaceTreeDiagnostic `json:"diagnostics,omitempty"`
 }
 
 // CommandApprovalUnresolvedApprover surfaces a configured-but-unresolvable

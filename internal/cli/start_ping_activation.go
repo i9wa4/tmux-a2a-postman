@@ -13,6 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 var errPingSessionOwned = errors.New("session owned by another daemon")
@@ -111,7 +112,7 @@ func registerWatchedSessionDirs(watcher *fswatcher.Watcher, watchedDirs map[stri
 }
 
 func activationNodeNames(cfg *config.Config) map[string]bool {
-	candidateNodes := config.GetEdgeNodeNames(cfg.Edges)
+	candidateNodes := workspacetree.EligibleNodeNames(cfg)
 	if candidateNodes == nil {
 		candidateNodes = make(map[string]bool)
 	}

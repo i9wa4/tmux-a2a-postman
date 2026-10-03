@@ -75,8 +75,21 @@ func compactNodeStatusMark(node status.NodeStatus) string {
 	}
 }
 
-func orderedEdgeNodeNames(edges []string) []string {
-	return config.OrderedEdgeNodeNames(edges)
+func orderedEdgeNodeNames(edges []string, sessionName string) []string {
+	addresses := config.OrderedEdgeNodeNames(edges)
+	names := make([]string, 0, len(addresses))
+	seen := make(map[string]bool, len(addresses))
+	for _, address := range addresses {
+		session, name, qualified := nodeaddr.Split(address)
+		if qualified && session != sessionName {
+			continue
+		}
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func collectSessionStatus(baseDir, contextID, sessionName string, cfg *config.Config) (status.SessionStatus, error) {
@@ -232,7 +245,8 @@ func buildWorkspaceTreeStatus(cfg *config.Config, sessionName string) *status.Wo
 			ID:          node.ID,
 			State:       "configured",
 		},
-		Diagnostics: diagnostics,
+		DiplomatEdges: topology.DiplomatEdges(),
+		Diagnostics:   diagnostics,
 	}
 	if parent, found, _ := topology.NearestParent(sessionName); found {
 		result.Parent = workspaceTreeRef(parent)
@@ -323,7 +337,7 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		return status.SessionStatus{}, fmt.Errorf("discovering nodes: %w", err)
 	}
 
-	orderedEdgeNodes := orderedEdgeNodeNames(cfg.Edges)
+	orderedEdgeNodes := orderedEdgeNodeNames(workspacetree.ConfiguredEdges(cfg), sessionName)
 	edgeNodeRank := make(map[string]int, len(orderedEdgeNodes))
 	edgeNodes := make(map[string]bool, len(orderedEdgeNodes))
 	for idx, nodeName := range orderedEdgeNodes {
