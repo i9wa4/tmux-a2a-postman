@@ -364,6 +364,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		}
 		deliverReason := *reason
 		if mint {
+			beforeMintAttemptHookFn(expiresAt)
 			outcome, mintErr := atomicCreateOrReplaceRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, supersedes, ctx.now())
 			switch {
 			case errors.Is(mintErr, errNoCurrentWriter):
@@ -476,8 +477,19 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 
+	// #831 F-4: on a lost first-mint race, evaluation.Thread stays nil (the
+	// evaluation was locally reset to "absent"/"pending" rather than
+	// re-projected), so without mintedWinningExpiresAt here this call's OWN
+	// local draft expiresAt -- not the actually-stored winning value -- would
+	// leak into the result metadata the loser sees. Same precedence as
+	// commandApprovalExpiryDeadline above: prefer the actually-stored
+	// winning mint, then an already-projected thread's own ExpiresAt, then
+	// this call's local draft only as a last resort.
 	resultExpiresAt := expiresAt
-	if evaluation.Thread != nil && evaluation.Thread.ExpiresAt != "" {
+	switch {
+	case mintedWinningExpiresAt != "":
+		resultExpiresAt = mintedWinningExpiresAt
+	case evaluation.Thread != nil && evaluation.Thread.ExpiresAt != "":
 		resultExpiresAt = evaluation.Thread.ExpiresAt
 	}
 	result := executeBashResult{
@@ -823,15 +835,33 @@ params:
 	return writeExecuteBashMetadata(ctx.stdout, result)
 }
 
+// resolveExecuteBashSessionName (#831 F-1 closure): the resolved session
+// name feeds BOTH requesterAddress (the mint/request path) and
+// executeBashDecisionOptions.sessionName (the --record-decision path),
+// which together make up the "principal" every policy match and decision
+// authorization is keyed on. A caller-supplied --session can no longer
+// silently override the calling pane's REAL, auto-detected tmux session:
+// a pane titled "worker" actually running in session A could otherwise
+// pass --session B and be treated as B:worker, inheriting B's pinned
+// policy, or --record-decision on B's own thread from a same-titled pane
+// in A. When a real session is detectable, --session may only ever
+// CONFIRM it (an exact match is accepted, same as before for the common
+// case); any different value is refused outright rather than honored.
+// The flag-only fallback is kept for contexts where no real session is
+// detectable at all (non-tmux/test contexts), unchanged from before.
 func resolveExecuteBashSessionName(ctx commandContext, flagValue string) (string, error) {
-	if strings.TrimSpace(flagValue) != "" {
-		return config.ValidateSessionName(strings.TrimSpace(flagValue))
-	}
-	sessionName := ctx.getTmuxSessionName()
-	if sessionName == "" {
+	actual := strings.TrimSpace(ctx.getTmuxSessionName())
+	requested := strings.TrimSpace(flagValue)
+	switch {
+	case actual != "" && requested != "" && actual != requested:
+		return "", fmt.Errorf("--session %q does not match the calling pane's actual tmux session %q; execute-bash always binds identity to the real session, never a caller-supplied override", requested, actual)
+	case actual != "":
+		return config.ValidateSessionName(actual)
+	case requested != "":
+		return config.ValidateSessionName(requested)
+	default:
 		return "", fmt.Errorf("tmux session name required: run inside tmux or pass --session")
 	}
-	return config.ValidateSessionName(sessionName)
 }
 
 func resolveExecuteBashContextID(baseDir, sessionName, flagValue string) (string, error) {
@@ -1677,6 +1707,19 @@ var errClaimExpired = errors.New("approval request has expired before the claim 
 // checks are meant to catch. Production code never overrides this; it
 // defaults to a no-op.
 var appendEventBeforeClaimHookFn = func() {}
+
+// beforeMintAttemptHookFn is a test-only seam (#831 F-2 closure): called
+// immediately before atomicCreateOrReplaceRequest, after this call has
+// already evaluated the thread as mintable (e.g. "absent") but before it
+// attempts the atomic append. It receives this call's own local draft
+// expiresAt, which a test can use to identify which of several concurrent
+// racers (each with a distinct TTL, hence a distinct draft expiresAt) is
+// currently at the gate -- forcing both racers past their own evaluation
+// before either one's append lands, then releasing them in a chosen
+// order, proving the race is a genuine concurrent first-mint, not a
+// sequential arrival. Production code never overrides this; it defaults
+// to a no-op.
+var beforeMintAttemptHookFn = func(draftExpiresAt string) {}
 
 // claimCommandExecution atomically claims the right to run an approved
 // command exactly once (#823 F-001), keyed by (thread, input_request_id,

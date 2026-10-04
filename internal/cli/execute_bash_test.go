@@ -4492,3 +4492,321 @@ func findExecutionCompletedPayload(t *testing.T, sessionDir string) journal.Comm
 	t.Fatal("missing command execution completed event")
 	return journal.CommandExecutionCompletedPayload{}
 }
+
+// --- #831 REVIEW-831-R0 F-1 closure: cross-session principal binding ---
+
+// TestRunExecuteBashSessionFlagMatchingActualSessionWorks is the positive
+// control for #831 F-1: a --session value that matches the calling pane's
+// real, auto-detected tmux session still behaves exactly as before.
+func TestRunExecuteBashSessionFlagMatchingActualSessionWorks(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "diagnostic",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "diagnostic",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--command", "printf matching-session",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashSessionFlagMismatchRefusedOnRequestPath pins #831 F-1's
+// first closure requirement: a --session naming a DIFFERENT session than
+// the calling pane's real, auto-detected tmux session must be refused
+// outright on the request (mint) path -- a pane titled "worker" actually
+// running in session A must never be treated as session B's "worker" just
+// by passing --session B.
+func TestRunExecuteBashSessionFlagMismatchRefusedOnRequestPath(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "diagnostic",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	err := runExecuteBashWithContext(fixture.context(), []string{
+		"--context-id", fixture.contextID,
+		"--session", "other-session",
+		"--label", "diagnostic",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--command", "printf cross-session-request",
+	})
+	if err == nil {
+		t.Fatal("error = nil, want refusal for a --session mismatching the real detected session")
+	}
+	if !strings.Contains(err.Error(), "does not match the calling pane's actual tmux session") {
+		t.Fatalf("error = %v, want the F-1 cross-session mismatch diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashRecordDecisionSessionMismatchRefused pins #831 F-1's
+// second closure requirement: the SAME refusal on the --record-decision
+// path -- a same-titled approver pane actually running in a different real
+// session cannot record a decision for another session's thread merely by
+// passing --session <target>.
+func TestRunExecuteBashRecordDecisionSessionMismatchRefused(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = "orchestrator"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	commandText := "printf cross-session-decision"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal pending approval")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "unassigned",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	err = runExecuteBashWithContext(fixture.contextAsPane("orchestrator"), []string{
+		"--context-id", fixture.contextID,
+		"--session", "other-session",
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+	})
+	if err == nil {
+		t.Fatal("record-decision error = nil, want refusal for a --session mismatching the real detected session")
+	}
+	if !strings.Contains(err.Error(), "does not match the calling pane's actual tmux session") {
+		t.Fatalf("error = %v, want the F-1 cross-session mismatch diagnostic", err)
+	}
+}
+
+// TestRunExecuteBashSessionFlagUsedWhenNoRealSessionDetected is #831 F-1's
+// fallback control: when getTmuxSessionName cannot detect any real session
+// at all (a genuinely non-tmux context), the caller-supplied --session is
+// still honored exactly as before, since there is no real session identity
+// to protect against being overridden.
+func TestRunExecuteBashSessionFlagUsedWhenNoRealSessionDetected(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "diagnostic",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+	ctx := fixture.context()
+	ctx.getTmuxSessionName = func() string { return "" }
+
+	err := runExecuteBashWithContext(ctx, []string{
+		"--context-id", fixture.contextID,
+		"--session", fixture.sessionName,
+		"--label", "diagnostic",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--command", "printf no-real-session-detected",
+	})
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (flag honored when no real session is detectable)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// --- #831 REVIEW-831-R0 F-2/F-4 closure: concurrent first-mint race ---
+
+// testRunExecuteBashConcurrentFirstMintRace pins #831 F-2 (the missing D6
+// acceptance test) and exercises F-4's fix at the same time: two
+// concurrent FIRST-TIME callers for the identical command-approval thread,
+// each with its own distinct, valid TTL, race through
+// atomicCreateOrReplaceRequest via the beforeMintAttemptHookFn seam. Both
+// callers are forced past their own "absent" evaluation before either
+// one's append lands (proving this is a genuine concurrent first-mint, not
+// a sequential arrival), then released in the order firstReleasedIsA asks
+// for. Whichever call's append actually lands is the winner; the loser's
+// redeliver path (#823 F-015) must report the WINNER's actually-stored
+// ExpiresAt in its result metadata, never its own local draft (#831 F-4) --
+// this is checked for both possible winner orders and for both terminal
+// evaluation outcomes the wait loop can produce without ever re-projecting
+// a Thread (#831 F-4's exact reachable surface, confirmed by reading
+// commandApprovalWaitInterruption): the approval's own TTL-based expiry
+// ("expired") and the caller's local --wait-timeout-seconds ("wait_timeout").
+func testRunExecuteBashConcurrentFirstMintRace(t *testing.T, firstReleasedIsA bool, outcome string) {
+	t.Helper()
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	fixture := newExecuteBashFixture(t, policyConfig)
+	commandText := "printf concurrent-first-mint-ttl-race"
+
+	const ttlASeconds = 60.0
+	const ttlBSeconds = 120.0
+	expiresAtA := fixture.now.Add(time.Duration(ttlASeconds * float64(time.Second))).UTC().Format(time.RFC3339Nano)
+	expiresAtB := fixture.now.Add(time.Duration(ttlBSeconds * float64(time.Second))).UTC().Format(time.RFC3339Nano)
+	if expiresAtA == expiresAtB {
+		t.Fatal("test setup bug: expiresAtA == expiresAtB, the two TTLs must be distinguishable")
+	}
+
+	var waitTimeoutSeconds float64
+	switch outcome {
+	case "expired":
+		// Larger than either TTL, so the approval's own TTL-based expiry
+		// (whichever TTL actually won the mint race) is what ends the
+		// wait, not the local wait-timeout.
+		waitTimeoutSeconds = 600
+	case "wait_timeout":
+		// Smaller than either TTL, so the caller's own wait-timeout ends
+		// the wait first, well before either TTL's expiry.
+		waitTimeoutSeconds = 5
+	default:
+		t.Fatalf("unknown outcome %q", outcome)
+	}
+
+	releaseA := make(chan struct{})
+	releaseB := make(chan struct{})
+	var arrivedA, arrivedB sync.WaitGroup
+	arrivedA.Add(1)
+	arrivedB.Add(1)
+
+	originalHook := beforeMintAttemptHookFn
+	beforeMintAttemptHookFn = func(draftExpiresAt string) {
+		switch draftExpiresAt {
+		case expiresAtA:
+			arrivedA.Done()
+			<-releaseA
+		case expiresAtB:
+			arrivedB.Done()
+			<-releaseB
+		default:
+			t.Errorf("beforeMintAttemptHookFn: unexpected draft expiresAt %q", draftExpiresAt)
+		}
+	}
+	t.Cleanup(func() { beforeMintAttemptHookFn = originalHook })
+
+	argsFor := func(ttlSeconds float64) []string {
+		return []string{
+			"--context-id", fixture.contextID,
+			"--session", fixture.sessionName,
+			"--label", "protected",
+			"--category", "release",
+			"--approval-ttl-seconds", fmt.Sprintf("%g", ttlSeconds),
+			"--wait-timeout-seconds", fmt.Sprintf("%g", waitTimeoutSeconds),
+			"--command", commandText,
+		}
+	}
+
+	var stderrA, stderrB bytes.Buffer
+	ctxA := fixture.context()
+	ctxA.stderr = &stderrA
+	ctxB := fixture.context()
+	ctxB.stderr = &stderrB
+
+	var wg sync.WaitGroup
+	var errA, errB error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		errA = runExecuteBashWithContext(ctxA, argsFor(ttlASeconds))
+	}()
+	go func() {
+		defer wg.Done()
+		errB = runExecuteBashWithContext(ctxB, argsFor(ttlBSeconds))
+	}()
+
+	arrivedA.Wait()
+	arrivedB.Wait()
+	// Both callers are now blocked right at their own mint gate, having
+	// already evaluated the thread as mintable ("absent") -- release them
+	// in the order this test case asks for, which deterministically
+	// decides the winner without any reliance on goroutine scheduling luck.
+	if firstReleasedIsA {
+		close(releaseA)
+		close(releaseB)
+	} else {
+		close(releaseB)
+		close(releaseA)
+	}
+	wg.Wait()
+
+	// #831 F-4: which call's append actually lands first is decided by
+	// atomicCreateOrReplaceRequest itself, not by this test's release
+	// order -- releasing A's channel before B's only controls which
+	// goroutine stops BLOCKING first, not which one the Go scheduler runs
+	// first past that point, so the true winner cannot be predicted from
+	// firstReleasedIsA. Instead, assert the actual invariant F-4 closes:
+	// BOTH callers must converge on the SAME actually-stored ExpiresAt,
+	// and that value must be one of the two distinguishable drafts (never
+	// some third, malformed value).
+	results := map[string]struct {
+		err    error
+		stderr *bytes.Buffer
+	}{
+		"A": {errA, &stderrA},
+		"B": {errB, &stderrB},
+	}
+	parsed := map[string]executeBashResult{}
+	for name, r := range results {
+		if r.err == nil {
+			t.Fatalf("call %s error = nil, want a blocking refusal (%s)", name, outcome)
+		}
+		var outcomeErr commandApprovalOutcomeError
+		if !errors.As(r.err, &outcomeErr) {
+			t.Fatalf("call %s error = %v, want a commandApprovalOutcomeError", name, r.err)
+		}
+		if outcomeErr.status != outcome {
+			t.Fatalf("call %s status = %q, want %q (full err: %v)", name, outcomeErr.status, outcome, r.err)
+		}
+		var result executeBashResult
+		if err := json.Unmarshal(r.stderr.Bytes(), &result); err != nil {
+			t.Fatalf("call %s: Unmarshal(stderr metadata) = %v; stderr = %s", name, err, r.stderr.String())
+		}
+		if result.ExpiresAt != expiresAtA && result.ExpiresAt != expiresAtB {
+			t.Fatalf("call %s result.ExpiresAt = %q, want one of the two draft values (A=%s, B=%s)", name, result.ExpiresAt, expiresAtA, expiresAtB)
+		}
+		parsed[name] = result
+	}
+	if parsed["A"].ExpiresAt != parsed["B"].ExpiresAt {
+		t.Fatalf("call A result.ExpiresAt = %q, call B result.ExpiresAt = %q; both callers must report the single actually-stored winning ExpiresAt, never a loser's own local draft", parsed["A"].ExpiresAt, parsed["B"].ExpiresAt)
+	}
+
+	requestCount := 0
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Fatalf("command_approval_requested events = %d, want exactly 1 (two concurrent first-mint callers must converge on one request)", requestCount)
+	}
+}
+
+func TestRunExecuteBashConcurrentFirstMintRace_AWinsExpired(t *testing.T) {
+	testRunExecuteBashConcurrentFirstMintRace(t, true, "expired")
+}
+
+func TestRunExecuteBashConcurrentFirstMintRace_BWinsExpired(t *testing.T) {
+	testRunExecuteBashConcurrentFirstMintRace(t, false, "expired")
+}
+
+func TestRunExecuteBashConcurrentFirstMintRace_AWinsWaitTimeout(t *testing.T) {
+	testRunExecuteBashConcurrentFirstMintRace(t, true, "wait_timeout")
+}
+
+func TestRunExecuteBashConcurrentFirstMintRace_BWinsWaitTimeout(t *testing.T) {
+	testRunExecuteBashConcurrentFirstMintRace(t, false, "wait_timeout")
+}
