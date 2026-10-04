@@ -21,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
 func TestParseMessageFilename(t *testing.T) {
@@ -1618,6 +1619,169 @@ func TestDeliverMessage_ForeignSession(t *testing.T) {
 	deadPath := filepath.Join(senderDir, "dead-letter", "20260201-040000-from-alice-to-bob-dl-foreign-session.md")
 	if _, err := os.Stat(deadPath); err != nil {
 		t.Errorf("message not dead-lettered with dlSuffixForeignSession: %v", err)
+	}
+}
+
+// TestDeliverMessage_ForeignSessionForgedSender proves M2-B1: a message
+// physically delivered into one session's post/ must not be able to claim an
+// explicit cross-session sender (here "other-session:evil") to inherit that
+// other, legitimately enabled session's adjacency graph. Before the M2-B1
+// fix, router.Resolve's explicit session:node syntax let senderFullName
+// resolve against other-session's own node map regardless of
+// sourceSessionName, and the routing-permission check consulted
+// other-session's permissive adjacency for the forged identity -- delivering
+// a message own-session's own adjacency would have denied outright. After
+// the fix, SenderForeign must dead-letter it before adjacency is consulted.
+func TestDeliverMessage_ForeignSessionForgedSender(t *testing.T) {
+	ownSessionDir := filepath.Join(t.TempDir(), "own-session")
+	if err := config.CreateSessionDirs(ownSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(own-session) failed: %v", err)
+	}
+	otherSessionDir := filepath.Join(t.TempDir(), "other-session")
+	if err := config.CreateSessionDirs(otherSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(other-session) failed: %v", err)
+	}
+
+	filename := "20260201-050000-from-other-session:evil-to-bob.md"
+	postPath := filepath.Join(ownSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: other-session:evil\n  to: bob\n  timestamp: 2026-02-01T05:00:00Z\n---\n\ncontent\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// other-session is a real, enabled session (not a stale/foreign one) whose
+	// own adjacency permits evil -> bob; own-session has no adjacency entry
+	// for this sender at all, so a correct implementation must deny it on
+	// sender-session-binding grounds, never reaching the adjacency check.
+	nodes := map[string]discovery.NodeInfo{
+		"own-session:bob":    {PaneID: "%1", SessionName: "own-session", SessionDir: ownSessionDir},
+		"other-session:evil": {PaneID: "%2", SessionName: "other-session", SessionDir: otherSessionDir},
+	}
+	adjacency := map[string][]string{
+		"other-session:evil": {"bob"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+	isSessionEnabled := func(s string) bool { return s == "own-session" || s == "other-session" }
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "own-session"); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	deadPath := filepath.Join(ownSessionDir, "dead-letter", "20260201-050000-from-other-session:evil-to-bob-dl-forged-sender.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not dead-lettered with dlSuffixForgedSender: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(ownSessionDir, "dead-letter", "20260201-050000-from-other-session:evil-to-bob-dl-routing-denied.md")); !os.IsNotExist(err) {
+		t.Errorf("message must not be delivered via other-session's adjacency: %v", err)
+	}
+	// Guardian C-1: explicit inbox-absence assertion, not just dead-letter
+	// presence -- a forged sender must never reach bob's inbox at all.
+	if _, err := os.Stat(filepath.Join(ownSessionDir, "inbox", "bob", "20260201-050000-from-other-session:evil-to-bob.md")); !os.IsNotExist(err) {
+		t.Errorf("forged-sender message must not be delivered to recipient inbox: %v", err)
+	}
+}
+
+// TestDeliverMessage_SameSessionExplicitSenderDelivers proves the M2-B1 fix
+// has no false positive: a sender explicitly qualified with its own,
+// physically-matching source session (e.g. "own-session:alice" on a message
+// found in own-session's post/) is not foreign and must still deliver
+// normally.
+func TestDeliverMessage_SameSessionExplicitSenderDelivers(t *testing.T) {
+	ownSessionDir := filepath.Join(t.TempDir(), "own-session")
+	if err := config.CreateSessionDirs(ownSessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs(own-session) failed: %v", err)
+	}
+
+	filename := "20260201-060000-from-own-session:alice-to-bob.md"
+	postPath := filepath.Join(ownSessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: own-session:alice\n  to: bob\n  timestamp: 2026-02-01T06:00:00Z\n---\n\ncontent\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"own-session:alice": {PaneID: "%1", SessionName: "own-session", SessionDir: ownSessionDir},
+		"own-session:bob":   {PaneID: "%2", SessionName: "own-session", SessionDir: ownSessionDir},
+	}
+	adjacency := map[string][]string{
+		"own-session:alice": {"bob"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+	isSessionEnabled := func(s string) bool { return s == "own-session" }
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "own-session"); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	inboxPath := filepath.Join(ownSessionDir, "inbox", "bob", filename)
+	if _, err := os.Stat(inboxPath); err != nil {
+		t.Fatalf("legitimate same-session explicit sender not delivered: %v", err)
+	}
+}
+
+// TestDeliverMessage_DiplomatOnlyForeignSessionForgedSender proves M2-B1
+// against a REAL, workspace-tree-derived diplomat edge, not a hand-written
+// adjacency entry: with cfg.Edges empty, a root session (diplomat
+// orchestrator) and its api child session (diplomat worker) get exactly one
+// legitimate cross-session authorization edge, "api:worker --- root:orchestrator",
+// derived by workspacetree.ConfiguredEdges/config.ParseEdges. A THIRD
+// enabled session ("intruder", neither root nor api) writes a message into
+// its OWN post/ claiming From "api:worker" to "root:orchestrator" -- the
+// exact legitimate diplomat identity and edge, just not actually sent from
+// api's own session. It must be dead-lettered as a forged sender, never
+// delivered via that real edge, and never denied via ordinary routing
+// (which would wrongly imply the edge was evaluated and failed, instead of
+// never being reached).
+func TestDeliverMessage_DiplomatOnlyForeignSessionForgedSender(t *testing.T) {
+	baseDir := t.TempDir()
+	rootDir := filepath.Join(baseDir, "root")
+	apiDir := filepath.Join(baseDir, "api")
+	intruderDir := filepath.Join(baseDir, "intruder")
+	for _, d := range []string{rootDir, apiDir, intruderDir} {
+		if err := config.CreateSessionDirs(d); err != nil {
+			t.Fatalf("CreateSessionDirs(%s) failed: %v", d, err)
+		}
+	}
+
+	cfg := &config.Config{
+		EnterDelay:  0.1,
+		TmuxTimeout: 1.0,
+		WorkspaceTree: []config.WorkspaceTreeNodeConfig{
+			{SessionName: "root", DiplomatNode: "orchestrator"},
+			{SessionName: "api", ParentSessionName: "root", DiplomatNode: "worker"},
+		},
+	}
+	adjacency, err := config.ParseEdges(workspacetree.ConfiguredEdges(cfg))
+	if err != nil {
+		t.Fatalf("ParseEdges(ConfiguredEdges): %v", err)
+	}
+
+	filename := "20260201-070000-from-api:worker-to-root:orchestrator.md"
+	postPath := filepath.Join(intruderDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: api:worker\n  to: root:orchestrator\n  timestamp: 2026-02-01T07:00:00Z\n---\n\ncontent\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"api:worker":        {PaneID: "%21", SessionName: "api", SessionDir: apiDir},
+		"root:orchestrator": {PaneID: "%22", SessionName: "root", SessionDir: rootDir},
+	}
+	isSessionEnabled := func(s string) bool { return s == "root" || s == "api" || s == "intruder" }
+
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, isSessionEnabled, nil, idle.NewIdleTracker(), "intruder"); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	deadPath := filepath.Join(intruderDir, "dead-letter", "20260201-070000-from-api:worker-to-root:orchestrator-dl-forged-sender.md")
+	if _, err := os.Stat(deadPath); err != nil {
+		t.Errorf("message not dead-lettered with dlSuffixForgedSender: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(intruderDir, "dead-letter", "20260201-070000-from-api:worker-to-root:orchestrator-dl-routing-denied.md")); !os.IsNotExist(err) {
+		t.Errorf("message must not be denied via ordinary routing; the real diplomat edge was never reached: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, "inbox", "orchestrator", filename)); !os.IsNotExist(err) {
+		t.Errorf("forged-sender message must not be delivered via the real diplomat edge: %v", err)
 	}
 }
 
