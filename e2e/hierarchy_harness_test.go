@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,11 +18,19 @@ import (
 // pattern (session dirs via config.CreateSessionDirs, a
 // map[string]discovery.NodeInfo keyed "session:node", an adjacency map,
 // delivery purely via message.DeliverMessage) to three session
-// directories instead of one (#768's first slice: happy-path three-level
-// traversal). Each level shares the SAME mouthpiece role-template name
-// ("mouthpiece"), differing only in sessionName/contextID/parent linkage
-// (#768 AC bullet 1: "one common mouthpiece-based session template with
-// no messenger/diplomat mode split").
+// directories instead of one.
+//
+// Guardian REVIEW-853 R0 correction (H-2): this is a CONSUMER-SIDE
+// three-session transport baseline, not a #768 AC1/"hierarchy" fixture.
+// There is no WorkspaceTree, Parent field, common session template, or
+// alias-resolution mechanism here -- all three sessions share ONE flat
+// hierarchyContextID and a hand-built adjacency map with no structural
+// notion of "level" or "parent" at all; "top"/"owner"/"repo" are plain
+// session-name strings this harness happens to use, not a modeled
+// hierarchy. #768's actual AC1 (one common mouthpiece-based session
+// template) and its own hierarchy/alias-resolution requirements remain
+// OPEN, not satisfied by this harness, and explicitly wait on
+// #764/#765/#766/#767 landing first.
 type hierarchyHarness struct {
 	baseDir   string
 	contextID string
@@ -156,4 +165,56 @@ func (h *hierarchyHarness) postCount(t *testing.T, session string) int {
 	t.Helper()
 	dir := filepath.Join(h.sessionDirs[session], "post")
 	return countFiles(t, dir)
+}
+
+// deadLetterCount returns the number of files in the given level's
+// dead-letter directory (Guardian REVIEW-853 H-4: postCount==0 alone
+// does not prove delivery, since DeliverMessage may dead-letter a
+// message and still return nil -- a test must also prove the
+// dead-letter directory stayed empty for a delivery it expects to
+// succeed).
+func (h *hierarchyHarness) deadLetterCount(t *testing.T, session string) int {
+	t.Helper()
+	dir := filepath.Join(h.sessionDirs[session], "dead-letter")
+	return countFiles(t, dir)
+}
+
+// inboxEnvelope reads the single file expected in the given level's
+// mouthpiece inbox and returns its raw content, failing the test if
+// there isn't exactly one file (Guardian REVIEW-853 H-1: a count alone
+// does not prove the right message, with the right from/to/body,
+// actually arrived -- callers must assert against this content).
+func (h *hierarchyHarness) inboxEnvelope(t *testing.T, session string) string {
+	t.Helper()
+	dir := filepath.Join(h.sessionDirs[session], "inbox", hierarchyMouthpiece)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("inboxEnvelope(%s): ReadDir: %v", session, err)
+	}
+	var files []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			files = append(files, e)
+		}
+	}
+	if len(files) != 1 {
+		t.Fatalf("inboxEnvelope(%s): found %d files, want exactly 1", session, len(files))
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, files[0].Name()))
+	if err != nil {
+		t.Fatalf("inboxEnvelope(%s): ReadFile: %v", session, err)
+	}
+	return string(raw)
+}
+
+// assertEnvelopeContains fails the test unless every given substring
+// (typically the exact from:/to: header values and the body text) is
+// present in the envelope content.
+func assertEnvelopeContains(t *testing.T, envelope string, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(envelope, w) {
+			t.Fatalf("envelope does not contain %q; envelope:\n%s", w, envelope)
+		}
+	}
 }
