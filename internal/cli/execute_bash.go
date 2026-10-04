@@ -366,6 +366,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		if mint {
 			beforeMintAttemptHookFn(expiresAt)
 			outcome, mintErr := atomicCreateOrReplaceRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, supersedes, ctx.now())
+			afterMintAttemptHookFn(expiresAt)
 			switch {
 			case errors.Is(mintErr, errNoCurrentWriter):
 				// #823 F-002: blocking mode with no live current session
@@ -850,18 +851,24 @@ params:
 // The flag-only fallback is kept for contexts where no real session is
 // detectable at all (non-tmux/test contexts), unchanged from before.
 func resolveExecuteBashSessionName(ctx commandContext, flagValue string) (string, error) {
+	// #831 F-1 / Guardian REVIEW-849 P1: when the real session is
+	// undetectable, this MUST fail closed, never fall back to trusting
+	// the caller-supplied --session. A caller already running inside a
+	// real tmux pane could otherwise unset $TMUX before invoking
+	// execute-bash to force this fallback and then impersonate any
+	// session via --session -- exactly the hidden bypass P1 flagged.
+	// This is a single shared resolver, so failing closed here covers
+	// the request/mint path, the --record-decision path, and any other
+	// caller of resolvedSessionName uniformly.
 	actual := strings.TrimSpace(ctx.getTmuxSessionName())
-	requested := strings.TrimSpace(flagValue)
-	switch {
-	case actual != "" && requested != "" && actual != requested:
-		return "", fmt.Errorf("--session %q does not match the calling pane's actual tmux session %q; execute-bash always binds identity to the real session, never a caller-supplied override", requested, actual)
-	case actual != "":
-		return config.ValidateSessionName(actual)
-	case requested != "":
-		return config.ValidateSessionName(requested)
-	default:
-		return "", fmt.Errorf("tmux session name required: run inside tmux or pass --session")
+	if actual == "" {
+		return "", fmt.Errorf("tmux session identity could not be verified: run inside tmux so the real session can be detected; --session is never trusted as a substitute for a verified identity")
 	}
+	requested := strings.TrimSpace(flagValue)
+	if requested != "" && requested != actual {
+		return "", fmt.Errorf("--session %q does not match the calling pane's actual tmux session %q; execute-bash always binds identity to the real session, never a caller-supplied override", requested, actual)
+	}
+	return config.ValidateSessionName(actual)
 }
 
 func resolveExecuteBashContextID(baseDir, sessionName, flagValue string) (string, error) {
@@ -1720,6 +1727,17 @@ var appendEventBeforeClaimHookFn = func() {}
 // sequential arrival. Production code never overrides this; it defaults
 // to a no-op.
 var beforeMintAttemptHookFn = func(draftExpiresAt string) {}
+
+// afterMintAttemptHookFn is a test-only seam (Guardian REVIEW-849 P2
+// closure): called immediately after atomicCreateOrReplaceRequest
+// returns, with this call's own local draft expiresAt. Pairs with
+// beforeMintAttemptHookFn to let a test force a deterministic winner: by
+// not releasing a second racer from beforeMintAttemptHookFn's gate until
+// the first racer's afterMintAttemptHookFn has fired, the test removes
+// any dependence on goroutine-scheduling luck for which racer's append
+// actually lands first. Production code never overrides this; it
+// defaults to a no-op.
+var afterMintAttemptHookFn = func(draftExpiresAt string) {}
 
 // claimCommandExecution atomically claims the right to run an approved
 // command exactly once (#823 F-001), keyed by (thread, input_request_id,

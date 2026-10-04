@@ -4593,12 +4593,13 @@ func TestRunExecuteBashRecordDecisionSessionMismatchRefused(t *testing.T) {
 	}
 }
 
-// TestRunExecuteBashSessionFlagUsedWhenNoRealSessionDetected is #831 F-1's
-// fallback control: when getTmuxSessionName cannot detect any real session
-// at all (a genuinely non-tmux context), the caller-supplied --session is
-// still honored exactly as before, since there is no real session identity
-// to protect against being overridden.
-func TestRunExecuteBashSessionFlagUsedWhenNoRealSessionDetected(t *testing.T) {
+// TestRunExecuteBashRequestRefusedWhenRealSessionUndetectable is Guardian
+// REVIEW-849 P1's closure: when getTmuxSessionName cannot detect any real
+// session at all, the request/mint path must fail CLOSED, never fall back
+// to trusting a caller-supplied --session -- a caller already inside a
+// real tmux pane could otherwise unset $TMUX before invoking execute-bash
+// to force this fallback and then impersonate any session via --session.
+func TestRunExecuteBashRequestRefusedWhenRealSessionUndetectable(t *testing.T) {
 	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
 		Requester: "worker",
 		Label:     "diagnostic",
@@ -4616,11 +4617,55 @@ func TestRunExecuteBashSessionFlagUsedWhenNoRealSessionDetected(t *testing.T) {
 		"--mode", "advisory",
 		"--command", "printf no-real-session-detected",
 	})
-	if err != nil {
-		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (flag honored when no real session is detectable)", err)
+	if err == nil {
+		t.Fatal("error = nil, want refusal when the real tmux session cannot be verified")
 	}
-	if fixture.runCount != 1 {
-		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	if !strings.Contains(err.Error(), "could not be verified") {
+		t.Fatalf("error = %v, want the P1 undetectable-identity diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashRecordDecisionRefusedWhenRealSessionUndetectable is the
+// same P1 closure for the --record-decision path: an undetectable real
+// session must refuse the decision outright too, never fall back to the
+// caller-supplied --session.
+func TestRunExecuteBashRecordDecisionRefusedWhenRealSessionUndetectable(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = "orchestrator"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	commandText := "printf undetectable-session-decision"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--mode", "blocking",
+		"--command", commandText,
+	))
+	if err == nil {
+		t.Fatal("first invocation error = nil, want blocking refusal pending approval")
+	}
+	threadID := commandApprovalThreadID(resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "unassigned",
+		Mode:      "blocking",
+		Label:     "protected",
+	}, commandDigest(commandText))
+
+	ctx := fixture.contextAsPane("orchestrator")
+	ctx.getTmuxSessionName = func() string { return "" }
+	err = runExecuteBashWithContext(ctx, []string{
+		"--context-id", fixture.contextID,
+		"--session", fixture.sessionName,
+		"--thread-id", threadID,
+		"--record-decision", "approved",
+	})
+	if err == nil {
+		t.Fatal("record-decision error = nil, want refusal when the real tmux session cannot be verified")
+	}
+	if !strings.Contains(err.Error(), "could not be verified") {
+		t.Fatalf("error = %v, want the P1 undetectable-identity diagnostic", err)
 	}
 }
 
@@ -4683,7 +4728,7 @@ func testRunExecuteBashConcurrentFirstMintRace(t *testing.T, firstReleasedIsA bo
 	arrivedA.Add(1)
 	arrivedB.Add(1)
 
-	originalHook := beforeMintAttemptHookFn
+	originalBeforeHook := beforeMintAttemptHookFn
 	beforeMintAttemptHookFn = func(draftExpiresAt string) {
 		switch draftExpiresAt {
 		case expiresAtA:
@@ -4696,7 +4741,29 @@ func testRunExecuteBashConcurrentFirstMintRace(t *testing.T, firstReleasedIsA bo
 			t.Errorf("beforeMintAttemptHookFn: unexpected draft expiresAt %q", draftExpiresAt)
 		}
 	}
-	t.Cleanup(func() { beforeMintAttemptHookFn = originalHook })
+	t.Cleanup(func() { beforeMintAttemptHookFn = originalBeforeHook })
+
+	// Guardian REVIEW-849 P2: pair with afterMintAttemptHookFn so the
+	// SECOND racer is never released until the FIRST racer's
+	// atomicCreateOrReplaceRequest call has actually returned -- this
+	// removes any dependence on goroutine-scheduling luck for which
+	// racer's append lands first; the released-first racer is
+	// deterministically the one whose append is attempted (and, absent
+	// any external interference, wins).
+	appendedA := make(chan struct{})
+	appendedB := make(chan struct{})
+	originalAfterHook := afterMintAttemptHookFn
+	afterMintAttemptHookFn = func(draftExpiresAt string) {
+		switch draftExpiresAt {
+		case expiresAtA:
+			close(appendedA)
+		case expiresAtB:
+			close(appendedB)
+		default:
+			t.Errorf("afterMintAttemptHookFn: unexpected draft expiresAt %q", draftExpiresAt)
+		}
+	}
+	t.Cleanup(func() { afterMintAttemptHookFn = originalAfterHook })
 
 	argsFor := func(ttlSeconds float64) []string {
 		return []string{
@@ -4731,27 +4798,31 @@ func testRunExecuteBashConcurrentFirstMintRace(t *testing.T, firstReleasedIsA bo
 	arrivedA.Wait()
 	arrivedB.Wait()
 	// Both callers are now blocked right at their own mint gate, having
-	// already evaluated the thread as mintable ("absent") -- release them
-	// in the order this test case asks for, which deterministically
-	// decides the winner without any reliance on goroutine scheduling luck.
+	// already evaluated the thread as mintable ("absent"). Guardian
+	// REVIEW-849 P2: release the first racer and wait for ITS append to
+	// actually complete (afterMintAttemptHookFn) before releasing the
+	// second -- this deterministically forces the first-released racer
+	// to be the one whose atomicCreateOrReplaceRequest call lands first,
+	// removing any dependence on goroutine-scheduling luck.
 	if firstReleasedIsA {
 		close(releaseA)
+		<-appendedA
 		close(releaseB)
 	} else {
 		close(releaseB)
+		<-appendedB
 		close(releaseA)
 	}
 	wg.Wait()
 
-	// #831 F-4: which call's append actually lands first is decided by
-	// atomicCreateOrReplaceRequest itself, not by this test's release
-	// order -- releasing A's channel before B's only controls which
-	// goroutine stops BLOCKING first, not which one the Go scheduler runs
-	// first past that point, so the true winner cannot be predicted from
-	// firstReleasedIsA. Instead, assert the actual invariant F-4 closes:
-	// BOTH callers must converge on the SAME actually-stored ExpiresAt,
+	// #831 F-4: both callers must converge on the SAME actually-stored
+	// ExpiresAt -- the winner determined above by forced release order --
 	// and that value must be one of the two distinguishable drafts (never
 	// some third, malformed value).
+	winningExpiresAt := expiresAtB
+	if firstReleasedIsA {
+		winningExpiresAt = expiresAtA
+	}
 	results := map[string]struct {
 		err    error
 		stderr *bytes.Buffer
@@ -4775,8 +4846,8 @@ func testRunExecuteBashConcurrentFirstMintRace(t *testing.T, firstReleasedIsA bo
 		if err := json.Unmarshal(r.stderr.Bytes(), &result); err != nil {
 			t.Fatalf("call %s: Unmarshal(stderr metadata) = %v; stderr = %s", name, err, r.stderr.String())
 		}
-		if result.ExpiresAt != expiresAtA && result.ExpiresAt != expiresAtB {
-			t.Fatalf("call %s result.ExpiresAt = %q, want one of the two draft values (A=%s, B=%s)", name, result.ExpiresAt, expiresAtA, expiresAtB)
+		if result.ExpiresAt != winningExpiresAt {
+			t.Fatalf("call %s result.ExpiresAt = %q, want the winning ExpiresAt %q (own draft was %s)", name, result.ExpiresAt, winningExpiresAt, map[string]string{"A": expiresAtA, "B": expiresAtB}[name])
 		}
 		parsed[name] = result
 	}
