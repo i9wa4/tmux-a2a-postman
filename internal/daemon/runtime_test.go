@@ -2388,6 +2388,107 @@ func TestHandleWatcherEvent_DaemonSubmitSendDispatchesPostWithoutPostWatcherEven
 	waitForPostEventIdle(t, rt, filepath.Join(sessionDir, "post", filename), 10*time.Second)
 }
 
+// TestHandleWatcherEvent_DaemonSubmitSendForeignSessionForgedSenderDeadLettered
+// proves M2-B1's daemon-submit equivalence: a message submitted through
+// review-session's own daemon-submit send lane, claiming an explicit
+// cross-session sender ("other-session:evil") that is itself a real,
+// enabled session with permissive adjacency for that forged identity, must
+// be dead-lettered on sender-session-binding grounds -- not delivered -- via
+// the exact same watcher-driven DeliverMessage call this test's sibling
+// (DispatchesPostWithoutPostWatcherEvent, above) proves daemon-submit shares
+// with direct post/ delivery.
+func TestHandleWatcherEvent_DaemonSubmitSendForeignSessionForgedSenderDeadLettered(t *testing.T) {
+	tmpDir := t.TempDir()
+	installRuntimeTestTmux(t, tmpDir)
+
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-forged"
+	sessionName := "review-session"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	manager := journal.NewManager(contextID, os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, sessionName, time.Now()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Edges = []string{"orchestrator --- messenger"}
+	cfg.NotificationTemplate = "new message from {from_node}"
+	cfg.TmuxTimeout = 0.01
+	adjacency, err := config.ParseEdges(cfg.Edges)
+	if err != nil {
+		t.Fatalf("ParseEdges: %v", err)
+	}
+	// The forged identity's own session grants it permissive adjacency to
+	// the recipient; review-session's own edges above never mention it.
+	adjacency["other-session:evil"] = []string{"messenger"}
+
+	daemonState := NewDaemonState(0, contextID)
+	daemonState.enabledSessionsMu.Lock()
+	daemonState.enabledSessions[sessionName] = true
+	daemonState.enabledSessions["other-session"] = true
+	daemonState.enabledSessionsMu.Unlock()
+
+	rt := &daemonRuntime{
+		baseDir:          baseDir,
+		sessionDir:       sessionDir,
+		contextID:        contextID,
+		selfSession:      sessionName,
+		cfg:              cfg,
+		adjacency:        adjacency,
+		nodes:            map[string]discovery.NodeInfo{},
+		knownNodes:       make(map[string]bool),
+		events:           make(chan tui.DaemonEvent, 8),
+		daemonState:      daemonState,
+		idleTracker:      idle.NewIdleTracker(),
+		watchedDirs:      make(map[string]bool),
+		claimedPanes:     make(map[string]bool),
+		prevSessionNodes: make(map[string][]string),
+		activePostEvents: make(map[string]bool),
+	}
+	rt.nodes[sessionName+":messenger"] = discovery.NodeInfo{SessionName: sessionName, SessionDir: sessionDir, PaneID: "%2"}
+	rt.nodes["other-session:evil"] = discovery.NodeInfo{SessionName: "other-session", SessionDir: filepath.Join(baseDir, contextID, "other-session"), PaneID: "%9"}
+
+	filename := "20260502-004700-r2222-from-other-session:evil-to-messenger.md"
+	content := "---\nparams:\n  contextId: ctx-submit-forged\n  from: other-session:evil\n  to: messenger\n  timestamp: 2026-05-02T00:47:00+09:00\n---\n\nhello\n"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-send-forged",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Content:   content,
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+
+	rt.handleWatcherEvent(fswatcher.Event{Name: requestPath, Op: fswatcher.Create})
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+
+	deadPath := filepath.Join(sessionDir, "dead-letter", "20260502-004700-r2222-from-other-session:evil-to-messenger-dl-forged-sender.md")
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(deadPath); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("Stat(deadPath): %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for forged-sender dead-letter at %s", deadPath)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "messenger", filename)); !os.IsNotExist(err) {
+		t.Fatalf("forged-sender message must not be delivered to inbox: %v", err)
+	}
+	waitForPostEventIdle(t, rt, filepath.Join(sessionDir, "post", filename), 10*time.Second)
+}
+
 func TestDispatchPendingDaemonSubmitRequestsProcessesMissedPopRequest(t *testing.T) {
 	tmpDir := t.TempDir()
 

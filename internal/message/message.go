@@ -872,6 +872,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	senderResolution := resolveRuntimeNode(info.From, sourceSessionName, knownNodes)
 	policyInput.SenderResolved = true
 	policyInput.SenderResolution = senderResolution
+	policyInput.SenderForeign = senderResolution.Found && senderResolution.SessionName != sourceSessionName
 	senderFullName := senderResolution.Address
 	if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)

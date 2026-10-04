@@ -36,6 +36,7 @@ type deliveryPolicyInput struct {
 
 	SenderResolved   bool
 	SenderResolution router.Resolution
+	SenderForeign    bool
 
 	RoutingChecked bool
 	RoutingAllowed bool
@@ -119,6 +120,16 @@ func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
 		}
 	}
 
+	// A resolved sender whose session differs from the physical source
+	// session (the directory the message file was actually found in) is a
+	// forged claimed sender: the router's explicit session:node syntax lets
+	// any claimed From address resolve against a different, legitimately
+	// enabled session's adjacency graph, bypassing the source session's own
+	// edges. Reject it before routing/adjacency ever consults senderFullName.
+	if input.SenderResolved && input.SenderResolution.Found && input.Info.From != "daemon" && input.SenderForeign {
+		return forgedSenderDecision()
+	}
+
 	if input.RoutingChecked && input.Info.From != "daemon" && !input.RoutingAllowed {
 		return deliveryDecision{
 			Action:             deliveryActionDeadLetter,
@@ -187,7 +198,7 @@ func (input deliveryPolicyInput) evidencePresenceGateEligible() bool {
 	if !input.RecipientResolved || !input.RecipientResolution.Found || input.RecipientForeign {
 		return false
 	}
-	if !input.SenderResolved || !input.SenderResolution.Found {
+	if !input.SenderResolved || !input.SenderResolution.Found || input.SenderForeign {
 		return false
 	}
 	if !input.RoutingChecked || !input.RoutingAllowed {

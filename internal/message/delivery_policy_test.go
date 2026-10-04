@@ -243,6 +243,29 @@ func TestPlanDeliveryPolicy(t *testing.T) {
 			},
 		},
 		{
+			name: "sender foreign session",
+			in: deliveryPolicyInput{
+				Info:                baseInfo,
+				SourceSessionName:   "test",
+				RecipientResolved:   true,
+				RecipientResolution: foundRecipient,
+				SenderResolved:      true,
+				SenderResolution: router.Resolution{
+					Address:         "other:orchestrator",
+					SessionName:     "other",
+					NodeName:        "orchestrator",
+					ExplicitSession: true,
+					Found:           true,
+				},
+				SenderForeign: true,
+			},
+			want: deliveryDecision{
+				Action:           deliveryActionDeadLetter,
+				DeadLetterSuffix: dlSuffixForgedSender,
+				EventReason:      "forged sender",
+			},
+		},
+		{
 			name: "route denial",
 			in: deliveryPolicyInput{
 				Info:                baseInfo,
