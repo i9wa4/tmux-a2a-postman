@@ -80,7 +80,8 @@ type Config struct {
 	// Global settings
 	Edges                          []string                        `toml:"edges"`
 	ReplyCommand                   string                          `toml:"reply_command"`
-	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING; deprecated alias of InterfaceNode (#764)
+	InterfaceNode                  string                          `toml:"interface_node"`           // #764: canonical mouthpiece designation; ui_node is a one-cycle-deprecated legacy alias
 	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
 	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
 	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
@@ -103,6 +104,7 @@ type Config struct {
 
 	directTemplateRootTrust map[string]bool
 	uiNodeSet               bool
+	interfaceNodeSet        bool
 	verdictGraceSecondsSet  bool
 	verdictDebtCapSet       bool
 }
@@ -420,6 +422,45 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 	return cfg.uiNodeSet
 }
 
+// HasExplicitInterfaceNodeSetting reports whether interface_node (#764's
+// canonical mouthpiece designation) was explicitly set in TOML, as opposed
+// to being derived from the legacy ui_node alias.
+func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.interfaceNodeSet
+}
+
+// resolveInterfaceNodeDesignation reconciles the legacy ui_node TOML key
+// with the new canonical interface_node key (#764 scope item 1), following
+// Diplomat's proposed migration/compat path (#764 scope item 6):
+//   - interface_node set, ui_node unset: derive ui_node from interface_node.
+//   - ui_node set, interface_node unset: derive interface_node from
+//     ui_node, and emit a non-silent one-cycle deprecation diagnostic.
+//   - both set, same value: valid, no diagnostic.
+//   - both set, different values: emit a non-silent conflict diagnostic;
+//     neither value is silently preferred over the other.
+//
+// This covers the TOML [postman] section only; markdown-frontmatter and
+// mermaid-sourced ui_node overrides are not yet reconciled here (left for
+// a follow-up #764 slice).
+func resolveInterfaceNodeDesignation(cfg *Config, path string) {
+	switch {
+	case cfg.interfaceNodeSet && cfg.uiNodeSet:
+		if cfg.InterfaceNode != cfg.UINode {
+			log.Printf("WARNING: %s: conflicting designation settings: interface_node=%q vs legacy ui_node=%q; set them to the same value or remove ui_node (#764)", path, cfg.InterfaceNode, cfg.UINode)
+		}
+	case cfg.interfaceNodeSet && !cfg.uiNodeSet:
+		cfg.UINode = cfg.InterfaceNode
+		cfg.uiNodeSet = true
+	case !cfg.interfaceNodeSet && cfg.uiNodeSet:
+		log.Printf("WARNING: %s: deprecated config key \"ui_node\"; use \"interface_node\" instead (#764, one-release-cycle deprecation window)", path)
+		cfg.InterfaceNode = cfg.UINode
+		cfg.interfaceNodeSet = true
+	}
+}
+
 func (cfg *Config) EffectiveVerdictGraceSeconds(fallback int) int {
 	if cfg == nil {
 		return fallback
@@ -684,6 +725,10 @@ func mergeConfig(base, override *Config) {
 		base.UINode = override.UINode
 		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
 	}
+	if override.InterfaceNode != "" || override.interfaceNodeSet {
+		base.InterfaceNode = override.InterfaceNode
+		base.interfaceNodeSet = base.interfaceNodeSet || override.interfaceNodeSet
+	}
 	if override.CommandApproverNode != "" {
 		base.CommandApproverNode = override.CommandApproverNode
 	}
@@ -888,6 +933,8 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			cfg.interfaceNodeSet = tomlHasField(md, "postman", "interface_node")
+			resolveInterfaceNodeDesignation(cfg, configPath)
 			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
 			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)

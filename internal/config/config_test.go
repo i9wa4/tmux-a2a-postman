@@ -907,6 +907,98 @@ func TestLoadConfig_ExplicitConfig_MarksUINodeAsExplicit(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_InterfaceNodeUINodeReconciliation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+
+	tests := []struct {
+		name              string
+		extraLines        string
+		wantUINode        string
+		wantInterfaceNode string
+		wantUISet         bool
+		wantInterfaceSet  bool
+	}{
+		{
+			name:              "interface_node only derives ui_node",
+			extraLines:        `interface_node = "worker"`,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			name:              "legacy ui_node only derives interface_node",
+			extraLines:        `ui_node = "worker"`,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			name:              "both set, same value, no derivation needed",
+			extraLines:        "ui_node = \"worker\"\ninterface_node = \"worker\"",
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			name:              "both set, conflicting values are preserved as-is",
+			extraLines:        "ui_node = \"worker\"\ninterface_node = \"orchestrator\"",
+			wantUINode:        "worker",
+			wantInterfaceNode: "orchestrator",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			// Neither key is set in the user TOML, so both values are
+			// inherited unchanged from the embedded default base (which
+			// itself sets ui_node = interface_node = "messenger"); this
+			// case is about the explicit-vs-inherited flags, not the
+			// resolved value.
+			name:              "neither set",
+			extraLines:        "",
+			wantUINode:        "messenger",
+			wantInterfaceNode: "messenger",
+			wantUISet:         false,
+			wantInterfaceSet:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(tmpDir, tc.name+".toml")
+			content := "[postman]\n"
+			if tc.extraLines != "" {
+				content += tc.extraLines + "\n"
+			}
+			content += "edges = [\"worker --- orchestrator\"]\n\n[worker]\n[orchestrator]\n"
+			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.UINode != tc.wantUINode {
+				t.Fatalf("UINode = %q, want %q", cfg.UINode, tc.wantUINode)
+			}
+			if cfg.InterfaceNode != tc.wantInterfaceNode {
+				t.Fatalf("InterfaceNode = %q, want %q", cfg.InterfaceNode, tc.wantInterfaceNode)
+			}
+			if got := cfg.HasExplicitUINodeSetting(); got != tc.wantUISet {
+				t.Fatalf("HasExplicitUINodeSetting() = %v, want %v", got, tc.wantUISet)
+			}
+			if got := cfg.HasExplicitInterfaceNodeSetting(); got != tc.wantInterfaceSet {
+				t.Fatalf("HasExplicitInterfaceNodeSetting() = %v, want %v", got, tc.wantInterfaceSet)
+			}
+		})
+	}
+}
+
 func TestLoadConfig_Partial(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
