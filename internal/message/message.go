@@ -444,12 +444,76 @@ func isTrustedCommandApprovalDecision(requesterSessionDir, requesterSessionName,
 		thread.RequesterAddress == nodeaddr.Full(to, requesterSessionName)
 }
 
-func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) error {
-	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
-		return err
+// moveToDeadLetterWithProjection re-validates and performs a stale post/
+// entry's dead-letter move atomically under the SOURCE session's roots gate
+// (P2-2b), matching moveToDeadLetterForDecision's gating: a dead-letter move
+// touches only sessionDir's own post/ and dead-letter/ directories, so
+// gating any other session here would be pointless and risks foreign lock
+// state.
+//
+// Staleness is re-checked, the payload is re-read, and the dead-letter
+// directory is created, all INSIDE the same gated critical section as the
+// rename (Guardian F1/F2): an exclusive generation transition (quarantine)
+// can replace post/ between DrainStalePost's earlier, ungated directory
+// listing/mtime check and this call, so a fresh same-name file must never
+// be judged stale, read, moved, or have its directory recreated using a
+// decision made before the gate was held. A false "moved" return with a nil
+// error means the entry no longer exists or is no longer stale at gate time
+// -- a legitimate skip, not a failure. DrainStalePost (#840 part 2 P2-2b) is
+// this function's only caller.
+func moveToDeadLetterWithProjection(sessionDir, sessionName, postDir, deadLetterDir, entryName string, ttl time.Duration) (moved bool, err error) {
+	srcPath := filepath.Join(postDir, entryName)
+	var (
+		content  string
+		from, to string
+		dstPath  string
+	)
+	gateErr := withSessionRootsGates(sessionDir, sessionDir, func() error {
+		fi, statErr := os.Stat(srcPath)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				// Already gone (drained by a concurrent caller, quarantined
+				// away, or never existed) -- a legitimate skip, not a
+				// failure.
+				return nil
+			}
+			// Any other stat failure (permission, I/O, etc.) is a real
+			// error the caller must log, not a silent skip.
+			return statErr
+		}
+		if time.Since(fi.ModTime()) <= ttl {
+			// A fresh same-name file replaced the one seen stale before the
+			// gate was acquired; it must never be drained.
+			return nil
+		}
+		raw, readErr := os.ReadFile(srcPath)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				return nil
+			}
+			return readErr
+		}
+		content = string(raw)
+		if info, parseErr := ParseMessageFilename(entryName); parseErr == nil && info != nil {
+			from, to = info.From, info.To
+		}
+		if mkErr := os.MkdirAll(deadLetterDir, 0o700); mkErr != nil {
+			return mkErr
+		}
+		dstPath = deadLetterDst(sessionDir, entryName, DlSuffixTTLExpired)
+		if mvErr := moveToDeadLetter(srcPath, dstPath); mvErr != nil {
+			return mvErr
+		}
+		moved = true
+		return nil
+	})
+	if gateErr != nil {
+		return false, gateErr
 	}
-	finishDeadLetterRecord(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content)
-	return nil
+	if moved {
+		finishDeadLetterRecord(sessionDir, sessionName, srcPath, dstPath, entryName, from, to, content)
+	}
+	return moved, nil
 }
 
 // finishDeadLetterRecord records the journal/projection/msgtrace side effects
@@ -524,9 +588,10 @@ func sortedDistinctSessionDirs(a, b string) []string {
 // and recipient session directories, in sortedDistinctSessionDirs order
 // (once, if they are the same directory), then runs fn. It is DeliverMessage
 // and its dead-letter/notification bypass-writer helpers' entry point for
-// their own mutation paths in this slice (P2-2a); it does not cover every
-// writer in this package -- DrainStalePost's dead-letter move is a known,
-// separately-owned gap (see its own doc comment). It must never be called
+// their own mutation paths (P2-2a), and DrainStalePost's dead-letter move
+// also goes through it via moveToDeadLetterWithProjection (P2-2b); it does
+// not claim to cover every writer in this package beyond these. It must
+// never be called
 // while any session roots gate or admission fence is already held by the
 // caller: nesting here is between two DIFFERENT sessions' gates only, never
 // a second acquisition of a gate/fence the caller itself already holds.
@@ -1589,11 +1654,8 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		return 0
 	}
 	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
-	if mkErr := os.MkdirAll(deadLetterDir, 0o700); mkErr != nil {
-		log.Printf("postman: WARNING: failed to create dead-letter dir for TTL drain: %v\n", mkErr)
-		return 0
-	}
 	ttl := time.Duration(ttlSeconds * float64(time.Second))
+	sessionName := filepath.Base(sessionDir)
 	count := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
@@ -1603,24 +1665,24 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		if err != nil {
 			continue
 		}
-		if time.Since(fi.ModTime()) > ttl {
-			src := filepath.Join(postDir, entry.Name())
-			dst := deadLetterDst(sessionDir, entry.Name(), DlSuffixTTLExpired)
-			info, _ := ParseMessageFilename(entry.Name())
-			content, readErr := os.ReadFile(src)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				log.Printf("postman: WARNING: failed to read stale post payload %s: %v\n", src, readErr)
-			}
-			from := ""
-			to := ""
-			if info != nil {
-				from = info.From
-				to = info.To
-			}
-			if err := moveToDeadLetterWithProjection(sessionDir, filepath.Base(sessionDir), src, dst, entry.Name(), from, to, string(content)); err == nil {
-				log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
-				count++
-			}
+		// This is a cheap, ungated pre-filter only, to avoid acquiring the
+		// roots gate for entries that are obviously not stale at listing
+		// time. The authoritative staleness decision -- and the payload
+		// read and move themselves -- happen inside
+		// moveToDeadLetterWithProjection's gated critical section (F1), so
+		// a false positive here (an entry replaced between this check and
+		// the gate) can never cause an incorrect drain.
+		if time.Since(fi.ModTime()) <= ttl {
+			continue
+		}
+		moved, mvErr := moveToDeadLetterWithProjection(sessionDir, sessionName, postDir, deadLetterDir, entry.Name(), ttl)
+		if mvErr != nil {
+			log.Printf("postman: WARNING: failed to drain stale post/ message %s: %v\n", entry.Name(), mvErr)
+			continue
+		}
+		if moved {
+			log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
+			count++
 		}
 	}
 	return count

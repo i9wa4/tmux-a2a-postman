@@ -3363,6 +3363,174 @@ func TestMoveToDeadLetterForDecision_BlocksOnExclusiveSourceRootsGate(t *testing
 	}
 }
 
+// TestDrainStalePost_BlocksOnExclusiveSourceRootsGate proves P2-2b:
+// DrainStalePost's dead-letter move (via moveToDeadLetterWithProjection) is
+// now gated like moveToDeadLetterForDecision. An external holder takes the
+// session's roots gate exclusive; DrainStalePost's own move must not enter
+// its gated section until the holder releases.
+func TestDrainStalePost_BlocksOnExclusiveSourceRootsGate(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "stale body\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	stale := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(postPath, stale, stale); err != nil {
+		t.Fatalf("Chtimes(postPath): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan int, 1)
+	go func() {
+		contenderDone <- DrainStalePost(sessionDir, 1)
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	drained := <-contenderDone
+	probe.assertEnteredAfterRelease(t)
+
+	if drained != 1 {
+		t.Fatalf("DrainStalePost() = %d, want 1", drained)
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(postPath) = %v, want IsNotExist (moved out of post/)", err)
+	}
+}
+
+// TestDrainStalePost_SkipsFreshSameNameReplacementDuringExclusiveHold proves
+// Guardian F1: an exclusive generation transition (quarantine) can replace a
+// stale post/ entry with a brand-new, NOT-stale file under the same name
+// while DrainStalePost is waiting on the roots gate. DrainStalePost's
+// staleness decision must be re-made INSIDE the gated critical section, not
+// carried over from its earlier ungated listing -- so the fresh replacement
+// must never be drained, and must remain in post/ untouched.
+func TestDrainStalePost_SkipsFreshSameNameReplacementDuringExclusiveHold(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	staleContent := "stale body\n"
+	if err := os.WriteFile(postPath, []byte(staleContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	// A long TTL (1h) with mtime set 2h in the past leaves a wide margin on
+	// both sides: the "stale" file is unambiguously stale, and the later
+	// "fresh" replacement (mtime ~now) is unambiguously not, regardless of
+	// scheduler delay between Chtimes calls and the gated re-stat (Guardian
+	// C-2: a 1s TTL with a bare time.Now() fresh mtime was flaky under
+	// scheduling delay).
+	const ttlSeconds = 3600
+	stale := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(postPath, stale, stale); err != nil {
+		t.Fatalf("Chtimes(postPath): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	freshContent := "fresh body, not stale\n"
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			// Simulate a quarantine-style generation transition replacing
+			// the same filename with a brand-new, NOT-stale message while a
+			// contender waits on this same exclusive gate.
+			if err := os.WriteFile(postPath, []byte(freshContent), 0o644); err != nil {
+				return err
+			}
+			return os.Chtimes(postPath, time.Now(), time.Now())
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan int, 1)
+	go func() {
+		contenderDone <- DrainStalePost(sessionDir, ttlSeconds)
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	drained := <-contenderDone
+	probe.assertEnteredAfterRelease(t)
+
+	if drained != 0 {
+		t.Fatalf("DrainStalePost() = %d, want 0 (fresh replacement must not be drained)", drained)
+	}
+	got, err := os.ReadFile(postPath)
+	if err != nil {
+		t.Fatalf("ReadFile(postPath) after drain: %v", err)
+	}
+	if string(got) != freshContent {
+		t.Fatalf("post file content = %q, want unchanged fresh content %q", got, freshContent)
+	}
+}
+
+// TestDrainStalePost_CreatesDeadLetterDirUnderGateWhenAbsent proves Guardian
+// F2: the dead-letter directory is created (via moveToDeadLetterWithProjection,
+// inside the gated critical section) on demand, so a drain still succeeds
+// when dead-letter/ does not yet exist.
+func TestDrainStalePost_CreatesDeadLetterDirUnderGateWhenAbsent(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	if err := os.RemoveAll(deadLetterDir); err != nil {
+		t.Fatalf("RemoveAll(dead-letter): %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("stale body\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	stale := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(postPath, stale, stale); err != nil {
+		t.Fatalf("Chtimes(postPath): %v", err)
+	}
+
+	drained := DrainStalePost(sessionDir, 1)
+	if drained != 1 {
+		t.Fatalf("DrainStalePost() = %d, want 1", drained)
+	}
+	if fi, err := os.Stat(deadLetterDir); err != nil || !fi.IsDir() {
+		t.Fatalf("dead-letter dir not created: stat err=%v", err)
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(postPath) = %v, want IsNotExist", err)
+	}
+}
+
 // TestSendDeadLetterNotification_BlocksOnExclusiveRootsGate proves B-1/B-5
 // for the sendDeadLetterNotification bypass writer: an external holder
 // takes the (single) session's roots gate exclusive; the writer's own call
