@@ -1,20 +1,17 @@
 # #767: external-channel contract for decoupling human interaction from tmux
 
-Documentation-only design artifact. No production code in this PR. This document
-reuses the Guardian-APPROVED content from the prior #767 reassessment artifact
-(`~/.local/state/mkmd/i9wa4-tmux-a2a-postman/2026-10-04-main/plans/issue767-channel-reassessment-9mTxQw.md`,
-approved 2026-10-04 14:14 JST) rather than restating it from scratch.
-
-## 1. Scope
-
+Documentation-only design artifact. No production code in this PR.
 Defines the channel-independent contract #767 requires before any
 external (e.g. voice-first) channel can connect to the top-level
-mouthpiece node that #764 (mouthpiece unification, currently OPEN, not
-yet implemented) will introduce. This is a protocol-shape sketch, not a
+mouthpiece node that #764 (mouthpiece unification, OPEN, not yet
+implemented) will introduce. This is a protocol-shape sketch, not a
 specification ready to implement, and it depends on #764/#765/#766
-landing first (see "Remaining dependencies" below).
+landing first (see "Remaining dependencies" below). Content is ported
+near-verbatim from a prior Guardian-approved #767 reassessment research
+note (same repository's internal review history), not restated from
+scratch or re-derived.
 
-## 2. Historical context (corrected, not the original false claim)
+## 1. Historical context (corrected, not the original false claim)
 
 An earlier draft of this reassessment incorrectly claimed the #298-family
 phony-node/binding/sidecar design "does not exist anywhere in the current
@@ -51,17 +48,37 @@ reuse.
 
 **What remains in the current tree today**, independently of the above:
 only node-name regex validation and VT/control-sequence stripping
-(`StripVT`, `internal/notification/notification.go`,
-`internal/cli/send_message.go`). `IsPhony`, `BindingRegistry`,
+(`StripVT`, `internal/notification/notification.go:360-363,438-451`,
+`internal/cli/send_message.go:419`). `IsPhony`, `BindingRegistry`,
 `DeliverToPhonyNode`, a `--from` flag, and any `supervisor` package are
 **not present in the current tree**, recoverable from history as noted
 above, not something to build from first principles.
 
+## 2. Referent table
+
+The contract below involves several distinct, easily-conflated
+identifiers. This table is the single source of truth for each:
+
+| Referent                           | Created by                                              | Carried in                                                                                       | Scope                                              | Invalidated by                               |
+| ---------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------- | -------------------------------------------- |
+| Exchange ID                        | Node, on first inbound request                          | All four flows (inbound request, outbound report, pending-decision response, reconnect/catch-up) | One human-originated request's full lifecycle      | Never reused; a new exchange gets a new ID   |
+| Pending-decision token             | Node, when it emits an "acknowledged, pending" response | Pending-decision response only; maps back to exactly one exchange ID                             | One pending decision instance within one exchange  | Expiry, or a rebind (epoch bump) per A-3     |
+| Report sequence / catch-up cursor  | Node, per binding                                       | Outbound report (sequence number); reconnect/catch-up (cursor)                                   | Same (binding, epoch) pair in both uses -- see A-1 | A rebind (epoch bump) per A-3                |
+| Delivery acknowledgement           | External channel                                        | N/A (channel-to-node signal, not part of the four node-authored flows)                           | One delivery attempt                               | N/A -- a transport-layer fact, not revocable |
+| Inbound acceptance acknowledgement | Node                                                    | Implicit response to inbound request                                                             | One inbound request                                | N/A -- a work-layer fact once given          |
+| Report-action acknowledgement      | External channel / human                                | Implicit response to outbound report                                                             | One outbound report                                | N/A -- a work-layer fact once given          |
+
 ## 3. Four entities (abstract contract, channel-independent)
 
-1. **Durable exchange ID** -- reuses #765's own planned correlation-token
-   mechanism (#765 is OPEN, not yet implemented; this contract depends on
-   it, it does not itself build it). One exchange ID spans the full
+1. **Durable exchange ID** -- the exchange ID is the node's own durable
+   identifier for one request's full lifecycle (see referent table). It
+   is expected to be persisted and correlated using whatever mechanism
+
+   #765 (OPEN, not yet implemented) defines for hierarchical
+
+   request/return provenance; this contract depends on that mechanism
+   existing, it does not itself build or presume its exact shape beyond
+   "a durable, correlatable identifier." One exchange ID spans the full
    lifecycle of one human-originated request: inbound request, zero or
    more pending-decision round-trips, and the final outbound report.
 
@@ -72,94 +89,152 @@ above, not something to build from first principles.
    tmux-side role happens to be relaying it at a given hop.
 
 3. **Decision binding** -- a tuple of `{exchange_id, action scope/revision
-   digest, approval-context snapshot}`. A decision presented back into
-   the system MUST match all three fields against what was originally
-   sent out for decision; a mismatch on any field is an outright
-   rejection, never a best-effort match.
+   digest, approval-context snapshot}`. Every authorization challenge in
+   this contract (S-3's status-poll/answer-submission check, below) is
+   bound to this exact tuple: a request presenting only a valid token but
+   failing to also match the current action scope/revision digest and
+   approval-context snapshot is rejected, never accepted on token
+   validity alone. A decision presented back into the system MUST match
+   all three fields against what was originally sent out for decision; a
+   mismatch on any field is an outright rejection, never a best-effort
+   match.
 
-4. **Delivery acknowledgement vs. task acknowledgement** -- these are two
-   distinct, never-conflated acknowledgements:
+4. **Three distinct acknowledgements, never conflated** (see referent
+   table):
    - *Delivery acknowledgement*: the external channel confirms it
-     received/delivered a message (a transport-layer fact).
-   - *Task acknowledgement*: the system confirms a request has actually
-     been accepted for processing, or a human has actually acted on a
-     report (a work-layer fact).
-   Conflating the two would let "the message was handed to the channel"
-   be mistaken for "a human saw and acted on it."
+     received/delivered a message (a transport-layer fact, not
+     node-authored).
+   - *Inbound acceptance acknowledgement*: the node confirms an inbound
+     request has actually been accepted for processing (a work-layer
+     fact, distinct from mere delivery).
+   - *Report-action acknowledgement*: a human has actually acted on an
+     outbound report (a work-layer fact, distinct from both of the
+     above -- a report being delivered does not mean a human acted on
+     it).
+   Conflating any of the three would let "the message was handed to the
+   channel" be mistaken for "the system accepted the task" or "a human
+   saw and acted on it."
 
 ## 4. Four flows
 
 ### 4.1. Inbound request (external channel to node)
 
-Carries an idempotency key scoped to the (channel, external conversation)
-pair, a channel-side timestamp (advisory only -- the node's own receipt
-time is canonical), the raw channel-native payload, enough provenance to
-address a later outbound report back to the same place, and exactly one
-resolved target node identity. Delivery is at-least-once, idempotent on
-the key.
+Carries: the exchange ID (minted here, at the start of the exchange's
+lifecycle); an idempotency key scoped to the (channel, external
+conversation) pair; a channel-side timestamp (advisory only -- the
+node's own receipt time is canonical); the raw channel-native payload;
+enough provenance to address a later outbound report back to the same
+place; and exactly one resolved target node identity. Delivery is
+at-least-once, idempotent on the key.
 
 - **S-1 (HIGH, security)**: receipt MUST authenticate the external
   principal/source AND check an ACTIVE binding to the target
   session/node at that exact moment, with revocation taking effect
   immediately on rebind or teardown. Resolving an address, or observing
-  that a session is merely enabled, is NOT source binding (the #700
-  M2-B1 lesson).
+  that a session is merely enabled, is NOT source binding -- this is the
+
+  #700 M2-B1 lesson (an address that resolves to a target is a routing
+
+  fact, not proof the claimed sender is who a currently valid binding
+  says may act as that sender).
 - **S-2 (HIGH, security)**: the raw channel-native payload MUST be
   sanitized (VT/control-sequence stripping, invalid-UTF-8 handling)
   BEFORE any pane or tmux notification is attempted, reusing the
-  already-implemented `StripVT` machinery. An external channel's payload
-  is attacker-influenced input exactly as #845's fixture PaneIDs were not
+  already-implemented `StripVT` machinery
+  (`internal/notification/notification.go:360-363,438-451`,
+  `internal/cli/send_message.go:419`). An external channel's payload is
+  attacker-influenced input exactly as #845's fixture PaneIDs were not
   meant to be real targets.
 - **S-4 (MEDIUM, security/QA)**: idempotency-key retention duration MUST
-  be at least the bounded catch-up window's own retention threshold
-  (A-2) -- a key retained for less time than the catch-up window would
-  let a legitimately-delayed redelivery be misread as new.
+  be at least `max(ordinary redelivery delay, bounded catch-up window)`
+  (catch-up window per A-2) -- a key retained for less time than either
+  the longest expected ordinary redelivery delay or the catch-up window
+  would let a legitimately-delayed redelivery, or a catch-up replay, be
+  misread as a new, non-duplicate event.
 
 ### 4.2. Outbound report (node to external channel)
 
-Carries target channel/conversation identity, a report body, and a
-report "kind" tag so the channel-specific adapter decides rendering. Not
-assumed synchronous or guaranteed; failures are classified as
-transient/redeliverable vs. terminal (reusing #309's reason taxonomy as
-precedent). Reports for the same conversation carry a monotonic
-per-binding sequence number, not wall-clock time.
+Carries: the exchange ID; target channel/conversation identity; a report
+body; and a report "kind" tag so the channel-specific adapter decides
+rendering. Not assumed synchronous or guaranteed. Reports for the same
+conversation carry a monotonic per-binding sequence number, not
+wall-clock time -- this sequence number uses the SAME stream referent as
+the reconnect/catch-up cursor (A-1); they are the same counter viewed
+from two flows, not two independent numbering schemes.
+
+Failures are classified as transient/redeliverable (e.g.
+`session_offline`, `channel_unbound`, `sidecar_unavailable`) vs. terminal
+(e.g. `routing_denied`, `redelivery_failed`, missing idempotency key),
+reusing #309's reason taxonomy as precedent. A transient reason is
+retried, bounded by normal redelivery policy; a TERMINAL reason MUST go
+to dead-letter/quarantine and MUST NOT be retried forever -- an adapter
+or node that keeps retrying a terminal-classified failure indefinitely
+violates this contract.
 
 ### 4.3. Pending-decision response
 
 The node must be able to return an intermediate "acknowledged, pending"
-response, distinct from a final answer. A pending response carries a
-correlation token; the eventual final response must reference the same
-token. Status must be independently pollable, not only push-delivered.
+response, distinct from a final answer. A pending response carries the
+exchange ID plus a separate pending-decision token (see referent table:
+these are two different identifiers -- the exchange ID identifies the
+whole request's lifecycle, the pending-decision token identifies this
+one specific pending-decision instance within it, and maps back to
+exactly one exchange ID). The eventual final response must reference the
+same pending-decision token. Status must be independently pollable, not
+only push-delivered.
 
-- **S-3 (HIGH, security)**: holding a correlation token must NOT by
+- **S-3 (HIGH, security)**: holding a pending-decision token must NOT by
   itself confer authority to act. A status-poll or answer-submission
-  request MUST additionally be authorized against the caller's own
-  binding/conversation scope, an expiry, and a supersede-on-rebind rule
-  (A-3). An answer MUST also be validated against the pending action's
-  current revision/digest, not merely its token.
+  request MUST additionally be authorized against entity 3's full
+  `{exchange_id, action scope/revision digest, approval-context
+  snapshot}` tuple -- the caller's own binding/conversation scope, an
+  expiry, and a supersede-on-rebind rule (A-3) -- never against token
+  possession alone. An answer MUST also be validated against the pending
+  action's current revision/digest, not merely its token: if the
+  underlying pending action changed between issuance and answer, a stale
+  answer matching only the token is rejected, not silently applied.
 
 ### 4.4. Reconnect and catch-up semantics
 
 - **A-1 (HIGH, architecture)**: the stream referent must be ONE of: one
   durable event stream per (binding, epoch) with cursor N indexing the
   full stream across every conversation that pair has seen; or a
-  per-conversation stream, with cursor N scoped to one conversation.
-  **This design explicitly DEFERS the choice to #764/#765**, since
-  picking one requires knowing those issues' own target-identity and
-  exchange-provenance shape first.
+  per-conversation stream, with cursor N scoped to one conversation and
+  an explicit lifecycle consequence defined for what happens to a
+  conversation's stream when its binding tears down or rebinds (a
+  per-conversation stream has no natural single point, unlike the
+  binding-wide option, where that lifecycle event is just another
+  stream entry). **This design explicitly DEFERS the choice to
+
+  #764/#765**, since picking one requires knowing those issues' own
+
+  target-identity and exchange-provenance shape first. Whichever option
+  is chosen, this design requires the INVARIANT that the outbound
+  report's sequence number (above) and this section's catch-up cursor
+  use the exact SAME referent -- they are never allowed to diverge into
+  two separately-numbered schemes.
 - Catch-up is expressed as "everything since cursor/sequence N," never
   "everything since timestamp T" (clock drift makes timestamp-based
-  catch-up unreliable).
+  catch-up unreliable). Catch-up MUST be idempotent: replaying an
+  already-seen cursor range is safe and produces no duplicate side
+  effects.
 - **A-2 (HIGH, architecture)**: bounded catch-up must concretely define
   a retention threshold; an explicit cursor-too-old-or-gap result
   distinct from a normal catch-up response; a reconciliation snapshot of
   current binding state and pending decisions issued alongside that
   result; and a safe resume cursor handed back in the snapshot.
+- Binding lifecycle changes (teardown, rebinding) MUST be visible
+  through this same catch-up stream, not a separate side channel --
+  otherwise a reconnecting adapter can miss exactly the event (a rebind)
+  that would tell it where to resume.
 - **A-3 (MEDIUM, architecture)**: a binding must carry an explicit
-  generation/epoch number, incremented on every rebind. A cursor issued
-  under a prior epoch must not be silently accepted against the current
-  epoch's stream, which is what makes S-3's supersede-on-rebind rule
-  enforceable.
+  generation/epoch number, incremented on every rebind. BOTH the
+  pending-decision token (entity 3 / S-3) AND the catch-up cursor
+  (above) are scoped to a specific (binding, epoch) pair, and a single
+  rebind's epoch bump is the ONE mechanism that invalidates both at
+  once -- never two separate invalidation paths that could drift out of
+  sync with each other. A token or cursor issued under a prior epoch
+  must not be silently accepted against the current epoch's stream.
 
 ## 5. Negative outcomes (Q-2)
 
@@ -169,15 +244,22 @@ token. Status must be independently pollable, not only push-delivered.
    never a silent no-op.
 2. **Outbound report**: delivery to an unauthorized report target must be
    refused with an explicit reason, never silently dropped or
-   redirected; the delivery-acknowledgement/task-acknowledgement
-   distinction above must be preserved here specifically.
-3. **Pending-decision response**: a DENIED decision, an EXPIRED token, a
-   SUPERSEDED decision (per A-3's epoch rule), and a lost completion push
-   are four distinct negative outcomes, not one generic failure.
-4. **Reconnect and catch-up**: a stale cursor (A-2) and a cursor from a
+   redirected; the delivery/inbound-acceptance/report-action
+   acknowledgement distinction above must be preserved here
+   specifically.
+3. **Pending-decision response**: these are three distinct DECISION
+   outcomes, not one generic failure -- a DENIED decision, an EXPIRED
+   token, and a SUPERSEDED decision (per A-3's epoch rule) each need
+   their own explicit, observable result.
+4. **Lost completion push** is a categorically SEPARATE, delivery-layer
+   failure, not a fourth decision outcome -- per the "status must be
+   independently pollable" requirement above, a lost push must be
+   recoverable by polling, distinguishing "we don't know what happened,
+   poll for the answer" from any of the three decision outcomes in (3).
+5. **Reconnect and catch-up**: a stale cursor (A-2) and a cursor from a
    prior epoch presented against the current epoch (A-3) are different
    failure modes requiring different adapter behavior. A rebind
-   occurring while a catch-up is in progress is a fifth case this design
+   occurring while a catch-up is in progress is a sixth case this design
    has not yet resolved and is explicitly left unresolved, not silently
    assumed safe.
 
@@ -189,7 +271,12 @@ token. Status must be independently pollable, not only push-delivered.
   and needs re-review against them before reuse.
 - Durable storage for the per-binding sequence counter and idempotency
   keys: #307/#309's `internal/memory` store is similarly recoverable and
-  stale, not a from-scratch design question.
+  stale, not a from-scratch design question. Separately, this repository
+  already has a durable, fsynced event-journal mechanism
+  (`internal/journal`) in active use elsewhere; no channel-specific
+  event/outbox/ack mechanism exists yet, but the existing journal
+  infrastructure is a plausible foundation to build this contract's
+  durable stream on, not a from-nothing design question either.
 - Exact wire/serialization format for all four message shapes (this
   design fixes required fields and semantics, not an encoding).
 - Depends on #764 (OPEN) for the target identity (the mouthpiece or
@@ -198,9 +285,8 @@ token. Status must be independently pollable, not only push-delivered.
   exchange provenance and return-path linkage, and the other half of
   A-1's deferred decision; #766 (OPEN) for a canonical status/decision
   vocabulary this design's pending-decision response should align with;
-  and, not covered by any of #764/#765/#766, a durable event/outbox/ack
-  mechanism, a retention policy, and a binding-identity scheme, none of
-  which exist yet in any form.
+  and a retention policy and binding-identity scheme, neither of which
+  exist yet in any form.
 
 ## 7. Stub fixture now versus real integration later
 
@@ -212,19 +298,22 @@ integration is explicitly deferred until #764, #765, and #766 land.
 
 ## 8. Acceptance checklist (this artifact's own scope)
 
-- [x] Four entities defined with exact field shapes, matching the
-      Guardian-approved research artifact.
-- [x] Four flows defined with exchange-ID continuity, S-1 through S-4 and
-      A-1 through A-3 security/architecture requirements, and ack
-      separation.
+- [x] Four entities defined, matching the Guardian-approved research
+      baseline, including the referent table distinguishing exchange ID,
+      pending-decision token, and report-sequence/catch-up cursor.
+- [x] Four flows defined with exchange-ID carriage throughout, S-1
+      through S-4 and A-1 through A-3 security/architecture
+      requirements, and the three-way acknowledgement split.
 - [x] Historical accuracy: #302-309 implemented and merged, then removed
       by `feff0ab`, not "never implemented"; only node validation and
-      `StripVT` remain in the current tree today.
-- [x] #765's correlation mechanism described as a dependency (OPEN, not
-      yet implemented), not as something already available.
+      `StripVT` remain in the current tree today (exact source
+      coordinates cited).
+- [x] #765's correlation mechanism described narrowly, as a dependency
+      (OPEN, not yet implemented) this contract's exchange ID expects to
+      use, not as an existing, specific token format.
 - [x] In/out boundary stated; stub-fixture-vs-future-integration
       distinction stated.
-- [x] Negative-outcome scenarios (Q-2) for all four flows.
-- [ ] Guardian review of this PR-committed derivative (not yet
-      requested as of this commit; the content itself was already
-      approved in its prior research-artifact form).
+- [x] Negative-outcome scenarios (Q-2) for all four flows, with the lost
+      completion push kept categorically distinct from the three
+      decision outcomes.
+- [x] No machine-local filesystem paths; provenance stated in prose.
