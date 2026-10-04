@@ -416,6 +416,137 @@ approval_ttl_seconds = 900
 	}
 }
 
+// commandApprovalTOML builds a minimal, otherwise-valid postman.toml
+// containing exactly one [[postman.command_approval]] entry, for the
+// #831 D5/D7 real-loader tests below.
+func commandApprovalTOML(entry string) string {
+	return "\n[postman]\nbase_dir = \"/tmp/postman-state\"\nedges = [\"worker --- orchestrator\"]\n\n[[postman.command_approval]]\n" + entry + "\n"
+}
+
+func writeAndLoadCommandApprovalConfig(t *testing.T, entry string) (*Config, error) {
+	t.Helper()
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	if err := os.WriteFile(configPath, []byte(commandApprovalTOML(entry)), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	return LoadConfig(configPath)
+}
+
+// TestLoadConfig_CommandApprovalWildcardLabelOnAdvisoryRefused pins #831
+// D5/D7: an advisory/warn-only command_approval entry with a wildcard/empty
+// Label is refused at config-load time (a whole-config-load failure, not a
+// per-entry skip).
+func TestLoadConfig_CommandApprovalWildcardLabelOnAdvisoryRefused(t *testing.T) {
+	_, err := writeAndLoadCommandApprovalConfig(t, `requester = "worker"
+category = "diagnostic"
+mode = "advisory"`)
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want refusal for a wildcard/empty Label on an advisory entry")
+	}
+	if !strings.Contains(err.Error(), "specific, non-wildcard label") {
+		t.Fatalf("error = %v, want the wildcard-label diagnostic", err)
+	}
+}
+
+// TestLoadConfig_CommandApprovalWildcardCategoryOnWarnOnlyRefused mirrors
+// the test above for Category on a warn-only entry.
+func TestLoadConfig_CommandApprovalWildcardCategoryOnWarnOnlyRefused(t *testing.T) {
+	_, err := writeAndLoadCommandApprovalConfig(t, `requester = "worker"
+label = "deploy"
+mode = "warn-only"`)
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want refusal for a wildcard/empty Category on a warn-only entry")
+	}
+	if !strings.Contains(err.Error(), "specific, non-wildcard category") {
+		t.Fatalf("error = %v, want the wildcard-category diagnostic", err)
+	}
+}
+
+// TestLoadConfig_CommandApprovalWildcardRequesterOnAdvisoryRefused mirrors
+// the test above for Requester (#831 D4-dependent tightening of D5).
+func TestLoadConfig_CommandApprovalWildcardRequesterOnAdvisoryRefused(t *testing.T) {
+	_, err := writeAndLoadCommandApprovalConfig(t, `label = "diagnostic-tool-x"
+category = "diagnostic"
+mode = "advisory"`)
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want refusal for a wildcard/empty Requester on an advisory entry")
+	}
+	if !strings.Contains(err.Error(), "specific, non-wildcard requester") {
+		t.Fatalf("error = %v, want the wildcard-requester diagnostic", err)
+	}
+}
+
+// TestLoadConfig_CommandApprovalFullyPinnedWeakModeLoads is the positive
+// control: an advisory/warn-only entry that pins ALL THREE of Requester,
+// Label, and Category together loads successfully.
+func TestLoadConfig_CommandApprovalFullyPinnedWeakModeLoads(t *testing.T) {
+	cfg, err := writeAndLoadCommandApprovalConfig(t, `requester = "trusted-node"
+label = "diagnostic-tool-x"
+category = "diagnostic"
+mode = "advisory"`)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v, want nil (fully pinned weak-mode entry is valid)", err)
+	}
+	if len(cfg.CommandApproval) != 1 || cfg.CommandApproval[0].Mode != "advisory" {
+		t.Fatalf("CommandApproval = %#v, want one advisory entry", cfg.CommandApproval)
+	}
+}
+
+// TestLoadConfig_CommandApprovalModeTypoRefused pins #831 D7 Part A: a
+// non-empty Mode value outside {advisory, warn-only, blocking} is refused
+// at config-load time, even on an entry that would otherwise not need any
+// wildcard pinning (blocking mode).
+func TestLoadConfig_CommandApprovalModeTypoRefused(t *testing.T) {
+	_, err := writeAndLoadCommandApprovalConfig(t, `requester = "worker"
+label = "nix-build"
+category = "verification"
+mode = "blocing"`)
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want refusal for a typo'd Mode value")
+	}
+	if !strings.Contains(err.Error(), `mode "blocing" is not one of advisory, warn-only, blocking`) {
+		t.Fatalf("error = %v, want the mode-typo diagnostic", err)
+	}
+}
+
+// TestLoadConfig_CommandApprovalEmptyModeLoadsSuccessfully pins #831 D7's
+// least-breaking choice: an omitted/empty Mode field remains VALID (it
+// means the default floor "blocking" applies to that entry) -- only a
+// non-empty value outside the recognized set is a typo.
+func TestLoadConfig_CommandApprovalEmptyModeLoadsSuccessfully(t *testing.T) {
+	cfg, err := writeAndLoadCommandApprovalConfig(t, `requester = "worker"
+label = "nix-build"
+category = "verification"`)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v, want nil (empty Mode is valid, resolves to blocking)", err)
+	}
+	if len(cfg.CommandApproval) != 1 || cfg.CommandApproval[0].Mode != "" {
+		t.Fatalf("CommandApproval = %#v, want one entry with empty Mode", cfg.CommandApproval)
+	}
+}
+
+// TestLoadConfig_CommandApprovalInvalidEntryRefusedEvenWithoutApproverNode
+// pins #831 D7 Part B: a config-load failure happens BEFORE approver
+// resolution, so an invalid/wildcard-weak entry still fails the WHOLE
+// config load even in what would otherwise be the classic
+// no-command_approver_node fail-open scenario -- fail-open never masks a
+// config validation failure.
+func TestLoadConfig_CommandApprovalInvalidEntryRefusedEvenWithoutApproverNode(t *testing.T) {
+	// No command_approver_node set anywhere in this config at all.
+	_, err := writeAndLoadCommandApprovalConfig(t, `label = "*"
+mode = "advisory"`)
+	if err == nil {
+		t.Fatal("LoadConfig() error = nil, want the whole config load refused despite no command_approver_node being configured")
+	}
+	if !strings.Contains(err.Error(), "specific, non-wildcard") {
+		t.Fatalf("error = %v, want a wildcard-pin diagnostic", err)
+	}
+}
+
 func TestLoadConfig_TOMLCommandApproverNodeIgnored(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
