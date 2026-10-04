@@ -64,6 +64,16 @@ opposed to the daemon-wide aggregate above.
   obtaining a genuine third example requires a future bounded, isolated
   reproduction (e.g. the `#563` soak-validation runbook), not an ad hoc
   probe against this session's own live daemon.
+- **Read-only search attempt (this rework):** searched this session's own
+  daemon journal records
+  (`~/.local/state/tmux-a2a-postman/*/tmux-a2a-postman/journal/records/
+  *.json`) for any independently-resolved request matching the `#839`
+  incident window (2026-09-30). No matches were found: this session's
+  journal history only covers activity from 2026-10-03 onward, after the
+  incident window #839 describes. This criterion (a genuine third
+  independently-resolved per-request example) is therefore explicitly
+  left **unresolved** rather than fabricated or obtained via a live `pop`
+  probe against the active fleet, which was out of scope for this task.
 - The two available examples themselves resolved to *different* outcomes
   (`late_response` vs. `claimed`), which is itself worth recording as a
   correlation finding: the same client-observable symptom (30s timeout)
