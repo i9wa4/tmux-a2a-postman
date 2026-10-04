@@ -423,8 +423,12 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 }
 
 // HasExplicitInterfaceNodeSetting reports whether interface_node (#764's
-// canonical mouthpiece designation) was explicitly set in TOML, as opposed
-// to being derived from the legacy ui_node alias.
+// canonical mouthpiece designation) has a resolved, non-default value: either
+// set directly, or derived from the legacy ui_node alias by
+// resolveInterfaceNodeDesignation. It does NOT distinguish "set directly" from
+// "derived from ui_node"; callers that need that distinction must inspect
+// cfg.InterfaceNode/cfg.UINode equality and the resolution diagnostics
+// themselves.
 func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
 	if cfg == nil {
 		return false
@@ -442,14 +446,22 @@ func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
 //   - both set, different values: emit a non-silent conflict diagnostic;
 //     neither value is silently preferred over the other.
 //
-// This covers the TOML [postman] section only; markdown-frontmatter and
-// mermaid-sourced ui_node overrides are not yet reconciled here (left for
-// a follow-up #764 slice).
+// Every runtime reader of the designation uses cfg.UINode (escalation
+// routing, verdict-debt exemption, FilterToUINode); interface_node is the
+// canonical INPUT but ui_node remains the single resolved RUNTIME value, so
+// this function must run after every layer (TOML, node files, markdown
+// frontmatter/Mermaid overlay) that can set either key has been merged into
+// cfg, not just after the TOML [postman] section.
+//
+// Diagnostics use log.Printf (stderr), matching warnDeprecatedKeys's
+// existing channel choice (#764 E-7): several CLI commands emit structured
+// JSON on stdout, so a config-resolution diagnostic must never write there.
 func resolveInterfaceNodeDesignation(cfg *Config, path string) {
 	switch {
 	case cfg.interfaceNodeSet && cfg.uiNodeSet:
 		if cfg.InterfaceNode != cfg.UINode {
-			log.Printf("WARNING: %s: conflicting designation settings: interface_node=%q vs legacy ui_node=%q; set them to the same value or remove ui_node (#764)", path, cfg.InterfaceNode, cfg.UINode)
+			log.Printf("WARNING: %s: conflicting designation settings: interface_node=%q vs legacy ui_node=%q; interface_node wins as the canonical value (#764)", path, cfg.InterfaceNode, cfg.UINode)
+			cfg.UINode = cfg.InterfaceNode
 		}
 	case cfg.interfaceNodeSet && !cfg.uiNodeSet:
 		cfg.UINode = cfg.InterfaceNode
@@ -934,7 +946,6 @@ func LoadConfig(path string) (*Config, error) {
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
 			cfg.interfaceNodeSet = tomlHasField(md, "postman", "interface_node")
-			resolveInterfaceNodeDesignation(cfg, configPath)
 			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
 			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)
@@ -1026,6 +1037,12 @@ func LoadConfig(path string) (*Config, error) {
 			log.Printf("warning: skipping %s: %v", xdgMarkdownPath, err)
 		}
 	}
+
+	// #764 E-2: resolve ui_node/interface_node once every layer that can set
+	// either key (TOML [postman], nodes/*.toml, XDG markdown frontmatter and
+	// Mermaid overlay) has been merged into cfg, not immediately after the
+	// TOML [postman] section alone.
+	resolveInterfaceNodeDesignation(cfg, configPath)
 
 	cfg.initDirectTemplateRootTrust()
 

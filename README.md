@@ -65,7 +65,11 @@ daemon discovers tmux panes by title, routes messages through local files, and
 keeps an archive that agents can inspect later.
 
 Each tmux session is a separate project workspace. `ui_node` marks the role
-the human talks to first, while the daemon keeps routing, delivery, and
+the human talks to first (a provisional new `interface_node` TOML key is also
+accepted as the canonical spelling going forward; see #764 -- the final
+field name and `ui_node` deprecation timeline are not yet decided, and the
+Mermaid `ui_node` class below is unaffected for now), while the daemon keeps
+routing, delivery, and
 archived mail outside the agent panes.
 
 ## 2. Why Use It
