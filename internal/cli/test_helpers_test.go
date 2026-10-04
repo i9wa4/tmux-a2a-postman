@@ -15,8 +15,54 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
 )
 
+// #845 (F-1): many tests in this package exercise delivery/notification code
+// paths that are NOT built via newExecuteBashFixtureRaw (whose own
+// tmuxtest.InstallMissing call only protects its own fixtures), e.g.
+// TestDeliverCommandApprovalRequest_DeliversTrustedRequestToReviewerInbox,
+// confirmed by Guardian's recording shim to reach real
+// PaneNotifier.run (set-buffer/paste-buffer/send-keys against pane %2).
+// An earlier version of this fix replaced PATH with a bare empty directory
+// (matching internal/message/ping/daemon), but internal/cli also has tests
+// (e.g. stop_test.go) that need OTHER real executables like "sleep" to
+// spawn a fake long-running process; emptying PATH entirely broke those
+// with "sleep: executable file not found in $PATH". Instead, this prepends
+// a poison "tmux" shim (always exits nonzero, never the real binary) onto
+// the EXISTING PATH, so "tmux" can never resolve to the real server while
+// every other tool keeps working. Tests that need a scripted fake tmux
+// still work: tmuxtest.Install/InstallMissing use t.Setenv("PATH", dir)
+// (full replacement, not prepend), scoped per test and automatically
+// restored, which still wins over this baseline for the duration of that
+// one test.
+func lockDownPATHAgainstRealTmux() (restore func()) {
+	dir, err := os.MkdirTemp("", "tmux-a2a-postman-cli-test-no-tmux-*")
+	if err != nil {
+		panic(err)
+	}
+	shim := "#!/bin/sh\necho 'tmux is blocked during internal/cli tests (#845)' >&2\nexit 127\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(shim), 0o755); err != nil {
+		panic(err)
+	}
+	original, hadOriginal := os.LookupEnv("PATH")
+	newPath := dir
+	if hadOriginal {
+		newPath = dir + string(os.PathListSeparator) + original
+	}
+	if err := os.Setenv("PATH", newPath); err != nil {
+		panic(err)
+	}
+	return func() {
+		if hadOriginal {
+			_ = os.Setenv("PATH", original)
+		} else {
+			_ = os.Unsetenv("PATH")
+		}
+		_ = os.RemoveAll(dir)
+	}
+}
+
 func TestMain(m *testing.M) {
 	restoreDurableWrites := journal.SetDurableWritesForTesting(false)
+	restorePath := lockDownPATHAgainstRealTmux()
 	configHome, err := os.MkdirTemp("", "tmux-a2a-postman-cli-test-config-*")
 	if err != nil {
 		panic(err)
@@ -32,6 +78,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	code := m.Run()
+	restorePath()
 	restoreDurableWrites()
 	_ = os.RemoveAll(configHome)
 	_ = os.RemoveAll(home)

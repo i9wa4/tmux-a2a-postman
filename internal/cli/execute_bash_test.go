@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
 )
 
 type executeBashFixture struct {
@@ -70,6 +72,17 @@ func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolic
 func newExecuteBashFixtureRaw(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
 	t.Helper()
 
+	// #845: this fixture's discoveredNodes map hardcodes fake tmux PaneIDs
+	// (e.g. "%3") that are NOT scoped to any real session -- tmux PaneIDs
+	// are unique per tmux SERVER, not per session. Any pane-notification
+	// delivery exercised by a test using this fixture must never reach a
+	// real "tmux" binary, or it sends real keystrokes to whatever
+	// ambient pane on the real server happens to hold that ID. InstallMissing
+	// points PATH at an empty directory so "tmux" cannot be found at all,
+	// which is stricter and safer than a scripted fake for fixtures that
+	// don't assert on tmux's own output.
+	tmuxtest.InstallMissing(t)
+
 	baseDir := t.TempDir()
 	contextID := "ctx-484"
 	sessionName := "test-session"
@@ -102,6 +115,23 @@ func newExecuteBashFixtureRaw(t *testing.T, policies ...config.CommandApprovalPo
 	}
 	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = originalDiscover })
 	return fixture
+}
+
+// TestNewExecuteBashFixtureNeverReachesRealTmux is a regression guard for
+// #845: this package's fixtures hardcode fake PaneIDs (e.g. "%3") that are
+// not scoped to any real tmux session, so any fixture-driven test that
+// reached a real "tmux" binary could send real keystrokes to an unrelated,
+// ambient pane on whatever live tmux server the test process happened to
+// run inside. newExecuteBashFixtureRaw installs tmuxtest.InstallMissing to
+// prevent this; this test fails loudly if that wiring is ever removed, by
+// directly asserting "tmux" cannot be resolved on PATH while a fixture is
+// active.
+func TestNewExecuteBashFixtureNeverReachesRealTmux(t *testing.T) {
+	_ = newExecuteBashFixtureRaw(t, config.CommandApprovalPolicy{})
+
+	if path, err := exec.LookPath("tmux"); err == nil {
+		t.Fatalf("expected \"tmux\" to be unresolvable while an execute-bash fixture is active (internal/tmuxtest.InstallMissing must be wired into newExecuteBashFixtureRaw), but found it at %q -- this would let fixture-driven tests send real keystrokes to an ambient tmux pane (see #845)", path)
+	}
 }
 
 func (f *executeBashFixture) context() commandContext {
