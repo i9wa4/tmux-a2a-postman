@@ -848,8 +848,14 @@ params:
 // in A. When a real session is detectable, --session may only ever
 // CONFIRM it (an exact match is accepted, same as before for the common
 // case); any different value is refused outright rather than honored.
-// The flag-only fallback is kept for contexts where no real session is
-// detectable at all (non-tmux/test contexts), unchanged from before.
+// Guardian REVIEW-849 P1: when NO real session is detectable at all,
+// this now ALSO fails closed (no flag-only fallback) -- see the function
+// body. Residual trust-model limit, not closed by this function: the
+// "real" session identity itself ultimately comes from the tmux pane
+// TITLE (requester) and the tmux session name (this function), both
+// read from the live multiplexer; a caller with enough local access to
+// retitle its own pane or otherwise spoof what the multiplexer reports
+// is a different, still-open trust assumption this PR does not address.
 func resolveExecuteBashSessionName(ctx commandContext, flagValue string) (string, error) {
 	// #831 F-1 / Guardian REVIEW-849 P1: when the real session is
 	// undetectable, this MUST fail closed, never fall back to trusting
@@ -871,11 +877,39 @@ func resolveExecuteBashSessionName(ctx commandContext, flagValue string) (string
 	return config.ValidateSessionName(actual)
 }
 
+// resolveContextIDFromSessionFn is a test-only seam over
+// config.ResolveContextIDFromSession (Guardian REVIEW-849 F-1b closure):
+// production always calls the real disk/PID-based resolver; tests
+// override this var to report a fixed contextID (or a forced error)
+// without needing to construct a real postman.pid file on disk. See
+// newExecuteBashFixtureRaw, which overrides this once for every fixture
+// test, and the dedicated negative test for the "no live context"
+// refusal case.
+var resolveContextIDFromSessionFn = config.ResolveContextIDFromSession
+
+// resolveExecuteBashContextID (Guardian REVIEW-849 F-1b closure): mirrors
+// resolveExecuteBashSessionName's binding -- a caller-supplied
+// --context-id can no longer silently select a DIFFERENT context than
+// the one the live, daemon-owned session actually belongs to, and can no
+// longer be trusted at all when no live context can be verified either.
+// Without this, a caller could pick a same-named session living under a
+// different (possibly weaker-policy) context, or an arbitrary
+// --context-id when no live daemon owns this session yet, and inherit
+// that other context's policy/config. This fails closed unconditionally
+// when the live context cannot be resolved -- there is no flag-only
+// fallback, unlike resolveExecuteBashSessionName's non-tmux fallback,
+// since an unresolvable context has no equivalent "genuinely no
+// multiplexer at all" benign case to preserve.
 func resolveExecuteBashContextID(baseDir, sessionName, flagValue string) (string, error) {
-	if strings.TrimSpace(flagValue) != "" {
-		return config.ResolveContextID(strings.TrimSpace(flagValue))
+	requested := strings.TrimSpace(flagValue)
+	live, liveErr := resolveContextIDFromSessionFn(baseDir, sessionName)
+	if liveErr != nil {
+		return "", fmt.Errorf("context identity could not be verified: %w; --context-id is never trusted as a substitute for a verified live context", liveErr)
 	}
-	return config.ResolveContextIDFromSession(baseDir, sessionName)
+	if requested != "" && requested != live {
+		return "", fmt.Errorf("--context-id %q does not match the live daemon-owned context %q for session %q; execute-bash always binds identity to the live context, never a caller-supplied override", requested, live, sessionName)
+	}
+	return config.ResolveContextID(live)
 }
 
 // removedExecuteBashFlags maps a flag name removed from execute-bash's flag
