@@ -40,7 +40,7 @@ saturation_count: 0
 worker_limit: 8
 ```
 
-## 3. Per-request outcomes (>=3), correlated against the window above
+## 3. Per-request outcomes (2 available; 3 requested), correlated against the window above
 
 Each row is independently resolvable via `inspect-daemon-submit --id
 <request-id>`, which returns a request-scoped `storage_state`/outcome, as
@@ -55,20 +55,18 @@ opposed to the daemon-wide aggregate above.
 **Gaps, stated explicitly:**
 
 - Only two independently-resolved per-request examples were available in
-
-  #839's own body text at the time this artifact was written. A third
-
-  per-request example was not captured in the issue, and this artifact
-  does not fabricate one. Per the task's explicit constraint, no live
-  `pop` was run against the active fleet to manufacture a third sample;
-  obtaining a genuine third example requires a future bounded, isolated
-  reproduction (e.g. the `#563` soak-validation runbook), not an ad hoc
-  probe against this session's own live daemon.
+  the body text of issue #839 at the time this artifact was written. A
+  third per-request example was not captured in the issue, and this
+  artifact does not fabricate one. Per the task's explicit constraint, no
+  live `pop` was run against the active fleet to manufacture a third
+  sample; obtaining a genuine third example requires a future bounded,
+  isolated reproduction (e.g. the `#563` soak-validation runbook), not an
+  ad hoc probe against this session's own live daemon.
 - **Read-only search attempt (this rework):** searched this session's own
-  daemon journal records
-  (`~/.local/state/tmux-a2a-postman/*/tmux-a2a-postman/journal/records/
-  *.json`) for any independently-resolved request matching the `#839`
-  incident window (2026-09-30). No matches were found: this session's
+  daemon journal records (path pattern:
+  `~/.local/state/tmux-a2a-postman/*/tmux-a2a-postman/journal/records/*.json`)
+  for any independently-resolved request matching the issue's incident
+  window (2026-09-30). No matches were found: this session's
   journal history only covers activity from 2026-10-03 onward, after the
   incident window #839 describes. This criterion (a genuine third
   independently-resolved per-request example) is therefore explicitly
@@ -81,10 +79,8 @@ opposed to the daemon-wide aggregate above.
 - The aggregate snapshot's `observed_at` (14:32:26Z) predates both
   request examples (14:40:01Z and 14:52:17Z); the snapshot and the two
   request rows are from the same general incident window described in
-
-  #839, but are not a single atomically-captured correlated triple. This
-
-  artifact does not claim otherwise.
+  issue #839, but are not a single atomically-captured correlated triple.
+  This artifact does not claim otherwise.
 - `oldest_pending_age_seconds: 209` at the aggregate snapshot's timestamp
   exceeds the 30s queue-age threshold used by the `#563` soak-validation
   runbook (`docs/design/daemon-soak-validation.md:58-61,69`); this
@@ -101,11 +97,17 @@ opposed to the daemon-wide aggregate above.
 - No claim is made that this is a formal `#563` soak-validation result;
   it is a bounded, point-in-time correlation record pending a real soak
   run.
+- Issue #839's own investigation Ask ("Investigate whether daemon-wide
+  worker-pool sizing, scheduling fairness across sessions, or something
+  else explains" the timeouts) remains **open** after this artifact. This
+  artifact is a bounded correlation record, not an investigation result,
+  and must not be read as closing that Ask.
 
 ## 5. Source
 
 All data points are reproduced from issue #839's own body text (filed
-observations), cross-referenced against `docs/design/daemon-soak-
-validation.md` and `scripts/validation/daemon_soak_check.go` for the
-soak-threshold context cited above. No new live-fleet probing was
-performed to produce this artifact.
+observations), cross-referenced against
+`docs/design/daemon-soak-validation.md` and
+`scripts/validation/daemon_soak_check.go` for the soak-threshold context
+cited above. No new live-fleet probing was performed to produce this
+artifact.
