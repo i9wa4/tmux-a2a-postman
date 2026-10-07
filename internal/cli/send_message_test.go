@@ -20,6 +20,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
 
+// sendPostAwaitTimeout bounds how long fake direct-post consumers wait for the
+// CLI to deposit a draft in the post directory. A one-second deadline can expire
+// before send preparation finishes on a loaded host.
+const sendPostAwaitTimeout = 10 * time.Second
+
 func shellSensitiveBodyForSendTest() string {
 	return "literal command substitution: $(printf SHOULD_NOT_RUN)\n" +
 		"literal backticks: `date`\n" +
@@ -2136,7 +2141,7 @@ role = "worker"
 
 	delivered := make(chan string, 1)
 	go func() {
-		filename, err := awaitMarkdownFile(t, filepath.Join(sessionDir, "post"), time.Second)
+		filename, err := awaitMarkdownFile(t, filepath.Join(sessionDir, "post"), sendPostAwaitTimeout)
 		if err != nil {
 			t.Errorf("awaitMarkdownFile: %v", err)
 			delivered <- ""
@@ -3065,7 +3070,7 @@ role = "worker"
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, sendPostAwaitTimeout)
 		if err != nil {
 			t.Errorf("awaitMarkdownFile: %v", err)
 			return
@@ -3148,7 +3153,7 @@ role = "worker"
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, sendPostAwaitTimeout)
 		if err != nil {
 			t.Errorf("awaitMarkdownFile: %v", err)
 			return
