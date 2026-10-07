@@ -71,11 +71,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1790212537,
-        "narHash": "sha256-PAyPueQd7lD4iav8fEHYHwxZ5PxI3xdyA+FZ/tPhY3A=",
+        "lastModified": 1790673591,
+        "narHash": "sha256-x27S4qjVUK023i1+NsUb0C8IBmcKt7EebS+PbCTeYyM=",
         "owner": "i9wa4",
         "repo": "markdown-formatter",
-        "rev": "093cf669b94b80161c044c82aa5b4001b708025f",
+        "rev": "4a702dc7c70456cc306b60e48b965131448ae7d8",
         "type": "github"
       },
       "original": {
