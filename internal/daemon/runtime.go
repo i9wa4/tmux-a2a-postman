@@ -93,6 +93,9 @@ type daemonRuntime struct {
 	pendingMailboxProjectionSyncs  map[string]bool
 	mailboxProjectionSyncWG        sync.WaitGroup
 	sendPaneNotification           paneNotificationSender
+	lastPostDiscoveryAt            time.Time
+	preSyncOnce                    sync.Once
+	preSyncQueue                   chan preDeliverySyncRequest
 	lastEscalationCheck            time.Time
 	lastEscalationPushKey          string
 }
@@ -1119,18 +1122,34 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	now := rt.now()
 	recordShadowMailboxPathEvent(eventPath, projection.MailboxProjectionPostedEventType, journal.VisibilityMailboxProjection, now)
 	sourceSessionDir := filepath.Dir(filepath.Dir(eventPath))
-	var postTraceFields msgtrace.Fields
 	if content, err := os.ReadFile(eventPath); err == nil {
 		fields := msgtrace.FromContent(filename, shadowRelativePath(sourceSessionDir, eventPath), filepath.Base(sourceSessionDir), string(content))
 		fields.ContextID = rt.contextID
 		fields.SubmitPath = string(projection.SubmitPathPost)
 		msgtrace.Log("send_enqueue", fields)
-		postTraceFields = fields
 	}
-	syncMailboxProjectionWithTrace(sourceSessionDir, postTraceFields)
+	// The pre-delivery mailbox projection sync used to run here, inline on the
+	// single select loop that also dispatches daemon-submit pop/validate-send
+	// requests. It now runs at the start of the budgeted delivery goroutine
+	// (see dispatchPostDelivery), still after the posted journal event and
+	// before DeliverMessage, so event-before-sync ordering is unchanged (#871).
 
+	// Topology discovery forks tmux subprocesses. Back-to-back posts (and
+	// cap-stuck post retries) reuse the discovery result from the last
+	// postDiscoveryReuseWindow instead of re-forking tmux on every post; the
+	// periodic scan tick keeps rt.nodes fresh in between (#871).
+	// Reuse is only allowed while both endpoints of this post are present in
+	// the cached topology; a miss (new or repurposed pane) forces a fresh
+	// discovery before the unknown-recipient dead-letter decision.
+	if rt.postDiscoveryFresh(now) && rt.postEndpointsIdentityValid(sourceSessionDir, filename) {
+		rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.adjacency, rt.cfg, reservation)
+		return
+	}
 	freshNodes, _, err := rt.discoverNodes()
 	if err == nil {
+		// Only a successful discovery starts a reuse window; a failed one
+		// must not suppress the next post's fallback discovery.
+		rt.lastPostDiscoveryAt = now
 		rt.pruneClaimedPanes(freshNodes)
 		rt.pruneWatchedDirs(freshNodes)
 		rt.claimNewPanes(freshNodes)
@@ -1159,6 +1178,41 @@ func (rt *daemonRuntime) processActivePostEvent(eventPath, filename string) {
 	}
 
 	rt.dispatchPostDelivery(eventPath, filename, rt.nodes, rt.adjacency, rt.cfg, reservation)
+}
+
+// postDiscoveryReuseWindow bounds how long the post path reuses the previous
+// node discovery before forking tmux again.
+const postDiscoveryReuseWindow = time.Second
+
+// postDiscoveryFresh reports whether the post path may reuse rt.nodes. It is
+// only read and written from the single select-loop goroutine.
+func (rt *daemonRuntime) postDiscoveryFresh(now time.Time) bool {
+	if rt.lastPostDiscoveryAt.IsZero() || rt.nodes == nil {
+		return false
+	}
+	age := now.Sub(rt.lastPostDiscoveryAt)
+	return age >= 0 && age < postDiscoveryReuseWindow
+}
+
+// postEndpointsKnown reports whether the cached topology contains both the
+// sender and the recipient of the post. Reserved daemon endpoints (postman,
+// daemon) are not panes and always count as known. An unparseable filename is
+// not reused (the full path decides what to do with it).
+func (rt *daemonRuntime) postEndpointsKnown(sourceSessionDir, filename string) bool {
+	info, err := message.ParseMessageFilename(filename)
+	if err != nil {
+		return false
+	}
+	sourceSessionName := filepath.Base(sourceSessionDir)
+	for _, endpoint := range []string{info.From, info.To} {
+		if endpoint == "postman" || endpoint == "daemon" {
+			continue
+		}
+		if _, ok := rt.nodes[discovery.ResolveNodeName(endpoint, sourceSessionName, rt.nodes)]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (rt *daemonRuntime) reservePostDeliveryOrScheduleRetry(eventPath, filename string) (postDeliveryReservation, bool) {
@@ -1290,6 +1344,16 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 		}()
 
 		postTraceFields := rt.postDeliveryTraceFields(eventPath, filename)
+		// Pre-delivery projection sync, moved off the dispatcher loop (#871).
+		// No daemon lock is held here; the sync takes its own mailbox locks.
+		preSyncFields := postTraceFields
+		preSyncFields.SubmitPath = string(projection.SubmitPathPost)
+		if !rt.runPreDeliverySync(filepath.Dir(filepath.Dir(eventPath)), preSyncFields) {
+			// Fail closed: leave the post in post/ for the periodic
+			// pending-post reconciler instead of delivering while the
+			// pre-delivery sync may still be running (#871).
+			return
+		}
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			attemptFields := postTraceFields
