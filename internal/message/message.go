@@ -1038,6 +1038,14 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	// decided before the envelope, routing, adjacency and session-enabled checks
 	// and without consulting the forged session's edges or state.
 	if senderClaimsForeignSession(info.From, sourceSessionName) {
+		// Preserve the forged bytes for the audit trail: the dead-letter record
+		// and the mailbox projection are written from messageContent, which has
+		// not been read yet at this point in DeliverMessage.
+		if rawBytes, readErr := os.ReadFile(postPath); readErr == nil {
+			messageContent = string(rawBytes)
+		} else if !os.IsNotExist(readErr) {
+			log.Printf("postman: WARNING: failed to read forged message for the dead-letter record %s: %v\n", filename, readErr)
+		}
 		decision := planDeliveryPolicy(policyInput)
 		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		log.Printf("postman: SECURITY: forged sender %q in session %q via post/ names a different session — dead-lettering %s\n",
