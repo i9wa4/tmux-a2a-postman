@@ -20,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
+	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
@@ -2612,6 +2613,58 @@ func TestDeliverNotificationWithRetry_BothAttemptsFail_LogsWarning(t *testing.T)
 	}
 	if !strings.Contains(logOut, "msg=test-fail.md") {
 		t.Errorf("expected msg= in WARNING, got: %s", logOut)
+	}
+}
+
+// TestDeliverNotificationWithRetry_PaneUnresponsivePropagatesAsWarning verifies
+// that notification.ErrPaneUnresponsive (returned when SendToPane's verify-retry
+// loop exhausts maxRetries without observing a pane content change, #816) skips
+// the refreshed-pane-ID retry -- a stale address can't explain a pane that was
+// addressed correctly but never responded, and re-delivering would re-paste the
+// message and press Enter again against the same pane (guardian F-039) -- and
+// goes straight to the WARNING log, closing the "pane delivery succeeded"
+// false-positive gap identified in #811.
+func TestDeliverNotificationWithRetry_PaneUnresponsivePropagatesAsWarning(t *testing.T) {
+	var callCount int
+
+	adapter := controlplane.TmuxHandAdapter{
+		ProbeRuntime: func(string) (string, error) { return "bash", nil },
+		SendToPane: func(paneID string, _ string, _ time.Duration, _ time.Duration, _ int, _ bool, _ time.Duration, _ int) error {
+			callCount++
+			return fmt.Errorf("%w: pane %s unchanged after 2 verify retries", notification.ErrPaneUnresponsive, paneID)
+		},
+	}
+
+	target := controlplane.Target{
+		ActorID:     "worker",
+		RunID:       "test:worker",
+		SessionName: "test",
+		Brain:       controlplane.Brain{Runtime: "bash"},
+		Hand:        controlplane.HandAttachment{Kind: controlplane.HandKindTmux, Address: "%frozen"},
+	}
+	delivery := controlplane.PaneDelivery{BypassCooldown: true}
+	knownNodes := map[string]discovery.NodeInfo{
+		"test:worker": {PaneID: "%fresh", SessionName: "test"},
+	}
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	deliverNotificationWithRetry(adapter, target, delivery, "test:worker", knownNodes, "test-unresponsive.md")
+
+	if callCount != 1 {
+		t.Errorf("adapter.Deliver called %d times, want exactly 1 (no refreshed-pane-ID retry for an unresponsive-but-correctly-addressed pane)", callCount)
+	}
+	logOut := buf.String()
+	if !strings.Contains(logOut, "pane notification failed") {
+		t.Errorf("expected WARNING containing 'pane notification failed', got: %s", logOut)
+	}
+	if !strings.Contains(logOut, "pane unresponsive") {
+		t.Errorf("expected the underlying ErrPaneUnresponsive text in the WARNING, got: %s", logOut)
+	}
+	if strings.Contains(logOut, "pane delivery succeeded") {
+		t.Errorf("must not log a success message when the pane never responded: %s", logOut)
 	}
 }
 

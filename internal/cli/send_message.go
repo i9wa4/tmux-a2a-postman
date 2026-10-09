@@ -57,6 +57,8 @@ type sendOutput struct {
 	ReplyTo             string                `json:"reply_to,omitempty"`
 	InputRequestID      string                `json:"input_request_id,omitempty"`
 	FillsInputRequestID string                `json:"fills_input_request_id,omitempty"`
+	Verdict             string                `json:"verdict,omitempty"`
+	VerdictOf           string                `json:"verdict_of,omitempty"`
 	ThreadID            string                `json:"thread_id,omitempty"`
 	CommandHash         string                `json:"command_hash,omitempty"`
 	Fill                *sendFillOutput       `json:"fill,omitempty"`
@@ -161,6 +163,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	replyRequired := fs.Bool("reply-required", false, "mark message as requiring a reply")
 	replyTo := fs.String("reply-to", "", "message id this message replies to")
 	fillsInputRequestID := fs.String("fills-input-request-id", "", "input request id this message fills")
+	verdict := fs.String("verdict", "", "verdict to stamp on the filled request named by --verdict-of (e.g. APPROVED, NOT APPROVED, none); clears the sender's verdict debt for that request")
+	verdictOf := fs.String("verdict-of", "", "input request id the --verdict applies to; must be supplied together with --verdict")
 	threadID := fs.String("thread-id", "", "command approval thread id for an exact reply")
 	commandHash := fs.String("command-hash", "", "command approval sha256 digest for an exact reply")
 	evidenceCommand := fs.String("evidence-command", "", "replay evidence command")
@@ -207,6 +211,9 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 	if err := validateSendCommandApprovalCorrelation(*threadID, *commandHash); err != nil {
+		return err
+	}
+	if err := validateSendVerdictCorrelation(verdict, verdictOf); err != nil {
 		return err
 	}
 	evidenceFields := map[string]string{
@@ -445,6 +452,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		"fills_input_request_id":     *fillsInputRequestID,
 		"thread_id":                  *threadID,
 		"command_hash":               *commandHash,
+		"verdict":                    *verdict,
+		"verdictOf":                  *verdictOf,
 		"evidence_command":           evidenceFields["evidence_command"],
 		"evidence_cwd":               evidenceFields["evidence_cwd"],
 		"evidence_env_allowlist":     evidenceFields["evidence_env_allowlist"],
@@ -557,6 +566,8 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		ReplyTo:             *replyTo,
 		InputRequestID:      inputRequestID,
 		FillsInputRequestID: *fillsInputRequestID,
+		Verdict:             *verdict,
+		VerdictOf:           *verdictOf,
 		ThreadID:            *threadID,
 		CommandHash:         *commandHash,
 		SubmitPath:          projection.SubmitPathPost,
@@ -980,6 +991,51 @@ func validateSendCommandApprovalCorrelation(threadID, commandHash string) error 
 	}
 	if commandHash != "" && !commandHashPattern.MatchString(commandHash) {
 		return fmt.Errorf("--command-hash must use sha256:<64 lowercase hex>")
+	}
+	return nil
+}
+
+// validateSendVerdictCorrelation keeps send-heredoc's optional
+// verdict-debt-clearing tuple (#757) safe and paired. --verdict-of must name
+// the input request id the debt gate matches against
+// (verdictgate.applyOutgoingVerdict), so it is validated with the same
+// token rule as --fills-input-request-id. Both flags are trimmed in place
+// before the pairing check, so a whitespace-only --verdict is treated as
+// absent rather than silently written and silently failing to clear debt
+// (guardian F-025). --verdict text itself is validated (guardian F-024):
+// EnsureEnvelopeParams joins frontmatter lines verbatim with no escaping
+// for this field, so an unvalidated newline could inject arbitrary
+// frontmatter params or, with a literal "---" line, terminate the
+// frontmatter block outright -- and a send that produces content
+// ParseMetadata cannot parse makes verdictgate.Enforce fail open instead
+// of enforcing anything, inverting the feature this flag exists for.
+func validateSendVerdictCorrelation(verdict, verdictOf *string) error {
+	*verdict = strings.TrimSpace(*verdict)
+	*verdictOf = strings.TrimSpace(*verdictOf)
+	if (*verdict == "") != (*verdictOf == "") {
+		return fmt.Errorf("--verdict and --verdict-of must be provided together")
+	}
+	if err := validateInputRequestFillFlag("--verdict-of", *verdictOf); err != nil {
+		return err
+	}
+	if *verdict != "" {
+		if err := validateVerdictText(*verdict); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateVerdictText rejects a --verdict value unsafe for direct,
+// unescaped interpolation into a single frontmatter line.
+func validateVerdictText(verdict string) error {
+	if strings.ContainsAny(verdict, "\r\n") {
+		return fmt.Errorf("--verdict must be a single line; newlines are not allowed")
+	}
+	for _, r := range verdict {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("--verdict must not contain control characters")
+		}
 	}
 	return nil
 }

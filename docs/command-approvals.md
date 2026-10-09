@@ -19,8 +19,16 @@ approval_ttl_seconds = 900
 ```
 
 `requester`, `label`, and `category` are match keys. Empty values and `*`
-match any value. CLI flags may override `reviewer`, `mode`, and expiry for a
-single command.
+match any value for a `blocking` policy entry, but an `advisory`/`warn-only`
+entry must pin all three to specific, non-wildcard values — a config with a
+wildcard/empty `requester`, `label`, or `category` on a weak-mode entry fails
+to load entirely (#831 D5/D7). `requester` is never a CLI flag: the effective
+requester is always the calling pane's tmux title (#831 D4), the same trust
+model `--record-decision`'s reviewer binding already uses, not a caller-
+supplied value. CLI flags may override `reviewer` for a single command, may
+only NARROW `mode` (`blocking` > `warn-only` > `advisory`) once an approver is
+configured (#831 D1), and may only TIGHTEN (shorten), never lengthen, the
+effective approval TTL (#831 D6).
 
 `reviewer` is a plain audit label with no topology meaning.
 `command_approver_node` is different: it names one real, configured node (same
@@ -96,7 +104,233 @@ present, and continues.
 `blocking` refuses wrapper-mediated execution unless the matching approval
 thread has a non-expired approved decision from the configured reviewer for the
 exact command digest. Missing, stale, rejected, expired, wrong-reviewer, and
-changed-digest approvals do not run.
+changed-digest approvals do not run. Missing, stale, rejected, expired, and
+wrong-reviewer threads are retryable (#823 F-012): repeating the identical
+command mints a fresh request instead of resurfacing the old terminal
+diagnosis forever — see
+[3.1](#31-waiting-for-the-decision-synchronously-823) below. A changed-digest
+mismatch is a refusal, not a retryable state: it never mints a new request.
+
+`blocking` is the default mode (#753) when neither a matching policy nor
+`--mode` sets one explicitly. A configured `command_approver_node` that never
+answers now halts the calling agent's work by default, where it previously
+only produced an `advisory` warning; see
+[3.3. Recovering when a blocking approval never lands](#33-recovering-when-a-blocking-approval-never-lands-753)
+for how to get unstuck.
+
+### 3.1. Waiting for the decision synchronously (#823)
+
+With a trusted, resolvable `command_approver_node`, `blocking` mode keeps the
+`execute-bash` call open by default and polls the local approval projection
+(every 500ms) until the matching thread reaches a decision, a bounded
+deadline passes, or the process is interrupted. On approval it runs the
+command in the *same invocation* — the requester never has to inspect a
+separate decision message and reconstruct or resubmit the original command.
+
+```sh
+tmux-a2a-postman execute-bash \
+  --label nix-build \
+  --category verification \
+  --reason "verify release build" \
+  --command "nix build"
+# blocks here, polling, until the reviewer decides (or the wait times out)
+```
+
+- `--wait-timeout-seconds <n>` bounds how long the wait can run; the default
+  is 300 (5 minutes). Waiting is never indefinite. There is no immediate-
+  return escape hatch: `--no-wait` was removed (#831 D2), reversing #823's
+  own intentionally-shipped opt-out — blocking mode always waits.
+- The request's own expiry (`--approval-ttl-seconds`, default 900) and the
+  wait timeout are two independent absolute deadlines; `expired` (exit 11)
+  wins whenever the request's own expiry has passed, checked before
+  `wait_timeout` (exit 12), including at exact equality (#831 D6). A caller
+  should retry the identical call rather than lower
+  `--wait-timeout-seconds`; see
+  [Harness/caller timeout guidance](#32-harnesscaller-timeout-guidance-831)
+  below.
+- Fail-open (#626, no `command_approver_node` configured) and fail-closed (a
+  configured but unresolvable `command_approver_node`) are unaffected by
+  waiting — those decisions are made before the wait loop is ever
+  considered, so an absent or unresolvable approver still behaves exactly as
+  in [1.1. Fail-open rule](#11-fail-open-rule-626).
+- Rejection, expiry, a wait timeout, cancellation (SIGINT/SIGTERM), a
+  requester mismatch on a reused `--thread-id`, a failed or lost delivery to
+  the approver, a context/session-generation change mid-wait, a repeated
+  claim on an already-executed approval, a changed command digest, no live
+  current session writer, and a few other terminal outcomes each surface a
+  distinct `--json` `status` field and a distinct process exit code (10-23:
+  rejected=10, expired=11, wait_timeout=12, cancelled=13, digest_mismatch=14,
+  wrong_reviewer=15, stale=16, historical_only=17, requester_mismatch=18,
+  delivery_failed=19, approver_lost=20, session_changed=21,
+  already_executed=22, session_unavailable=23), so a caller scripting
+  against `execute-bash` can distinguish "the approver said no" from
+  "nobody answered in time" from "I was interrupted" without parsing the
+  reason string.
+- **#823 F-006 — read this before scripting against exit codes.** These
+  exit codes are NOT guaranteed distinct from an executed command's own
+  exit status: a command that itself exits 10 is numerically
+  indistinguishable, on the bare exit code alone, from a rejected approval
+  (also exit 10). The wrapper does not remap or reserve a code range the
+  target command can never produce. The authoritative way to tell the two
+  apart is the `--json` wrapper metadata's `status` field — one of the
+  decision names above (the command never ran) versus `"exited"` with
+  `exit_status` set (the command ran and exited with that status). Do not
+  rely on the bare numeric exit code alone when that distinction matters.
+- One approval is single-use (#823 F-001): once a real, thread-backed
+  blocking-mode approval executes the command, an atomic claim event
+  (`command_execution_claimed`) is journaled for that exact
+  thread/input-request/command-digest. Every other invocation racing for
+  the same approval — concurrent waiters, or a repeated call while the
+  approval is still within its TTL — observes the existing claim and
+  refuses with `already_executed` instead of running the command again.
+  This changes the pre-#823 semantics, where a still-valid approved thread
+  could authorize the command any number of times within its TTL. Fail-open
+  (`auto_approved_no_reviewer`) and non-blocking-mode executions are not
+  claimed — there is no scarce human decision to consume there.
+- The wait binds itself to its starting correlation and re-checks it on
+  every poll, and again immediately before accepting an approval or
+  claiming it (#823 F-002/F-004/F-005): a retry against a still-pending
+  thread reuses the thread's existing request instead of overwriting its
+  correlation (which used to be able to strand the first waiter's approval
+  reply), a decision on a thread belonging to a different requester is
+  never accepted even when `--thread-id` and the command digest both
+  match, and a context or session-generation change — even one landing in
+  the narrow window right before the command is claimed and run — ends the
+  wait with a distinct `session_changed` outcome instead of silently
+  polling toward a generic timeout or claiming anyway.
+- Retrying the identical command is safe and converges instead of
+  permanently sticking on an old outcome (#823 rework-2, F-012/F-013). One
+  unified rule governs every call: no request yet → a fresh one is created
+  (two truly concurrent first callers still converge on exactly one
+  request); a still-pending request → the exact same request is reused and
+  re-delivered (this also recovers a request whose earlier delivery
+  attempt failed, #823 F-013, without minting a duplicate); a request that
+  ended rejected, expired, stale, historical-only, or wrong-reviewer → the
+  next call atomically mints a fresh request superseding it, so none of
+  those outcomes can block a future retry forever; a requester mismatch,
+  digest mismatch, or unresolvable approver is a refusal and never mints
+  anything; and an approved-and-already-executed thread stays
+  `already_executed` until its own TTL expires, only then becoming
+  retryable like any other expired thread. See
+  [3.3](#33-recovering-when-a-blocking-approval-never-lands-753) for how to
+  recover `already_executed` sooner than the TTL, if needed.
+- Cancellation and the deadline always win over a late approval (#823
+  F-005): both are checked before the wait loop accepts any decision on
+  each iteration, again immediately before claiming, and again immediately
+  after the claim succeeds and before the command actually runs — so a
+  SIGINT/SIGTERM caught at any of these points, including precisely during
+  the claim itself, still stops the command; the approval stays consumed
+  (single-use either way) but never executes.
+- A concurrent race for the same thread never lets the loser deliver a
+  misleading prompt (#823 rework-3 F-015): when two callers race to mint or
+  replace a request for the same thread id (for example two concurrent
+  explicit `--thread-id` calls with different `--label`/`--category`), the
+  loser validates its own requester, trusted approver, command digest, and
+  policy against the request that actually won the race. On a mismatch it
+  refuses with `requester_mismatch` and sends no prompt at all, rather than
+  delivering a prompt built from its own policy under the winner's
+  thread/input-request correlation.
+- Blocking mode never falls back to a shadow-bootstrapped session for
+  minting a request or claiming an approval (#823 rework-3 F-002): if there
+  is no live current session writer yet (a genuine cold start, before this
+  session has any daemon-owned or previously-bootstrapped state), the call
+  refuses immediately with `session_unavailable` instead of racing a
+  session bootstrap that could otherwise land two first-ever calls in two
+  different generations. Advisory and warn-only modes are unaffected and
+  keep their prior behavior. A later call in the same, now-bootstrapped
+  session proceeds normally.
+- Delivery failure and mid-wait approver loss are distinct, fast outcomes
+  (#823 F-003): a request that fails to deliver to the approver returns
+  `delivery_failed` immediately rather than waiting out the full timeout on
+  a request the approver never saw, and the wait periodically re-verifies
+  the approver is still discoverable, returning `approver_lost` if it
+  disappears mid-wait.
+
+### 3.2. Harness/caller timeout guidance (#831)
+
+Since `--no-wait` is removed, a caller (a postman worker/agent invoking
+`execute-bash`) whose command is not yet decided blocks for up to
+`--wait-timeout-seconds` (default 300s) before receiving `wait_timeout`
+(exit 12), rather than an immediate `blocked`/`pending` result.
+
+- On `wait_timeout`, the underlying request is very likely still valid: a
+  `wait_timeout` result can only occur when the wait deadline passed while the
+  request's own expiry had not (see
+  [3.1](#31-waiting-for-the-decision-synchronously-823)'s two-deadline model
+  above; an already-expired request returns `expired` directly instead).
+  Retrying the IDENTICAL `execute-bash` call (same
+  `--label`/`--category`/`--command`, letting the deterministic thread id reuse
+  the still-pending request) is correct, not wasteful.
+- Do not busy-loop retrying with a very low `--wait-timeout-seconds` — that
+  reintroduces the exact "poll externally" pattern #823 eliminated. Prefer
+  the default (or a deliberately longer) timeout and let one call absorb the
+  wait.
+- Any external harness that invokes `execute-bash` as a subprocess and
+  enforces its own kill/timeout on that subprocess must set that external
+  timeout to EXCEED whatever `--wait-timeout-seconds` the invocation itself
+  uses.
+- A `cancelled` outcome applies only to a handled SIGINT/SIGTERM arriving
+  while `execute-bash` is actively waiting. A SIGKILL is not handled and
+  cannot be — the process is simply gone, with no `cancelled`/`wait_timeout`/
+  `expired` outcome ever written.
+- A caller killed after `execute-bash` has already claimed the single-use
+  approval, but before the command actually started running, must make a
+  fresh `execute-bash` request (a new approval thread); the consumed
+  approval cannot be reused (`already_executed`, exit 22, is the likely
+  outcome of a naive retry). A caller killed during the command's own
+  execution should inspect for real-world side effects before retrying —
+  the command runs via plain process execution with no wiring to the
+  wrapper's own cancellation, so a kill mid-execution can leave partial
+  effects or an orphaned child process.
+
+### 3.3. Recovering when a blocking approval never lands (#753)
+
+A `blocking` command that has requested approval but received no decision
+by the time `--wait-timeout-seconds` elapses leaves a `pending` thread and
+refuses to run. To recover:
+
+1. Inspect the pending thread without re-running the command:
+
+   ```sh
+   tmux-a2a-postman inspect-command-approvals
+   ```
+
+   This shows the thread id, requester, reviewer, label, category, digest,
+   reason, expiry, and current status for every outstanding request.
+2. If the configured `command_approver_node` is reachable, have it record a
+   decision through the normal path — either by replying `APPROVED: <reason>`
+   or `NOT APPROVED: <reason>` to the delivered approval request (see
+   [4.1](#41-delivery-to-a-valid-command_approver_node-626)), or by running
+   `--record-decision` directly from that node's own pane:
+
+   ```sh
+   tmux-a2a-postman execute-bash \
+     --thread-id command-approval-... \
+     --record-decision approved \
+     --reason "digest reviewed"
+   ```
+
+3. There is no `--mode` downgrade escape once a `command_approver_node` is
+   configured (#831 D1): `--mode advisory` or `--mode warn-only` is refused
+   as a policy-floor downgrade even when that configured approver is
+   currently unresolvable — the exemption applies only to the genuinely
+   ABSENT case ([1.1. Fail-open rule](#11-fail-open-rule-626), no approver
+   configured at all). If the approver is unavailable and the command
+   genuinely cannot wait, either have an operator reconfigure/remove the
+   `command_approver_node` (accepting the broader fail-open consequences
+   documented in 1.1), or use the direct-shell boundary below.
+4. As a last resort, running the command directly in the shell (bypassing
+   `execute-bash` entirely) is the explicit, documented escape boundary
+   described in [7. Boundary](#7-boundary): the wrapper coordinates review, it
+   is not a sandbox, so nothing prevents this — but it also means no approval
+   thread, decision, or audit record is created for that run.
+
+If instead a call reports `already_executed` (#823 F-001) for a command that
+genuinely needs to run again, the approval that already ran it is single-use
+and cannot be reused. Either wait for that approval's own TTL to expire —
+the next call then mints a brand-new request automatically (#823 F-012) — or
+pass an explicit `--thread-id` naming a fresh, not-yet-used thread id to
+start an independent approval cycle right away.
 
 ## 4. Decisions
 
@@ -208,3 +442,36 @@ This is coordination, not enforcement. `execute-bash` does not sandbox bash,
 prevent direct shell execution, prevent another process from running the same
 command, or enforce OS-level policy. Use it to make agent command review
 explicit and auditable inside a Postman session.
+
+## 8. Upgrade Notes (#831)
+
+For operators upgrading an existing deployment past #831's implementation:
+
+- Any single bad `command_approval` policy entry now fails the WHOLE config
+  load (D7 Part B) -- not just daemon startup: `start`, `stop`,
+  `execute-bash`, `send-heredoc`, `pop`, `capture-profile`,
+  `get-status`/`get-status-oneline`, and `inspect-message` all load the same
+  config independently, so a noncompliant config breaks all of these
+  commands, not only the daemon process.
+- PREFLIGHT BEFORE UPGRADING: run `tmux-a2a-postman get-status` (or
+  `get-status-oneline`) against your current config using the NEW/candidate
+  binary before deploying this change. `get-status` already loads config as
+  part of its normal operation, is read-only and safe to run repeatedly.
+  IMPORTANT: this only works with the new binary -- your CURRENTLY-RUNNING
+  (old) binary has no knowledge of these new rules and will report an
+  existing config as fine even when it would fail to load under them.
+- BEFORE upgrading, pin `Requester`+`Label`+`Category` together (non-
+  wildcard, specific values) on every `advisory`/`warn-only` policy entry,
+  and fix any `Mode` string typos in your config. A config that currently
+  relies on a fail-open, wildcard-permissive weak-mode entry (e.g.
+  `Label: "*"` or no `Requester` pinned) will REFUSE TO LOAD after this
+  change -- this is the intentional point of D5/D7, but it should be
+  discovered during preflight, not as a surprise command failure after
+  upgrading.
+- `--no-wait` and `--requester` are removed entirely. A caller still passing
+  either gets a clear migration-guidance error (not Go's generic "flag
+  provided but not defined"). Callers relying on `--no-wait`'s old
+  immediate-return behavior must adjust to `execute-bash` always waiting for
+  a blocking-mode decision, bounded by `--wait-timeout-seconds`; callers
+  relying on `--requester` must rely on the calling pane's own tmux title
+  instead (D4).

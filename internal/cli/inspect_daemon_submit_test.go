@@ -73,6 +73,64 @@ func TestRunInspectDaemonSubmitReportsRequestAndLateResponseWithoutSensitiveFiel
 	}
 }
 
+// TestRunInspectDaemonSubmitReportsEvictedLateResponse is the #796 rework
+// F-007/F-008 post-eviction inspect test: once a late response has been
+// evicted (simulated here the same way the daemon's runtime.go eviction path
+// would leave things -- a tombstone, no live response file), a lookup must
+// report evicted_late_response rather than a bare not_found indistinguishable
+// from a wrong id.
+func TestRunInspectDaemonSubmitReportsEvictedLateResponse(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-daemon-submit"
+	sessionName := "review"
+	sessionDir := filepath.Join(baseDir, contextID, sessionName)
+	t.Setenv("POSTMAN_HOME", baseDir)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	now := time.Now().UTC()
+	requestID := "20260527-111405-r9e09"
+	if _, err := projection.WriteDaemonSubmitEvicted(sessionDir, projection.DaemonSubmitEvictedResponse{
+		RequestID:        requestID,
+		Command:          projection.DaemonSubmitPop,
+		HandledAtOrMTime: now.Add(-2 * time.Hour).Format(time.RFC3339Nano),
+		AgeSeconds:       7200,
+		EvictedAt:        now.Format(time.RFC3339Nano),
+		Reason:           "retention_exceeded",
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitEvicted: %v", err)
+	}
+
+	stdout, stderr, err := captureCommandOutput(t, func() error {
+		return RunInspectDaemonSubmit([]string{
+			"--context-id", contextID,
+			"--session", sessionName,
+			"--id", requestID,
+		})
+	})
+	if err != nil {
+		t.Fatalf("RunInspectDaemonSubmit() error = %v stderr=%q", err, stderr)
+	}
+
+	var got inspectDaemonSubmitOutput
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q): %v", stdout, err)
+	}
+	if got.Status != "evicted_late_response" || got.Evicted == nil {
+		t.Fatalf("inspect output = %#v, want evicted_late_response", got)
+	}
+	if got.Evicted.State != "evicted_late_response" || got.Evicted.Command != string(projection.DaemonSubmitPop) {
+		t.Fatalf("evicted state = %#v", got.Evicted)
+	}
+	if got.Evicted.AgeSeconds != 7200 || got.Evicted.Reason != "retention_exceeded" {
+		t.Fatalf("evicted fields = %#v, want age_seconds=7200 reason=retention_exceeded", got.Evicted)
+	}
+	if got.Response != nil {
+		t.Fatalf("Response = %#v, want nil once evicted", got.Response)
+	}
+}
+
 func TestRunInspectDaemonSubmitReportsStaleResponse(t *testing.T) {
 	baseDir := t.TempDir()
 	contextID := "ctx-daemon-submit"

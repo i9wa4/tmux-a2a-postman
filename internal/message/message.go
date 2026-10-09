@@ -3,6 +3,7 @@ package message
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -1140,6 +1141,13 @@ var sendDeliveryNotificationHook = sendDeliveryNotification
 // testability: callers can inject a TmuxHandAdapter with a mock SendToPane.
 func deliverNotificationWithRetry(adapter controlplane.HandAdapter, target controlplane.Target, delivery controlplane.PaneDelivery, recipient string, knownNodes map[string]discovery.NodeInfo, filename string) {
 	if err := adapter.Deliver(target, delivery); err != nil {
+		// A stale-address retry cannot help an unresponsive-but-correctly-addressed
+		// pane, and re-delivering would re-paste the message and press Enter again
+		// against the same pane (#816 guardian F-039).
+		if errors.Is(err, notification.ErrPaneUnresponsive) {
+			log.Printf("postman: WARNING: pane notification failed: node=%s pane=%s session=%s msg=%s err=%v\n", recipient, target.Hand.Address, target.SessionName, filename, err)
+			return
+		}
 		// Retry once: look up a potentially refreshed PaneID from knownNodes (the
 		// daemon's discovery loop may have updated it since goroutine launch).
 		retryTarget := target

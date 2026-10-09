@@ -1,10 +1,12 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -424,24 +426,11 @@ func TestSendToPane_RejectsEmptyNotificationBody(t *testing.T) {
 }
 
 func TestTmuxPaneSenderSanitizesInteractiveDelivery(t *testing.T) {
-	var setBuffer string
+	var calls [][]string
 	notifier := NewPaneNotifier(0)
 	notifier.sleep = func(time.Duration) {}
 	notifier.runTmux = func(args ...string) error {
-		switch args[0] {
-		case "set-buffer":
-			setBuffer = args[1]
-		case "paste-buffer":
-			if args[1] != "-t" || args[2] != "%99" {
-				t.Fatalf("paste-buffer args = %#v, want target %%99", args)
-			}
-		case "send-keys":
-			if args[1] != "-t" || args[2] != "%99" || args[3] != "C-m" {
-				t.Fatalf("send-keys args = %#v, want C-m to %%99", args)
-			}
-		default:
-			t.Fatalf("unexpected tmux command args = %#v", args)
-		}
+		calls = append(calls, args)
 		return nil
 	}
 
@@ -455,6 +444,21 @@ func TestTmuxPaneSenderSanitizesInteractiveDelivery(t *testing.T) {
 		t.Fatalf("DeliverPane() error = %v", err)
 	}
 
+	// #800/F-030: set-buffer, paste-buffer, and send-keys are one chained
+	// invocation against a uniquely-named buffer (no run-shell segment here
+	// since EnterDelay is zero).
+	if len(calls) != 1 {
+		t.Fatalf("tmux calls = %d, want 1 atomic chained invocation: %#v", len(calls), calls)
+	}
+	args := calls[0]
+	if args[0] != "set-buffer" || args[1] != "-b" {
+		t.Fatalf("args[0:2] = %#v, want [set-buffer -b]: %#v", args[0:2], args)
+	}
+	bufName := args[2]
+	if bufName == "" {
+		t.Fatalf("buffer name is empty: %#v", args)
+	}
+	setBuffer := args[3]
 	if strings.Contains(setBuffer, "\x1b") {
 		t.Fatalf("set-buffer contained raw escape sequence: %q", setBuffer)
 	}
@@ -467,6 +471,11 @@ func TestTmuxPaneSenderSanitizesInteractiveDelivery(t *testing.T) {
 	if !strings.HasSuffix(setBuffer, "\n<!-- end of message -->") {
 		t.Fatalf("set-buffer missing end sentinel: %q", setBuffer)
 	}
+	rest := strings.Join(args[4:], " ")
+	wantRest := fmt.Sprintf("; paste-buffer -b %s -d -t %%99 ; send-keys -t %%99 C-m", bufName)
+	if rest != wantRest {
+		t.Fatalf("chained args after set-buffer = %q, want %q (same buffer name reused, deleted after paste)", rest, wantRest)
+	}
 }
 
 func TestPaneNotifierCooldownIsInstanceScoped(t *testing.T) {
@@ -478,16 +487,17 @@ func TestPaneNotifierCooldownIsInstanceScoped(t *testing.T) {
 	if err := notifierA.SendToPane("%1", "hello again", 0, 0, 1, false, 0, 0); err != nil {
 		t.Fatalf("notifierA second SendToPane: %v", err)
 	}
-	if *callsA != 3 {
-		t.Fatalf("notifierA tmux calls = %d, want 3 because second send is within cooldown", *callsA)
+	// #800: set-buffer+paste-buffer+send-keys are one chained call per send.
+	if *callsA != 1 {
+		t.Fatalf("notifierA tmux calls = %d, want 1 because second send is within cooldown", *callsA)
 	}
 
 	notifierB, callsB := paneNotifierForTest(now, time.Minute)
 	if err := notifierB.SendToPane("%1", "independent hello", 0, 0, 1, false, 0, 0); err != nil {
 		t.Fatalf("notifierB SendToPane: %v", err)
 	}
-	if *callsB != 3 {
-		t.Fatalf("notifierB tmux calls = %d, want 3 with independent cooldown state", *callsB)
+	if *callsB != 1 {
+		t.Fatalf("notifierB tmux calls = %d, want 1 with independent cooldown state", *callsB)
 	}
 }
 
@@ -500,8 +510,9 @@ func TestPaneNotifierBypassCooldown(t *testing.T) {
 	if err := notifier.SendToPane("%1", "hello again", 0, 0, 1, true, 0, 0); err != nil {
 		t.Fatalf("second SendToPane: %v", err)
 	}
-	if *calls != 6 {
-		t.Fatalf("tmux calls = %d, want 6 because bypass sends both notifications", *calls)
+	// #800: set-buffer+paste-buffer+send-keys are one chained call per send.
+	if *calls != 2 {
+		t.Fatalf("tmux calls = %d, want 2 because bypass sends both notifications", *calls)
 	}
 }
 
@@ -510,7 +521,10 @@ func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
 	notifier, _ := paneNotifierForTest(now, 0)
 	sendKeys := 0
 	notifier.runTmux = func(args ...string) error {
-		if len(args) > 0 && args[0] == "send-keys" {
+		// #800: the initial send-keys is chained inside the same call as
+		// set-buffer/paste-buffer, so look for it anywhere in args rather
+		// than only at args[0].
+		if slices.Contains(args, "send-keys") {
 			sendKeys++
 		}
 		return nil
@@ -518,11 +532,93 @@ func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
 	notifier.capture = func(paneID string) (string, error) {
 		return "unchanged", nil
 	}
-	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
-		t.Fatalf("SendToPane: %v", err)
+	err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2)
+	if !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (snapshot never changed)", err)
 	}
 	if sendKeys != 3 {
 		t.Fatalf("send-keys calls = %d, want initial send plus 2 verify retries", sendKeys)
+	}
+}
+
+func TestSendToPane_VerifyRetryReturnsNilWhenSnapshotChanges(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifier, _ := paneNotifierForTest(now, 0)
+	captureCalls := 0
+	notifier.capture = func(paneID string) (string, error) {
+		captureCalls++
+		if captureCalls >= 2 {
+			return "changed", nil
+		}
+		return "unchanged", nil
+	}
+	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane() error = %v, want nil once a snapshot change is observed", err)
+	}
+}
+
+func TestSendToPane_VerifyRetryDetectsNotificationLeftInComposer(t *testing.T) {
+	const filename = "20260924-171131-s711b-r407e-from-orchestrator-to-worker.md"
+	message := "Hello, worker! You've got mail: " + filename + ". Run tmux-a2a-postman pop."
+	for _, prompt := range []string{"❯", "›"} {
+		t.Run(prompt, func(t *testing.T) {
+			notifier, _ := paneNotifierForTest(time.Now(), 0)
+			captureCalls := 0
+			sendKeys := 0
+			notifier.capture = func(string) (string, error) {
+				captureCalls++
+				return "previous output\n" + prompt + " " + message + "\nfooter " + fmt.Sprint(captureCalls), nil
+			}
+			notifier.runTmux = func(args ...string) error {
+				if slices.Contains(args, "send-keys") {
+					sendKeys++
+				}
+				return nil
+			}
+			err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2)
+			if !errors.Is(err, ErrPaneUnresponsive) {
+				t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive while notification remains in composer", err)
+			}
+			if sendKeys != 3 {
+				t.Fatalf("send-keys calls = %d, want initial send plus 2 retries", sendKeys)
+			}
+		})
+	}
+}
+
+func TestSendToPane_VerifyRetryChecksAfterFinalEnter(t *testing.T) {
+	const filename = "20260924-171131-s711b-r407e-from-orchestrator-to-worker.md"
+	message := "Hello, worker! You've got mail: " + filename + ". Run tmux-a2a-postman pop."
+	notifier, _ := paneNotifierForTest(time.Now(), 0)
+	sendKeys := 0
+	notifier.runTmux = func(args ...string) error {
+		if slices.Contains(args, "send-keys") {
+			sendKeys++
+		}
+		return nil
+	}
+	notifier.capture = func(string) (string, error) {
+		if sendKeys < 3 {
+			return "❯ " + message + "\n──────────────────", nil
+		}
+		return "❯ " + message + "\nprocessed\n──────────────────\n❯ \n──────────────────", nil
+	}
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane error = %v, want nil after final Enter clears composer", err)
+	}
+	if sendKeys != 3 {
+		t.Fatalf("send-keys calls = %d, want initial send plus 2 retries", sendKeys)
+	}
+}
+
+func TestSendToPane_VerifyRetryReturnsNilOnCaptureError(t *testing.T) {
+	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
+	notifier, _ := paneNotifierForTest(now, 0)
+	notifier.capture = func(paneID string) (string, error) {
+		return "", fmt.Errorf("capture-pane failed")
+	}
+	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane() error = %v, want nil when verification cannot run (capture error means unknown, not unresponsive)", err)
 	}
 }
 
@@ -549,9 +645,12 @@ func TestSendToPane_EnterCount2(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
-	// Expected calls: set-buffer, paste-buffer -t %99, send-keys -t %99 C-m, send-keys -t %99 C-m
-	if len(lines) != 6 {
-		t.Errorf("expected 6 lines (set-buffer+2 sentinel lines+paste-buffer+2 send-keys), got %d: %v", len(lines), lines)
+	// #800: set-buffer+paste-buffer+run-shell+first send-keys are one
+	// chained invocation (3 lines from the sentinel-wrapped text, with
+	// paste-buffer/run-shell/send-keys appended to the last of those
+	// lines); the second Enter (enterCount=2) is a separate send-keys call.
+	if len(lines) != 4 {
+		t.Errorf("expected 4 lines (3-line chained first invocation + 1 additional send-keys), got %d: %v", len(lines), lines)
 	}
 
 	// Count send-keys invocations (should be exactly 2)
@@ -588,9 +687,9 @@ func TestSendToPane_EnterCount3(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
-	// Expected calls: set-buffer, paste-buffer, send-keys x3
-	if len(lines) != 7 {
-		t.Errorf("expected 7 lines (set-buffer+2 sentinel lines+paste-buffer+3 send-keys), got %d: %v", len(lines), lines)
+	// #800: 3-line chained first invocation + 2 additional send-keys calls.
+	if len(lines) != 5 {
+		t.Errorf("expected 5 lines (3-line chained first invocation + 2 additional send-keys), got %d: %v", len(lines), lines)
 	}
 
 	sendKeyCount := 0
@@ -626,9 +725,9 @@ func TestSendToPane_EnterCount1(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
-	// Expected calls: set-buffer, paste-buffer, send-keys x1
-	if len(lines) != 5 {
-		t.Errorf("expected 5 lines (set-buffer+2 sentinel lines+paste-buffer+1 send-keys), got %d: %v", len(lines), lines)
+	// #800: set-buffer+paste-buffer+run-shell+send-keys is one chained call.
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines (chained first invocation only, enterCount=1), got %d: %v", len(lines), lines)
 	}
 
 	sendKeyCount := 0
@@ -664,9 +763,9 @@ func TestSendToPane_EnterCount0(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(string(argsData)), "\n")
 
-	// Expected: set-buffer, paste-buffer, send-keys x1 (0 treated same as 1)
-	if len(lines) != 5 {
-		t.Errorf("expected 5 lines (enterCount=0 sends one Enter), got %d: %v", len(lines), lines)
+	// #800: chained first invocation only (0 treated same as 1).
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines (enterCount=0 sends one Enter), got %d: %v", len(lines), lines)
 	}
 
 	sendKeyCount := 0
@@ -743,8 +842,8 @@ esac
 	}()
 
 	err = SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1, true, 1*time.Millisecond, 2)
-	if err != nil {
-		t.Fatalf("SendToPane failed: %v", err)
+	if !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (fake tmux capture-pane always reports unchanged)", err)
 	}
 	if err := stderrW.Close(); err != nil {
 		t.Fatalf("stderrW.Close failed: %v", err)
@@ -755,6 +854,85 @@ esac
 	}
 	if strings.Contains(string(stderrBytes), "enter verify") {
 		t.Fatalf("SendToPane leaked enter-verify warning to stderr: %q", string(stderrBytes))
+	}
+}
+
+// TestAtomicFirstEnterArgs_ChainsSetBufferPasteAndSubmitInOneCommand pins
+// #800's core fix: set-buffer, paste-buffer, and the submitting send-keys
+// C-m are one semicolon-chained tmux command line, with the enter delay
+// (when positive) executed by tmux's own run-shell between paste and
+// submit -- never a Go-level time.Sleep between separate tmux invocations.
+// That is what closes the interruption window: a daemon restart can only
+// land before this single argv is handed to exec.Command (nothing sent
+// yet) or after the one resulting tmux process has already run to
+// completion (paste and Enter both already delivered); there is no
+// Go-level pause in between where a restart could leave text pasted with
+// the submitting Enter never sent.
+func TestAtomicFirstEnterArgs_ChainsSetBufferPasteAndSubmitInOneCommand(t *testing.T) {
+	t.Run("zero delay: no run-shell segment", func(t *testing.T) {
+		args := atomicFirstEnterArgs("hello", "%1", 0)
+		if len(args) < 3 || args[0] != "set-buffer" || args[1] != "-b" {
+			t.Fatalf("atomicFirstEnterArgs(delay=0) = %#v, want to start with [set-buffer -b <name>]", args)
+		}
+		bufName := args[2]
+		want := []string{"set-buffer", "-b", bufName, "hello", ";", "paste-buffer", "-b", bufName, "-d", "-t", "%1", ";", "send-keys", "-t", "%1", "C-m"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("atomicFirstEnterArgs(delay=0) = %#v, want %#v", args, want)
+		}
+	})
+
+	t.Run("positive delay: run-shell sleep segment between paste and submit", func(t *testing.T) {
+		args := atomicFirstEnterArgs("hello", "%1", 250*time.Millisecond)
+		if len(args) < 3 || args[0] != "set-buffer" || args[1] != "-b" {
+			t.Fatalf("atomicFirstEnterArgs(delay=250ms) = %#v, want to start with [set-buffer -b <name>]", args)
+		}
+		bufName := args[2]
+		want := []string{"set-buffer", "-b", bufName, "hello", ";", "paste-buffer", "-b", bufName, "-d", "-t", "%1", ";", "run-shell", "sleep 0.250", ";", "send-keys", "-t", "%1", "C-m"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("atomicFirstEnterArgs(delay=250ms) = %#v, want %#v", args, want)
+		}
+	})
+
+	t.Run("consecutive calls use distinct buffer names", func(t *testing.T) {
+		first := atomicFirstEnterArgs("a", "%1", 0)
+		second := atomicFirstEnterArgs("b", "%1", 0)
+		if first[2] == second[2] {
+			t.Fatalf("two calls reused the same buffer name %q; #800/F-030 requires distinct names to prevent cross-pane collisions", first[2])
+		}
+	})
+}
+
+// TestSendToPane_FirstEnterHasNoGoLevelSleepBetweenPasteAndSubmit proves the
+// #800 fix at the SendToPane level, not just the args builder: even with a
+// nonzero enter delay, exactly one tmux invocation is issued for the
+// initial paste+submit, and the injected sleep function -- which a
+// daemon-restart-interrupted Go goroutine could be paused inside -- is
+// never called for it. The delay is entirely tmux's (run-shell's)
+// responsibility now.
+func TestSendToPane_FirstEnterHasNoGoLevelSleepBetweenPasteAndSubmit(t *testing.T) {
+	notifier := NewPaneNotifier(0)
+	var calls [][]string
+	notifier.runTmux = func(args ...string) error {
+		calls = append(calls, args)
+		return nil
+	}
+	sleepCalls := 0
+	notifier.sleep = func(time.Duration) {
+		sleepCalls++
+	}
+
+	if err := notifier.SendToPane("%1", "hello", 250*time.Millisecond, 0, 1, true, 0, 0); err != nil {
+		t.Fatalf("SendToPane: %v", err)
+	}
+
+	if len(calls) != 1 {
+		t.Fatalf("tmux calls = %d, want exactly 1 atomic invocation: %#v", len(calls), calls)
+	}
+	if sleepCalls != 0 {
+		t.Fatalf("Go-level sleep calls = %d, want 0 (delay must run inside the atomic tmux invocation via run-shell)", sleepCalls)
+	}
+	if !slices.Contains(calls[0], "run-shell") {
+		t.Fatalf("chained args = %#v, want a run-shell segment carrying the enter delay", calls[0])
 	}
 }
 

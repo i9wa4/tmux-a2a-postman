@@ -13,6 +13,15 @@ Flags:
   --reply-to <message>    Message id for fallback closure or traceability
   --fills-input-request-id <id>
                           Exact input request id this message fills
+  --verdict <text>        Verdict to stamp on the filled request named by
+                          --verdict-of (e.g. "APPROVED: ...", "NOT APPROVED: ...",
+                          "none"); clears the sender's verdict debt for that
+                          request. Must be provided together with --verdict-of.
+                          Must be a single line with no control characters.
+                          This is an operator-recorded stamp for the verdict-debt
+                          gate, not evidence that the underlying request was
+                          actually re-checked.
+  --verdict-of <id>       Input request id the --verdict applies to
   --thread-id <id>        Command approval thread id for an exact reply
   --command-hash <sha256:hex>
                           Command approval digest for an exact reply; required with --thread-id
@@ -50,7 +59,9 @@ Output:
   Reply-required sends include "input_request_id".
   Exact replies include "fills_input_request_id". Command-approval replies
   additionally require paired --thread-id and --command-hash flags, which are
-  archived as "thread_id" and "command_hash" frontmatter metadata.
+  archived as "thread_id" and "command_hash" frontmatter metadata. A verdict
+  send includes "verdict" and "verdict_of", archived as "verdict" and
+  "verdictOf" frontmatter metadata.
   Evidence flags populate outer envelope evidence_* params. If any evidence
   flag is set, all required replay contract fields must be present and valid.
   Fill/reply sends may also include:
