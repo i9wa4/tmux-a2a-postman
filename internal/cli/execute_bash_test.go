@@ -4646,6 +4646,21 @@ func runBashCommandCapturingScriptStdout(t *testing.T, commandText string) strin
 	return string(data)
 }
 
+// newExecuteBashFixtureWithBash builds a standard fixture and then restores
+// the PATH that was in effect before the fixture ran tmuxtest.InstallMissing
+// (#845), which replaces PATH with an empty directory. Tests that execute the
+// captured commandText through the real runBashCommand need "bash" and the
+// ordinary coreutils to resolve. The restored baseline PATH still starts with
+// the poison "tmux" shim installed by TestMain (lockDownPATHAgainstRealTmux),
+// so a real tmux binary stays unreachable.
+func newExecuteBashFixtureWithBash(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
+	t.Helper()
+	baselinePath := os.Getenv("PATH")
+	fixture := newExecuteBashFixture(t, policies...)
+	t.Setenv("PATH", baselinePath)
+	return fixture
+}
+
 // TestRunExecuteBashPositionalSingleElementIsVerbatimShellSourceWithUnchangedDigest
 // covers #838 I-1: exactly one positional element must still be run as
 // verbatim shell source -- including its own internal shell operators and
@@ -4653,7 +4668,7 @@ func runBashCommandCapturingScriptStdout(t *testing.T, commandText string) strin
 // pre-#838 (and --command) code paths, since joining a single element with
 // any separator never changes it.
 func TestRunExecuteBashPositionalSingleElementIsVerbatimShellSourceWithUnchangedDigest(t *testing.T) {
-	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+	fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
 		Requester: "worker",
 		Label:     "low-risk",
 		Category:  "diagnostic",
@@ -4696,7 +4711,7 @@ func TestRunExecuteBashPositionalSingleElementIsVerbatimShellSourceWithUnchanged
 // bug in that helper could not make a test built from the same helper agree
 // with buggy production output (#838 I-3).
 func TestRunExecuteBashPositionalMultiElementReconstructsMultilineScript(t *testing.T) {
-	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+	fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
 		Requester: "worker",
 		Label:     "low-risk",
 		Category:  "diagnostic",
@@ -4764,7 +4779,7 @@ func TestRunExecuteBashPositionalMultiElementReconstructsCdChain(t *testing.T) {
 // code rather than exact stdout, since bash -lc runs as a login shell and
 // the caller's own shell profile may print unrelated banner text to stdout.
 func TestRunExecuteBashPositionalMultiElementRealEndToEndFileEffect(t *testing.T) {
-	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+	fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
 		Requester: "worker",
 		Label:     "low-risk",
 		Category:  "diagnostic",
