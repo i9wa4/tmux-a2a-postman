@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +26,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxtest"
 )
 
 type executeBashFixture struct {
@@ -31,6 +34,7 @@ type executeBashFixture struct {
 	contextID            string
 	sessionName          string
 	sessionDir           string
+	nowMu                sync.Mutex
 	now                  time.Time
 	policies             []config.CommandApprovalPolicy
 	commandApproverNode  string
@@ -44,6 +48,35 @@ type executeBashFixture struct {
 	runStatus            int
 	runErr               error
 }
+
+// currentNow/advanceNow (#831 D2 test migration) are mutex-guarded since
+// TestRunExecuteBashBlockingApprovalIsSingleUseAcrossConcurrentWaiters and
+// similar tests drive concurrent waiters against the same fixture, each
+// polling (and, under the new default fake sleep below, advancing the clock)
+// from its own goroutine.
+func (f *executeBashFixture) currentNow() time.Time {
+	f.nowMu.Lock()
+	defer f.nowMu.Unlock()
+	return f.now
+}
+
+func (f *executeBashFixture) advanceNow(d time.Duration) {
+	f.nowMu.Lock()
+	f.now = f.now.Add(d)
+	f.nowMu.Unlock()
+}
+
+// waitWatchdogPolls (#831 D2 test migration, "wait watchdog" requirement) is
+// an upper bound on how many fake-clock poll ticks the default sleep below
+// will advance through before failing the test with a clear diagnostic,
+// distinct from and independent of the production --wait-timeout-seconds
+// deadline being exercised. It guards against a misconfigured fake clock
+// (one that never actually advances what the wait loop believes has
+// elapsed) hanging the test suite instead of failing fast. The default
+// approval TTL (15min) at the real 500ms poll interval needs at most ~1800
+// ticks to naturally reach a terminal expired/wait_timeout state; this cap
+// is comfortably above that.
+const waitWatchdogPolls = 4000
 
 func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
 	t.Helper()
@@ -69,6 +102,17 @@ func newExecuteBashFixture(t *testing.T, policies ...config.CommandApprovalPolic
 // (no session-state.json / lease on disk yet).
 func newExecuteBashFixtureRaw(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
 	t.Helper()
+
+	// #845: this fixture's discoveredNodes map hardcodes fake tmux PaneIDs
+	// (e.g. "%3") that are NOT scoped to any real session -- tmux PaneIDs
+	// are unique per tmux SERVER, not per session. Any pane-notification
+	// delivery exercised by a test using this fixture must never reach a
+	// real "tmux" binary, or it sends real keystrokes to whatever
+	// ambient pane on the real server happens to hold that ID. InstallMissing
+	// points PATH at an empty directory so "tmux" cannot be found at all,
+	// which is stricter and safer than a scripted fake for fixtures that
+	// don't assert on tmux's own output.
+	tmuxtest.InstallMissing(t)
 
 	baseDir := t.TempDir()
 	contextID := "ctx-484"
@@ -104,6 +148,23 @@ func newExecuteBashFixtureRaw(t *testing.T, policies ...config.CommandApprovalPo
 	return fixture
 }
 
+// TestNewExecuteBashFixtureNeverReachesRealTmux is a regression guard for
+// #845: this package's fixtures hardcode fake PaneIDs (e.g. "%3") that are
+// not scoped to any real tmux session, so any fixture-driven test that
+// reached a real "tmux" binary could send real keystrokes to an unrelated,
+// ambient pane on whatever live tmux server the test process happened to
+// run inside. newExecuteBashFixtureRaw installs tmuxtest.InstallMissing to
+// prevent this; this test fails loudly if that wiring is ever removed, by
+// directly asserting "tmux" cannot be resolved on PATH while a fixture is
+// active.
+func TestNewExecuteBashFixtureNeverReachesRealTmux(t *testing.T) {
+	_ = newExecuteBashFixtureRaw(t, config.CommandApprovalPolicy{})
+
+	if path, err := exec.LookPath("tmux"); err == nil {
+		t.Fatalf("expected \"tmux\" to be unresolvable while an execute-bash fixture is active (internal/tmuxtest.InstallMissing must be wired into newExecuteBashFixtureRaw), but found it at %q -- this would let fixture-driven tests send real keystrokes to an ambient tmux pane (see #845)", path)
+	}
+}
+
 func (f *executeBashFixture) context() commandContext {
 	return f.contextAsPane("worker")
 }
@@ -115,6 +176,7 @@ func (f *executeBashFixture) context() commandContext {
 // from the command_approver_node's own pane, structurally distinct from the
 // requester's.
 func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
+	pollCount := 0
 	return commandContext{
 		stdout: &f.stdout,
 		stderr: &f.stderr,
@@ -129,7 +191,23 @@ func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
 		},
 		getTmuxPaneName:    func() string { return paneName },
 		getTmuxSessionName: func() string { return f.sessionName },
-		now:                func() time.Time { return f.now },
+		now:                func() time.Time { return f.currentNow() },
+		// #831 D2 test migration: the DEFAULT sleep for every test that does
+		// not set its own ctx.sleep override. Since #823 made blocking-mode
+		// waiting synchronous and this issue removes --no-wait entirely,
+		// every test that reaches the wait loop now needs a deterministic
+		// clock -- this ADVANCES the fixture's fake now() by the requested
+		// duration (never a no-op that would desynchronize the fake clock
+		// from what the wait loop believes has elapsed), bounded by
+		// waitWatchdogPolls so a genuinely stuck wait loop fails fast with a
+		// clear diagnostic instead of spinning indefinitely.
+		sleep: func(_ context.Context, d time.Duration) {
+			pollCount++
+			if pollCount > waitWatchdogPolls {
+				panic(fmt.Sprintf("wait loop did not reach a terminal state within %d ticks (possible fixture/production bug)", waitWatchdogPolls))
+			}
+			f.advanceNow(d)
+		},
 		runBash: func(command string, stdout, stderr io.Writer) (int, error) {
 			f.runCount++
 			f.commands = append(f.commands, command)
@@ -143,26 +221,39 @@ func (f *executeBashFixture) contextAsPane(paneName string) commandContext {
 	}
 }
 
-// args builds the standard test invocation. It defaults to --no-wait: since
-// #823 made blocking mode wait by default, and these fixtures use a fixed
-// fake clock (ctx.now never advances on its own), a default-on wait loop
-// here would poll forever against a projection state that never reaches its
-// synthetic deadline. Tests that specifically exercise the default-on wait
-// behavior (TestRunExecuteBashBlockingWait*) override this back off with an
-// explicit trailing "--no-wait=false", relying on Go's flag package letting
-// a later flag occurrence win.
+// args builds the standard test invocation. #831 (D2/D4) removed both
+// --no-wait and --requester from execute-bash entirely: the effective
+// requester is now always whatever pane title the context() (default
+// "worker", #626 B1-residual precedent) or contextAsPane(paneName) call
+// supplies, and blocking mode always waits (bounded by
+// --wait-timeout-seconds and the request's own expiry) -- the fixture's
+// default ctx.sleep above (which advances the fake clock deterministically,
+// bounded by waitWatchdogPolls) is what keeps every test that reaches the
+// wait loop from hanging, not an opt-out flag.
 func (f *executeBashFixture) args(extra ...string) []string {
 	base := []string{
 		"--context-id", f.contextID,
 		"--session", f.sessionName,
-		"--requester", "worker",
-		"--no-wait",
 	}
 	return append(base, extra...)
 }
 
 func TestRunExecuteBashAdvisoryRecordsRequestWithoutCommandTextAndRuns(t *testing.T) {
-	fixture := newExecuteBashFixture(t)
+	// #831 D1: advisory access is now config-declared, not CLI-flag-declared
+	// -- a --mode advisory flag with no matching config entry would
+	// downgrade the (blocking) floor and be refused. Pinning this explicit
+	// advisory policy makes advisory mode the genuine, admin-declared floor
+	// for this label/category, not an absence-of-config artifact.
+	// #831 I-005 (guardian rework 1): Requester is pinned too, since D5/D7
+	// refuse loading any advisory/warn-only config entry whose Requester is
+	// wildcard/empty -- a real LoadConfig would reject this fixture's policy
+	// without it.
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
 	commandText := "printf raw-command-sentinel-7f3c3d9b-never-mailbox"
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
@@ -212,12 +303,24 @@ func TestRunExecuteBashAdvisoryRecordsRequestWithoutCommandTextAndRuns(t *testin
 }
 
 func TestRunExecuteBashStoreCommandTextOptIn(t *testing.T) {
-	fixture := newExecuteBashFixture(t)
+	// #831 D1: see TestRunExecuteBashAdvisoryRecordsRequestWithoutCommandTextAndRuns
+	// -- advisory access is config-declared, not CLI-flag-declared.
+	// #831 I-005 (guardian rework 1): Requester and Category are pinned too,
+	// since D5/D7 refuse loading any advisory/warn-only config entry whose
+	// Requester or Category is wildcard/empty -- a real LoadConfig would
+	// reject this fixture's policy without them. The invocation below adds
+	// --category to match.
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "diagnostic",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
 	commandText := "printf audit-me"
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "diagnostic",
-		"--mode", "advisory",
+		"--category", "diagnostic",
 		"--reviewer", "orchestrator",
 		"--store-command-text",
 		"--command", commandText,
@@ -263,8 +366,10 @@ func TestRunExecuteBashStoreCommandTextDoesNotLeakToApprovalMailbox(t *testing.T
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want pending blocking approval")
 	}
-	if !strings.Contains(err.Error(), "approval is absent") {
-		t.Fatalf("error = %v, want pending approval absence", err)
+	// #831 D2: blocking mode always waits now, ending in wait_timeout
+	// rather than the old immediate "approval is absent" diagnostic.
+	if !strings.Contains(err.Error(), "approval wait timed out") {
+		t.Fatalf("error = %v, want approval wait timeout", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want zero execution", fixture.runCount)
@@ -345,8 +450,13 @@ func TestRunExecuteBashCommandApprovalABCLifecycleRejectsWithoutExecution(t *tes
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want pending blocking approval")
 	}
-	if !strings.Contains(err.Error(), "approval is absent") {
-		t.Fatalf("runExecuteBashWithContext() error = %v, want approval absence", err)
+	// #831 D2: blocking mode always waits now, so a first-time absent
+	// approval mints a fresh pending request and waits on it (the fixture's
+	// fake clock advances deterministically to the wait_timeout deadline;
+	// no one decides it before this call returns) rather than reporting the
+	// immediate "approval is absent" state.
+	if !strings.Contains(err.Error(), "approval wait timed out") {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want approval wait timeout", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount after request = %d, want zero execution", fixture.runCount)
@@ -449,16 +559,22 @@ func TestRunExecuteBashCommandApprovalABCLifecycleRejectsWithoutExecution(t *tes
 }
 
 func TestRunExecuteBashWarnOnlyRequiresOverride(t *testing.T) {
+	// #831 I-005 (guardian rework 1): Category is pinned too, since D5/D7
+	// refuse loading any advisory/warn-only config entry whose Category is
+	// wildcard/empty -- a real LoadConfig would reject this fixture's policy
+	// without it. The invocation below adds --category to match.
 	policy := config.CommandApprovalPolicy{
 		Requester: "worker",
 		Reviewer:  "orchestrator",
 		Label:     "deploy",
+		Category:  "deploy",
 		Mode:      "warn-only",
 	}
 	fixture := newExecuteBashFixture(t, policy)
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "deploy",
+		"--category", "deploy",
 		"--command", "printf deploy",
 	))
 	if err == nil {
@@ -473,16 +589,22 @@ func TestRunExecuteBashWarnOnlyRequiresOverride(t *testing.T) {
 }
 
 func TestRunExecuteBashWarnOnlyOverrideRunsAndAudits(t *testing.T) {
+	// #831 I-005 (guardian rework 1): Category is pinned too, since D5/D7
+	// refuse loading any advisory/warn-only config entry whose Category is
+	// wildcard/empty -- a real LoadConfig would reject this fixture's policy
+	// without it. The invocation below adds --category to match.
 	policy := config.CommandApprovalPolicy{
 		Requester: "worker",
 		Reviewer:  "orchestrator",
 		Label:     "deploy",
+		Category:  "deploy",
 		Mode:      "warn-only",
 	}
 	fixture := newExecuteBashFixture(t, policy)
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "deploy",
+		"--category", "deploy",
 		"--override-approval",
 		"--command", "printf deploy",
 	))
@@ -509,38 +631,56 @@ func TestRunExecuteBashWarnOnlyOverrideRunsAndAudits(t *testing.T) {
 // separately (guardian F-018) because warn-only, unlike blocking, would
 // let --override-approval run the command.
 func TestRunExecuteBashDefaultModeIsBlockingWithoutOverride(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{name: "no override flag"},
-		{name: "with override-approval flag", args: []string{"--override-approval"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fixture := newExecuteBashFixture(t)
+	// #831 D2: blocking mode always waits now, so this ends in wait_timeout
+	// (the fixture's fake clock advances deterministically) rather than the
+	// old immediate "approval is absent" diagnostic.
+	t.Run("no override flag", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t)
 
-			err := runExecuteBashWithContext(fixture.context(), fixture.args(append([]string{
-				"--label", "unset-mode",
-				"--command", "printf default-mode",
-			}, tc.args...)...))
-			if err == nil {
-				t.Fatal("runExecuteBashWithContext() error = nil, want default-blocking refusal")
-			}
-			if !strings.Contains(err.Error(), "approval is absent") {
-				t.Fatalf("error = %v, want approval-absent diagnostic", err)
-			}
-			if fixture.runCount != 0 {
-				t.Fatalf("runCount = %d, want 0 (command must not run without approval)", fixture.runCount)
-			}
-			decision := findExecutionDecisionPayload(t, fixture.sessionDir)
-			if decision.Mode != commandApprovalModeBlocking {
-				t.Fatalf("decision.Mode = %q, want %q", decision.Mode, commandApprovalModeBlocking)
-			}
-			if decision.Decision != "blocked" {
-				t.Fatalf("decision.Decision = %q, want %q", decision.Decision, "blocked")
-			}
-		})
-	}
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--label", "unset-mode",
+			"--command", "printf default-mode",
+		))
+		if err == nil {
+			t.Fatal("runExecuteBashWithContext() error = nil, want default-blocking refusal")
+		}
+		if !strings.Contains(err.Error(), "approval wait timed out") {
+			t.Fatalf("error = %v, want approval wait timeout diagnostic", err)
+		}
+		if fixture.runCount != 0 {
+			t.Fatalf("runCount = %d, want 0 (command must not run without approval)", fixture.runCount)
+		}
+		decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+		if decision.Mode != commandApprovalModeBlocking {
+			t.Fatalf("decision.Mode = %q, want %q", decision.Mode, commandApprovalModeBlocking)
+		}
+		if decision.Decision != "blocked" {
+			t.Fatalf("decision.Decision = %q, want %q", decision.Decision, "blocked")
+		}
+	})
+
+	// #831 D3: --override-approval now fails LOUDLY (an explicit error,
+	// before any request is minted or decision recorded) when passed but
+	// the effective mode is not warn-only, replacing the silent no-op this
+	// subtest used to document.
+	t.Run("with override-approval flag", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t)
+
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--label", "unset-mode",
+			"--command", "printf default-mode",
+			"--override-approval",
+		))
+		if err == nil {
+			t.Fatal("runExecuteBashWithContext() error = nil, want --override-approval-outside-warn-only refusal")
+		}
+		if !strings.Contains(err.Error(), "--override-approval only applies in warn-only mode") {
+			t.Fatalf("error = %v, want loud override-approval-outside-warn-only diagnostic", err)
+		}
+		if fixture.runCount != 0 {
+			t.Fatalf("runCount = %d, want 0 (command must not run without approval)", fixture.runCount)
+		}
+	})
 }
 
 // TestRunExecuteBashDefaultModeStillFailsOpenWithoutCommandApproverNode pins
@@ -630,26 +770,33 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 		wantReason string
 	}{
 		{
+			// #831 D2: blocking mode always waits now (--no-wait was
+			// removed) -- an absent approval mints a fresh pending request
+			// and this call waits on it, ending in wait_timeout (the
+			// fixture's fake clock advances deterministically to the
+			// default --wait-timeout-seconds deadline; no one ever decides
+			// it in this test).
 			name: "absent",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 			},
 			command:    "printf absent",
-			wantReason: "approval is absent",
+			wantReason: "approval wait timed out",
 		},
 		{
 			// #823 rework-2 (F-012): a stale terminal thread is now
 			// eligible for retry -- the call atomically mints a fresh
-			// request and reports "approval is pending" instead of
-			// resurfacing the stale diagnosis, so the deterministic thread
-			// id never permanently blocks a future retry of the identical
-			// command.
+			// request. #831 D2: that fresh request is then waited on
+			// (blocking mode always waits), ending in wait_timeout rather
+			// than immediately reporting "approval is pending", so the
+			// deterministic thread id never permanently blocks a future
+			// retry of the identical command.
 			name: "stale",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 				threadID := commandApprovalThreadID(policy, commandDigest(commandText))
 				fixture.appendCommandApprovalDecisionOnly(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
 			},
 			command:    "printf stale",
-			wantReason: "approval is pending",
+			wantReason: "approval wait timed out",
 		},
 		{
 			// #823 rework-2 (F-012): ditto for a rejected thread.
@@ -658,7 +805,7 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 				fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionRejected, "orchestrator", fixture.now.Add(15*time.Minute))
 			},
 			command:    "printf rejected",
-			wantReason: "approval is pending",
+			wantReason: "approval wait timed out",
 		},
 		{
 			// #823 rework-2 (F-012): ditto for an expired thread.
@@ -667,15 +814,18 @@ func TestRunExecuteBashBlockingRefusesInvalidApprovals(t *testing.T) {
 				fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(-time.Second))
 			},
 			command:    "printf expired",
-			wantReason: "approval is pending",
+			wantReason: "approval wait timed out",
 		},
 		{
+			// #831 D2: this now also waits (blocking mode always waits),
+			// ending in wait_timeout rather than the immediate "approval is
+			// pending" diagnostic.
 			name: "wrong reviewer remains pending",
 			setup: func(t *testing.T, fixture *executeBashFixture, policy resolvedCommandApprovalPolicy, commandText string) {
 				fixture.appendCommandApproval(t, policy, commandText, journal.ApprovalDecisionApproved, "critic", fixture.now.Add(15*time.Minute))
 			},
 			command:    "printf reviewer",
-			wantReason: "approval is pending",
+			wantReason: "approval wait timed out",
 		},
 		{
 			name: "changed digest",
@@ -1048,15 +1198,21 @@ func TestRunExecuteBashBlockingRejectsLegacyAddresslessApprovedAuditOnly(t *test
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want a pending blocking refusal for the freshly minted request")
 	}
-	if !strings.Contains(err.Error(), "approval is pending") {
-		t.Fatalf("error = %v, want approval-is-pending diagnostic (fresh mint over the historical-only thread)", err)
+	// #831 D2: the freshly minted request is then waited on (blocking mode
+	// always waits), ending in wait_timeout rather than the immediate
+	// "approval is pending" diagnostic.
+	if !strings.Contains(err.Error(), "approval wait timed out") {
+		t.Fatalf("error = %v, want approval wait timeout (fresh mint over the historical-only thread)", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want 0; legacy address-less approval must not authorize live execution", fixture.runCount)
 	}
 	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
-	if decision.Decision != "blocked" || !strings.Contains(decision.Reason, "approval is pending") {
-		t.Fatalf("execution decision = %#v, want blocked pending reason", decision)
+	// #831 D2: the freshly minted request's wait concludes in wait_timeout,
+	// so the FINAL journaled decision reason is the wait-timeout diagnostic,
+	// not the immediate approval-is-pending reason recorded at mint time.
+	if decision.Decision != "blocked" || !strings.Contains(decision.Reason, "approval wait timed out") {
+		t.Fatalf("execution decision = %#v, want blocked wait-timeout reason", decision)
 	}
 }
 
@@ -1222,12 +1378,27 @@ func TestRunExecuteBashBlockingRejectsExplicitThreadIDWithMismatchedDigest(t *te
 }
 
 func TestRunExecuteBashPropagatesExitStatus(t *testing.T) {
-	fixture := newExecuteBashFixture(t)
+	// #831 D1: advisory access is now config-declared, not CLI-flag-declared
+	// -- a --mode advisory flag with no matching config entry would
+	// downgrade the (blocking) floor and be refused, so this fixture pins
+	// an explicit advisory policy for this label/category to make advisory
+	// mode the genuine, admin-declared floor rather than relying on
+	// absence-of-config.
+	// #831 I-005 (guardian rework 1): Requester is pinned too, since D5/D7
+	// refuse loading any advisory/warn-only config entry whose Requester is
+	// wildcard/empty -- a real LoadConfig would reject this fixture's policy
+	// without it.
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "diagnostic",
+		Category:  "exit-status",
+		Mode:      "advisory",
+	})
 	fixture.runStatus = 7
 
 	err := runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "diagnostic",
-		"--mode", "advisory",
+		"--category", "exit-status",
 		"--reviewer", "orchestrator",
 		"--command", "exit 7",
 	))
@@ -1370,8 +1541,10 @@ func newOpenApprovalFixture(t *testing.T, commandText string) (*executeBashFixtu
 		"--reason", "auto-fill regression setup",
 		"--command", commandText,
 	))
-	if err == nil || !strings.Contains(err.Error(), "approval is absent") {
-		t.Fatalf("runExecuteBashWithContext(request) error = %v, want pending blocking approval", err)
+	// #831 D2: blocking mode always waits now, ending in wait_timeout
+	// rather than the old immediate "approval is absent" diagnostic.
+	if err == nil || !strings.Contains(err.Error(), "approval wait timed out") {
+		t.Fatalf("runExecuteBashWithContext(request) error = %v, want approval wait timeout", err)
 	}
 
 	threadID, thread := onlyApprovalThread(t, fixture.sessionDir, fixture.now)
@@ -1740,7 +1913,6 @@ func TestRunExecuteBashBlockingWaitsForDecisionThenRuns(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err != nil {
 		t.Fatalf("runExecuteBashWithContext() error = %v, want default-on wait to observe the approval and run", err)
@@ -1852,7 +2024,6 @@ func TestRunExecuteBashBlockingWaitRejectsCrossRequesterThread(t *testing.T) {
 		"--category", "release",
 		"--thread-id", foreignThreadID,
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want cross-requester refusal")
@@ -1897,7 +2068,6 @@ func TestRunExecuteBashBlockingWaitDeliveryFailureFailsFast(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want delivery_failed refusal")
@@ -1943,7 +2113,6 @@ func TestRunExecuteBashBlockingWaitDetectsApproverLostMidWait(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want approver_lost refusal")
@@ -2005,7 +2174,6 @@ func TestRunExecuteBashBlockingWaitSessionGenerationChangeEndsWait(t *testing.T)
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want session_changed refusal")
@@ -2066,7 +2234,6 @@ func TestRunExecuteBashBlockingWaitCancellationBeatsLateApproval(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want cancellation to win over the late approval")
@@ -2213,7 +2380,6 @@ func TestRunExecuteBashBlockingApprovalIsSingleUseAcrossConcurrentWaiters(t *tes
 				"--label", "protected",
 				"--category", "release",
 				"--command", commandText,
-				"--no-wait=false",
 			))
 		}(i)
 	}
@@ -2312,14 +2478,13 @@ func TestRunExecuteBashBlockingWaitObservesExpiryDuringWait(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 		"--approval-ttl-seconds", "1",
 		"--wait-timeout-seconds", "300",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want expired refusal")
 	}
-	if !strings.Contains(err.Error(), "approval is expired") {
+	if !strings.Contains(err.Error(), "approval request has expired") {
 		t.Fatalf("error = %v, want expiry diagnostic (not a generic wait_timeout)", err)
 	}
 	var outcomeErr commandApprovalOutcomeError
@@ -2348,7 +2513,6 @@ func TestRunExecuteBashDefaultWaitFailsOpenWithoutCommandApproverNode(t *testing
 	err := runExecuteBashWithContext(ctx, fixture.args(
 		"--label", "default-wait-fail-open",
 		"--command", "printf default-wait-fail-open",
-		"--no-wait=false",
 	))
 	if err != nil {
 		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open)", err)
@@ -2377,7 +2541,6 @@ func TestRunExecuteBashDefaultWaitFailsClosedWhenCommandApproverNodeUnresolvable
 	err := runExecuteBashWithContext(ctx, fixture.args(
 		"--label", "default-wait-fail-closed",
 		"--command", "printf default-wait-fail-closed",
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want unresolved approver block")
@@ -2411,7 +2574,6 @@ func TestRunExecuteBashBlockingWaitTimesOutWithoutDecision(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 		"--wait-timeout-seconds", "1",
 	))
 	if err == nil {
@@ -2462,7 +2624,6 @@ func TestRunExecuteBashBlockingWaitCancelledBySignal(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want cancellation refusal")
@@ -2519,7 +2680,6 @@ func TestRunExecuteBashBlockingWaitApprovedRunsCommandAndPropagatesExitStatus(t 
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	var exitErr commandExitError
 	if !errors.As(err, &exitErr) {
@@ -2575,7 +2735,6 @@ func TestRunExecuteBashBlockingWaitObservesRejectionThenRefuses(t *testing.T) {
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want rejection refusal")
@@ -2630,7 +2789,6 @@ func TestRunExecuteBashBlockingWaitSkipsWaitingOnImmediateDigestMismatch(t *test
 		"--category", "release",
 		"--thread-id", approvedThreadID,
 		"--command", "printf attack-command-wait",
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("runExecuteBashWithContext() error = nil, want digest_mismatch block")
@@ -2650,34 +2808,455 @@ func TestRunExecuteBashBlockingWaitSkipsWaitingOnImmediateDigestMismatch(t *test
 	}
 }
 
-// TestRunExecuteBashNoWaitReturnsImmediatelyWithoutPolling pins the
-// "opt-out legacy behavior" outcome explicitly: --no-wait must return the
-// pending result immediately, never invoking ctx.sleep even once, exactly
-// matching pre-#823 behavior.
-func TestRunExecuteBashNoWaitReturnsImmediatelyWithoutPolling(t *testing.T) {
-	policyConfig := config.CommandApprovalPolicy{
-		Requester: "worker",
-		Reviewer:  "orchestrator",
-		Label:     "protected",
-		Category:  "release",
-		Mode:      "blocking",
-	}
-	fixture := newExecuteBashFixture(t, policyConfig)
+// TestRunExecuteBashNoWaitProducesMigrationGuidanceError pins #831 D2's
+// removal of --no-wait: a caller still passing it must get a clear
+// migration-guidance error, never Go's generic "flag provided but not
+// defined" error, and must never reach the flag set, config load, or any
+// wait/mint logic at all.
+func TestRunExecuteBashNoWaitProducesMigrationGuidanceError(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
 	ctx := fixture.context()
 	ctx.sleep = func(context.Context, time.Duration) {
-		t.Fatal("ctx.sleep called, want --no-wait to return immediately without polling")
+		t.Fatal("ctx.sleep called, want the removed --no-wait flag to be refused before any wait logic runs")
 	}
 
 	err := runExecuteBashWithContext(ctx, fixture.args(
 		"--label", "protected",
 		"--category", "release",
 		"--command", "printf no-wait-legacy",
+		"--no-wait",
 	))
 	if err == nil {
-		t.Fatal("runExecuteBashWithContext() error = nil, want immediate pending refusal")
+		t.Fatal("runExecuteBashWithContext() error = nil, want a migration-guidance error for the removed --no-wait flag")
 	}
-	if !strings.Contains(err.Error(), "approval is absent") {
-		t.Fatalf("error = %v, want immediate approval-absent diagnostic", err)
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("error = %v, want migration guidance, not Go's generic unknown-flag error", err)
+	}
+	if !strings.Contains(err.Error(), "--no-wait was removed") {
+		t.Fatalf("error = %v, want a clear --no-wait removal message", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashRequesterFlagProducesMigrationGuidanceError pins #831
+// D4's removal of --requester: a caller still passing it must get a clear
+// migration-guidance error, never Go's generic "flag provided but not
+// defined" error.
+func TestRunExecuteBashRequesterFlagProducesMigrationGuidanceError(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected",
+		"--category", "release",
+		"--command", "printf requester-legacy",
+		"--requester", "some-other-node",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want a migration-guidance error for the removed --requester flag")
+	}
+	if strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("error = %v, want migration guidance, not Go's generic unknown-flag error", err)
+	}
+	if !strings.Contains(err.Error(), "--requester was removed") {
+		t.Fatalf("error = %v, want a clear --requester removal message", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashClaimRefusesExpiredApprovalObservedJustBeforeExpiry pins
+// #831 I-001 (guardian rework 1, HIGH): an approval observed as "approved"
+// just before its own TTL lapses must never be claimed and run after that
+// TTL has actually passed. appendEventBeforeClaimHookFn injects the exact
+// "clock advances between observation and claim" race the guardian's review
+// identified -- the pre-claim interruption re-check runs BEFORE this hook
+// fires (so it still sees a non-expired approval), and only the atomic
+// claim's own equivalence-closure check (added by this fix) catches the
+// expiry that lands in this narrow window.
+func TestRunExecuteBashClaimRefusesExpiredApprovalObservedJustBeforeExpiry(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	})
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+	}
+	commandText := "printf claim-after-expiry"
+	threadID := commandApprovalThreadID(policy, commandDigest(commandText))
+
+	ctx := fixture.context()
+	decided := false
+	ctx.sleep = func(context.Context, time.Duration) {
+		// Decide on the very first poll tick, well within the short 3s TTL
+		// below, WITHOUT advancing the clock -- the wait loop observes the
+		// approval immediately afterward.
+		if decided {
+			return
+		}
+		decided = true
+		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+	}
+
+	original := appendEventBeforeClaimHookFn
+	appendEventBeforeClaimHookFn = func() {
+		// Advance the clock past the approval's own (short, 3s) expiry,
+		// simulating time passing in the narrow window between the wait
+		// loop accepting the approved decision and the atomic claim
+		// immediately below.
+		fixture.advanceNow(5 * time.Second)
+	}
+	t.Cleanup(func() { appendEventBeforeClaimHookFn = original })
+
+	err := runExecuteBashWithContext(ctx, fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText,
+		"--approval-ttl-seconds", "3",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want expired refusal")
+	}
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "expired" {
+		t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: expired}", err)
+	}
+	if outcomeErr.ExitCode() != 11 {
+		t.Fatalf("ExitCode() = %d, want 11", outcomeErr.ExitCode())
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0 (an expired approval must never run)", fixture.runCount)
+	}
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandExecutionClaimedEventType {
+			t.Fatalf("unexpected claim event recorded for an expired approval: %#v", event)
+		}
+	}
+}
+
+// TestCommandApprovalWaitInterruptionExpiredWinsAtEqualDeadlineUnderAdvancingClock
+// pins #831 I-002 (guardian rework 1, MEDIUM): commandApprovalWaitInterruption
+// must sample "now" exactly once and compare BOTH the expiry and
+// wait-timeout deadlines against that single instant. A clock that advances
+// on every call could otherwise let wait_timeout win a race it should have
+// lost to expired, if the two checks sampled two different instants
+// straddling the (equal) deadlines. This is a direct unit test of the
+// function (same package), not an end-to-end CLI test, because the
+// production fixture's fake clock only advances via explicit ctx.sleep
+// calls and cannot otherwise reproduce a same-tick double-read race.
+func TestCommandApprovalWaitInterruptionExpiredWinsAtEqualDeadlineUnderAdvancingClock(t *testing.T) {
+	base := time.Date(2026, time.June, 1, 10, 0, 0, 0, time.UTC)
+	deadline := base.Add(time.Second)
+	callCount := 0
+	ctx := commandContext{
+		now: func() time.Time {
+			callCount++
+			// Advances aggressively on EVERY call so the test fails loudly
+			// if this function is ever changed back to sampling now() more
+			// than once per invocation.
+			return base.Add(time.Duration(callCount) * time.Second)
+		},
+	}
+	params := commandApprovalWaitParams{deadline: deadline, expiryDeadline: deadline}
+	result := commandApprovalWaitInterruption(context.Background(), ctx, params, "", 0, false)
+	if result == nil {
+		t.Fatal("commandApprovalWaitInterruption() = nil, want a terminal result")
+	}
+	if result.Decision != "expired" {
+		t.Fatalf("Decision = %q, want %q (expired must win at/after equal deadlines)", result.Decision, "expired")
+	}
+	if callCount != 1 {
+		t.Fatalf("ctx.now() was called %d times, want exactly 1 (I-002: sample once, reuse for both checks)", callCount)
+	}
+}
+
+// TestValidatePositiveSecondsFlag pins #831 D2/D6's shared validation for
+// --wait-timeout-seconds and (when explicitly set) --approval-ttl-seconds:
+// zero, negative, NaN, +/-Inf, sub-nanosecond, and overflowing values must
+// all be refused with a specific, named diagnostic, before ever converting
+// to a time.Duration.
+func TestValidatePositiveSecondsFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		seconds float64
+		wantErr string
+	}{
+		{name: "zero", seconds: 0, wantErr: "must be a positive number of seconds"},
+		{name: "negative", seconds: -1, wantErr: "must be a positive number of seconds"},
+		{name: "NaN", seconds: math.NaN(), wantErr: "must be a finite positive number of seconds"},
+		{name: "positive infinity", seconds: math.Inf(1), wantErr: "must be a finite positive number of seconds"},
+		{name: "negative infinity", seconds: math.Inf(-1), wantErr: "must be a finite positive number of seconds"},
+		{name: "sub-nanosecond", seconds: 1e-12, wantErr: "too small to represent"},
+		{name: "overflow", seconds: math.MaxFloat64, wantErr: "overflows the maximum representable duration"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := validatePositiveSecondsFlag("wait-timeout-seconds", tc.seconds); err == nil {
+				t.Fatalf("validatePositiveSecondsFlag(%v) error = nil, want refusal", tc.seconds)
+			} else if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+	t.Run("valid positive", func(t *testing.T) {
+		d, err := validatePositiveSecondsFlag("wait-timeout-seconds", 300)
+		if err != nil {
+			t.Fatalf("validatePositiveSecondsFlag(300) error = %v, want nil", err)
+		}
+		if d != 300*time.Second {
+			t.Fatalf("duration = %v, want 300s", d)
+		}
+	})
+}
+
+// TestResolveCommandApprovalPolicyTTLOmittedUsesFloor pins #831 D6: an
+// OMITTED --approval-ttl-seconds is a harmless no-op, using the floor TTL
+// (config-declared, or the hardcoded default) with no validation and no
+// error -- distinct from an EXPLICIT 0, which is refused (see
+// TestValidatePositiveSecondsFlag).
+func TestResolveCommandApprovalPolicyTTLOmittedUsesFloor(t *testing.T) {
+	policy, err := resolveCommandApprovalPolicy(&config.Config{}, "worker", "label", "category", "", "", 0, false)
+	if err != nil {
+		t.Fatalf("resolveCommandApprovalPolicy() error = %v, want nil (omitted TTL is a no-op)", err)
+	}
+	if policy.TTL != defaultCommandApprovalTTL {
+		t.Fatalf("policy.TTL = %v, want the default floor %v", policy.TTL, defaultCommandApprovalTTL)
+	}
+}
+
+// TestResolveCommandApprovalPolicyTTLExplicitLengthenRefused pins #831 D6:
+// an explicit --approval-ttl-seconds may only TIGHTEN (shorten) the
+// effective TTL floor, never lengthen it.
+func TestResolveCommandApprovalPolicyTTLExplicitLengthenRefused(t *testing.T) {
+	longerSeconds := (defaultCommandApprovalTTL + time.Minute).Seconds()
+	_, err := resolveCommandApprovalPolicy(&config.Config{}, "worker", "label", "category", "", "", longerSeconds, true)
+	if err == nil {
+		t.Fatal("resolveCommandApprovalPolicy() error = nil, want lengthen refusal")
+	}
+	if !strings.Contains(err.Error(), "may only tighten") {
+		t.Fatalf("error = %v, want tighten-only diagnostic", err)
+	}
+}
+
+// TestResolveCommandApprovalPolicyTTLExplicitTightenSucceeds is the positive
+// control for the test above: a value that legitimately SHORTENS the floor
+// is accepted.
+func TestResolveCommandApprovalPolicyTTLExplicitTightenSucceeds(t *testing.T) {
+	shorterSeconds := (defaultCommandApprovalTTL - time.Minute).Seconds()
+	policy, err := resolveCommandApprovalPolicy(&config.Config{}, "worker", "label", "category", "", "", shorterSeconds, true)
+	if err != nil {
+		t.Fatalf("resolveCommandApprovalPolicy() error = %v, want nil (tightening is allowed)", err)
+	}
+	want := time.Duration(shorterSeconds * float64(time.Second))
+	if policy.TTL != want {
+		t.Fatalf("policy.TTL = %v, want %v", policy.TTL, want)
+	}
+}
+
+// TestRunExecuteBashReusedPendingThreadKeepsStoredExpiryDespiteTighterTTL
+// pins #831 D6: a later call reusing an existing PENDING thread must never
+// have its own (even validly tightened) --approval-ttl-seconds value alter
+// that thread's already-stored expiry -- only the FIRST call that minted the
+// thread fixes its expiry; a legitimately-tightened value simply has no
+// effect on an already-minted thread, which is a different outcome from
+// being refused.
+func TestRunExecuteBashReusedPendingThreadKeepsStoredExpiryDespiteTighterTTL(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	})
+	commandText := "printf reused-ttl"
+
+	if err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText,
+		"--wait-timeout-seconds", "1",
+	)); err == nil {
+		t.Fatal("first call: error = nil, want wait_timeout")
+	}
+	_, thread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	originalExpiresAt := thread.ExpiresAt
+	if originalExpiresAt == "" {
+		t.Fatal("first call: thread.ExpiresAt is empty, want a real stored expiry")
+	}
+
+	if err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "protected", "--category", "release", "--command", commandText,
+		"--wait-timeout-seconds", "1", "--approval-ttl-seconds", "60",
+	)); err == nil {
+		t.Fatal("second call: error = nil, want wait_timeout again")
+	}
+	_, reThread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	if reThread.ExpiresAt != originalExpiresAt {
+		t.Fatalf("reused thread ExpiresAt changed = %q, want unchanged %q", reThread.ExpiresAt, originalExpiresAt)
+	}
+}
+
+// TestRunExecuteBashModeDowngradeRefusedWithValidConfiguredApprover pins
+// #831 D1: a --mode flag may only narrow the effective policy floor once an
+// approver is configured -- a downgrade attempt must be refused BEFORE any
+// request is minted or delivered, not merely ignored after minting.
+func TestRunExecuteBashModeDowngradeRefusedWithValidConfiguredApprover(t *testing.T) {
+	fixture := newExecuteBashFixture(t) // default floor: blocking (no matching policy)
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "downgrade-attempt",
+		"--mode", "advisory",
+		"--command", "printf downgrade",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want downgrade refusal")
+	}
+	if !strings.Contains(err.Error(), "would downgrade the effective policy floor") {
+		t.Fatalf("error = %v, want downgrade-refusal diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+	for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			t.Fatalf("unexpected approval request minted for a refused downgrade: %#v", event)
+		}
+	}
+}
+
+// TestRunExecuteBashModeDowngradeRefusedWithUnresolvableApprover pins #831
+// D1's stated scope: the downgrade refusal applies even when the configured
+// command_approver_node is currently unresolvable -- only the genuinely
+// ABSENT case (#626) is exempt.
+func TestRunExecuteBashModeDowngradeRefusedWithUnresolvableApprover(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = "typo-reviewer"
+	fixture.nodes = map[string]config.NodeConfig{"orchestrator": {}}
+	fixture.discoveredNodes = map[string]discovery.NodeInfo{
+		"test-session:typo-reviewer": {PaneID: "%9", SessionName: "test-session", SessionDir: fixture.sessionDir},
+	}
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "downgrade-attempt",
+		"--mode", "advisory",
+		"--command", "printf downgrade",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want downgrade refusal")
+	}
+	if !strings.Contains(err.Error(), "would downgrade the effective policy floor") {
+		t.Fatalf("error = %v, want downgrade-refusal diagnostic", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashModeDowngradeExemptWhenApproverAbsent pins #831 D1's
+// stated exemption: with NO command_approver_node configured at all, the
+// #626 fail-open rule still applies unconditionally, and a --mode flag has
+// no downgrade to refuse (there is no configured floor to downgrade FROM).
+func TestRunExecuteBashModeDowngradeExemptWhenApproverAbsent(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+	fixture.commandApproverNode = ""
+	fixture.nodes = nil
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "downgrade-attempt",
+		"--mode", "advisory",
+		"--command", "printf downgrade",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (fail open, no floor to downgrade)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	decision := findExecutionDecisionPayload(t, fixture.sessionDir)
+	if decision.Decision != "auto_approved_no_reviewer" {
+		t.Fatalf("decision.Decision = %q, want %q", decision.Decision, "auto_approved_no_reviewer")
+	}
+}
+
+// TestRunExecuteBashSpoofedRequesterCannotSelectWeakerPinnedPolicy pins #831
+// D4: the effective requester is always the calling pane's tmux title, never
+// a caller-declared value -- a caller whose pane title does not match a
+// policy's pinned Requester must not be able to reach that policy by any
+// means; the policy match itself is keyed off the real pane title.
+func TestRunExecuteBashSpoofedRequesterCannotSelectWeakerPinnedPolicy(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "trusted-node",
+		Label:     "diagnostic-tool-x",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	// Invoked from a pane titled "attacker-node", NOT "trusted-node".
+	err := runExecuteBashWithContext(fixture.contextAsPane("attacker-node"), fixture.args(
+		"--label", "diagnostic-tool-x",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--command", "printf spoofed",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want the pinned advisory policy to NOT match and the default blocking floor to refuse the --mode advisory downgrade")
+	}
+	if !strings.Contains(err.Error(), "would downgrade the effective policy floor") {
+		t.Fatalf("error = %v, want a D1 downgrade-refusal diagnostic (policy did not match, floor stayed blocking)", err)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashMatchingRequesterAppliesPinnedPolicy is the positive
+// control for the test above: invoked from the pane title the policy
+// actually pins, the SAME policy DOES match and applies as configured,
+// proving the fix above does not also break legitimate matching. This also
+// documents D4's stated trust boundary: a pane retitled to impersonate
+// "trusted-node" is indistinguishable from the real thing at this layer --
+// an accepted, tmux-trust-level limit, not a bug.
+func TestRunExecuteBashMatchingRequesterAppliesPinnedPolicy(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "trusted-node",
+		Label:     "diagnostic-tool-x",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	err := runExecuteBashWithContext(fixture.contextAsPane("trusted-node"), fixture.args(
+		"--label", "diagnostic-tool-x",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--command", "printf trusted",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v, want nil (pinned policy applies)", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+}
+
+// TestRunExecuteBashEmptyPaneIdentityRefused pins #831 D4: a missing/empty
+// pane title must be refused outright, never silently defaulted to some
+// placeholder requester.
+func TestRunExecuteBashEmptyPaneIdentityRefused(t *testing.T) {
+	fixture := newExecuteBashFixture(t)
+
+	err := runExecuteBashWithContext(fixture.contextAsPane(""), fixture.args(
+		"--label", "diagnostic",
+		"--command", "printf empty-pane",
+	))
+	if err == nil {
+		t.Fatal("error = nil, want refusal for an empty pane identity")
+	}
+	if !strings.Contains(err.Error(), "could not resolve a non-empty tmux pane title") {
+		t.Fatalf("error = %v, want the empty-pane-identity diagnostic", err)
 	}
 	if fixture.runCount != 0 {
 		t.Fatalf("runCount = %d, want 0", fixture.runCount)
@@ -2814,7 +3393,6 @@ func TestRunExecuteBashBlockingWaitSessionChangeAndApprovalSameTickEndsWait(t *t
 		"--label", "protected",
 		"--category", "release",
 		"--command", commandText,
-		"--no-wait=false",
 	))
 	if err == nil {
 		t.Fatal("error = nil, want session_changed refusal even though an approval was recorded in the same tick")
@@ -3273,7 +3851,7 @@ func TestRunExecuteBashBlockingSecondTerminalCycleMintsFreshRequest(t *testing.T
 		fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
 	}
 	err := runExecuteBashWithContext(ctx, fixture.args(
-		"--label", "protected", "--category", "release", "--command", commandText, "--no-wait=false",
+		"--label", "protected", "--category", "release", "--command", commandText,
 	))
 	if err != nil {
 		t.Fatalf("retry 2 error = %v, want nil (fresh request C minted, waited, approved, and run)", err)
@@ -3415,7 +3993,7 @@ func TestRunExecuteBashBlockingCancelDuringClaimStopsRunBash(t *testing.T) {
 	t.Cleanup(func() { appendEventBeforeClaimHookFn = original })
 
 	err := runExecuteBashWithContext(ctx, fixture.args(
-		"--label", "protected", "--category", "release", "--command", commandText, "--no-wait=false",
+		"--label", "protected", "--category", "release", "--command", commandText,
 	))
 	if err == nil {
 		t.Fatal("error = nil, want cancellation to stop the command even though the claim already landed")
