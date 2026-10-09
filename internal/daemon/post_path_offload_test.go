@@ -528,16 +528,18 @@ func TestPostDiscoveryFreshWindow(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{"s:worker": {SessionName: "s"}}
 
 	cases := []struct {
-		name  string
-		rt    daemonRuntime
+		name string
+		// A pointer: daemonRuntime holds mutexes and must not be copied
+		// (govet copylocks).
+		rt    *daemonRuntime
 		now   time.Time
 		fresh bool
 	}{
-		{"never discovered", daemonRuntime{nodes: nodes}, base, false},
-		{"no nodes yet", daemonRuntime{lastPostDiscoveryAt: base}, base, false},
-		{"inside window", daemonRuntime{nodes: nodes, lastPostDiscoveryAt: base}, base.Add(postDiscoveryReuseWindow - time.Millisecond), true},
-		{"at window edge", daemonRuntime{nodes: nodes, lastPostDiscoveryAt: base}, base.Add(postDiscoveryReuseWindow), false},
-		{"clock went backwards", daemonRuntime{nodes: nodes, lastPostDiscoveryAt: base}, base.Add(-time.Second), false},
+		{"never discovered", &daemonRuntime{nodes: nodes}, base, false},
+		{"no nodes yet", &daemonRuntime{lastPostDiscoveryAt: base}, base, false},
+		{"inside window", &daemonRuntime{nodes: nodes, lastPostDiscoveryAt: base}, base.Add(postDiscoveryReuseWindow - time.Millisecond), true},
+		{"at window edge", &daemonRuntime{nodes: nodes, lastPostDiscoveryAt: base}, base.Add(postDiscoveryReuseWindow), false},
+		{"clock went backwards", &daemonRuntime{nodes: nodes, lastPostDiscoveryAt: base}, base.Add(-time.Second), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
