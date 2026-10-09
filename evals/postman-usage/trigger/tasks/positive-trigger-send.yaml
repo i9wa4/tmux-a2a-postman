@@ -1,0 +1,17 @@
+id: positive-trigger-send-001
+name: Positive Trigger -- Send Procedure (first-contact MUST LOAD)
+description: >-
+  Discriminates the first original MUST-LOAD trigger: before any
+  first-contact or initial node send.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "Use postman-usage to send the first-contact message to another node with send-heredoc, preserving the Markdown body exactly."
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: positive-trigger
+    config:
+      skill_path: skills/postman-usage/SKILL.md
+      mode: positive
