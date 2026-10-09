@@ -907,6 +907,195 @@ func TestLoadConfig_ExplicitConfig_MarksUINodeAsExplicit(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_InterfaceNodeUINodeReconciliation(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+	t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+
+	tests := []struct {
+		name              string
+		extraLines        string
+		wantUINode        string
+		wantInterfaceNode string
+		wantUISet         bool
+		wantInterfaceSet  bool
+	}{
+		{
+			name:              "interface_node only derives ui_node",
+			extraLines:        `interface_node = "worker"`,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			name:              "legacy ui_node only derives interface_node",
+			extraLines:        `ui_node = "worker"`,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			name:              "both set, same value, no derivation needed",
+			extraLines:        "ui_node = \"worker\"\ninterface_node = \"worker\"",
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			name:              "both set, conflicting values: interface_node wins as the runtime value",
+			extraLines:        "ui_node = \"worker\"\ninterface_node = \"orchestrator\"",
+			wantUINode:        "orchestrator",
+			wantInterfaceNode: "orchestrator",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			// Parity with TestLoadConfig_ExplicitConfig_MarksUINodeAsExplicit's
+			// "explicit empty" ui_node case (#764 E-6): an explicit empty
+			// interface_node is still an explicit setting, not "unset".
+			name:              "interface_node explicit empty value",
+			extraLines:        `interface_node = ""`,
+			wantUINode:        "",
+			wantInterfaceNode: "",
+			wantUISet:         true,
+			wantInterfaceSet:  true,
+		},
+		{
+			// Neither key is set in the user TOML, so both values are
+			// inherited unchanged from the embedded default base (which
+			// itself sets ui_node = interface_node = "messenger"); this
+			// case is about the explicit-vs-inherited flags, not the
+			// resolved value.
+			name:              "neither set",
+			extraLines:        "",
+			wantUINode:        "messenger",
+			wantInterfaceNode: "messenger",
+			wantUISet:         false,
+			wantInterfaceSet:  false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(tmpDir, tc.name+".toml")
+			content := "[postman]\n"
+			if tc.extraLines != "" {
+				content += tc.extraLines + "\n"
+			}
+			content += "edges = [\"worker --- orchestrator\"]\n\n[worker]\n[orchestrator]\n"
+			if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.UINode != tc.wantUINode {
+				t.Fatalf("UINode = %q, want %q", cfg.UINode, tc.wantUINode)
+			}
+			if cfg.InterfaceNode != tc.wantInterfaceNode {
+				t.Fatalf("InterfaceNode = %q, want %q", cfg.InterfaceNode, tc.wantInterfaceNode)
+			}
+			if got := cfg.HasExplicitUINodeSetting(); got != tc.wantUISet {
+				t.Fatalf("HasExplicitUINodeSetting() = %v, want %v", got, tc.wantUISet)
+			}
+			if got := cfg.HasExplicitInterfaceNodeSetting(); got != tc.wantInterfaceSet {
+				t.Fatalf("HasExplicitInterfaceNodeSetting() = %v, want %v", got, tc.wantInterfaceSet)
+			}
+		})
+	}
+}
+
+func TestResolveInterfaceNodeDesignation_Diagnostics(t *testing.T) {
+	tests := []struct {
+		name              string
+		uiNode            string
+		uiNodeSet         bool
+		interfaceNode     string
+		interfaceNodeSet  bool
+		wantUINode        string
+		wantInterfaceNode string
+		wantLogContains   string // "" means expect no log output at all
+	}{
+		{
+			name:              "legacy only: warns and derives interface_node",
+			uiNode:            "worker",
+			uiNodeSet:         true,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantLogContains:   `deprecated config key "ui_node"`,
+		},
+		{
+			name:              "mismatch: warns and interface_node wins as the runtime value",
+			uiNode:            "worker",
+			uiNodeSet:         true,
+			interfaceNode:     "orchestrator",
+			interfaceNodeSet:  true,
+			wantUINode:        "orchestrator",
+			wantInterfaceNode: "orchestrator",
+			wantLogContains:   "conflicting designation settings",
+		},
+		{
+			name:              "interface_node only: no warning, derives ui_node",
+			interfaceNode:     "worker",
+			interfaceNodeSet:  true,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantLogContains:   "",
+		},
+		{
+			name:              "same value on both: no warning",
+			uiNode:            "worker",
+			uiNodeSet:         true,
+			interfaceNode:     "worker",
+			interfaceNodeSet:  true,
+			wantUINode:        "worker",
+			wantInterfaceNode: "worker",
+			wantLogContains:   "",
+		},
+		{
+			name:              "neither set: no warning, values untouched",
+			wantUINode:        "",
+			wantInterfaceNode: "",
+			wantLogContains:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+			cfg := &Config{
+				UINode:           tc.uiNode,
+				uiNodeSet:        tc.uiNodeSet,
+				InterfaceNode:    tc.interfaceNode,
+				interfaceNodeSet: tc.interfaceNodeSet,
+			}
+			resolveInterfaceNodeDesignation(cfg, "/fake/config.toml")
+
+			if cfg.UINode != tc.wantUINode {
+				t.Errorf("UINode = %q, want %q", cfg.UINode, tc.wantUINode)
+			}
+			if cfg.InterfaceNode != tc.wantInterfaceNode {
+				t.Errorf("InterfaceNode = %q, want %q", cfg.InterfaceNode, tc.wantInterfaceNode)
+			}
+			if tc.wantLogContains == "" {
+				if buf.Len() != 0 {
+					t.Errorf("resolveInterfaceNodeDesignation: unexpected log output: %q", buf.String())
+				}
+			} else if !strings.Contains(buf.String(), tc.wantLogContains) {
+				t.Errorf("resolveInterfaceNodeDesignation: expected log containing %q, got: %q", tc.wantLogContains, buf.String())
+			}
+		})
+	}
+}
+
 func TestLoadConfig_Partial(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.toml")
