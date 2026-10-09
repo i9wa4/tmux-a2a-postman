@@ -102,11 +102,19 @@ reconstruction.
 When `--command` is omitted, trailing positional arguments after `--`
 become the command, with a rule based on how many there are:
 
-- **Exactly one** positional argument is legacy, unchanged verbatim shell
-  source: the same text and the same command digest as before #838 (joining
-  a single element with any separator is a no-op).
+- **Exactly one** positional argument is legacy, unchanged shell source: the
+  same text and the same command digest as before #838 (joining a single
+  element with any separator is a no-op). Like `--command`, the final command
+  text is trimmed of leading and trailing whitespace, so a one-element
+  invocation with surrounding whitespace runs and is digested trimmed.
+  Operators, pipes and expansions inside that one argument keep their shell
+  meaning.
 - **Two or more** positional arguments are each individually POSIX-single-
   quoted and space-joined, reconstructing their original argv boundaries.
+  Because every element is quoted, an operator or expansion placed in its own
+  element (`;`, `&&`, `|`, `$(...)`, `$HOME`) is a literal argument to the
+  program named by the first element, not a shell operator. Use one argument
+  or `--command` when shell operators are intended.
 
 Before this fix, positional arguments of any count were joined with an
 unquoted space (`strings.Join(fs.Args(), " ")`). For two or more arguments,

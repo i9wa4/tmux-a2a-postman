@@ -109,10 +109,13 @@ Positional argv fallback (#838):
   --command's value is trimmed of leading/trailing whitespace, not used
   byte-for-byte. When --command is omitted, trailing positional arguments
   after -- become the command: exactly one argument is legacy, unchanged
-  verbatim shell source (same text and digest as before #838); two or more
-  arguments are each individually POSIX-single-quoted and space-joined,
-  reconstructing the original argv boundaries that the pre-#838 unquoted
-  join lost. This changes the reconstructed text (and therefore the digest
+  shell source (same text and digest as before #838; like --command, its
+  surrounding whitespace is trimmed, and operators inside it keep their shell
+  meaning); two or more arguments are each individually POSIX-single-quoted
+  and space-joined, reconstructing the original argv boundaries that the
+  pre-#838 unquoted join lost, so an operator or expansion in its own
+  argument (;, &&, |, $(...)) is a literal argument, not a shell operator.
+  This changes the reconstructed text (and therefore the digest
   and default thread id) for any TWO-OR-MORE-argument positional invocation
   relative to pre-#838 behavior; a pending approval minted before upgrading
   will not match the new digest and needs a fresh request (reusing its old

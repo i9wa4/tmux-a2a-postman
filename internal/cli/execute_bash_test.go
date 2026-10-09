@@ -4818,6 +4818,119 @@ func TestRunExecuteBashPositionalMultiElementRealEndToEndFileEffect(t *testing.T
 	}
 }
 
+// TestRunExecuteBashPositionalRealRunPreservesByteExactArgv is the #838 R1
+// real-run fixture: for each argument vector it drives the full production
+// pipeline, captures the exact commandText it produced, asserts that text
+// against a hand-written expectation (independent of posixSingleQuote), then
+// executes THAT captured text through the real runBashCommand into a tiny
+// recorder program that writes argc and every argument NUL-terminated to a
+// file. The recorded argc and bytes must equal the input argv exactly, so any
+// re-splitting, dropped empty argument, expansion or operator interpretation
+// shows up as a boundary or content difference.
+func TestRunExecuteBashPositionalRealRunPreservesByteExactArgv(t *testing.T) {
+	recorder := filepath.Join(t.TempDir(), "record-argv.sh")
+	script := "#!/bin/sh\nprintf '%s\\0' \"$#\" \"$@\" > \"$ARGV_RECORD_OUT\"\n"
+	if err := os.WriteFile(recorder, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(recorder) error = %v", err)
+	}
+	quotedRecorder := "'" + recorder + "'"
+
+	cases := []struct {
+		name        string
+		args        []string
+		wantCommand string
+	}{
+		{
+			name:        "empty later argument keeps its boundary",
+			args:        []string{"a", "", "b"},
+			wantCommand: quotedRecorder + " 'a' '' 'b'",
+		},
+		{
+			name:        "single quote",
+			args:        []string{"it's"},
+			wantCommand: quotedRecorder + " 'it'\\''s'",
+		},
+		{
+			name:        "double quotes and backslashes",
+			args:        []string{`say "hi" \n \\ \$HOME`},
+			wantCommand: quotedRecorder + ` 'say "hi" \n \\ \$HOME'`,
+		},
+		{
+			name:        "newline tab and carriage return inside one argument",
+			args:        []string{"l1\nl2\tcol\rcr", "second"},
+			wantCommand: quotedRecorder + " 'l1\nl2\tcol\rcr' 'second'",
+		},
+		{
+			name:        "unicode",
+			args:        []string{"日本語", "é ü"},
+			wantCommand: quotedRecorder + " '日本語' 'é ü'",
+		},
+		{
+			name:        "leading dash arguments stay arguments",
+			args:        []string{"-n", "--flag=x", "-"},
+			wantCommand: quotedRecorder + " '-n' '--flag=x' '-'",
+		},
+		{
+			name:        "shell operators in their own arguments stay literal",
+			args:        []string{";", "&&", "|", "||", ">", "$(echo pwned)", "`echo pwned`", "$HOME", "*", "~"},
+			wantCommand: quotedRecorder + " ';' '&&' '|' '||' '>' '$(echo pwned)' '`echo pwned`' '$HOME' '*' '~'",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
+				Requester: "worker",
+				Label:     "low-risk",
+				Category:  "diagnostic",
+				Mode:      "advisory",
+			})
+			out := filepath.Join(t.TempDir(), "argv.bin")
+			t.Setenv("ARGV_RECORD_OUT", out)
+
+			cliArgs := append([]string{"--label", "low-risk", "--category", "diagnostic", "--mode", "advisory", "--reason", "byte-exact argv", "--", recorder}, tc.args...)
+			if err := runExecuteBashWithContext(fixture.context(), fixture.args(cliArgs...)); err != nil {
+				t.Fatalf("runExecuteBashWithContext() error = %v", err)
+			}
+			if len(fixture.commands) != 1 {
+				t.Fatalf("commands = %#v, want exactly one", fixture.commands)
+			}
+			if got := fixture.commands[0]; got != tc.wantCommand {
+				t.Fatalf("commandText = %q, want %q", got, tc.wantCommand)
+			}
+
+			var stdout, stderr bytes.Buffer
+			exitCode, err := runBashCommand(fixture.commands[0], &stdout, &stderr)
+			if err != nil {
+				t.Fatalf("runBashCommand() error = %v", err)
+			}
+			if exitCode != 0 {
+				t.Fatalf("exitCode = %d, want 0 (stderr: %s)", exitCode, stderr.String())
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v (the recorder never ran, so the argv did not reach it)", out, err)
+			}
+			fields := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+			if wantArgc := fmt.Sprintf("%d", len(tc.args)); fields[0] != wantArgc {
+				t.Fatalf("recorded argc = %q, want %q (recorded fields: %q)", fields[0], wantArgc, fields)
+			}
+			got := fields[1:]
+			if len(tc.args) == 0 {
+				got = nil
+			}
+			if len(got) != len(tc.args) {
+				t.Fatalf("recorded %d arguments %q, want %d %q", len(got), got, len(tc.args), tc.args)
+			}
+			for i := range tc.args {
+				if got[i] != tc.args[i] {
+					t.Fatalf("argument %d = %q, want byte-exact %q", i, got[i], tc.args[i])
+				}
+			}
+		})
+	}
+}
+
 func TestRunExecuteBashPositionalArgvHashIsDeterministic(t *testing.T) {
 	buildCommandText := func(t *testing.T) string {
 		t.Helper()
@@ -4902,6 +5015,111 @@ func TestRunExecuteBashPositionalDigestChangesForMultiElementOnly(t *testing.T) 
 		current := productionDigest(t, argv)
 		if legacy != current {
 			t.Fatalf("expected the single-element digest to stay the same, got legacy=%q current=%q", legacy, current)
+		}
+	})
+}
+
+// TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest is the #838 R2
+// upgrade-boundary fixture. An approval thread minted BEFORE the upgrade
+// carries the digest of the old unquoted join. After the upgrade the same
+// multi-element invocation reconstructs different command text, so reusing the
+// old thread id must end as digest_mismatch with zero runs and no new mint,
+// whether the old thread is still pending or already approved. A thread minted
+// for the reconstructed text keeps hash continuity and runs exactly once.
+func TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest(t *testing.T) {
+	argv := []string{"bash", "-c", "cd /tmp && pwd"}
+	// Hand-written pre-#838 text: strings.Join(argv, " ") with no quoting.
+	oldJoinedText := "bash -c cd /tmp && pwd"
+	// Hand-written post-#838 text: every element POSIX-single-quoted.
+	reconstructedText := "'bash' '-c' 'cd /tmp && pwd'"
+	if commandDigest(oldJoinedText) == commandDigest(reconstructedText) {
+		t.Fatal("test setup: old joined text and reconstructed text must have different digests")
+	}
+
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	requestedEvents := func(t *testing.T, fixture *executeBashFixture) int {
+		t.Helper()
+		count := 0
+		for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+			if event.Type == journal.CommandApprovalRequestedEventType {
+				count++
+			}
+		}
+		return count
+	}
+	runPositional := func(fixture *executeBashFixture, extra ...string) error {
+		args := fixture.args(append([]string{"--label", "protected", "--category", "release"}, extra...)...)
+		args = append(args, "--")
+		args = append(args, argv...)
+		return runExecuteBashWithContext(fixture.context(), args)
+	}
+
+	for _, state := range []struct {
+		name string
+		mint func(*testing.T, *executeBashFixture) string
+	}{
+		{
+			name: "pending thread minted with the old joined digest",
+			mint: func(t *testing.T, f *executeBashFixture) string {
+				return f.appendCommandApprovalRequest(t, policy, oldJoinedText, f.now.Add(15*time.Minute))
+			},
+		},
+		{
+			name: "approved thread minted with the old joined digest",
+			mint: func(t *testing.T, f *executeBashFixture) string {
+				return f.appendCommandApproval(t, policy, oldJoinedText, journal.ApprovalDecisionApproved, "orchestrator", f.now.Add(15*time.Minute))
+			},
+		},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			fixture := newExecuteBashFixture(t, policyConfig)
+			oldThreadID := state.mint(t, fixture)
+			before := requestedEvents(t, fixture)
+
+			err := runPositional(fixture, "--thread-id", oldThreadID)
+			var outcomeErr commandApprovalOutcomeError
+			if !errors.As(err, &outcomeErr) || outcomeErr.status != "digest_mismatch" {
+				t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: digest_mismatch}", err)
+			}
+			if fixture.runCount != 0 {
+				t.Fatalf("runCount = %d, want 0; the reconstructed command must not run under an old-digest approval", fixture.runCount)
+			}
+			if after := requestedEvents(t, fixture); after != before {
+				t.Fatalf("command_approval_requested events = %d, want unchanged %d (digest_mismatch must never mint)", after, before)
+			}
+		})
+	}
+
+	t.Run("thread minted for the reconstructed text keeps hash continuity and runs once", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t, policyConfig)
+		fixture.appendCommandApproval(t, policy, reconstructedText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+		before := requestedEvents(t, fixture)
+
+		if err := runPositional(fixture); err != nil {
+			t.Fatalf("runExecuteBashWithContext() error = %v", err)
+		}
+		if fixture.runCount != 1 {
+			t.Fatalf("runCount = %d, want exactly 1", fixture.runCount)
+		}
+		if got := fixture.commands[0]; got != reconstructedText {
+			t.Fatalf("command = %q, want %q", got, reconstructedText)
+		}
+		if after := requestedEvents(t, fixture); after != before {
+			t.Fatalf("command_approval_requested events = %d, want unchanged %d (an approved matching thread must not mint)", after, before)
 		}
 	})
 }
