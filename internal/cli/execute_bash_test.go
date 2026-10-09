@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -5032,8 +5034,45 @@ func TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest(t *testing.T) {
 	oldJoinedText := "bash -c cd /tmp && pwd"
 	// Hand-written post-#838 text: every element POSIX-single-quoted.
 	reconstructedText := "'bash' '-c' 'cd /tmp && pwd'"
-	if commandDigest(oldJoinedText) == commandDigest(reconstructedText) {
+	// Expected digests are computed here, independently of the production
+	// commandDigest helper, straight from the exact command text.
+	independentDigest := func(text string) string {
+		sum := sha256.Sum256([]byte(text))
+		return "sha256:" + hex.EncodeToString(sum[:])
+	}
+	oldDigest, newDigest := independentDigest(oldJoinedText), independentDigest(reconstructedText)
+	if oldDigest == newDigest {
 		t.Fatal("test setup: old joined text and reconstructed text must have different digests")
+	}
+	// recordedHashes returns every command_hash journaled for one event type.
+	recordedHashes := func(t *testing.T, fixture *executeBashFixture, eventType string) []string {
+		t.Helper()
+		var hashes []string
+		for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+			if event.Type != eventType {
+				continue
+			}
+			var payload struct {
+				CommandHash string `json:"command_hash"`
+			}
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("Unmarshal(%s payload): %v", eventType, err)
+			}
+			hashes = append(hashes, payload.CommandHash)
+		}
+		return hashes
+	}
+	assertAllHashes := func(t *testing.T, fixture *executeBashFixture, eventType, want string) {
+		t.Helper()
+		hashes := recordedHashes(t, fixture, eventType)
+		if len(hashes) == 0 {
+			t.Fatalf("no %s event recorded", eventType)
+		}
+		for i, got := range hashes {
+			if got != want {
+				t.Fatalf("%s[%d].command_hash = %q, want independent SHA-256 %q", eventType, i, got, want)
+			}
+		}
 	}
 
 	policyConfig := config.CommandApprovalPolicy{
@@ -5089,6 +5128,9 @@ func TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest(t *testing.T) {
 			fixture := newExecuteBashFixture(t, policyConfig)
 			oldThreadID := state.mint(t, fixture)
 			before := requestedEvents(t, fixture)
+			// The old thread stores the independent SHA-256 of the OLD joined
+			// text, which differs from the digest of the reconstructed text.
+			assertAllHashes(t, fixture, journal.CommandApprovalRequestedEventType, oldDigest)
 
 			err := runPositional(fixture, "--thread-id", oldThreadID)
 			var outcomeErr commandApprovalOutcomeError
@@ -5100,6 +5142,40 @@ func TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest(t *testing.T) {
 			}
 			if after := requestedEvents(t, fixture); after != before {
 				t.Fatalf("command_approval_requested events = %d, want unchanged %d (digest_mismatch must never mint)", after, before)
+			}
+			// Nothing was minted, decided, executed or completed for the new
+			// digest: every recorded request hash is still the old one, and no
+			// execution/completion event exists.
+			assertAllHashes(t, fixture, journal.CommandApprovalRequestedEventType, oldDigest)
+			for _, eventType := range []string{journal.CommandExecutionClaimedEventType, journal.CommandExecutionCompletedEventType} {
+				if hashes := recordedHashes(t, fixture, eventType); len(hashes) != 0 {
+					t.Fatalf("%s events = %v, want none after digest_mismatch", eventType, hashes)
+				}
+			}
+			// The refusal itself is audited: an execution decision may carry the
+			// attempted (new) digest, but only as a digest_mismatch refusal, never
+			// as an allowed run.
+			for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+				if event.Type != journal.CommandExecutionDecidedEventType {
+					continue
+				}
+				var decided struct {
+					CommandHash string `json:"command_hash"`
+					Decision    string `json:"decision"`
+					Reason      string `json:"reason"`
+				}
+				if err := json.Unmarshal(event.Payload, &decided); err != nil {
+					t.Fatalf("Unmarshal(execution decision payload): %v", err)
+				}
+				if decided.CommandHash != newDigest {
+					continue
+				}
+				if decided.Decision != "blocked" {
+					t.Fatalf("execution decision for the NEW digest %q = %q under an old-digest approval, want blocked", decided.CommandHash, decided.Decision)
+				}
+				if !strings.Contains(strings.ToLower(decided.Reason), "digest") {
+					t.Fatalf("blocked execution decision reason = %q, want it to name the digest mismatch", decided.Reason)
+				}
 			}
 		})
 	}
@@ -5120,6 +5196,17 @@ func TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest(t *testing.T) {
 		}
 		if after := requestedEvents(t, fixture); after != before {
 			t.Fatalf("command_approval_requested events = %d, want unchanged %d (an approved matching thread must not mint)", after, before)
+		}
+		// Hash continuity: the request, the approval decision, the execution
+		// decision and the completion record all carry the independent SHA-256
+		// of the exact reconstructed command text.
+		for _, eventType := range []string{
+			journal.CommandApprovalRequestedEventType,
+			journal.CommandApprovalDecidedEventType,
+			journal.CommandExecutionDecidedEventType,
+			journal.CommandExecutionCompletedEventType,
+		} {
+			assertAllHashes(t, fixture, eventType, newDigest)
 		}
 	})
 }
