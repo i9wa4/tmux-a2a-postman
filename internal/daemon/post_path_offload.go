@@ -35,10 +35,14 @@ var preDeliverySyncWaitTimeout = 30 * time.Second
 
 const preDeliverySyncQueueDepth = 64
 
+// preDeliverySyncRequest is shared by pointer between the delivery goroutine
+// and the worker. ok is written by the worker before it closes done and read by
+// the waiter only after done is closed, so the close orders the accesses.
 type preDeliverySyncRequest struct {
 	sessionDir string
 	fields     msgtrace.Fields
 	done       chan struct{}
+	ok         bool
 }
 
 // runPreDeliverySync hands the sync to the single dedicated worker and waits
@@ -46,11 +50,16 @@ type preDeliverySyncRequest struct {
 // (one pre-delivery sync at a time, previously guaranteed by running on the
 // select loop) without adding sync-vs-sync overlap, and no lock is held while
 // the sync runs. Ordering per message is preserved: the delivery goroutine does
-// not call DeliverMessage until its own sync has finished.
+// not call DeliverMessage until its own sync function has returned normally.
 //
-// It returns true only when the sync has completed; on any timeout it returns
-// false, reports a visible error event and log line, and the caller must not
-// deliver (fail closed; the pending-post reconciler retries the post). Queue
+// It returns true only when the sync function returned normally. An ordinary
+// sync problem is logged inside the sync function itself (it has no error
+// result) and counts as completed, exactly as when the sync ran inline on the
+// loop. A timeout, or a panic in the sync function, returns false: the worker
+// survives the panic and keeps serving later requests, but the post is not
+// delivered on the strength of a sync that did not finish. On false the caller
+// must not deliver; a visible error event and log line are emitted (fail
+// closed; the pending-post reconciler retries the post). Queue
 // and retry are bounded: the queue holds at most preDeliverySyncQueueDepth
 // requests, each delivery goroutine waits at most preDeliverySyncWaitTimeout
 // and occupies one non-daemon delivery budget slot while waiting, and retries
@@ -59,7 +68,7 @@ type preDeliverySyncRequest struct {
 // goroutines or a delivery that overlaps the sync.
 func (rt *daemonRuntime) runPreDeliverySync(sessionDir string, fields msgtrace.Fields) bool {
 	rt.preSyncOnce.Do(func() {
-		queue := make(chan preDeliverySyncRequest, preDeliverySyncQueueDepth)
+		queue := make(chan *preDeliverySyncRequest, preDeliverySyncQueueDepth)
 		rt.preSyncQueue = queue
 		go func() {
 			for req := range queue {
@@ -67,16 +76,18 @@ func (rt *daemonRuntime) runPreDeliverySync(sessionDir string, fields msgtrace.F
 					defer close(req.done)
 					defer func() {
 						if r := recover(); r != nil {
+							// req.ok stays false: this sync did not complete.
 							log.Printf("🚨 PANIC in pre-delivery sync worker for %s: %v\n", req.sessionDir, r)
 						}
 					}()
 					preDeliverySyncFn(req.sessionDir, req.fields)
+					req.ok = true
 				}()
 			}
 		}()
 	})
 
-	req := preDeliverySyncRequest{sessionDir: sessionDir, fields: fields, done: make(chan struct{})}
+	req := &preDeliverySyncRequest{sessionDir: sessionDir, fields: fields, done: make(chan struct{})}
 	timer := time.NewTimer(preDeliverySyncWaitTimeout)
 	defer timer.Stop()
 	select {
@@ -88,7 +99,11 @@ func (rt *daemonRuntime) runPreDeliverySync(sessionDir string, fields msgtrace.F
 	}
 	select {
 	case <-req.done:
-		return true
+		if !req.ok {
+			log.Printf("postman: WARNING: component=post_path event=pre_delivery_sync_panicked session=%s message_id=%s action=defer_delivery\n", filepath.Base(sessionDir), fields.MessageID)
+			rt.reportPreDeliverySyncStall("panic", sessionDir, fields)
+		}
+		return req.ok
 	case <-timer.C:
 		log.Printf("postman: WARNING: component=post_path event=pre_delivery_sync_wait_timeout session=%s message_id=%s action=defer_delivery\n", filepath.Base(sessionDir), fields.MessageID)
 		rt.reportPreDeliverySyncStall("wait", sessionDir, fields)
@@ -104,7 +119,7 @@ func (rt *daemonRuntime) reportPreDeliverySyncStall(phase, sessionDir string, fi
 	}
 	tui.SendEventNonBlocking(rt.events, tui.DaemonEvent{
 		Type: "error",
-		Message: fmt.Sprintf("pre-delivery sync %s timeout for %s in %s: delivery deferred, post kept for retry",
+		Message: fmt.Sprintf("pre-delivery sync %s failure for %s in %s: delivery deferred, post kept for retry",
 			phase, fields.MessageID, filepath.Base(sessionDir)),
 	})
 }

@@ -355,7 +355,7 @@ func TestPreDeliverySyncTimeoutFailsClosed(t *testing.T) {
 	for drained := false; !drained; {
 		select {
 		case ev := <-events:
-			if ev.Type == "error" && strings.Contains(ev.Message, "pre-delivery sync wait timeout") {
+			if ev.Type == "error" && strings.Contains(ev.Message, "pre-delivery sync wait failure") {
 				sawStallEvent = true
 			}
 		default:
@@ -387,6 +387,136 @@ func TestPreDeliverySyncTimeoutFailsClosed(t *testing.T) {
 	waitForInboxEntries(t, sessionDir, "worker", 1)
 	if syncFinished.Load() < 1 {
 		t.Fatal("the original sync never finished")
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("post file still present after the successful retry: %v", err)
+	}
+}
+
+// TestPreDeliverySyncPanicFailsClosedAndWorkerSurvives covers N1: a panic in
+// the pre-delivery sync must NOT be treated as a completed sync. The post is not
+// delivered (DeliverMessage never runs), stays in post/, a visible error event
+// is emitted, the worker survives, and once the sync works again the reconciler
+// delivers the post exactly once.
+func TestPreDeliverySyncPanicFailsClosedAndWorkerSurvives(t *testing.T) {
+	previousLog := log.Writer()
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(previousLog) })
+	installRuntimeTestTmux(t, t.TempDir())
+	installPostPaneIdentityStub(t, map[string][2]string{
+		"%1": {"sess", "orchestrator"},
+		"%2": {"sess", "worker"},
+	})
+
+	baseDir := t.TempDir()
+	sessionDir := filepath.Join(baseDir, "ctx", "sess")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"sess:orchestrator": {SessionName: "sess", SessionDir: sessionDir, PaneID: "%1"},
+		"sess:worker":       {SessionName: "sess", SessionDir: sessionDir, PaneID: "%2"},
+	}
+	originalDiscover := discoverNodesWithCollisionsForRuntime
+	discoverNodesWithCollisionsForRuntime = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return nodes, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesWithCollisionsForRuntime = originalDiscover })
+
+	var panicking atomic.Bool
+	panicking.Store(true)
+	var syncCalls atomic.Int32
+	originalSync := preDeliverySyncFn
+	preDeliverySyncFn = func(dir string, fields msgtrace.Fields) {
+		syncCalls.Add(1)
+		if panicking.Load() {
+			panic("injected pre-delivery sync panic")
+		}
+		originalSync(dir, fields)
+	}
+	t.Cleanup(func() { preDeliverySyncFn = originalSync })
+
+	events := make(chan tui.DaemonEvent, 256)
+	rt := &daemonRuntime{
+		baseDir:     baseDir,
+		sessionDir:  sessionDir,
+		contextID:   "ctx",
+		selfSession: "sess",
+		nodes:       nodes,
+		adjacency:   map[string][]string{"orchestrator": {"worker"}},
+
+		activePostEvents: map[string]bool{},
+		watcher:          &recordingFilesystemWatcher{},
+		knownNodes:       map[string]bool{},
+		claimedPanes:     map[string]bool{},
+		watchedDirs:      map[string]bool{},
+
+		cfg:         &config.Config{EnterDelay: 0.01, TmuxTimeout: 1.0, NodeOrder: []string{"orchestrator", "worker"}},
+		events:      events,
+		daemonState: NewDaemonState(0, "ctx"),
+		idleTracker: idle.NewIdleTracker(),
+	}
+	rt.daemonState.SetSessionEnabled("sess", true)
+
+	name := "20261010-040000-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  contextId: ctx\n  from: orchestrator\n  to: worker\n  messageId: " + name + "\n  timestamp: 2026-10-10T04:00:00+09:00\n---\n\nbody\n"
+	postPath := filepath.Join(sessionDir, "post", name)
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	waitIdle := func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			rt.postEventsMu.Lock()
+			active := len(rt.activePostEvents)
+			rt.postEventsMu.Unlock()
+			if active == 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("delivery goroutine did not finish")
+	}
+
+	// Attempt 1: the sync panics -> nothing may be delivered.
+	rt.dispatchPendingPostMessages()
+	waitIdle()
+	sawEvent := false
+	for drained := false; !drained; {
+		select {
+		case ev := <-events:
+			if ev.Type == "error" && strings.Contains(ev.Message, "pre-delivery sync panic failure") {
+				sawEvent = true
+			}
+		default:
+			drained = true
+		}
+	}
+	if !sawEvent {
+		t.Fatal("a panicking pre-delivery sync must surface a visible error event")
+	}
+	if syncCalls.Load() != 1 {
+		t.Fatalf("sync ran %d times, want 1", syncCalls.Load())
+	}
+	if _, err := os.Stat(postPath); err != nil {
+		t.Fatalf("post file must stay in post/ after a panicked sync: %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox", "worker")); err == nil && len(entries) != 0 {
+		t.Fatalf("message delivered after a panicked pre-delivery sync (%d inbox entries)", len(entries))
+	}
+
+	// Attempt 2: the sync works again; the SAME worker (it survived the panic)
+	// serves it and the reconciler delivers exactly once.
+	panicking.Store(false)
+	rt.dispatchPendingPostMessages()
+	waitForInboxEntries(t, sessionDir, "worker", 1)
+	waitIdle()
+	rt.dispatchPendingPostMessages()
+	waitIdle()
+	rt.waitForMailboxProjectionSyncs()
+	waitForInboxEntries(t, sessionDir, "worker", 1)
+	if syncCalls.Load() < 2 {
+		t.Fatalf("worker did not serve the retry after the panic (sync calls = %d)", syncCalls.Load())
 	}
 	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
 		t.Fatalf("post file still present after the successful retry: %v", err)

@@ -95,7 +95,7 @@ type daemonRuntime struct {
 	sendPaneNotification           paneNotificationSender
 	lastPostDiscoveryAt            time.Time
 	preSyncOnce                    sync.Once
-	preSyncQueue                   chan preDeliverySyncRequest
+	preSyncQueue                   chan *preDeliverySyncRequest
 	lastEscalationCheck            time.Time
 	lastEscalationPushKey          string
 }

@@ -181,20 +181,25 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	chainTimeout := atomicChainTimeout(tmuxTimeout, enterDelay)
 	if err := n.run(chainTimeout, atomicFirstEnterArgs(sanitized, paneID, enterDelay)...); err != nil {
 		n.warnf("⚠️  postman: WARNING: failed to paste and submit to pane %s: %v\n", paneID, err)
-		if errors.Is(err, context.DeadlineExceeded) {
-			// The chain may have pasted (and even submitted) before the
-			// deadline hit, so the delivery state is ambiguous. Report it as
-			// ErrPaneUnresponsive so callers do not treat it as a plain
-			// failure and re-paste a second copy of the notification (#871).
-			return fmt.Errorf("%w: chained paste/submit to pane %s timed out after %s, delivery state ambiguous, not retried: %w", ErrPaneUnresponsive, paneID, chainTimeout, err)
+		// The chain may have pasted (and even submitted) before the deadline
+		// hit, so the delivery state is ambiguous: report it as
+		// ErrPaneUnresponsive so callers do not treat it as a plain failure
+		// and re-paste a second copy of the notification (#871).
+		if ambiguous := ambiguousDeadlineError(paneID, "chained paste/submit", chainTimeout, err); ambiguous != nil {
+			return ambiguous
 		}
 		return err
 	}
 
-	// 5. Send additional C-m keystrokes up to enterCount total
+	// 5. Send additional C-m keystrokes up to enterCount total. The paste has
+	// already happened, so a deadline here is ambiguous too and must not lead
+	// the caller to re-paste (#871).
 	for i := 1; i < enterCount; i++ {
 		n.sleepFor(enterDelay)
 		if err := n.run(tmuxTimeout, "send-keys", "-t", paneID, "C-m"); err != nil {
+			if ambiguous := ambiguousDeadlineError(paneID, fmt.Sprintf("C-m %d", i+1), tmuxTimeout, err); ambiguous != nil {
+				return ambiguous
+			}
 			return fmt.Errorf("failed to send C-m %d to pane %s: %w", i+1, paneID, err)
 		}
 	}
@@ -227,12 +232,26 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 				return fmt.Errorf("%w: pane %s unchanged or notification still in composer after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
 			}
 			if err := n.run(tmuxTimeout, "send-keys", "-t", paneID, "C-m"); err != nil {
+				if ambiguous := ambiguousDeadlineError(paneID, "verify-retry C-m", tmuxTimeout, err); ambiguous != nil {
+					return ambiguous
+				}
 				return fmt.Errorf("failed to retry C-m for pane %s: %w", paneID, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// ambiguousDeadlineError returns a non-retryable ErrPaneUnresponsive error
+// (keeping the deadline cause) when err is a tmux deadline at a stage that
+// follows, or is, the paste, and nil for any other error. Once the notification
+// text may be in the pane, retrying the whole delivery would paste it again.
+func ambiguousDeadlineError(paneID, stage string, timeout time.Duration, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s to pane %s timed out after %s, delivery state ambiguous, not retried: %w", ErrPaneUnresponsive, stage, paneID, timeout, err)
 }
 
 func notificationFilename(message string) string {
