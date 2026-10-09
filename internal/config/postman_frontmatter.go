@@ -55,7 +55,7 @@ func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogS
 
 		key := strings.ToLower(strings.TrimSpace(keyNode.Value))
 		switch key {
-		case "ui_node", "reply_command":
+		case "interface_node", "ui_node", "reply_command": // ui_node is surfaced only so the loader can warn and ignore it (#764)
 			value, err := parseYAMLScalarString(valueNode)
 			if err != nil {
 				return nil, nil, nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")

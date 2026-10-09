@@ -14,10 +14,10 @@ import (
 )
 
 type Options struct {
-	GraceSeconds  int
-	DebtCap       int
-	ExemptUINode  string
-	RecordTimeout TimeoutRecorder
+	GraceSeconds        int
+	DebtCap             int
+	ExemptInterfaceNode string
+	RecordTimeout       TimeoutRecorder
 }
 
 type TimeoutRecorder func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error)
@@ -42,7 +42,7 @@ func Enforce(sessionDir, sender, filename, content string, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if IsExemptSender(sender, opts.ExemptUINode) {
+	if IsExemptSender(sender, opts.ExemptInterfaceNode) {
 		return nil
 	}
 	state, ok, err := projection.ProjectVerdictDebtState(sessionDir, sessionName, time.Now(), opts.GraceSeconds)
@@ -79,8 +79,12 @@ func NormalizeSender(sessionName, sender, envelopeSender string) (string, error)
 	return normalizedSender, nil
 }
 
-func IsExemptSender(sender, exemptUINode string) bool {
-	return sender == "messenger" || sender == exemptUINode
+// IsExemptSender reports whether sender is the configured interface node. The
+// exemption is verdict-debt only. With no interface node configured
+// (exemptInterfaceNode == "") nobody is exempt: there is deliberately no
+// built-in node name (#764, fail closed).
+func IsExemptSender(sender, exemptInterfaceNode string) bool {
+	return exemptInterfaceNode != "" && sender == exemptInterfaceNode
 }
 
 func applyOutgoingVerdict(sessionName string, debt projection.VerdictRequesterDebt, sender string, meta envelope.Metadata) projection.VerdictRequesterDebt {

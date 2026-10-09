@@ -17,11 +17,12 @@ sends the normal pane notification when inbox delivery succeeds.
 - Timing: queued at startup, due after `auto_ping_delay_seconds` (default
   `20`), then delivered on the next full scan.
 - Source: daemon startup.
-- Recipients: all discovered nodes unless `ui_node` is explicitly set.
-  Explicit `ui_node` limits startup auto-PING to matching roles discovered in
-  enabled sessions.
-- Notes: journal reason is `startup`. The embedded default
-  `ui_node = "messenger"` does not narrow by itself.
+- Recipients: all discovered nodes unless `interface_node` is explicitly set.
+  Explicit `interface_node` limits startup auto-PING to matching roles
+  discovered in enabled sessions.
+- Notes: journal reason is `startup`. There is no embedded default
+  `interface_node` and no `ui_node` alias, so an omitted setting does not
+  narrow.
 
 ### 1.2. New Node Auto-PING
 
@@ -52,11 +53,11 @@ sends the normal pane notification when inbox delivery succeeds.
   command first activates that session for this daemon.
 - Source: user/operator.
 - Recipients: every discovered node in the selected tmux session.
-- Notes: not limited by startup `ui_node`. During the startup auto-PING delay,
-  the TUI disables `p` and shows a readiness countdown instead of dispatching a
-  manual PING. If an operator sends after the countdown while a startup or
-  discovery auto-PING is still pending for the same node and pane, the
-  successful operator PING resolves that pending automatic wake so the next
+- Notes: not limited by startup `interface_node`. During the startup auto-PING
+  delay, the TUI disables `p` and shows a readiness countdown instead of
+  dispatching a manual PING. If an operator sends after the countdown while a
+  startup or discovery auto-PING is still pending for the same node and pane,
+  the successful operator PING resolves that pending automatic wake so the next
   scan does not deliver duplicate daemon PING mail. If the session is owned by
   another daemon, the send is blocked. Pressing `p` again is still an
   intentional operator retry and can send another direct PING.

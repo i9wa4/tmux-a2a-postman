@@ -504,10 +504,10 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 			return fmt.Errorf("daemon validate-send: %w", err)
 		}
 	} else if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
-		GraceSeconds:  cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
-		DebtCap:       cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
-		ExemptUINode:  cfg.UINode,
-		RecordTimeout: verdictgate.RecordTimeoutWithCurrentLease,
+		GraceSeconds:        cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
+		DebtCap:             cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
+		ExemptInterfaceNode: cfg.InterfaceNode,
+		RecordTimeout:       verdictgate.RecordTimeoutWithCurrentLease,
 	}); err != nil {
 		return err
 	}

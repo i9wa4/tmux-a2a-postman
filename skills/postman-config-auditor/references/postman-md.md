@@ -32,17 +32,21 @@ supported public surface.
 
 Supported global keys in `postman.md`:
 
-| Key             | Effect                                                              |
-| --------------- | ------------------------------------------------------------------- |
-| `ui_node`       | Sets `Config.UINode` as a frontmatter override                      |
-| `reply_command` | Sets `Config.ReplyCommand` when non-empty                           |
-| `skill_path`    | Appends catalogs to role context, daemon PINGs, or compaction PINGs |
+| Key              | Effect                                                              |
+| ---------------- | ------------------------------------------------------------------- |
+| `interface_node` | Sets `Config.InterfaceNode` as a frontmatter override               |
+| `reply_command`  | Sets `Config.ReplyCommand` when non-empty                           |
+| `skill_path`     | Appends catalogs to role context, daemon PINGs, or compaction PINGs |
 
 Rules:
 
-- Prefer marking the UI node in the Mermaid graph with `class <node> ui_node`.
-  Inline `:::ui_node` also works. Frontmatter `ui_node` is still supported as an
-  explicit override.
+- Prefer marking the interface node in the Mermaid graph with
+  `class <node> interface_node`. Inline `:::interface_node` also works.
+  Frontmatter `interface_node` is an explicit override.
+- `ui_node` is not an alias and has no compatibility reader. A frontmatter
+  `ui_node` key, a `class <node> ui_node` statement, and an inline `:::ui_node`
+  class are each warned about (naming the file and the form) and ignored; they
+  can neither set nor mask `interface_node`.
 - Mark the execute-bash command approver in the Mermaid graph with
   `class <node> command_approver_node`. Inline
   `<node>:::command_approver_node` also works. Exactly one distinct
@@ -51,7 +55,8 @@ Rules:
   `command_approval.unresolved_command_approvers` nor
   `command_approval.deprecated_command_approvers`. The deprecated marker means
   ignored legacy TOML approver keys are still present.
-- Empty frontmatter `ui_node:` is meaningful and explicitly clears `ui_node`.
+- Empty frontmatter `interface_node:` is meaningful and explicitly means no
+  interface node. Omitting the key means the same: there is no default.
 - `skill_path` may be a scalar path or a YAML list of path entries.
 - `skill_path` list items may be scalar paths or mappings with `path`,
   optional `inject`, and `skills`.
@@ -190,9 +195,9 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- critic
-    class messenger ui_node
+    class messenger interface_node
     class orchestrator command_approver_node
-    classDef ui_node fill:#e0f2fe
+    classDef interface_node fill:#e0f2fe
     classDef command_approver_node fill:#fef3c7
 ```
 ````
@@ -200,8 +205,8 @@ graph LR
 Edge rules:
 
 - Only `---` is parsed as an edge operator.
-- The UI node may be marked with a `class messenger ui_node` statement, or with
-  inline class syntax such as `messenger:::ui_node`.
+- The interface node may be marked with a `class messenger interface_node`
+  statement, or with inline class syntax such as `messenger:::interface_node`.
 - The command approver node may be marked with a
   `class orchestrator command_approver_node` statement, or with inline class
   syntax such as `orchestrator:::command_approver_node`. It is global for all
@@ -303,9 +308,9 @@ Important rules:
   non-empty.
 - `workspace_tree` is TOML-only. `postman.md` does not parse or override
   explicit workspace hierarchy metadata.
-- A Mermaid `ui_node` class in the `edges` graph sets `ui_node` when
-  frontmatter does not set it. Frontmatter `ui_node` wins within the same
-  Markdown file.
+- A Mermaid `interface_node` class in the `edges` graph sets `interface_node`
+  when frontmatter does not set it. Frontmatter `interface_node` wins within the
+  same Markdown file, and postman.md wins over TOML.
 - A Mermaid `command_approver_node` class in the `edges` graph sets the global
   execute-bash command approver. There is no TOML or per-policy override for
   this field.

@@ -8,8 +8,12 @@ Primary files:
 postman.toml is optional. Embedded defaults from postman.default.toml are used
 when no user TOML exists. A minimal postman.md can contain only Mermaid edges;
 nodes referenced by those edges are materialized automatically. Mark the
-human-facing startup PING target with the Mermaid ui_node class. Mark the
-execute-bash approver with the Mermaid command_approver_node class.
+human-facing interface node with the Mermaid interface_node class. It is the
+startup PING target, the verdict-debt exemption, and the escalation push
+target. There is no default and no ui_node alias: with no interface_node there
+is no interface node (fail closed), and the legacy ui_node forms are warned
+about and ignored. Mark the execute-bash approver with the Mermaid
+command_approver_node class.
 Public defaults are owned by postman.default.toml; DefaultConfig only
 initializes structural containers.
 Global config is read once at daemon startup. Restart the daemon after editing
@@ -28,7 +32,7 @@ Quick reading guide:
 
 Core config:
   edges                            Bidirectional routes between nodes
-  ui_node                          Optional target filter for startup auto-PING; prefer Mermaid class <node> ui_node
+  interface_node                   The one human-facing node (startup PING target, verdict-debt exemption, escalation target); prefer Mermaid class <node> interface_node; omitted = no interface node
   command_approver_node            Mermaid-only singleton: class <node> command_approver_node in postman.md
   auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)
   message_footer                   Header guidance before the sender body separator
@@ -67,8 +71,16 @@ Edge syntax:
   ]
 
 Mermaid node designation:
-  class messenger ui_node
+  class messenger interface_node
   class orchestrator command_approver_node
+
+interface_node forms (frontmatter wins over the Mermaid class, which wins over TOML):
+  postman.md frontmatter:   interface_node: messenger
+  postman.md Mermaid class: class messenger interface_node
+  postman.toml:             [postman] interface_node = "messenger"
+  An explicit empty value means no interface node. get-status reports an
+  interface_node object with configured=false and a diagnostic when none is
+  configured; the daemon logs the same diagnostic once at start.
 
 Migration note:
   [postman] command_approver_node and per-policy command_approver_node keys in

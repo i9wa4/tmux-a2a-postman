@@ -2448,14 +2448,14 @@ func runtimeNodeKeys(nodes map[string]discovery.NodeInfo) []string {
 }
 
 func startupAutoPingNodeKeys(nodes map[string]discovery.NodeInfo, cfg *config.Config) []string {
-	if cfg == nil || !cfg.HasExplicitUINodeSetting() || cfg.UINode == "" {
+	if cfg == nil || !cfg.HasExplicitInterfaceNodeSetting() || cfg.InterfaceNode == "" {
 		return runtimeNodeKeys(nodes)
 	}
 
 	nodeKeys := runtimeNodeKeys(nodes)
 	filtered := make([]string, 0, len(nodeKeys))
 	for _, nodeKey := range nodeKeys {
-		if ping.ExtractSimpleName(nodeKey) == cfg.UINode {
+		if ping.ExtractSimpleName(nodeKey) == cfg.InterfaceNode {
 			filtered = append(filtered, nodeKey)
 		}
 	}

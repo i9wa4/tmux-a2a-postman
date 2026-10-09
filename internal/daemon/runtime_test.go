@@ -4377,14 +4377,14 @@ func TestBootstrap_QueuesAndDeliversStartupAutoPingForDiscoveredNode(t *testing.
 	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
-func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitUINode(t *testing.T) {
+func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitInterfaceNode(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(baseDir, "xdg-config"))
 	t.Setenv("HOME", filepath.Join(baseDir, "home"))
 	t.Chdir(baseDir)
 
 	configPath := filepath.Join(baseDir, "postman.toml")
-	content := "[postman]\nui_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n"
+	content := "[postman]\ninterface_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
@@ -4436,10 +4436,10 @@ func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitUINode(t *testing.T) {
 		t.Fatal("ProjectAutoPingState() ok = false, want true")
 	}
 	if !state.Nodes["review:messenger"].Pending {
-		t.Fatal("startup auto-PING was not queued for explicit ui_node")
+		t.Fatal("startup auto-PING was not queued for explicit interface_node")
 	}
 	if state.Nodes["review:worker"].Pending {
-		t.Fatal("startup auto-PING was queued for non-ui_node worker")
+		t.Fatal("startup auto-PING was queued for non-interface_node worker")
 	}
 }
 

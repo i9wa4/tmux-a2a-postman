@@ -14,12 +14,14 @@ defaults.
   to run the daemon.
 - A minimal `postman.md` may contain only a Mermaid `edges` section. Nodes
   referenced by those edges are materialized with empty `NodeConfig` values.
-- The explicit human-facing startup PING target should normally be marked in
-  Mermaid with the `ui_node` class, keeping topology-facing settings in one
-  diagram.
+- The explicit human-facing interface node should normally be marked in
+  Mermaid with the `interface_node` class, keeping topology-facing settings in
+  one diagram. It has no embedded default and there is no `ui_node` alias:
+  omitted means no interface node (fail closed), and the legacy `ui_node`
+  forms are warned about and ignored.
 - The execute-bash command approver should be marked in Mermaid with the
-  `command_approver_node` class. This is a singleton topology-facing
-  designation like `ui_node`; `[postman] command_approver_node` and per-policy
+  `command_approver_node` class. This is a singleton topology-facing designation
+  like `interface_node`; `[postman] command_approver_node` and per-policy
   `command_approver_node` keys in `postman.toml` are no longer user-facing
   config surfaces.
 - `postman.md` frontmatter may set `skill_path` to generate an agent skill
@@ -86,18 +88,19 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- critic
-    class messenger ui_node
+    class messenger interface_node
     class orchestrator command_approver_node
-    classDef ui_node fill:#e0f2fe
+    classDef interface_node fill:#e0f2fe
     classDef command_approver_node fill:#fef3c7
 ```
 ````
 
-This creates `messenger`, `orchestrator`, `worker`, and `critic` nodes even
-when no `[messenger]`, `[orchestrator]`, `[worker]`, or `[critic]` TOML sections
-exist. The `ui_node` class explicitly marks `messenger` as the startup
-auto-PING target. The `command_approver_node` class marks `orchestrator` as the
-single execute-bash approver for all command approval policies.
+This creates `messenger`, `orchestrator`, `worker`, and `critic` nodes even when
+no `[messenger]`, `[orchestrator]`, `[worker]`, or `[critic]` TOML sections
+exist. The `interface_node` class explicitly marks `messenger` as the startup
+auto-PING target, the verdict-debt exemption, and the escalation push target.
+The `command_approver_node` class marks `orchestrator` as the single
+execute-bash approver for all command approval policies.
 
 ## 5. Command Approver Migration
 

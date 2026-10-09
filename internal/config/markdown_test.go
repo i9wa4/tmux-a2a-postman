@@ -59,13 +59,13 @@ func TestMarkdownFrontmatterAccept(t *testing.T) {
 		{
 			name: "basic key:value",
 			content: `---
-ui_node: messenger
+interface_node: messenger
 reply_command: send
 ---
 body`,
 			want: map[string]string{
-				"ui_node":       "messenger",
-				"reply_command": "send",
+				"interface_node": "messenger",
+				"reply_command":  "send",
 			},
 		},
 		{
@@ -301,7 +301,7 @@ flowchart LR
 	}
 }
 
-func TestParseMermaidUINode(t *testing.T) {
+func TestParseMermaidInterfaceNode(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
@@ -313,8 +313,8 @@ func TestParseMermaidUINode(t *testing.T) {
 			name: "inline class",
 			input: `
 graph LR
-    messenger:::ui_node --- orchestrator
-    classDef ui_node fill:#fff3bf
+    messenger:::interface_node --- orchestrator
+    classDef interface_node fill:#fff3bf
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -323,7 +323,7 @@ graph LR
 			name: "inline class after label",
 			input: `
 graph LR
-    messenger["Human"]:::ui_node --- orchestrator
+    messenger["Human"]:::interface_node --- orchestrator
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -333,7 +333,7 @@ graph LR
 			input: `
 graph LR
     messenger --- orchestrator
-    messenger{Human?}:::ui_node
+    messenger{Human?}:::interface_node
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -343,7 +343,7 @@ graph LR
 			input: `
 graph LR
     messenger --- orchestrator
-    messenger["Human reviewer"]:::ui_node
+    messenger["Human reviewer"]:::interface_node
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -353,7 +353,7 @@ graph LR
 			input: `
 graph LR
     messenger --- orchestrator
-    messenger{Human reviewer?}:::ui_node
+    messenger{Human reviewer?}:::interface_node
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -362,7 +362,7 @@ graph LR
 			name: "label text containing class marker ignored",
 			input: `
 graph LR
-    messenger["note :::ui_node pending"] --- orchestrator
+    messenger["note :::interface_node pending"] --- orchestrator
 `,
 			wantSet: false,
 		},
@@ -371,7 +371,7 @@ graph LR
 			input: `
 graph LR
     messenger --- orchestrator
-    messenger["note :::ui_node pending"]
+    messenger["note :::interface_node pending"]
 `,
 			wantSet: false,
 		},
@@ -380,7 +380,7 @@ graph LR
 			input: `
 graph LR
     messenger --- orchestrator
-    class messenger ui_node
+    class messenger interface_node
 `,
 			want:    "messenger",
 			wantSet: true,
@@ -390,26 +390,35 @@ graph LR
 			input: `
 graph LR
     messenger --- orchestrator
-    class messenger active,ui_node
+    class messenger active,interface_node
 `,
 			want:    "messenger",
 			wantSet: true,
 		},
 		{
-			name: "non ui class ignored",
+			name: "non interface class ignored",
 			input: `
 graph LR
     messenger:::active --- orchestrator
-    classDef ui_node fill:#fff3bf
+    classDef interface_node fill:#fff3bf
 `,
 			wantSet: false,
 		},
 		{
-			name: "conflicting ui nodes rejected",
+			name: "legacy ui_node class never designates",
 			input: `
 graph LR
     messenger:::ui_node --- orchestrator
-    class worker ui_node
+    class messenger ui_node
+`,
+			wantSet: false,
+		},
+		{
+			name: "conflicting interface nodes rejected",
+			input: `
+graph LR
+    messenger:::interface_node --- orchestrator
+    class worker interface_node
 `,
 			wantErr: true,
 		},
@@ -417,18 +426,75 @@ graph LR
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, gotSet, err := parseMermaidUINode(tt.input)
+			got, gotSet, err := parseMermaidInterfaceNode(tt.input)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("parseMermaidUINode() error = nil, want error")
+					t.Fatal("parseMermaidInterfaceNode() error = nil, want error")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseMermaidUINode() error = %v", err)
+				t.Fatalf("parseMermaidInterfaceNode() error = %v", err)
 			}
 			if got != tt.want || gotSet != tt.wantSet {
-				t.Fatalf("parseMermaidUINode() = %q, %v; want %q, %v", got, gotSet, tt.want, tt.wantSet)
+				t.Fatalf("parseMermaidInterfaceNode() = %q, %v; want %q, %v", got, gotSet, tt.want, tt.wantSet)
+			}
+		})
+	}
+}
+
+// TestLegacyMermaidUINodeForms (#764 A3/A5): the legacy ui_node class forms are
+// detected, classified as class statement vs inline form, never error, and
+// never name an interface node.
+func TestLegacyMermaidUINodeForms(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantContains []string
+		wantCount    int
+	}{
+		{
+			name:      "class statement",
+			input:     "graph LR\n    messenger --- orchestrator\n    class messenger ui_node\n",
+			wantCount: 1, wantContains: []string{"Mermaid class statement", "class messenger ui_node", "nodes messenger"},
+		},
+		{
+			name:      "inline class on an edge",
+			input:     "graph LR\n    messenger:::ui_node --- orchestrator\n",
+			wantCount: 1, wantContains: []string{"Mermaid inline :::ui_node", "nodes messenger"},
+		},
+		{
+			name:      "class statement and inline together are both reported",
+			input:     "graph LR\n    messenger:::ui_node --- orchestrator\n    class messenger ui_node\n",
+			wantCount: 2,
+		},
+		{
+			name:      "conflicting legacy nodes do not error",
+			input:     "graph LR\n    messenger:::ui_node --- orchestrator\n    class worker ui_node\n",
+			wantCount: 2,
+		},
+		{
+			name:      "classDef alone is not a designation",
+			input:     "graph LR\n    messenger --- orchestrator\n    classDef ui_node fill:#fff3bf\n",
+			wantCount: 0,
+		},
+		{
+			name:      "new interface_node class is not legacy",
+			input:     "graph LR\n    messenger --- orchestrator\n    class messenger interface_node\n",
+			wantCount: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := legacyMermaidUINodeForms(tt.input)
+			if len(got) != tt.wantCount {
+				t.Fatalf("legacyMermaidUINodeForms() = %d forms %q, want %d", len(got), got, tt.wantCount)
+			}
+			joined := strings.Join(got, "\n")
+			for _, want := range tt.wantContains {
+				if !strings.Contains(joined, want) {
+					t.Errorf("forms %q missing %q", joined, want)
+				}
 			}
 		})
 	}
@@ -842,7 +908,7 @@ func TestExtractNodeFields_FallbackFrontmatter(t *testing.T) {
 // node sections with h3 reserved fields.
 func TestLoadMarkdownConfig(t *testing.T) {
 	content := `---
-ui_node: messenger
+interface_node: messenger
 reply_command: send-heredoc --to <r>
 ---
 
@@ -882,8 +948,8 @@ Worker template.
 	}
 
 	t.Run("GlobalFrontmatter", func(t *testing.T) {
-		if cfg.UINode != "messenger" {
-			t.Errorf("UINode: got %q, want %q", cfg.UINode, "messenger")
+		if cfg.InterfaceNode != "messenger" {
+			t.Errorf("InterfaceNode: got %q, want %q", cfg.InterfaceNode, "messenger")
 		}
 		if cfg.ReplyCommand != `send-heredoc --to <r>` {
 			t.Errorf("ReplyCommand: got %q", cfg.ReplyCommand)
@@ -932,15 +998,15 @@ Worker template.
 	})
 }
 
-func TestLoadMarkdownConfig_MermaidUINode(t *testing.T) {
+func TestLoadMarkdownConfig_MermaidInterfaceNode(t *testing.T) {
 	content := `## ` + "`edges`" + `
 
 ` + "```mermaid" + `
 graph LR
     messenger --- orchestrator
     orchestrator --- worker
-    class messenger ui_node
-    classDef ui_node fill:#fff3bf
+    class messenger interface_node
+    classDef interface_node fill:#fff3bf
 ` + "```" + `
 `
 
@@ -954,14 +1020,125 @@ graph LR
 	if err != nil {
 		t.Fatalf("loadMarkdownConfig error: %v", err)
 	}
-	if cfg.UINode != "messenger" {
-		t.Fatalf("UINode: got %q, want %q", cfg.UINode, "messenger")
+	if cfg.InterfaceNode != "messenger" {
+		t.Fatalf("InterfaceNode: got %q, want %q", cfg.InterfaceNode, "messenger")
 	}
-	if !cfg.HasExplicitUINodeSetting() {
-		t.Fatal("Mermaid ui_node should be treated as an explicit setting")
+	if !cfg.HasExplicitInterfaceNodeSetting() {
+		t.Fatal("Mermaid interface_node should be treated as an explicit setting")
 	}
 	if len(cfg.Edges) != 2 {
 		t.Fatalf("Edges: got %v, want 2 edges", cfg.Edges)
+	}
+}
+
+// loadMarkdownCapturingLog loads a postman.md written from content and returns
+// the parsed config together with everything the loader logged to stderr.
+func loadMarkdownCapturingLog(t *testing.T, content string) (*Config, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "postman.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	cfg, err := loadMarkdownConfig(path)
+	if err != nil {
+		t.Fatalf("loadMarkdownConfig error: %v", err)
+	}
+	return cfg, strings.ReplaceAll(buf.String(), path, "<postman.md>")
+}
+
+// TestLoadMarkdownConfig_LegacyUINodeFormsWarnAndAreIgnored (#764 A3/A5/X7):
+// every legacy ui_node form (frontmatter key, Mermaid class statement, inline
+// :::ui_node) warns with the file and the exact form, designates nothing, and
+// cannot set or mask interface_node.
+func TestLoadMarkdownConfig_LegacyUINodeFormsWarnAndAreIgnored(t *testing.T) {
+	const edgesLegacyClass = "## `edges`\n\n```mermaid\ngraph LR\n    messenger --- orchestrator\n    class messenger ui_node\n```\n"
+	const edgesLegacyInline = "## `edges`\n\n```mermaid\ngraph LR\n    messenger:::ui_node --- orchestrator\n```\n"
+	const edgesNewClass = "## `edges`\n\n```mermaid\ngraph LR\n    messenger --- orchestrator\n    class orchestrator interface_node\n```\n"
+
+	tests := []struct {
+		name          string
+		content       string
+		wantNode      string
+		wantSet       bool
+		wantWarnings  []string
+		wantNoWarning bool
+	}{
+		{
+			name:         "legacy frontmatter key",
+			content:      "---\nui_node: messenger\n---\n\nbody\n",
+			wantWarnings: []string{"<postman.md>", "legacy postman.md frontmatter key ui_node is ignored"},
+		},
+		{
+			name:         "legacy Mermaid class statement",
+			content:      edgesLegacyClass,
+			wantWarnings: []string{"<postman.md>", "legacy Mermaid class statement", "class messenger ui_node"},
+		},
+		{
+			name:         "legacy inline class",
+			content:      edgesLegacyInline,
+			wantWarnings: []string{"<postman.md>", "legacy Mermaid inline :::ui_node"},
+		},
+		{
+			name:         "legacy frontmatter cannot mask new Mermaid class",
+			content:      "---\nui_node: messenger\n---\n\n" + edgesNewClass,
+			wantNode:     "orchestrator",
+			wantSet:      true,
+			wantWarnings: []string{"legacy postman.md frontmatter key ui_node is ignored"},
+		},
+		{
+			name:         "legacy Mermaid class cannot mask new frontmatter",
+			content:      "---\ninterface_node: worker\n---\n\n" + edgesLegacyClass,
+			wantNode:     "worker",
+			wantSet:      true,
+			wantWarnings: []string{"legacy Mermaid class statement"},
+		},
+		{
+			name:         "legacy cannot mask explicit empty frontmatter",
+			content:      "---\ninterface_node: \"\"\nui_node: messenger\n---\n\n" + edgesLegacyInline,
+			wantNode:     "",
+			wantSet:      true,
+			wantWarnings: []string{"legacy postman.md frontmatter key ui_node", "legacy Mermaid inline :::ui_node"},
+		},
+		{
+			name:          "new frontmatter alone: no warning",
+			content:       "---\ninterface_node: messenger\n---\n\nbody\n",
+			wantNode:      "messenger",
+			wantSet:       true,
+			wantNoWarning: true,
+		},
+		{
+			name:          "new Mermaid class alone: no warning",
+			content:       edgesNewClass,
+			wantNode:      "orchestrator",
+			wantSet:       true,
+			wantNoWarning: true,
+		},
+		{
+			name:          "frontmatter interface_node wins over Mermaid interface_node class",
+			content:       "---\ninterface_node: worker\n---\n\n" + edgesNewClass,
+			wantNode:      "worker",
+			wantSet:       true,
+			wantNoWarning: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, logged := loadMarkdownCapturingLog(t, tt.content)
+			if cfg.InterfaceNode != tt.wantNode || cfg.HasExplicitInterfaceNodeSetting() != tt.wantSet {
+				t.Fatalf("InterfaceNode=%q explicit=%v, want %q explicit=%v", cfg.InterfaceNode, cfg.HasExplicitInterfaceNodeSetting(), tt.wantNode, tt.wantSet)
+			}
+			if tt.wantNoWarning && strings.Contains(logged, "legacy") {
+				t.Fatalf("unexpected legacy warning: %q", logged)
+			}
+			for _, want := range tt.wantWarnings {
+				if !strings.Contains(logged, want) {
+					t.Errorf("log %q missing %q", logged, want)
+				}
+			}
+		})
 	}
 }
 
@@ -991,16 +1168,16 @@ graph LR
 	}
 }
 
-func TestLoadMarkdownConfig_FrontmatterUINodeOverridesMermaid(t *testing.T) {
+func TestLoadMarkdownConfig_FrontmatterInterfaceNodeOverridesMermaid(t *testing.T) {
 	content := `---
-ui_node: messenger
+interface_node: messenger
 ---
 
 ## ` + "`edges`" + `
 
 ` + "```mermaid" + `
 graph LR
-    boss:::ui_node --- orchestrator
+    boss:::interface_node --- orchestrator
 ` + "```" + `
 `
 
@@ -1014,8 +1191,8 @@ graph LR
 	if err != nil {
 		t.Fatalf("loadMarkdownConfig error: %v", err)
 	}
-	if cfg.UINode != "messenger" {
-		t.Fatalf("UINode: got %q, want frontmatter value", cfg.UINode)
+	if cfg.InterfaceNode != "messenger" {
+		t.Fatalf("InterfaceNode: got %q, want frontmatter value", cfg.InterfaceNode)
 	}
 }
 
@@ -1841,7 +2018,7 @@ license: MIT
 // TestLoadMarkdownConfig_NumberedHeadings covers numbered backtick headings.
 func TestLoadMarkdownConfig_NumberedHeadings(t *testing.T) {
 	content := `---
-ui_node: messenger
+interface_node: messenger
 ---
 
 ## 1. ` + "`edges`" + `
@@ -2021,13 +2198,12 @@ template = "from toml"
 	}
 }
 
-// TestLoadConfig_InterfaceNodeReconciledAfterMarkdownOverlay (#764 E-2):
-// interface_node (set in TOML) and a divergent legacy ui_node (set only via
-// XDG markdown frontmatter, applied AFTER the TOML [postman] decode) must
-// still be reconciled, with interface_node winning as the canonical runtime
-// value -- proving resolveInterfaceNodeDesignation runs after every layer
-// is merged, not just after the TOML section.
-func TestLoadConfig_InterfaceNodeReconciledAfterMarkdownOverlay(t *testing.T) {
+// TestLoadConfig_LegacyMarkdownUINodeCannotMaskTomlInterfaceNode (#764 A3):
+// interface_node set in TOML and a divergent legacy ui_node set only via XDG
+// markdown frontmatter (applied AFTER the TOML [postman] decode): the legacy
+// form warns with the markdown file and form, is ignored, and the TOML
+// interface_node stays the resolved value.
+func TestLoadConfig_LegacyMarkdownUINodeCannotMaskTomlInterfaceNode(t *testing.T) {
 	tmpDir := t.TempDir()
 	xdgDir, _ := setupXDGAndHome(t, tmpDir)
 
@@ -2048,14 +2224,11 @@ template = "from toml"
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.UINode != "orchestrator" {
-		t.Errorf("UINode = %q, want %q (interface_node must win over markdown-set legacy ui_node)", cfg.UINode, "orchestrator")
-	}
 	if cfg.InterfaceNode != "orchestrator" {
-		t.Errorf("InterfaceNode = %q, want %q", cfg.InterfaceNode, "orchestrator")
+		t.Errorf("InterfaceNode = %q, want %q (legacy markdown ui_node must not mask the TOML interface_node)", cfg.InterfaceNode, "orchestrator")
 	}
-	if !strings.Contains(buf.String(), "conflicting designation settings") {
-		t.Errorf("expected a conflicting-designation warning, got: %q", buf.String())
+	if !strings.Contains(buf.String(), "legacy postman.md frontmatter key ui_node is ignored") || !strings.Contains(buf.String(), "postman.md") {
+		t.Errorf("expected a legacy-form warning naming postman.md and the form, got: %q", buf.String())
 	}
 }
 

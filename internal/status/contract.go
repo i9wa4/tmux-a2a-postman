@@ -232,6 +232,16 @@ type CommandApprovalStatus struct {
 	DeprecatedCommandApprovers []CommandApprovalDeprecatedApprover `json:"deprecated_command_approvers,omitempty"`
 }
 
+// InterfaceNodeStatus surfaces the fail-closed no-interface-node state (#764
+// S1) so an unmigrated config is loud and auditable instead of silently
+// removing the verdict-debt exemption and the escalation push target. It is
+// emitted only when no usable interface node is configured, like the
+// command_approval markers.
+type InterfaceNodeStatus struct {
+	Configured bool   `json:"configured"`
+	Diagnostic string `json:"diagnostic"`
+}
+
 type SessionStatus struct {
 	SchemaVersion      int                    `json:"schema_version"`
 	ContextID          string                 `json:"context_id"`
@@ -249,6 +259,7 @@ type SessionStatus struct {
 	Tasks              []TaskRunProjection    `json:"tasks,omitempty"`
 	WorkspaceTree      *WorkspaceTreeStatus   `json:"workspace_tree,omitempty"`
 	CommandApproval    *CommandApprovalStatus `json:"command_approval,omitempty"`
+	InterfaceNode      *InterfaceNodeStatus   `json:"interface_node,omitempty"`
 	Nodes              []NodeStatus           `json:"nodes"`
 	LayoutGroups       []LayoutGroup          `json:"layout_groups,omitempty"`
 	Windows            []SessionWindow        `json:"windows"`
