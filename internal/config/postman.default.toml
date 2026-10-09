@@ -137,7 +137,8 @@ edges = []
 
 # Global settings
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
-ui_node = "messenger"            # Optional target filter for startup auto-PING
+ui_node = "messenger"            # Optional target filter for startup auto-PING; deprecated alias of interface_node (#764)
+interface_node = "messenger"     # #764: canonical mouthpiece designation; keep equal to ui_node during the deprecation window
 auto_enable_new_sessions = true    # Required default: auto-claim configured nodes in other tmux sessions so startup/discovery auto-PING reaches them
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
