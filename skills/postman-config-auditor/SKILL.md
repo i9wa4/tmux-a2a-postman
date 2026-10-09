@@ -38,5 +38,5 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 ## 3. DO NOT USE FOR
 
 - Generic CLI usage questions.
-- Live inbox/reply/session workflow operation; use `postman-session-operator`.
-- First-contact message sending; use `postman-send-message`.
+- Live inbox/reply/session workflow operation, or first-contact message
+  sending; use `postman-usage`.
