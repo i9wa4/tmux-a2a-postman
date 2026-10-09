@@ -124,9 +124,7 @@ assistants can discover postman commands while working:
 For Codex CLI:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message \
-  --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-session-operator \
+gh skill install i9wa4/tmux-a2a-postman postman-usage \
   --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
   --agent codex --scope user
@@ -135,9 +133,7 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
 For Claude Code:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message \
-  --agent claude-code --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-session-operator \
+gh skill install i9wa4/tmux-a2a-postman postman-usage \
   --agent claude-code --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
   --agent claude-code --scope user
@@ -207,16 +203,14 @@ ordinary Markdown:
 #       - ping
 #       - compaction_ping
 #     skills:
-#       - postman-send-message
-#       - postman-session-operator
+#       - postman-usage
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
 #     inject:
 #       - ping
 #       - compaction_ping
 #     skills:
-#       - postman-send-message
-#       - postman-session-operator
+#       - postman-usage
 #       - postman-config-auditor
 ---
 
@@ -540,6 +534,7 @@ Detailed configuration references:
 - [evidence replay contract](docs/design/evidence-replay-contract.md)
 - [PING event timing](docs/ping-events.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
+- [Herdr read-only compatibility policy](docs/design/herdr-readonly-discovery-spike.md#4-compatibility-authority)
 
 Command help lives in the binary: `tmux-a2a-postman help`,
 `tmux-a2a-postman help commands`, and `tmux-a2a-postman help config`. Claude
