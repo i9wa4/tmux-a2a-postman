@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 )
 
 func TestParseMessageFilename(t *testing.T) {
@@ -745,6 +748,9 @@ func TestSendDeadLetterNotification_UsesPublicRecoveryCommand(t *testing.T) {
 	}
 
 	deadLetterBasename := "20260201-030000-from-orchestrator-to-worker-dl-routing-denied.md"
+	knownNodes := map[string]discovery.NodeInfo{
+		"review:orchestrator": {SessionName: "review", SessionDir: sessionDir},
+	}
 	sendDeadLetterNotification(
 		sessionDir,
 		"test-ctx",
@@ -752,6 +758,8 @@ func TestSendDeadLetterNotification_UsesPublicRecoveryCommand(t *testing.T) {
 		"routing denied",
 		"20260201-030000-from-orchestrator-to-worker.md",
 		deadLetterBasename,
+		knownNodes,
+		"review",
 	)
 
 	inboxDir := filepath.Join(sessionDir, "inbox", "orchestrator")
@@ -2778,4 +2786,1106 @@ func validHerdrMessageSnapshot() multiplexer.HerdrSessionSnapshot {
 
 func validHerdrMessageEnvelope() multiplexer.HerdrResponseEnvelope {
 	return multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}
+}
+
+// ---------------------------------------------------------------------
+// P2-2a (docs/design/mailbox-overflow-policy.md §2.1): known-node
+// validation and admission-fence locking at the real writer call sites in
+// this package (DeliverMessage, writeRoutingDeniedWarning,
+// sendDeadLetterNotification).
+// ---------------------------------------------------------------------
+
+// TestSendDeadLetterNotification_SkipsUnknownSender covers the known-node
+// validation gate: a sender that does not resolve against knownNodes must
+// not get any inbox directory created or notification written, since a
+// prior caller running before sender resolution (several dead-letter
+// branches in DeliverMessage) cannot assume the sender is real.
+func TestSendDeadLetterNotification_SkipsUnknownSender(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{
+		"review:orchestrator": {SessionName: "review", SessionDir: sessionDir},
+	}
+	sendDeadLetterNotification(
+		sessionDir,
+		"test-ctx",
+		"review:forged-ghost-node",
+		"routing denied",
+		"20260201-030000-from-forged-ghost-node-to-worker.md",
+		"20260201-030000-from-forged-ghost-node-to-worker-dl-routing-denied.md",
+		knownNodes,
+		"review",
+	)
+
+	inboxRoot := filepath.Join(sessionDir, "inbox")
+	entries, err := os.ReadDir(inboxRoot)
+	if err != nil {
+		t.Fatalf("ReadDir(inbox root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("inbox root entries = %v, want none (no directory should be created for an unknown sender)", entries)
+	}
+}
+
+// TestWriteRoutingDeniedWarning_SkipsUnknownSender is the same gate for
+// the routing-denied warning writer.
+func TestWriteRoutingDeniedWarning_SkipsUnknownSender(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+
+	cfg := &config.Config{TmuxTimeout: 1.0}
+	info := &MessageInfo{From: "forged-ghost-node", To: "worker"}
+	writeRoutingDeniedWarning(sessionDir, "test-ctx", info, "forged-ghost-node", "review:forged-ghost-node", map[string][]string{}, cfg, map[string]discovery.NodeInfo{}, "review")
+
+	inboxRoot := filepath.Join(sessionDir, "inbox")
+	entries, err := os.ReadDir(inboxRoot)
+	if err != nil {
+		t.Fatalf("ReadDir(inbox root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("inbox root entries = %v, want none (no directory should be created for an unknown sender)", entries)
+	}
+}
+
+// TestDeliverMessage_QueueCapDeadLetters covers the ordinary (non-racing)
+// queue-cap path: a recipient inbox already at inboxQueueCap must
+// dead-letter a new arrival rather than admit it.
+func TestDeliverMessage_QueueCapDeadLetters(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	for i := 0; i < inboxQueueCap; i++ {
+		fillName := fmt.Sprintf("20260201-030000-r%04d-from-orchestrator-to-worker.md", i)
+		if err := os.WriteFile(filepath.Join(recipientInbox, fillName), []byte("filler"), 0o600); err != nil {
+			t.Fatalf("WriteFile(filler %d): %v", i, err)
+		}
+	}
+
+	filename := "20260201-040000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T04:00:00Z\n---\n\noverflow message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post) failed: %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+	adjacency := map[string][]string{"orchestrator": {"worker"}, "worker": {"orchestrator"}}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+	if err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), ""); err != nil {
+		t.Fatalf("DeliverMessage failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(recipientInbox, filename)); !os.IsNotExist(err) {
+		t.Fatalf("Stat(overflow message in inbox) = %v, want IsNotExist (must be dead-lettered, not admitted)", err)
+	}
+	entries, err := os.ReadDir(recipientInbox)
+	if err != nil {
+		t.Fatalf("ReadDir(recipient inbox): %v", err)
+	}
+	if len(entries) != inboxQueueCap {
+		t.Fatalf("recipient inbox entries = %d, want exactly %d (cap unchanged, overflow dead-lettered)", len(entries), inboxQueueCap)
+	}
+	dlEntries, err := os.ReadDir(filepath.Join(sessionDir, "dead-letter"))
+	if err != nil {
+		t.Fatalf("ReadDir(dead-letter): %v", err)
+	}
+	if len(dlEntries) != 1 {
+		t.Fatalf("dead-letter entries = %d, want 1", len(dlEntries))
+	}
+}
+
+// TestDeliverMessage_FenceForcesContenderToObservePostHolderState is the
+// real regression test for the TOCTOU the admission fence closes. An
+// external holder takes recipient "worker"'s admission fence directly
+// (store.WithAdmissionFence) and brings the recipient inbox from
+// inboxQueueCap-1 up to inboxQueueCap before releasing. DeliverMessage's own
+// queue-cap decision must then see the POST-holder count (inboxQueueCap) and
+// dead-letter, never a stale PRE-holder count (inboxQueueCap-1) that would
+// incorrectly admit past the cap. C-1(d): this test's contender-blocking
+// proof is a 10ms sleep plus an end-of-run order assertion, NOT a seam-based
+// deterministic proof -- it does not by itself prove ordering, only that it
+// held in this environment; the no-op-gate demonstration in the
+// rework-evidence report is what actually establishes that the fence, not
+// scheduler luck, produces the observed outcome (contrast with the
+// insideSessionRootsGatesForTest-seam-based tests below, which prove
+// blocking directly rather than inferring it from a sleep).
+func TestDeliverMessage_FenceForcesContenderToObservePostHolderState(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+	recipientInbox := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.MkdirAll(recipientInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	for i := 0; i < inboxQueueCap-1; i++ {
+		fillName := fmt.Sprintf("20260201-030000-r%04d-from-orchestrator-to-worker.md", i)
+		if err := os.WriteFile(filepath.Join(recipientInbox, fillName), []byte("filler"), 0o600); err != nil {
+			t.Fatalf("WriteFile(filler %d): %v", i, err)
+		}
+	}
+
+	var order []string
+	var mu sync.Mutex
+	record := func(s string) {
+		mu.Lock()
+		order = append(order, s)
+		mu.Unlock()
+	}
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		_, err := store.WithAdmissionFence(sessionDir, "worker", func(*store.AdmissionHandle) error {
+			record("holder-start")
+			close(holding)
+			<-releaseHolder
+			// Bring the count to exactly inboxQueueCap WHILE still holding
+			// the fence, immediately before releasing.
+			lastFill := filepath.Join(recipientInbox, "20260201-030000-r9999-from-orchestrator-to-worker.md")
+			if err := os.WriteFile(lastFill, []byte("filler"), 0o600); err != nil {
+				return err
+			}
+			record("holder-end")
+			return nil
+		})
+		holderDone <- err
+	}()
+	<-holding
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+	adjacency := map[string][]string{"orchestrator": {"worker"}, "worker": {"orchestrator"}}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+	filename := "20260201-050000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T05:00:00Z\n---\n\ncontender message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+
+	contenderDone := make(chan error, 1)
+	go func() {
+		record("contender-call")
+		err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+		record("contender-return")
+		contenderDone <- err
+	}()
+
+	// Give the contender a moment to reach (and block on) the recipient's
+	// fence before releasing the holder; this does not gate correctness
+	// (the assertions below are on final state and recorded order, not
+	// timing), it only improves the odds of exercising real contention.
+	time.Sleep(10 * time.Millisecond)
+	close(releaseHolder)
+
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithAdmissionFence: %v", err)
+	}
+	if err := <-contenderDone; err != nil {
+		t.Fatalf("contender DeliverMessage: %v", err)
+	}
+
+	if len(order) < 2 || order[0] != "holder-start" {
+		t.Fatalf("order = %v, want holder-start first", order)
+	}
+	if order[len(order)-1] != "contender-return" {
+		t.Fatalf("order = %v, want contender-return last (the contender must not complete before the holder released)", order)
+	}
+
+	// The contender must have dead-lettered: it can only have observed the
+	// POST-holder count (inboxQueueCap), never the stale PRE-holder count
+	// (inboxQueueCap-1).
+	if _, err := os.Stat(filepath.Join(recipientInbox, filename)); !os.IsNotExist(err) {
+		t.Fatalf("Stat(contender message in inbox) = %v, want IsNotExist (must observe the post-holder count and dead-letter, not admit past the cap)", err)
+	}
+	entries, err := os.ReadDir(recipientInbox)
+	if err != nil {
+		t.Fatalf("ReadDir(recipient inbox): %v", err)
+	}
+	if len(entries) != inboxQueueCap {
+		t.Fatalf("recipient inbox entries = %d, want exactly %d (the holder's own fill brought it to cap; the contender must not add to it)", len(entries), inboxQueueCap)
+	}
+}
+
+// ---------------------------------------------------------------------
+// Rework 1 (Guardian NOT APPROVED, closure conditions B-1..B-7): session
+// roots gate scope/order for every post removal, inbox rename and
+// dead-letter move (B-1); fail-closed queue-count errors (B-2); cap
+// suppression for the two direct inbox writers (B-3); cross-session
+// sender-identity validation for both direct writers (B-4); deterministic
+// seam-based blocking proof across source and cross-session recipient
+// (B-5).
+// ---------------------------------------------------------------------
+
+// gateBlockProbe wires the two withSessionRootsGates test-only hooks and
+// gives a reusable, non-sleep proof of blocking (C-1(a)): a bounded ready
+// handshake on aboutToRequestSessionGatesForTest proves the contender
+// actually reached the gate request (a contender the scheduler has not run
+// yet would otherwise look identical to a genuinely blocked one), and only
+// THEN does a bounded silence window on insideSessionRootsGatesForTest
+// assert it has not entered its gated section.
+type gateBlockProbe struct {
+	ready  chan struct{}
+	inside chan struct{}
+}
+
+func newGateBlockProbe(t *testing.T) *gateBlockProbe {
+	t.Helper()
+	p := &gateBlockProbe{ready: make(chan struct{}), inside: make(chan struct{})}
+	var readyOnce, insideOnce sync.Once
+	aboutToRequestSessionGatesForTest = func() { readyOnce.Do(func() { close(p.ready) }) }
+	insideSessionRootsGatesForTest = func() { insideOnce.Do(func() { close(p.inside) }) }
+	t.Cleanup(func() {
+		aboutToRequestSessionGatesForTest = nil
+		insideSessionRootsGatesForTest = nil
+		skipSessionRootsGateForDirForTest = nil
+	})
+	return p
+}
+
+// assertBlockedThenRelease waits (bounded) for the ready handshake, then
+// asserts the contender stays out of its gated section for a bounded
+// silence window, then closes release.
+func (p *gateBlockProbe) assertBlockedThenRelease(t *testing.T, release chan<- struct{}) {
+	t.Helper()
+	select {
+	case <-p.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("contender never reached the gate request (ready handshake timed out)")
+	}
+	select {
+	case <-p.inside:
+		t.Fatal("contender entered its gated section while the gate was still held")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+}
+
+// assertEnteredAfterRelease asserts the contender DID enter its gated
+// section (the inside hook fired) after the gate was released.
+func (p *gateBlockProbe) assertEnteredAfterRelease(t *testing.T) {
+	t.Helper()
+	select {
+	case <-p.inside:
+	default:
+		t.Fatal("contender never entered its gated section after the gate released")
+	}
+}
+
+// TestDeliverMessage_BlocksOnExclusiveRecipientRootsGate proves B-1's cross-
+// session gate order for the ordinary (non-dead-letter) delivery path: an
+// external holder takes the RECIPIENT session's roots gate EXCLUSIVE (never
+// acquired/held by DeliverMessage itself, matching real quarantine usage).
+// A concurrent real DeliverMessage call for a message from a DIFFERENT
+// source session must NOT enter its own gated section while the holder
+// holds the gate, and must proceed only after release (gateBlockProbe,
+// never a sleep gating correctness and never end-of-run ordering, which a
+// scheduler can satisfy by coincidence even against a broken gate -- see
+// the no-op-gate demonstration in the rework-2 evidence report).
+func TestDeliverMessage_BlocksOnExclusiveRecipientRootsGate(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	recipientDir := filepath.Join(root, "recipient")
+	if err := config.CreateSessionDirs(sourceDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(source): %v", err)
+	}
+	if err := config.CreateSessionDirs(recipientDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(recipient): %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"source:orchestrator": {PaneID: "%1", SessionName: "source", SessionDir: sourceDir},
+		"recipient:worker":    {PaneID: "%2", SessionName: "recipient", SessionDir: recipientDir},
+	}
+	adjacency := map[string][]string{
+		"source:orchestrator": {"recipient:worker"},
+		"recipient:worker":    {"source:orchestrator"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	// to/from are session-qualified (nodeaddr.Full form) so recipient
+	// resolution does not default to scoping "worker" within the SOURCE
+	// session's own namespace (router.Resolve's bare-address fallback).
+	filename := "20260201-060000-from-source:orchestrator-to-recipient:worker.md"
+	postPath := filepath.Join(sourceDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: source:orchestrator\n  to: recipient:worker\n  timestamp: 2026-02-01T06:00:00Z\n---\n\ncross-session message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(recipientDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan error, 1)
+	go func() {
+		contenderDone <- DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	if err := <-contenderDone; err != nil {
+		t.Fatalf("contender DeliverMessage: %v", err)
+	}
+	probe.assertEnteredAfterRelease(t)
+
+	dst := filepath.Join(recipientDir, "inbox", "worker", filename)
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("Stat(delivered message) = %v, want delivered after the gate released", err)
+	}
+}
+
+// TestDeliverMessage_BlocksOnExclusiveSourceRootsGate is C-1(b): the
+// companion to the recipient-gate test above, proving the ordinary cross-
+// session delivery rename ALSO depends on the SOURCE session's gate, not
+// just the recipient's. Without this test, removing the source gate from
+// that one call site (while leaving the recipient gate intact) would leave
+// every other test passing.
+func TestDeliverMessage_BlocksOnExclusiveSourceRootsGate(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	recipientDir := filepath.Join(root, "recipient")
+	if err := config.CreateSessionDirs(sourceDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(source): %v", err)
+	}
+	if err := config.CreateSessionDirs(recipientDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(recipient): %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"source:orchestrator": {PaneID: "%1", SessionName: "source", SessionDir: sourceDir},
+		"recipient:worker":    {PaneID: "%2", SessionName: "recipient", SessionDir: recipientDir},
+	}
+	adjacency := map[string][]string{
+		"source:orchestrator": {"recipient:worker"},
+		"recipient:worker":    {"source:orchestrator"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	filename := "20260201-061500-from-source:orchestrator-to-recipient:worker.md"
+	postPath := filepath.Join(sourceDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: source:orchestrator\n  to: recipient:worker\n  timestamp: 2026-02-01T06:15:00Z\n---\n\ncross-session message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sourceDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan error, 1)
+	go func() {
+		contenderDone <- DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	if err := <-contenderDone; err != nil {
+		t.Fatalf("contender DeliverMessage: %v", err)
+	}
+	probe.assertEnteredAfterRelease(t)
+
+	dst := filepath.Join(recipientDir, "inbox", "worker", filename)
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("Stat(delivered message) = %v, want delivered after the gate released", err)
+	}
+}
+
+// TestDeliverMessage_SourceOnlyGateRemovalFailsSourceGateTest is C-1(c)'s
+// surgical demonstration: skipSessionRootsGateForDirForTest removes ONLY
+// the source directory's gate (the recipient's stays real), and the test
+// above (which specifically proves the source gate blocks) must then FAIL
+// -- a blanket no-op-lock patch cannot distinguish "some gate is missing"
+// from "the specific gate this test targets is missing".
+func TestDeliverMessage_SourceOnlyGateRemovalFailsSourceGateTest(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source")
+	recipientDir := filepath.Join(root, "recipient")
+	if err := config.CreateSessionDirs(sourceDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(source): %v", err)
+	}
+	if err := config.CreateSessionDirs(recipientDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(recipient): %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"source:orchestrator": {PaneID: "%1", SessionName: "source", SessionDir: sourceDir},
+		"recipient:worker":    {PaneID: "%2", SessionName: "recipient", SessionDir: recipientDir},
+	}
+	adjacency := map[string][]string{
+		"source:orchestrator": {"recipient:worker"},
+		"recipient:worker":    {"source:orchestrator"},
+	}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	filename := "20260201-062000-from-source:orchestrator-to-recipient:worker.md"
+	postPath := filepath.Join(sourceDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: source:orchestrator\n  to: recipient:worker\n  timestamp: 2026-02-01T06:20:00Z\n---\n\ncross-session message\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+	skipSessionRootsGateForDirForTest = func(dir string) bool { return dir == filepath.Clean(sourceDir) }
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sourceDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan error, 1)
+	go func() {
+		contenderDone <- DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+	}()
+
+	select {
+	case <-probe.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("contender never reached the gate request")
+	}
+	// With the source gate skipped, the contender must proceed into its
+	// gated section (and likely finish) WITHOUT waiting for the holder,
+	// which still holds the real (now-irrelevant to this call) source
+	// gate directly via store.WithMailboxRootsExclusive.
+	select {
+	case <-probe.inside:
+	case <-time.After(2 * time.Second):
+		t.Fatal("contender should have entered its gated section immediately with the source gate skipped, proving the source gate alone was load-bearing")
+	}
+	close(releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	<-contenderDone
+}
+
+// TestMoveToDeadLetterForDecision_BlocksOnExclusiveSourceRootsGate proves
+// B-1/C-2 for the dead-letter move itself (the path the at-cap and every
+// other dead-letter branch in DeliverMessage shares, SOURCE session only
+// since C-2): an external holder takes the SOURCE session's roots gate
+// exclusive; a concurrent call to the same unexported helper DeliverMessage
+// uses for every dead-letter move must not enter its gated section until
+// the holder releases.
+func TestMoveToDeadLetterForDecision_BlocksOnExclusiveSourceRootsGate(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "dead-letter body\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	dst := filepath.Join(sessionDir, "dead-letter", "20260201-070000-from-orchestrator-to-worker-dl-routing-denied.md")
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan error, 1)
+	go func() {
+		contenderDone <- moveToDeadLetterForDecision(sessionDir, "test", postPath, dst, filename, &MessageInfo{From: "orchestrator", To: "worker"}, content)
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	if err := <-contenderDone; err != nil {
+		t.Fatalf("contender moveToDeadLetterForDecision: %v", err)
+	}
+	probe.assertEnteredAfterRelease(t)
+
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(postPath) = %v, want IsNotExist (moved out of post/)", err)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("Stat(dead-letter dst) = %v, want it to exist after the gate released", err)
+	}
+}
+
+// TestDrainStalePost_BlocksOnExclusiveSourceRootsGate proves P2-2b:
+// DrainStalePost's dead-letter move (via moveToDeadLetterWithProjection) is
+// now gated like moveToDeadLetterForDecision. An external holder takes the
+// session's roots gate exclusive; DrainStalePost's own move must not enter
+// its gated section until the holder releases.
+func TestDrainStalePost_BlocksOnExclusiveSourceRootsGate(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "stale body\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	stale := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(postPath, stale, stale); err != nil {
+		t.Fatalf("Chtimes(postPath): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan int, 1)
+	go func() {
+		contenderDone <- DrainStalePost(sessionDir, 1)
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	drained := <-contenderDone
+	probe.assertEnteredAfterRelease(t)
+
+	if drained != 1 {
+		t.Fatalf("DrainStalePost() = %d, want 1", drained)
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(postPath) = %v, want IsNotExist (moved out of post/)", err)
+	}
+}
+
+// TestDrainStalePost_SkipsFreshSameNameReplacementDuringExclusiveHold proves
+// Guardian F1: an exclusive generation transition (quarantine) can replace a
+// stale post/ entry with a brand-new, NOT-stale file under the same name
+// while DrainStalePost is waiting on the roots gate. DrainStalePost's
+// staleness decision must be re-made INSIDE the gated critical section, not
+// carried over from its earlier ungated listing -- so the fresh replacement
+// must never be drained, and must remain in post/ untouched.
+func TestDrainStalePost_SkipsFreshSameNameReplacementDuringExclusiveHold(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	staleContent := "stale body\n"
+	if err := os.WriteFile(postPath, []byte(staleContent), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	// A long TTL (1h) with mtime set 2h in the past leaves a wide margin on
+	// both sides: the "stale" file is unambiguously stale, and the later
+	// "fresh" replacement (mtime ~now) is unambiguously not, regardless of
+	// scheduler delay between Chtimes calls and the gated re-stat (Guardian
+	// C-2: a 1s TTL with a bare time.Now() fresh mtime was flaky under
+	// scheduling delay).
+	const ttlSeconds = 3600
+	stale := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(postPath, stale, stale); err != nil {
+		t.Fatalf("Chtimes(postPath): %v", err)
+	}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	freshContent := "fresh body, not stale\n"
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			// Simulate a quarantine-style generation transition replacing
+			// the same filename with a brand-new, NOT-stale message while a
+			// contender waits on this same exclusive gate.
+			if err := os.WriteFile(postPath, []byte(freshContent), 0o644); err != nil {
+				return err
+			}
+			return os.Chtimes(postPath, time.Now(), time.Now())
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan int, 1)
+	go func() {
+		contenderDone <- DrainStalePost(sessionDir, ttlSeconds)
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	drained := <-contenderDone
+	probe.assertEnteredAfterRelease(t)
+
+	if drained != 0 {
+		t.Fatalf("DrainStalePost() = %d, want 0 (fresh replacement must not be drained)", drained)
+	}
+	got, err := os.ReadFile(postPath)
+	if err != nil {
+		t.Fatalf("ReadFile(postPath) after drain: %v", err)
+	}
+	if string(got) != freshContent {
+		t.Fatalf("post file content = %q, want unchanged fresh content %q", got, freshContent)
+	}
+}
+
+// TestDrainStalePost_CreatesDeadLetterDirUnderGateWhenAbsent proves Guardian
+// F2: the dead-letter directory is created (via moveToDeadLetterWithProjection,
+// inside the gated critical section) on demand, so a drain still succeeds
+// when dead-letter/ does not yet exist.
+func TestDrainStalePost_CreatesDeadLetterDirUnderGateWhenAbsent(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+	if err := os.RemoveAll(deadLetterDir); err != nil {
+		t.Fatalf("RemoveAll(dead-letter): %v", err)
+	}
+
+	filename := "20260201-070000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("stale body\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+	stale := time.Now().Add(-1 * time.Hour)
+	if err := os.Chtimes(postPath, stale, stale); err != nil {
+		t.Fatalf("Chtimes(postPath): %v", err)
+	}
+
+	drained := DrainStalePost(sessionDir, 1)
+	if drained != 1 {
+		t.Fatalf("DrainStalePost() = %d, want 1", drained)
+	}
+	if fi, err := os.Stat(deadLetterDir); err != nil || !fi.IsDir() {
+		t.Fatalf("dead-letter dir not created: stat err=%v", err)
+	}
+	if _, err := os.Stat(postPath); !os.IsNotExist(err) {
+		t.Fatalf("Stat(postPath) = %v, want IsNotExist", err)
+	}
+}
+
+// TestSendDeadLetterNotification_BlocksOnExclusiveRootsGate proves B-1/B-5
+// for the sendDeadLetterNotification bypass writer: an external holder
+// takes the (single) session's roots gate exclusive; the writer's own call
+// must not enter its gated section until the holder releases.
+func TestSendDeadLetterNotification_BlocksOnExclusiveRootsGate(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	knownNodes := map[string]discovery.NodeInfo{"review:orchestrator": {SessionName: "review", SessionDir: sessionDir}}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan directInboxWriteOutcome, 1)
+	go func() {
+		contenderDone <- sendDeadLetterNotification(sessionDir, "test-ctx", "review:orchestrator", "routing denied", "orig.md", "orig-dl-routing-denied.md", knownNodes, "review")
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	outcome := <-contenderDone
+	if outcome != directInboxWriteOutcomeWritten {
+		t.Fatalf("outcome = %v, want written", outcome)
+	}
+	probe.assertEnteredAfterRelease(t)
+}
+
+// TestWriteRoutingDeniedWarning_BlocksOnExclusiveRootsGate is the same
+// proof for the writeRoutingDeniedWarning bypass writer.
+func TestWriteRoutingDeniedWarning_BlocksOnExclusiveRootsGate(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	knownNodes := map[string]discovery.NodeInfo{"review:orchestrator": {SessionName: "review", SessionDir: sessionDir}}
+	cfg := &config.Config{TmuxTimeout: 1.0}
+	info := &MessageInfo{From: "orchestrator", To: "worker"}
+
+	probe := newGateBlockProbe(t)
+
+	holding := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		holderDone <- store.WithMailboxRootsExclusive(sessionDir, func() error {
+			close(holding)
+			<-releaseHolder
+			return nil
+		})
+	}()
+	<-holding
+
+	contenderDone := make(chan directInboxWriteOutcome, 1)
+	go func() {
+		contenderDone <- writeRoutingDeniedWarning(sessionDir, "test-ctx", info, "orchestrator", "review:orchestrator", map[string][]string{}, cfg, knownNodes, "review")
+	}()
+
+	probe.assertBlockedThenRelease(t, releaseHolder)
+	if err := <-holderDone; err != nil {
+		t.Fatalf("holder WithMailboxRootsExclusive: %v", err)
+	}
+	outcome := <-contenderDone
+	if outcome != directInboxWriteOutcomeWritten {
+		t.Fatalf("outcome = %v, want written", outcome)
+	}
+	probe.assertEnteredAfterRelease(t)
+}
+
+// TestDeliverMessage_CountErrorFailsClosed covers B-2: a countInboxMessages
+// failure (here: the inbox path itself is a regular file, so os.ReadDir
+// returns a real error, not os.IsNotExist) must fail CLOSED -- the message
+// stays in post/ untouched and DeliverMessage returns an error -- never
+// silently skip the cap check and admit. C-5: the returned error must
+// specifically IDENTIFY the count failure (errors.Is errInboxCountFailed),
+// not just be "some error" -- code that ignored the count error entirely
+// would hit the same broken (non-directory) path on the later rename too,
+// also fail, and also leave the message in post/, so a bare non-nil check
+// cannot tell fail-closed counting apart from an ignored count error.
+func TestDeliverMessage_CountErrorFailsClosed(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "test")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs failed: %v", err)
+	}
+	recipientInboxPath := filepath.Join(sessionDir, "inbox", "worker")
+	if err := os.WriteFile(recipientInboxPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile(recipient inbox as a file): %v", err)
+	}
+
+	filename := "20260201-080000-from-orchestrator-to-worker.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	content := "---\nparams:\n  contextId: test-ctx\n  from: orchestrator\n  to: worker\n  timestamp: 2026-02-01T08:00:00Z\n---\n\nshould stay in post\n"
+	if err := os.WriteFile(postPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(post): %v", err)
+	}
+
+	nodes := map[string]discovery.NodeInfo{
+		"test:worker":       {PaneID: "%1", SessionName: "test", SessionDir: sessionDir},
+		"test:orchestrator": {PaneID: "%2", SessionName: "test", SessionDir: sessionDir},
+	}
+	adjacency := map[string][]string{"orchestrator": {"worker"}, "worker": {"orchestrator"}}
+	cfg := &config.Config{EnterDelay: 0.1, TmuxTimeout: 1.0}
+
+	err := DeliverMessage(postPath, "test-ctx", nodes, adjacency, cfg, func(string) bool { return true }, nil, idle.NewIdleTracker(), "")
+	if err == nil {
+		t.Fatalf("DeliverMessage err = nil, want a fail-closed error from the inbox count failure")
+	}
+	if !errors.Is(err, errInboxCountFailed) {
+		t.Fatalf("DeliverMessage err = %v, want it to wrap errInboxCountFailed (identifying the count failure specifically, not just any error)", err)
+	}
+	if _, statErr := os.Stat(postPath); statErr != nil {
+		t.Fatalf("Stat(postPath) = %v, want the message to remain in post/ untouched on a fail-closed count error", statErr)
+	}
+}
+
+// TestSendDeadLetterNotification_SuppressedAtCap covers B-3: the target
+// inbox already at inboxQueueCap must suppress the notification write
+// (never dead-letter or recurse into DeliverMessage) rather than overflow
+// it.
+func TestSendDeadLetterNotification_SuppressedAtCap(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	senderInbox := filepath.Join(sessionDir, "inbox", "orchestrator")
+	if err := os.MkdirAll(senderInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for i := 0; i < inboxQueueCap; i++ {
+		fillName := fmt.Sprintf("20260201-030000-r%04d-from-postman-to-orchestrator.md", i)
+		if err := os.WriteFile(filepath.Join(senderInbox, fillName), []byte("filler"), 0o600); err != nil {
+			t.Fatalf("WriteFile(filler %d): %v", i, err)
+		}
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{"review:orchestrator": {SessionName: "review", SessionDir: sessionDir}}
+	outcome := sendDeadLetterNotification(sessionDir, "test-ctx", "review:orchestrator", "routing denied", "orig.md", "orig-dl-routing-denied.md", knownNodes, "review")
+	if outcome != directInboxWriteOutcomeSuppressedAtCap {
+		t.Fatalf("outcome = %v, want suppressed-at-cap", outcome)
+	}
+	entries, err := os.ReadDir(senderInbox)
+	if err != nil {
+		t.Fatalf("ReadDir(sender inbox): %v", err)
+	}
+	if len(entries) != inboxQueueCap {
+		t.Fatalf("sender inbox entries = %d, want exactly %d (no new notification admitted at cap)", len(entries), inboxQueueCap)
+	}
+}
+
+// TestSendDeadLetterNotification_CountErrorSkipsWrite covers B-3's count-
+// error branch: skip the write and log, never crash or write anyway.
+func TestSendDeadLetterNotification_CountErrorSkipsWrite(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	senderInboxPath := filepath.Join(sessionDir, "inbox", "orchestrator")
+	if err := os.WriteFile(senderInboxPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile(sender inbox as a file): %v", err)
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{"review:orchestrator": {SessionName: "review", SessionDir: sessionDir}}
+	outcome := sendDeadLetterNotification(sessionDir, "test-ctx", "review:orchestrator", "routing denied", "orig.md", "orig-dl-routing-denied.md", knownNodes, "review")
+	if outcome != directInboxWriteOutcomeCountError {
+		t.Fatalf("outcome = %v, want count-error", outcome)
+	}
+}
+
+// TestWriteRoutingDeniedWarning_SuppressedAtCap is B-3's cap-suppression
+// test for the other direct writer.
+func TestWriteRoutingDeniedWarning_SuppressedAtCap(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	senderInbox := filepath.Join(sessionDir, "inbox", "orchestrator")
+	if err := os.MkdirAll(senderInbox, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for i := 0; i < inboxQueueCap; i++ {
+		fillName := fmt.Sprintf("20260201-030000-r%04d-from-postman-to-orchestrator.md", i)
+		if err := os.WriteFile(filepath.Join(senderInbox, fillName), []byte("filler"), 0o600); err != nil {
+			t.Fatalf("WriteFile(filler %d): %v", i, err)
+		}
+	}
+
+	cfg := &config.Config{TmuxTimeout: 1.0}
+	info := &MessageInfo{From: "orchestrator", To: "worker"}
+	knownNodes := map[string]discovery.NodeInfo{"review:orchestrator": {SessionName: "review", SessionDir: sessionDir}}
+	outcome := writeRoutingDeniedWarning(sessionDir, "test-ctx", info, "orchestrator", "review:orchestrator", map[string][]string{}, cfg, knownNodes, "review")
+	if outcome != directInboxWriteOutcomeSuppressedAtCap {
+		t.Fatalf("outcome = %v, want suppressed-at-cap", outcome)
+	}
+	entries, err := os.ReadDir(senderInbox)
+	if err != nil {
+		t.Fatalf("ReadDir(sender inbox): %v", err)
+	}
+	if len(entries) != inboxQueueCap {
+		t.Fatalf("sender inbox entries = %d, want exactly %d", len(entries), inboxQueueCap)
+	}
+}
+
+// TestWriteRoutingDeniedWarning_CountErrorSkipsWrite is B-3's count-error
+// test for the other direct writer.
+func TestWriteRoutingDeniedWarning_CountErrorSkipsWrite(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs: %v", err)
+	}
+	senderInboxPath := filepath.Join(sessionDir, "inbox", "orchestrator")
+	if err := os.WriteFile(senderInboxPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("WriteFile(sender inbox as a file): %v", err)
+	}
+
+	cfg := &config.Config{TmuxTimeout: 1.0}
+	info := &MessageInfo{From: "orchestrator", To: "worker"}
+	knownNodes := map[string]discovery.NodeInfo{"review:orchestrator": {SessionName: "review", SessionDir: sessionDir}}
+	outcome := writeRoutingDeniedWarning(sessionDir, "test-ctx", info, "orchestrator", "review:orchestrator", map[string][]string{}, cfg, knownNodes, "review")
+	if outcome != directInboxWriteOutcomeCountError {
+		t.Fatalf("outcome = %v, want count-error", outcome)
+	}
+}
+
+// TestSendDeadLetterNotification_SkipsQualifiedForeignSenderWithSameSimpleNameLocalNode
+// covers B-4: a fully session-qualified sender that resolves (Found=true)
+// but to a DIFFERENT session's node must never be treated as the LOCAL node
+// sharing the same simple name -- even though "orchestrator" also exists
+// locally in the target session.
+func TestSendDeadLetterNotification_SkipsQualifiedForeignSenderWithSameSimpleNameLocalNode(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(review): %v", err)
+	}
+	attackerDir := t.TempDir()
+	if err := config.CreateSessionDirs(attackerDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(attacker): %v", err)
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{
+		"review:orchestrator":           {SessionName: "review", SessionDir: sessionDir},
+		"attacker-session:orchestrator": {SessionName: "attacker-session", SessionDir: attackerDir},
+	}
+	outcome := sendDeadLetterNotification(sessionDir, "test-ctx", "attacker-session:orchestrator", "routing denied", "orig.md", "orig-dl-routing-denied.md", knownNodes, "attacker-session")
+	if outcome != directInboxWriteOutcomeSkippedForeignSession {
+		t.Fatalf("outcome = %v, want skipped-foreign-session", outcome)
+	}
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox"))
+	if err != nil {
+		t.Fatalf("ReadDir(review inbox root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("review inbox entries = %v, want none (the attacker-session sender must never write into review's own inbox even though its simple name collides with a local node)", entries)
+	}
+}
+
+// TestSendDeadLetterNotification_SkipsQualifiedForeignSenderWithoutSameSimpleNameLocalNode
+// is the same gate with NO colliding local node present at all, proving the
+// SessionDir check -- not an accidental collision -- is what rejects it.
+func TestSendDeadLetterNotification_SkipsQualifiedForeignSenderWithoutSameSimpleNameLocalNode(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(review): %v", err)
+	}
+	attackerDir := t.TempDir()
+	if err := config.CreateSessionDirs(attackerDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(attacker): %v", err)
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{
+		"attacker-session:orchestrator": {SessionName: "attacker-session", SessionDir: attackerDir},
+	}
+	outcome := sendDeadLetterNotification(sessionDir, "test-ctx", "attacker-session:orchestrator", "routing denied", "orig.md", "orig-dl-routing-denied.md", knownNodes, "attacker-session")
+	if outcome != directInboxWriteOutcomeSkippedForeignSession {
+		t.Fatalf("outcome = %v, want skipped-foreign-session", outcome)
+	}
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox"))
+	if err != nil {
+		t.Fatalf("ReadDir(review inbox root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("review inbox entries = %v, want none", entries)
+	}
+}
+
+// TestWriteRoutingDeniedWarning_SkipsQualifiedForeignSenderWithSameSimpleNameLocalNode
+// is B-4's same-collision test for the other direct writer.
+func TestWriteRoutingDeniedWarning_SkipsQualifiedForeignSenderWithSameSimpleNameLocalNode(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(review): %v", err)
+	}
+	attackerDir := t.TempDir()
+	if err := config.CreateSessionDirs(attackerDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(attacker): %v", err)
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{
+		"review:orchestrator":           {SessionName: "review", SessionDir: sessionDir},
+		"attacker-session:orchestrator": {SessionName: "attacker-session", SessionDir: attackerDir},
+	}
+	cfg := &config.Config{TmuxTimeout: 1.0}
+	info := &MessageInfo{From: "orchestrator", To: "worker"}
+	outcome := writeRoutingDeniedWarning(sessionDir, "test-ctx", info, "orchestrator", "attacker-session:orchestrator", map[string][]string{}, cfg, knownNodes, "attacker-session")
+	if outcome != directInboxWriteOutcomeSkippedForeignSession {
+		t.Fatalf("outcome = %v, want skipped-foreign-session", outcome)
+	}
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox"))
+	if err != nil {
+		t.Fatalf("ReadDir(review inbox root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("review inbox entries = %v, want none", entries)
+	}
+}
+
+// TestWriteRoutingDeniedWarning_SkipsQualifiedForeignSenderWithoutSameSimpleNameLocalNode
+// is B-4's no-collision test for the other direct writer.
+func TestWriteRoutingDeniedWarning_SkipsQualifiedForeignSenderWithoutSameSimpleNameLocalNode(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(review): %v", err)
+	}
+	attackerDir := t.TempDir()
+	if err := config.CreateSessionDirs(attackerDir); err != nil {
+		t.Fatalf("config.CreateSessionDirs(attacker): %v", err)
+	}
+
+	knownNodes := map[string]discovery.NodeInfo{
+		"attacker-session:orchestrator": {SessionName: "attacker-session", SessionDir: attackerDir},
+	}
+	cfg := &config.Config{TmuxTimeout: 1.0}
+	info := &MessageInfo{From: "orchestrator", To: "worker"}
+	outcome := writeRoutingDeniedWarning(sessionDir, "test-ctx", info, "orchestrator", "attacker-session:orchestrator", map[string][]string{}, cfg, knownNodes, "attacker-session")
+	if outcome != directInboxWriteOutcomeSkippedForeignSession {
+		t.Fatalf("outcome = %v, want skipped-foreign-session", outcome)
+	}
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "inbox"))
+	if err != nil {
+		t.Fatalf("ReadDir(review inbox root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("review inbox entries = %v, want none", entries)
+	}
 }
