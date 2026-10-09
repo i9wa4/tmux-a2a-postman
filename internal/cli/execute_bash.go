@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -155,6 +156,11 @@ type resolvedCommandApprovalPolicy struct {
 	Label     string
 	Category  string
 	TTL       time.Duration
+	// EffectiveFloorMode (#831 D1) is the config-declared mode, or the
+	// hardcoded "blocking" default when no config entry matched -- captured
+	// BEFORE any --mode flag override, so a downgrade attempt can be refused
+	// against the real floor rather than the post-override value.
+	EffectiveFloorMode string
 }
 
 type commandApprovalEvaluation struct {
@@ -170,12 +176,14 @@ func RunExecuteBash(args []string) error {
 
 func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	ctx = ctx.withDefaults()
+	if err := rejectRemovedExecuteBashFlags(args); err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("execute-bash", flag.ContinueOnError)
 	cliutil.SetUsageWithoutContextID(fs)
 	contextID := fs.String("context-id", "", "Context ID (optional, auto-resolved from tmux session)")
 	configPath := fs.String("config", "", "Config file path")
 	sessionName := fs.String("session", "", "tmux session name (optional, defaults to current tmux session)")
-	requester := fs.String("requester", "", "requester node name (optional, defaults to current tmux pane title)")
 	reviewer := fs.String("reviewer", "", "reviewer node override")
 	label := fs.String("label", "", "command label (required for execution)")
 	category := fs.String("category", "", "command category")
@@ -186,11 +194,20 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	storeCommandText := fs.Bool("store-command-text", false, "store full command text in durable audit events")
 	threadID := fs.String("thread-id", "", "approval thread id override or decision thread id")
 	recordDecision := fs.String("record-decision", "", "record an approval decision for --thread-id: approved or rejected")
-	ttlSeconds := fs.Float64("approval-ttl-seconds", 0, "approval request expiry in seconds")
+	ttlSeconds := fs.Float64("approval-ttl-seconds", 0, "approval request expiry in seconds; omitted uses the effective TTL floor, may only tighten (shorten) it, never lengthen")
 	jsonOutput := fs.Bool("json", false, "write wrapper metadata as JSON")
-	noWait := fs.Bool("no-wait", false, "in blocking mode, return the current pending/blocked result immediately instead of waiting for the matching approval thread to resolve")
-	waitTimeoutSeconds := fs.Float64("wait-timeout-seconds", defaultCommandApprovalWaitTimeoutSeconds, "how long blocking mode waits for a decision before giving up, unless --no-wait is set")
+	waitTimeoutSeconds := fs.Float64("wait-timeout-seconds", defaultCommandApprovalWaitTimeoutSeconds, "how long blocking mode waits for a decision before giving up; must be a positive, finite number of seconds")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ttlSecondsWasSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "approval-ttl-seconds" {
+			ttlSecondsWasSet = true
+		}
+	})
+	waitTimeoutDuration, err := validatePositiveSecondsFlag("wait-timeout-seconds", *waitTimeoutSeconds)
+	if err != nil {
 		return err
 	}
 
@@ -225,7 +242,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		})
 	}
 
-	resolvedRequester, err := resolveExecuteBashRequester(ctx, *requester)
+	resolvedRequester, err := resolveExecuteBashRequester(ctx)
 	if err != nil {
 		return err
 	}
@@ -240,7 +257,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return fmt.Errorf("--command or trailing bash command is required")
 	}
 
-	policy, err := resolveCommandApprovalPolicy(cfg, resolvedRequester, strings.TrimSpace(*label), strings.TrimSpace(*category), *reviewer, *mode, *ttlSeconds)
+	policy, err := resolveCommandApprovalPolicy(cfg, resolvedRequester, strings.TrimSpace(*label), strings.TrimSpace(*category), *reviewer, *mode, *ttlSeconds, ttlSecondsWasSet)
 	if err != nil {
 		return err
 	}
@@ -257,6 +274,23 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	approverConfigured := strings.TrimSpace(cfg.CommandApproverNode) != ""
 	requesterAddress := nodeaddr.Full(policy.Requester, resolvedSessionName)
 	commandApproverAddress := nodeaddr.Full(commandApproverNode, resolvedSessionName)
+
+	// D1 (#831): a --mode flag may only NARROW the effective policy floor
+	// once an approver is configured at all -- regardless of whether that
+	// configured approver currently resolves (validReviewer plays no role
+	// here; only the genuinely absent case, approverConfigured == false,
+	// #626's fail-open trigger, is exempt).
+	if approverConfigured && commandApprovalModeStrictness(policy.Mode) < commandApprovalModeStrictness(policy.EffectiveFloorMode) {
+		return fmt.Errorf("--mode %q would downgrade the effective policy floor %q; a command-approval mode may only be tightened, never weakened, once an approver is configured", policy.Mode, policy.EffectiveFloorMode)
+	}
+	// D3 (#831): --override-approval only ever has meaning in warn-only
+	// mode; fail loudly instead of silently no-op'ing when the effective
+	// mode is something else, but only once a real approver is configured
+	// (the absent-approver fail-open path must never be affected by mode
+	// at all).
+	if *overrideApproval && approverConfigured && policy.Mode != commandApprovalModeWarnOnly {
+		return fmt.Errorf("--override-approval only applies in warn-only mode; effective mode is %q", policy.Mode)
+	}
 
 	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, requesterAddress, commandApproverAddress, approverConfigured, validReviewer, ctx.now())
 	if err != nil {
@@ -295,6 +329,13 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	if evaluation.Thread != nil {
 		originalInputRequestID = evaluation.Thread.InputRequestID
 	}
+	// mintedWinningExpiresAt (#831 D6/E1): once a mint happens below (whether
+	// THIS call won or lost the create/replace race), this becomes the
+	// ACTUALLY-stored winning payload's ExpiresAt -- the correct source for
+	// the wait's expiryDeadline on a freshly minted request, never this
+	// call's own local draft expiresAt above, which can differ from what
+	// actually got stored when this call loses the race.
+	mintedWinningExpiresAt := ""
 	if !evaluation.Allowed && validReviewer {
 		mint := false
 		supersedes := ""
@@ -359,6 +400,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 				} else {
 					originalInputRequestID = outcome.inputRequestID
 					deliverReason = won.Reason
+					mintedWinningExpiresAt = won.ExpiresAt
 					redeliver = true
 				}
 			}
@@ -394,10 +436,16 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		waitSessionIdentityKnown bool
 		waitDeadline             time.Time
 	)
-	if evaluation.Decision != "delivery_failed" && shouldWaitForCommandApproval(policy.Mode, evaluation, validReviewer, approverConfigured, *noWait, *waitTimeoutSeconds) {
+	// #831 I-001 (guardian rework 1): computed unconditionally, not only on
+	// the wait path, so the two claim-adjacent interruption re-checks below
+	// (and the atomic claim itself) can also refuse an approval whose own
+	// expiry has already passed, even on the !waited path where this call
+	// never entered the wait loop at all.
+	expiryDeadline := commandApprovalExpiryDeadline(mintedWinningExpiresAt, evaluation, expiresAt)
+	if evaluation.Decision != "delivery_failed" && shouldWaitForCommandApproval(policy.Mode, evaluation, validReviewer, approverConfigured) {
 		waited = true
 		waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown = projection.CurrentSessionIdentity(sessionDir)
-		waitDeadline = ctx.now().Add(time.Duration(*waitTimeoutSeconds * float64(time.Second)))
+		waitDeadline = ctx.now().Add(waitTimeoutDuration)
 		waitCtx, cancelWait = ctx.newInterruptContext()
 		waitedEvaluation, err := waitForCommandApprovalDecision(waitCtx, ctx, commandApprovalWaitParams{
 			sessionDir:             sessionDir,
@@ -414,6 +462,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 			policyCategory:         policy.Category,
 			policyMode:             policy.Mode,
 			deadline:               waitDeadline,
+			expiryDeadline:         expiryDeadline,
 		})
 		if err != nil {
 			cancelWait()
@@ -485,7 +534,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		// (still alive) and the SAME starting session identity/deadline
 		// the wait (or the pre-claim bootstrap above) used, immediately
 		// before claiming.
-		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
+		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline, expiryDeadline: expiryDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
 			cancelWait()
 			status := commandApprovalBlockedStatus(interruption.Decision)
 			result.Status = status
@@ -495,7 +544,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		}
 		claimInputRequestID := evaluation.Thread.InputRequestID
 		appendEventBeforeClaimHookFn()
-		claimed, claimErr := claimCommandExecution(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, claimInputRequestID, commandHash, policy.Requester, expectedSessionKey, expectedSessionGeneration, expectedSessionIdentityKnown, ctx.now())
+		claimed, claimErr := claimCommandExecution(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, claimInputRequestID, commandHash, policy.Requester, expectedSessionKey, expectedSessionGeneration, expectedSessionIdentityKnown, expiryDeadline, ctx.now())
 		if claimErr != nil {
 			cancelWait()
 			switch {
@@ -509,6 +558,16 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 				status := commandApprovalBlockedStatus("session_unavailable")
 				result.Status = status
 				result.Reason = "no current session writer is available; blocking mode refuses to shadow-claim this approval"
+				_ = writeExecuteBashMetadata(ctx.stderr, result)
+				return commandApprovalOutcomeError{status: status, reason: result.Reason}
+			case errors.Is(claimErr, errClaimExpired):
+				// #831 I-001: the approval's own expiry passed by the time
+				// the atomic claim ran, closing the race window between the
+				// pre-claim interruption re-check above and the claim's own
+				// atomic write.
+				status := commandApprovalBlockedStatus("expired")
+				result.Status = status
+				result.Reason = "approval request has expired"
 				_ = writeExecuteBashMetadata(ctx.stderr, result)
 				return commandApprovalOutcomeError{status: status, reason: result.Reason}
 			}
@@ -529,7 +588,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		// still stop the command from running; the claim itself stays
 		// consumed (the approval is single-use either way), but the
 		// command never executes.
-		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
+		if interruption := commandApprovalWaitInterruption(waitCtx, ctx, commandApprovalWaitParams{sessionDir: sessionDir, deadline: waitDeadline, expiryDeadline: expiryDeadline}, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); interruption != nil {
 			cancelWait()
 			status := commandApprovalBlockedStatus(interruption.Decision)
 			result.Status = status
@@ -782,13 +841,117 @@ func resolveExecuteBashContextID(baseDir, sessionName, flagValue string) (string
 	return config.ResolveContextIDFromSession(baseDir, sessionName)
 }
 
-func resolveExecuteBashRequester(ctx commandContext, flagValue string) (string, error) {
-	requester := strings.TrimSpace(flagValue)
-	if requester == "" {
-		requester = strings.TrimSpace(ctx.getTmuxPaneName())
+// removedExecuteBashFlags maps a flag name removed from execute-bash's flag
+// set to migration guidance (#831 D2/D4), so a caller still passing it gets a
+// clear explanation instead of Go's generic "flag provided but not defined"
+// error.
+var removedExecuteBashFlags = map[string]string{
+	"requester": "--requester was removed; the effective requester is now always the calling pane's tmux title, never a caller-supplied value",
+	"no-wait":   "--no-wait was removed; execute-bash always waits for a blocking-mode decision up to --wait-timeout-seconds",
+}
+
+// rejectRemovedExecuteBashFlags scans the raw args for a removed flag BEFORE
+// flag.FlagSet.Parse ever sees them, since Parse itself would otherwise
+// return only the generic "flag provided but not defined" error.
+func rejectRemovedExecuteBashFlags(args []string) error {
+	for _, arg := range args {
+		if arg == "--" {
+			return nil
+		}
+		name := arg
+		switch {
+		case strings.HasPrefix(name, "--"):
+			name = name[2:]
+		case strings.HasPrefix(name, "-"):
+			name = name[1:]
+		default:
+			continue
+		}
+		if eq := strings.IndexByte(name, '='); eq >= 0 {
+			name = name[:eq]
+		}
+		if msg, removed := removedExecuteBashFlags[name]; removed {
+			return errors.New(msg)
+		}
 	}
+	return nil
+}
+
+// validatePositiveSecondsFlag applies the same enumerated validation to both
+// --wait-timeout-seconds and (when explicitly set) --approval-ttl-seconds
+// (#831 D2/D6): reject zero, negative, NaN, +Inf/-Inf, any sub-nanosecond
+// (non-representable) result, and any value whose conversion would overflow
+// time.Duration's range, before ever converting to a time.Duration.
+func validatePositiveSecondsFlag(flagName string, seconds float64) (time.Duration, error) {
+	if math.IsNaN(seconds) {
+		return 0, fmt.Errorf("--%s must be a finite positive number of seconds, got NaN", flagName)
+	}
+	if math.IsInf(seconds, 0) {
+		return 0, fmt.Errorf("--%s must be a finite positive number of seconds, got %v", flagName, seconds)
+	}
+	if seconds <= 0 {
+		return 0, fmt.Errorf("--%s must be a positive number of seconds, got %v", flagName, seconds)
+	}
+	maxSeconds := float64(math.MaxInt64) / float64(time.Second)
+	if seconds > maxSeconds {
+		return 0, fmt.Errorf("--%s %v seconds overflows the maximum representable duration", flagName, seconds)
+	}
+	d := time.Duration(seconds * float64(time.Second))
+	if d <= 0 {
+		return 0, fmt.Errorf("--%s %v seconds is too small to represent as a positive duration (sub-nanosecond)", flagName, seconds)
+	}
+	return d, nil
+}
+
+// commandApprovalModeStrictness defines the total order D1/D3 gate on:
+// blocking is the strictest, advisory the loosest. An unrecognized mode
+// (never reached in practice; resolveCommandApprovalPolicy's own switch
+// rejects it first) sorts as the loosest so it is never treated as
+// accidentally stricter than a real mode.
+func commandApprovalModeStrictness(mode string) int {
+	switch mode {
+	case commandApprovalModeBlocking:
+		return 2
+	case commandApprovalModeWarnOnly:
+		return 1
+	case commandApprovalModeAdvisory:
+		return 0
+	default:
+		return -1
+	}
+}
+
+// commandApprovalExpiryDeadline resolves the wait's expiryDeadline (#831
+// D2/D6/E1): for a freshly minted request -- whether this call won or lost
+// the create/replace race -- the ACTUALLY-stored winning payload's ExpiresAt
+// (mintedWinningExpiresAt); for a reused pending thread, the thread's own
+// already-stored ExpiresAt (evaluation.Thread); falling back to this call's
+// own local draft expiresAt only if neither is available (defensive; should
+// not occur in practice since both are always well-formed RFC3339Nano
+// timestamps written by this package).
+func commandApprovalExpiryDeadline(mintedWinningExpiresAt string, evaluation commandApprovalEvaluation, fallbackExpiresAt string) time.Time {
+	candidate := mintedWinningExpiresAt
+	if candidate == "" && evaluation.Thread != nil {
+		candidate = evaluation.Thread.ExpiresAt
+	}
+	if candidate == "" {
+		candidate = fallbackExpiresAt
+	}
+	if t, err := time.Parse(time.RFC3339Nano, candidate); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
+func resolveExecuteBashRequester(ctx commandContext) (string, error) {
+	// D4 (#831): the effective requester is always the calling pane's tmux
+	// title -- the same tmux-trust-level identity signal --record-decision's
+	// reviewer binding already relies on (execute_bash.go:621), never a
+	// caller-supplied flag. A missing/empty/unresolvable pane identity is
+	// REFUSED, not silently defaulted to some placeholder requester.
+	requester := strings.TrimSpace(ctx.getTmuxPaneName())
 	if requester == "" {
-		return "", fmt.Errorf("requester node required: set tmux pane title or pass --requester")
+		return "", fmt.Errorf("requester node required: could not resolve a non-empty tmux pane title; run inside tmux with a valid pane title")
 	}
 	if err := cliutil.ValidateOutboundNodeName("requester", requester); err != nil {
 		return "", err
@@ -796,7 +959,7 @@ func resolveExecuteBashRequester(ctx commandContext, flagValue string) (string, 
 	return requester, nil
 }
 
-func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category, reviewerFlag, modeFlag string, ttlSeconds float64) (resolvedCommandApprovalPolicy, error) {
+func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category, reviewerFlag, modeFlag string, ttlSeconds float64, ttlSecondsWasSet bool) (resolvedCommandApprovalPolicy, error) {
 	policy := resolvedCommandApprovalPolicy{
 		Requester: requester,
 		Reviewer:  "unassigned",
@@ -820,14 +983,35 @@ func resolveCommandApprovalPolicy(cfg *config.Config, requester, label, category
 		}
 		break
 	}
+	// EffectiveFloorMode/floorTTL (#831 D1/D6): captured immediately after the
+	// config-matching loop, before any --reviewer/--mode/--approval-ttl-seconds
+	// flag override below -- the floor D1 guards and the ceiling D6's
+	// tighten-only rule guards, both as they stood BEFORE a caller's flags
+	// had any chance to affect them.
+	policy.EffectiveFloorMode = policy.Mode
+	floorTTL := policy.TTL
 	if strings.TrimSpace(reviewerFlag) != "" {
 		policy.Reviewer = strings.TrimSpace(reviewerFlag)
 	}
 	if strings.TrimSpace(modeFlag) != "" {
 		policy.Mode = strings.TrimSpace(modeFlag)
 	}
-	if ttlSeconds > 0 {
-		policy.TTL = time.Duration(ttlSeconds * float64(time.Second))
+	if ttlSecondsWasSet {
+		// D6/E2 (#831): an EXPLICITLY-set --approval-ttl-seconds gets the
+		// same enumerated validation --wait-timeout-seconds requires, then
+		// the tighten-only check against the floor captured above -- a
+		// value that would LENGTHEN the floor is refused, never silently
+		// capped. An OMITTED flag (ttlSecondsWasSet == false) never reaches
+		// this branch at all: the floor TTL applies unchanged, exactly
+		// today's harmless no-op, no validation and no error.
+		ttlDuration, err := validatePositiveSecondsFlag("approval-ttl-seconds", ttlSeconds)
+		if err != nil {
+			return resolvedCommandApprovalPolicy{}, err
+		}
+		if ttlDuration > floorTTL {
+			return resolvedCommandApprovalPolicy{}, fmt.Errorf("--approval-ttl-seconds %.0f exceeds the effective TTL floor of %s; --approval-ttl-seconds may only tighten (shorten), never lengthen, the effective approval TTL", ttlSeconds, floorTTL)
+		}
+		policy.TTL = ttlDuration
 	}
 	switch policy.Mode {
 	case commandApprovalModeAdvisory, commandApprovalModeWarnOnly, commandApprovalModeBlocking:
@@ -983,8 +1167,8 @@ func evaluateCommandApproval(sessionDir string, policy resolvedCommandApprovalPo
 // changes fail-open (#626) or fail-closed (unresolvable reviewer) behavior,
 // and never re-waits on an already-rejected/expired/digest-mismatched
 // thread.
-func shouldWaitForCommandApproval(mode string, evaluation commandApprovalEvaluation, validReviewer, approverConfigured, noWait bool, waitTimeoutSeconds float64) bool {
-	if noWait || mode != commandApprovalModeBlocking || waitTimeoutSeconds <= 0 {
+func shouldWaitForCommandApproval(mode string, evaluation commandApprovalEvaluation, validReviewer, approverConfigured bool) bool {
+	if mode != commandApprovalModeBlocking {
 		return false
 	}
 	if !validReviewer || !approverConfigured {
@@ -1017,6 +1201,15 @@ type commandApprovalWaitParams struct {
 	policyCategory         string
 	policyMode             string
 	deadline               time.Time
+	// expiryDeadline (#831 D2/D6/E1) is the request's own absolute expiry --
+	// independent of and checked BEFORE deadline (the wait-timeout deadline)
+	// so "expired" wins over "wait_timeout" at exact equality. Populated
+	// (#831 I-001) at every call site in runExecuteBashWithContext,
+	// including both claim-adjacent interruption re-checks, not only the
+	// wait loop itself; IsZero() is only a defensive fallback for the
+	// practically-unreachable case where no well-formed expiry could be
+	// resolved at all.
+	expiryDeadline time.Time
 }
 
 // approverLivenessCheckEveryNPolls bounds how often waitForCommandApprovalDecision
@@ -1046,7 +1239,23 @@ func commandApprovalWaitInterruption(waitCtx context.Context, ctx commandContext
 		}
 	default:
 	}
-	if !ctx.now().Before(p.deadline) {
+	// #831 I-002 (guardian rework 1): sample now ONCE and compare both
+	// deadlines against the SAME instant, so a clock that advances between
+	// two separate ctx.now() calls can never make "wait_timeout" win a race
+	// it should have lost to "expired" at or after exact equality.
+	now := ctx.now()
+	// #831 D2/D6/E1: expiry is checked BEFORE wait-timeout, unconditionally,
+	// so "expired" wins at exact equality by construction rather than
+	// needing a special-cased tie-break. p.expiryDeadline is populated at
+	// every call site (#831 I-001); IsZero() only guards the practically-
+	// unreachable defensive fallback in commandApprovalExpiryDeadline.
+	if !p.expiryDeadline.IsZero() && !now.Before(p.expiryDeadline) {
+		return &commandApprovalEvaluation{
+			Decision: "expired",
+			Reason:   "approval request has expired",
+		}
+	}
+	if !now.Before(p.deadline) {
 		return &commandApprovalEvaluation{
 			Decision: "wait_timeout",
 			Reason:   "approval wait timed out before a decision was recorded",
@@ -1453,6 +1662,14 @@ var errNoCurrentWriter = errors.New("no current session writer is available; blo
 // pre-claim check and the writer actually opening.
 var errClaimSessionIdentityChanged = errors.New("session identity changed before the claim could be recorded")
 
+// errClaimExpired (#831 I-001) is returned from claimCommandExecution's
+// equivalence closure when the approval's own expiry has passed by the time
+// the atomic claim runs -- closing the race window between the pre-claim
+// interruption check and the claim's own atomic write. An approval must
+// never be claimed and run after it has expired, even if it was observed as
+// "approved" just before its TTL lapsed.
+var errClaimExpired = errors.New("approval request has expired before the claim could be recorded")
+
 // appendEventBeforeClaimHookFn is a test-only seam (#823 rework-3 F-004/
 // F-005): called immediately before claimCommandExecution, so tests can
 // inject a cancellation or a session-generation rotation at the exact
@@ -1477,7 +1694,7 @@ var appendEventBeforeClaimHookFn = func() {}
 // equivalence closure, under the same fence the claim write itself uses, so
 // a session rotation landing in the gap between evaluation (or the wait's
 // return) and the claim's own writer-open is still caught.
-func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRequestID, commandHash, requester string, expectedSessionKey string, expectedSessionGeneration int, expectedSessionIdentityKnown bool, now time.Time) (bool, error) {
+func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRequestID, commandHash, requester string, expectedSessionKey string, expectedSessionGeneration int, expectedSessionIdentityKnown bool, expiryDeadline time.Time, now time.Time) (bool, error) {
 	writer, err := journal.OpenCurrentWriter(sessionDir)
 	if err != nil {
 		// #823 F-002: blocking mode never shadow-claims.
@@ -1489,15 +1706,30 @@ func claimCommandExecution(sessionDir, contextID, sessionName, threadID, inputRe
 		InputRequestID: inputRequestID,
 		CommandHash:    commandHash,
 	}
-	identityChecked := false
+	preconditionChecked := false
 	equivalent := func(event journal.Event) (bool, error) {
-		if !identityChecked {
-			identityChecked = true
+		if !preconditionChecked {
+			preconditionChecked = true
 			if expectedSessionIdentityKnown {
 				curKey, curGeneration, ok := projection.CurrentSessionIdentity(sessionDir)
 				if !ok || curKey != expectedSessionKey || curGeneration != expectedSessionGeneration {
 					return false, errClaimSessionIdentityChanged
 				}
+			}
+			// #831 I-001: enforce the approval's own expiry from WITHIN the
+			// same equivalence closure the identity check above uses. `now`
+			// here is the call-site snapshot passed into this function
+			// (captured by ctx.now() immediately before this call), not a
+			// fresh read taken inside the closure -- this check's own value
+			// is fixed for the lifetime of one claimCommandExecution call.
+			// It is still the correct enforcement point for THIS call's own
+			// view of time; the remaining gap -- time passing during the
+			// atomic write's own retries -- is covered by the post-claim
+			// commandApprovalWaitInterruption re-check immediately after
+			// this call returns in runExecuteBashWithContext, not by this
+			// closure itself.
+			if !expiryDeadline.IsZero() && !now.Before(expiryDeadline) {
+				return false, errClaimExpired
 			}
 		}
 		if event.Type != journal.CommandExecutionClaimedEventType {

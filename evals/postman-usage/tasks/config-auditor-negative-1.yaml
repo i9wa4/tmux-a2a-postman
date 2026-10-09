@@ -1,0 +1,23 @@
+id: config-auditor-negative-001
+name: Config Auditor Negative Trigger 1
+description: >-
+  postman.md/topology auditing is postman-config-auditor's territory, not
+  postman-usage's. (Not migrated from either source skill: the source
+  postman-session-operator suite's own negative case, "send an initial
+  message to another node," no longer holds post-merge, since postman-usage
+  now legitimately covers first-contact sends too. This case replaces it
+  with a real negative for the merged skill's actual DO NOT USE FOR
+  boundary.)
+tags:
+  - negative-trigger
+inputs:
+  prompt: "Fix a wrong node name in postman.md's skill_path frontmatter."
+expected:
+  should_trigger: false
+graders:
+  - type: text
+    name: omits-skill-keywords
+    config:
+      not_contains:
+        - "send-heredoc"
+        - "postman-usage"

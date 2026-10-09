@@ -111,12 +111,12 @@ func TestRuntimeReconcileKeepsSamePaneIDInDifferentTabsRoutable(t *testing.T) {
 	snapshot.Panes[0].Metadata[multiplexer.HerdrPaneContextIDMetadataKey] = "ctx-tab-1"
 	snapshot.Panes = append(snapshot.Panes, multiplexer.HerdrPaneSnapshot{
 		ID:             paneID,
+		TerminalID:     paneID + ":terminal-2",
 		WorkspaceID:    "workspace-1",
 		TabID:          tabTwo,
 		Metadata:       map[string]string{"postman.node": "critic", multiplexer.HerdrPaneContextIDMetadataKey: "ctx-tab-2"},
 		Env:            map[string]string{},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-		PostmanNode:    "critic",
 		PostmanSession: sessionName,
 	})
 	client := &fakeRuntimeHerdrClient{snapshot: snapshot}
@@ -598,12 +598,12 @@ func TestRuntimeReconcileFinalNodesIgnoresOlderSuccessfulDiscoveryAfterNewerSucc
 	oldSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-old", "workspace-1:pane-old", "")
 	oldSnapshot.Panes = append(oldSnapshot.Panes, multiplexer.HerdrPaneSnapshot{
 		ID:             "workspace-1:pane-old-2",
+		TerminalID:     "workspace-1:pane-old-2:terminal",
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-old",
 		Metadata:       map[string]string{"postman.node": "worker-2"},
 		Env:            map[string]string{},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-		PostmanNode:    "worker-2",
 		PostmanSession: "work",
 	})
 	newSnapshot := runtimeHerdrSnapshotFor("work", "workspace-1", "workspace-1:tab-new", "workspace-1:pane-new", "")
@@ -1320,9 +1320,10 @@ func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
 	client := &fakeRuntimeHerdrClient{snapshot: validRuntimeHerdrSnapshot()}
 	client.snapshot.Panes = append(client.snapshot.Panes, multiplexer.HerdrPaneSnapshot{
 		ID:          "workspace-1:pane-2",
+		TerminalID:  "workspace-1:pane-2:terminal",
 		WorkspaceID: "workspace-1",
 		TabID:       "workspace-1:tab-1",
-		PostmanNode: "worker",
+		Metadata:    map[string]string{"postman.node": "worker"},
 		ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 	})
 	cfg := config.DefaultConfig()
@@ -1796,6 +1797,7 @@ func TestSocketClientHonorsContextDeadlineAfterConnect(t *testing.T) {
 
 func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 	socketPath := tempHerdrSocketPath(t)
+	installFakeHerdrSchemaCommand(t, `{"protocol":20,"schema_version":1,"schemas":{}}`)
 	methods := serveFakeHerdrSocket(t, socketPath)
 
 	client, err := herdrruntime.NewSocketClient(config.HerdrConfig{SocketPath: socketPath})
@@ -1811,8 +1813,8 @@ func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionSnapshot() error = %v", err)
 	}
-	if snapshot.Envelope.ProtocolVersion != "1" || snapshot.Envelope.SchemaVersion != 1 {
-		t.Fatalf("snapshot envelope = %#v, want protocol/schema 1", snapshot.Envelope)
+	if snapshot.Envelope.ProtocolVersion != "20" || snapshot.Envelope.SchemaVersion != 1 {
+		t.Fatalf("snapshot envelope = %#v, want protocol 20/schema 1", snapshot.Envelope)
 	}
 	if len(snapshot.Panes) != 1 || snapshot.Panes[0].WorkspaceID != "workspace-1" || snapshot.Panes[0].TabID != "workspace-1:tab-1" {
 		t.Fatalf("snapshot panes = %#v, want snake_case IDs decoded", snapshot.Panes)
@@ -1828,13 +1830,24 @@ func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 		t.Fatalf("SetWorkspaceMetadata() error = %v", err)
 	}
 
-	gotMethods := []string{<-methods, <-methods, <-methods}
-	wantMethods := []string{"session.snapshot", "pane.send_text", "workspace.report_metadata"}
+	gotMethods := []string{<-methods, <-methods, <-methods, <-methods, <-methods, <-methods}
+	wantMethods := []string{"ping", "session.snapshot", "ping", "pane.send_text", "ping", "workspace.report_metadata"}
 	for i := range wantMethods {
 		if gotMethods[i] != wantMethods[i] {
 			t.Fatalf("method[%d] = %q, want %q (all=%#v)", i, gotMethods[i], wantMethods[i], gotMethods)
 		}
 	}
+}
+
+func installFakeHerdrSchemaCommand(t *testing.T, schema string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "herdr")
+	body := "#!/bin/sh\nif [ \"$1\" = api ] && [ \"$2\" = schema ] && [ \"$3\" = --json ]; then\n  printf '%s\\n' '" + schema + "'\n  exit 0\nfi\nexit 64\n"
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake herdr) error = %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func tempHerdrSocketPath(t *testing.T) string {
@@ -1900,12 +1913,12 @@ func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwn
 		}},
 		Panes: []multiplexer.HerdrPaneSnapshot{{
 			ID:             paneID,
+			TerminalID:     paneID + ":terminal",
 			WorkspaceID:    workspaceID,
 			TabID:          tabID,
 			Metadata:       map[string]string{"postman.node": "worker"},
 			Env:            map[string]string{},
 			ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-			PostmanNode:    "worker",
 			PostmanSession: sessionName,
 		}},
 	}
@@ -1944,7 +1957,7 @@ func handleFakeHerdrSocketConn(conn net.Conn, methods chan<- string) {
 		return
 	}
 	var request struct {
-		ID     int64           `json:"id"`
+		ID     string          `json:"id"`
 		Method string          `json:"method"`
 		Params json.RawMessage `json:"params"`
 	}
@@ -1952,19 +1965,41 @@ func handleFakeHerdrSocketConn(conn net.Conn, methods chan<- string) {
 		return
 	}
 	methods <- request.Method
-	result := map[string]interface{}{"protocol_version": "1", "schema_version": 1}
-	if request.Method == "session.snapshot" {
-		result["workspaces"] = []map[string]interface{}{{"id": "workspace-1", "metadata": map[string]string{}}}
-		result["tabs"] = []map[string]interface{}{{"id": "workspace-1:tab-1", "workspace_id": "workspace-1"}}
-		result["panes"] = []map[string]interface{}{{
-			"id":           "workspace-1:pane-1",
-			"workspace_id": "workspace-1",
-			"tab_id":       "workspace-1:tab-1",
-			"metadata":     map[string]string{"postman.node": "worker"},
-			"process_info": map[string]interface{}{"foreground_processes": []map[string]string{{"name": "codex"}}},
-		}}
+	var result map[string]interface{}
+	switch request.Method {
+	case "ping":
+		result = map[string]interface{}{"type": "pong", "version": "0.8.2", "protocol": 20}
+	case "session.snapshot":
+		result = map[string]interface{}{
+			"type": "session_snapshot",
+			"snapshot": map[string]interface{}{
+				"version":              "0.8.2",
+				"protocol":             20,
+				"focused_workspace_id": "workspace-1",
+				"focused_tab_id":       "workspace-1:tab-1",
+				"focused_pane_id":      "workspace-1:pane-1",
+				"workspaces":           []map[string]interface{}{{"workspace_id": "workspace-1", "number": 1, "label": "work", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "workspace-1:tab-1", "agent_status": "working"}},
+				"tabs":                 []map[string]interface{}{{"tab_id": "workspace-1:tab-1", "workspace_id": "workspace-1", "number": 1, "label": "main", "focused": true, "pane_count": 1, "agent_status": "working"}},
+				"panes": []map[string]interface{}{{
+					"pane_id":        "workspace-1:pane-1",
+					"terminal_id":    "workspace-1:pane-1:terminal",
+					"workspace_id":   "workspace-1",
+					"tab_id":         "workspace-1:tab-1",
+					"focused":        true,
+					"agent_status":   "working",
+					"revision":       1,
+					"metadata":       map[string]string{"postman.node": "worker"},
+					"process_info":   map[string]interface{}{"pane_id": "workspace-1:pane-1", "foreground_processes": []map[string]interface{}{{"pid": 123, "name": "codex"}}},
+					"terminal_title": "worker",
+				}},
+				"layouts": []interface{}{},
+				"agents":  []interface{}{},
+			},
+		}
+	default:
+		result = map[string]interface{}{"type": "ok"}
 	}
-	response := map[string]interface{}{"jsonrpc": "2.0", "id": request.ID, "result": result}
+	response := map[string]interface{}{"id": request.ID, "result": result}
 	payload, _ := json.Marshal(response)
 	payload = append(payload, '\n')
 	_, _ = conn.Write(payload)

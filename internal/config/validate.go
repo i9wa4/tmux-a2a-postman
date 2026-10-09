@@ -166,7 +166,73 @@ func ValidateConfig(cfg *Config) []ValidationError {
 			})
 		}
 	}
+
+	// Rule 6: command_approval entries (severity: error, #831). Two related
+	// checks, both gating (a bad entry fails the WHOLE config load, not just
+	// that entry):
+	//   (a) Mode-string validation: an omitted/empty Mode is VALID (it means
+	//       the default floor "blocking" applies to that entry, matching
+	//       resolveCommandApprovalPolicy's own current resolution behavior);
+	//       only a NON-EMPTY value outside {advisory, warn-only, blocking} is
+	//       an error (e.g. a typo like "blocing").
+	//   (b) Wildcard-weak-policy validation: an advisory/warn-only entry must
+	//       pin a SPECIFIC, non-wildcard Label, Category, AND Requester
+	//       together -- an empty or "*" value on any one of those three
+	//       fields makes the policy reachable by any caller who can guess or
+	//       learn just that one string, which this issue closes by refusing
+	//       to load such an entry at all.
+	for i, candidate := range cfg.CommandApproval {
+		field := fmt.Sprintf("command_approval[%d]", i)
+		mode := strings.TrimSpace(candidate.Mode)
+		effectiveMode := mode
+		if effectiveMode == "" {
+			effectiveMode = "blocking"
+		}
+		switch mode {
+		case "", "advisory", "warn-only", "blocking":
+		default:
+			errors = append(errors, ValidationError{
+				Field:    field + ".mode",
+				Message:  fmt.Sprintf("mode %q is not one of advisory, warn-only, blocking", mode),
+				Severity: "error",
+			})
+			continue
+		}
+		if effectiveMode != "advisory" && effectiveMode != "warn-only" {
+			continue
+		}
+		if isWildcardOrEmptyCommandApprovalPattern(candidate.Label) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".label",
+				Message:  fmt.Sprintf("%s mode requires a specific, non-wildcard label (got %q); a wildcard/empty label on a weak-mode policy is reachable by any caller", effectiveMode, candidate.Label),
+				Severity: "error",
+			})
+		}
+		if isWildcardOrEmptyCommandApprovalPattern(candidate.Category) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".category",
+				Message:  fmt.Sprintf("%s mode requires a specific, non-wildcard category (got %q); a wildcard/empty category on a weak-mode policy is reachable by any caller", effectiveMode, candidate.Category),
+				Severity: "error",
+			})
+		}
+		if isWildcardOrEmptyCommandApprovalPattern(candidate.Requester) {
+			errors = append(errors, ValidationError{
+				Field:    field + ".requester",
+				Message:  fmt.Sprintf("%s mode requires a specific, non-wildcard requester (got %q); a wildcard/empty requester on a weak-mode policy is reachable by any caller", effectiveMode, candidate.Requester),
+				Severity: "error",
+			})
+		}
+	}
 	return errors
+}
+
+// isWildcardOrEmptyCommandApprovalPattern reports whether a command_approval
+// entry field would match any caller-supplied value at all -- the same
+// matching rule commandPolicyMatches (internal/cli) uses at request time, an
+// empty or "*" pattern matches anything.
+func isWildcardOrEmptyCommandApprovalPattern(pattern string) bool {
+	pattern = strings.TrimSpace(pattern)
+	return pattern == "" || pattern == "*"
 }
 
 // normalizeEdge normalizes an edge string for duplicate detection.
