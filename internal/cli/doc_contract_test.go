@@ -183,7 +183,7 @@ func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *test
 		"gh skill install",
 		"--agent codex",
 		"--agent claude-code",
-		"postman-send-message",
+		"postman-usage",
 		"postman-config-auditor",
 	)
 	assertContainsAllNormalized(
