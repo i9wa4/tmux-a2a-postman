@@ -5,6 +5,14 @@ const (
 	CommandApprovalDecidedEventType    = "command_approval_decided"
 	CommandExecutionDecidedEventType   = "command_execution_decided"
 	CommandExecutionCompletedEventType = "command_execution_completed"
+	// CommandExecutionClaimedEventType marks a single-use execution claim on
+	// an approved command approval thread (#823 F-001). Exactly one claim per
+	// (thread, input_request_id, command_hash) may ever be appended, via
+	// Writer.AppendCurrentSessionEventIfAbsent — this is what makes "one
+	// approval executes the command at most once" true across concurrent
+	// waiters and repeated calls within the approval's TTL, not just within a
+	// single process.
+	CommandExecutionClaimedEventType = "command_execution_claimed"
 )
 
 type CommandApprovalRequestPayload struct {
@@ -53,6 +61,13 @@ type CommandExecutionDecisionPayload struct {
 	Override       bool   `json:"override,omitempty"`
 	ApprovalThread string `json:"approval_thread,omitempty"`
 	CommandText    string `json:"command_text,omitempty"`
+}
+
+type CommandExecutionClaimPayload struct {
+	Requester      string `json:"requester"`
+	ApprovalThread string `json:"approval_thread,omitempty"`
+	InputRequestID string `json:"input_request_id,omitempty"`
+	CommandHash    string `json:"command_hash"`
 }
 
 type CommandExecutionCompletedPayload struct {

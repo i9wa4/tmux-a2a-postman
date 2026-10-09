@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
@@ -36,6 +39,12 @@ type commandContext struct {
 	collectSessionStatus  sessionStatusCollector
 	now                   func() time.Time
 	runBash               func(command string, stdout, stderr io.Writer) (int, error)
+	// sleep is context-aware (#823 F-005): the default implementation
+	// returns as soon as waitCtx is cancelled, instead of always blocking for
+	// the full duration, so a SIGINT/SIGTERM during a poll interval is
+	// observed immediately rather than after up to one full poll interval.
+	sleep               func(waitCtx context.Context, d time.Duration)
+	newInterruptContext func() (context.Context, func())
 }
 
 var defaultRoundTripDaemonSubmit = roundTripDaemonSubmit
@@ -106,6 +115,12 @@ func (ctx commandContext) withDefaults() commandContext {
 	if ctx.runBash == nil {
 		ctx.runBash = runBashCommand
 	}
+	if ctx.sleep == nil {
+		ctx.sleep = contextAwareSleep
+	}
+	if ctx.newInterruptContext == nil {
+		ctx.newInterruptContext = defaultInterruptContext
+	}
 	if ctx.currentIdentity == nil {
 		ctx.currentIdentity = func() (multiplexer.CurrentIdentity, error) {
 			paneID := ctx.getTmuxPaneID()
@@ -126,6 +141,24 @@ func (ctx commandContext) withDefaults() commandContext {
 		}
 	}
 	return ctx
+}
+
+// defaultInterruptContext cancels the returned context on SIGINT/SIGTERM,
+// matching the signal set start.go already treats as a clean-shutdown
+// request (see start.go's signal.NotifyContext usage).
+func defaultInterruptContext() (context.Context, func()) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
+
+// contextAwareSleep waits for d or until waitCtx is cancelled, whichever
+// comes first (#823 F-005).
+func contextAwareSleep(waitCtx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-waitCtx.Done():
+	}
 }
 
 func runBashCommand(command string, stdout, stderr io.Writer) (int, error) {

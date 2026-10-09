@@ -18,8 +18,22 @@ type inspectDaemonSubmitOutput struct {
 	RequestID   string                            `json:"request_id"`
 	Request     *inspectDaemonSubmitRequestState  `json:"request,omitempty"`
 	Response    *inspectDaemonSubmitResponseState `json:"response,omitempty"`
+	Evicted     *inspectDaemonSubmitEvictedState  `json:"evicted,omitempty"`
 	ContextID   string                            `json:"context_id,omitempty"`
 	SessionName string                            `json:"session_name,omitempty"`
+}
+
+// inspectDaemonSubmitEvictedState reports the bounded tombstone left behind
+// when a late response was evicted past its retention window (#796), so a
+// lookup after eviction is distinguishable from a wrong id or a lookup that
+// never existed (not_found).
+type inspectDaemonSubmitEvictedState struct {
+	State      string `json:"state"`
+	Command    string `json:"command,omitempty"`
+	HandledAt  string `json:"handled_at,omitempty"`
+	AgeSeconds int    `json:"age_seconds,omitempty"`
+	EvictedAt  string `json:"evicted_at,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 type inspectDaemonSubmitRequestState struct {
@@ -87,6 +101,17 @@ func RunInspectDaemonSubmit(args []string) error {
 		output.Status = response.State
 	}
 
+	if response == nil {
+		evicted, err := inspectDaemonSubmitEvicted(sessionDir, *id)
+		if err != nil {
+			return err
+		}
+		if evicted != nil {
+			output.Evicted = evicted
+			output.Status = evicted.State
+		}
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(output)
@@ -137,6 +162,24 @@ func inspectDaemonSubmitResponse(sessionDir, id string, now time.Time, request *
 		ErrorPresent:              response.Error != "",
 		RuntimeDiagnosticsPresent: response.RuntimeDiagnostics != nil,
 		RuntimeProfilePresent:     response.RuntimeProfile != nil,
+	}, nil
+}
+
+func inspectDaemonSubmitEvicted(sessionDir, id string) (*inspectDaemonSubmitEvictedState, error) {
+	evicted, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, id))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &inspectDaemonSubmitEvictedState{
+		State:      "evicted_late_response",
+		Command:    string(evicted.Command),
+		HandledAt:  evicted.HandledAtOrMTime,
+		AgeSeconds: evicted.AgeSeconds,
+		EvictedAt:  evicted.EvictedAt,
+		Reason:     evicted.Reason,
 	}, nil
 }
 

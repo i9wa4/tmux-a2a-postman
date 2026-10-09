@@ -1,6 +1,9 @@
 package journal
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
 // MailboxEventPayload carries the mailbox file snapshot needed to rebuild
 // mailbox projection files from replay.
@@ -42,6 +45,31 @@ func RecordProcessMailboxPayloadIfAbsent(sessionDir, tmuxSessionName, eventType 
 		return false, nil
 	}
 	return manager.RecordMailboxPayloadIfAbsent(sessionDir, tmuxSessionName, eventType, visibility, payload, equivalent, now)
+}
+
+// RecordMailboxPayloadIfAbsentUsingCurrentSessionWriter records a mailbox
+// event by opening a writer for sessionDir directly, exactly like
+// appendCommandEvent in the cli package does for command-approval events.
+// Unlike RecordProcessMailboxPayloadIfAbsent, it does not depend on an
+// in-process journal.Manager being installed via InstallProcessManager, so it
+// works from short-lived one-shot CLI invocations (e.g. `execute-bash
+// --record-decision`) that never install one — only the long-running daemon
+// process does.
+func RecordMailboxPayloadIfAbsentUsingCurrentSessionWriter(sessionDir, contextID, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, equivalent EventEquivalenceFunc, now time.Time) (bool, error) {
+	writer, err := OpenCurrentWriter(sessionDir)
+	if err != nil {
+		writer, err = OpenShadowWriter(sessionDir, contextID, tmuxSessionName, os.Getpid(), now)
+		if err != nil {
+			return false, err
+		}
+	}
+	if payload.Directory == "" {
+		payload.Directory = directoryNameFromEventType(eventType)
+	}
+	_, appended, err := writer.AppendCurrentSessionEventIfAbsent(eventType, visibility, payload, AppendOptions{
+		ThreadID: payload.ThreadID,
+	}, now, equivalent)
+	return appended, err
 }
 
 func (m *Manager) RecordMailboxPayload(sessionDir, tmuxSessionName, eventType string, visibility Visibility, payload MailboxEventPayload, now time.Time) error {
