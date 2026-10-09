@@ -364,7 +364,9 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		}
 		deliverReason := *reason
 		if mint {
+			beforeMintAttemptHookFn(expiresAt)
 			outcome, mintErr := atomicCreateOrReplaceRequest(sessionDir, resolvedContextID, resolvedSessionName, resolvedThreadID, policy, commandApproverNode, commandHash, *reason, expiresAt, commandText, *storeCommandText, supersedes, ctx.now())
+			afterMintAttemptHookFn(expiresAt)
 			switch {
 			case errors.Is(mintErr, errNoCurrentWriter):
 				// #823 F-002: blocking mode with no live current session
@@ -476,8 +478,19 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return err
 	}
 
+	// #831 F-4: on a lost first-mint race, evaluation.Thread stays nil (the
+	// evaluation was locally reset to "absent"/"pending" rather than
+	// re-projected), so without mintedWinningExpiresAt here this call's OWN
+	// local draft expiresAt -- not the actually-stored winning value -- would
+	// leak into the result metadata the loser sees. Same precedence as
+	// commandApprovalExpiryDeadline above: prefer the actually-stored
+	// winning mint, then an already-projected thread's own ExpiresAt, then
+	// this call's local draft only as a last resort.
 	resultExpiresAt := expiresAt
-	if evaluation.Thread != nil && evaluation.Thread.ExpiresAt != "" {
+	switch {
+	case mintedWinningExpiresAt != "":
+		resultExpiresAt = mintedWinningExpiresAt
+	case evaluation.Thread != nil && evaluation.Thread.ExpiresAt != "":
 		resultExpiresAt = evaluation.Thread.ExpiresAt
 	}
 	result := executeBashResult{
@@ -823,22 +836,80 @@ params:
 	return writeExecuteBashMetadata(ctx.stdout, result)
 }
 
+// resolveExecuteBashSessionName (#831 F-1 closure): the resolved session
+// name feeds BOTH requesterAddress (the mint/request path) and
+// executeBashDecisionOptions.sessionName (the --record-decision path),
+// which together make up the "principal" every policy match and decision
+// authorization is keyed on. A caller-supplied --session can no longer
+// silently override the calling pane's REAL, auto-detected tmux session:
+// a pane titled "worker" actually running in session A could otherwise
+// pass --session B and be treated as B:worker, inheriting B's pinned
+// policy, or --record-decision on B's own thread from a same-titled pane
+// in A. When a real session is detectable, --session may only ever
+// CONFIRM it (an exact match is accepted, same as before for the common
+// case); any different value is refused outright rather than honored.
+// Guardian REVIEW-849 P1: when NO real session is detectable at all,
+// this now ALSO fails closed (no flag-only fallback) -- see the function
+// body. Residual trust-model limit, not closed by this function: the
+// "real" session identity itself ultimately comes from the tmux pane
+// TITLE (requester) and the tmux session name (this function), both
+// read from the live multiplexer; a caller with enough local access to
+// retitle its own pane or otherwise spoof what the multiplexer reports
+// is a different, still-open trust assumption this PR does not address.
 func resolveExecuteBashSessionName(ctx commandContext, flagValue string) (string, error) {
-	if strings.TrimSpace(flagValue) != "" {
-		return config.ValidateSessionName(strings.TrimSpace(flagValue))
+	// #831 F-1 / Guardian REVIEW-849 P1: when the real session is
+	// undetectable, this MUST fail closed, never fall back to trusting
+	// the caller-supplied --session. A caller already running inside a
+	// real tmux pane could otherwise unset $TMUX before invoking
+	// execute-bash to force this fallback and then impersonate any
+	// session via --session -- exactly the hidden bypass P1 flagged.
+	// This is a single shared resolver, so failing closed here covers
+	// the request/mint path, the --record-decision path, and any other
+	// caller of resolvedSessionName uniformly.
+	actual := strings.TrimSpace(ctx.getTmuxSessionName())
+	if actual == "" {
+		return "", fmt.Errorf("tmux session identity could not be verified: run inside tmux so the real session can be detected; --session is never trusted as a substitute for a verified identity")
 	}
-	sessionName := ctx.getTmuxSessionName()
-	if sessionName == "" {
-		return "", fmt.Errorf("tmux session name required: run inside tmux or pass --session")
+	requested := strings.TrimSpace(flagValue)
+	if requested != "" && requested != actual {
+		return "", fmt.Errorf("--session %q does not match the calling pane's actual tmux session %q; execute-bash always binds identity to the real session, never a caller-supplied override", requested, actual)
 	}
-	return config.ValidateSessionName(sessionName)
+	return config.ValidateSessionName(actual)
 }
 
+// resolveContextIDFromSessionFn is a test-only seam over
+// config.ResolveContextIDFromSession (Guardian REVIEW-849 F-1b closure):
+// production always calls the real disk/PID-based resolver; tests
+// override this var to report a fixed contextID (or a forced error)
+// without needing to construct a real postman.pid file on disk. See
+// newExecuteBashFixtureRaw, which overrides this once for every fixture
+// test, and the dedicated negative test for the "no live context"
+// refusal case.
+var resolveContextIDFromSessionFn = config.ResolveContextIDFromSession
+
+// resolveExecuteBashContextID (Guardian REVIEW-849 F-1b closure): mirrors
+// resolveExecuteBashSessionName's binding -- a caller-supplied
+// --context-id can no longer silently select a DIFFERENT context than
+// the one the live, daemon-owned session actually belongs to, and can no
+// longer be trusted at all when no live context can be verified either.
+// Without this, a caller could pick a same-named session living under a
+// different (possibly weaker-policy) context, or an arbitrary
+// --context-id when no live daemon owns this session yet, and inherit
+// that other context's policy/config. This fails closed unconditionally
+// when the live context cannot be resolved -- there is no flag-only
+// fallback, unlike resolveExecuteBashSessionName's non-tmux fallback,
+// since an unresolvable context has no equivalent "genuinely no
+// multiplexer at all" benign case to preserve.
 func resolveExecuteBashContextID(baseDir, sessionName, flagValue string) (string, error) {
-	if strings.TrimSpace(flagValue) != "" {
-		return config.ResolveContextID(strings.TrimSpace(flagValue))
+	requested := strings.TrimSpace(flagValue)
+	live, liveErr := resolveContextIDFromSessionFn(baseDir, sessionName)
+	if liveErr != nil {
+		return "", fmt.Errorf("context identity could not be verified: %w; --context-id is never trusted as a substitute for a verified live context", liveErr)
 	}
-	return config.ResolveContextIDFromSession(baseDir, sessionName)
+	if requested != "" && requested != live {
+		return "", fmt.Errorf("--context-id %q does not match the live daemon-owned context %q for session %q; execute-bash always binds identity to the live context, never a caller-supplied override", requested, live, sessionName)
+	}
+	return config.ResolveContextID(live)
 }
 
 // removedExecuteBashFlags maps a flag name removed from execute-bash's flag
@@ -1677,6 +1748,30 @@ var errClaimExpired = errors.New("approval request has expired before the claim 
 // checks are meant to catch. Production code never overrides this; it
 // defaults to a no-op.
 var appendEventBeforeClaimHookFn = func() {}
+
+// beforeMintAttemptHookFn is a test-only seam (#831 F-2 closure): called
+// immediately before atomicCreateOrReplaceRequest, after this call has
+// already evaluated the thread as mintable (e.g. "absent") but before it
+// attempts the atomic append. It receives this call's own local draft
+// expiresAt, which a test can use to identify which of several concurrent
+// racers (each with a distinct TTL, hence a distinct draft expiresAt) is
+// currently at the gate -- forcing both racers past their own evaluation
+// before either one's append lands, then releasing them in a chosen
+// order, proving the race is a genuine concurrent first-mint, not a
+// sequential arrival. Production code never overrides this; it defaults
+// to a no-op.
+var beforeMintAttemptHookFn = func(draftExpiresAt string) {}
+
+// afterMintAttemptHookFn is a test-only seam (Guardian REVIEW-849 P2
+// closure): called immediately after atomicCreateOrReplaceRequest
+// returns, with this call's own local draft expiresAt. Pairs with
+// beforeMintAttemptHookFn to let a test force a deterministic winner: by
+// not releasing a second racer from beforeMintAttemptHookFn's gate until
+// the first racer's afterMintAttemptHookFn has fired, the test removes
+// any dependence on goroutine-scheduling luck for which racer's append
+// actually lands first. Production code never overrides this; it
+// defaults to a no-op.
+var afterMintAttemptHookFn = func(draftExpiresAt string) {}
 
 // claimCommandExecution atomically claims the right to run an approved
 // command exactly once (#823 F-001), keyed by (thread, input_request_id,
