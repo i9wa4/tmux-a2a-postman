@@ -11,7 +11,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 )
 
-func TestFilterToUINode(t *testing.T) {
+func TestFilterToInterfaceNode(t *testing.T) {
 	makeNodes := func(names ...string) map[string]discovery.NodeInfo {
 		m := make(map[string]discovery.NodeInfo, len(names))
 		for _, n := range names {
@@ -65,7 +65,7 @@ func TestFilterToUINode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := cliutil.FilterToUINode(tc.nodes, tc.uiNode)
+			got := cliutil.FilterToInterfaceNode(tc.nodes, tc.uiNode)
 			if tc.wantEmpty {
 				if len(got) != 0 {
 					t.Errorf("want empty map, got %v", got)

@@ -229,7 +229,7 @@ state. This design deliberately reverses that for the at-cap case:
 - A separate, explicitly mutating operator subcommand may replay or
   dispose exactly ONE identified message at a time (never a bulk
   operation). It requires the caller's tmux pane title to equal the
-  configured `ui_node` (the same pane-title authentication
+  configured `interface_node` (the same pane-title authentication
   `--record-decision` uses; a coordination control, not an OS security
   boundary) and an explicit reason, defaults to a dry-run (no mutation)
   unless a flag confirms the real run, and atomically records an audit

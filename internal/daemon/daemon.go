@@ -58,7 +58,7 @@ var (
 	daemonSubmitLateResponseRetentionSeconds int64 = defaultDaemonSubmitLateResponseRetentionSeconds
 	verdictGraceSeconds                            = defaultVerdictGraceSeconds
 	verdictDebtCap                                 = defaultVerdictDebtCap
-	verdictExemptUINode                            = "messenger"
+	verdictExemptInterfaceNode                     = "" // set from config; no built-in node name (#764, fail closed)
 )
 
 type filesystemWatcher interface {
@@ -276,9 +276,9 @@ func validateDaemonSubmitSendRequest(sessionDir string, request projection.Daemo
 
 func enforceVerdictGate(sessionDir, sender, filename, content string) error {
 	return verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
-		GraceSeconds: verdictGraceSeconds,
-		DebtCap:      verdictDebtCap,
-		ExemptUINode: verdictExemptUINode,
+		GraceSeconds:        verdictGraceSeconds,
+		DebtCap:             verdictDebtCap,
+		ExemptInterfaceNode: verdictExemptInterfaceNode,
 		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error) {
 			return journal.RecordProcessMailboxPayloadIfAbsent(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, equivalent, time.Now())
 		},
@@ -291,9 +291,9 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 	}
 	verdictGraceSeconds = cfg.EffectiveVerdictGraceSeconds(verdictGraceSeconds)
 	verdictDebtCap = cfg.EffectiveVerdictDebtCap(verdictDebtCap)
-	if cfg.UINode != "" {
-		verdictExemptUINode = cfg.UINode
-	}
+	// Unconditional: a reload that drops interface_node must also drop the
+	// exemption instead of keeping the previous process-global value.
+	verdictExemptInterfaceNode = cfg.ConfiguredInterfaceNode()
 }
 
 // daemonPopArchiveVerify is a package-level indirection so tests can inject

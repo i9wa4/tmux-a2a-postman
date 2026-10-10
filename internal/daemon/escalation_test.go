@@ -155,12 +155,68 @@ func TestRuntimeEscalationSnapshotIsolatesSameRoleAcrossSessions(t *testing.T) {
 		t.Fatalf("other worker requests = %#v, want only ireq_other", otherWorker.InputRequired)
 	}
 
-	uiNode, ok := runtimeUINode(rt.cfg, rt.nodes, "review")
+	uiNode, ok := runtimeInterfaceNode(rt.cfg, rt.nodes, "review")
 	if !ok {
-		t.Fatal("runtimeUINode() ok = false, want review messenger")
+		t.Fatal("runtimeInterfaceNode() ok = false, want review messenger")
 	}
 	if uiNode.NodeKey != "review:messenger" || uiNode.PaneID != "%10" {
-		t.Fatalf("runtimeUINode() = %s/%s, want review:messenger/%%10", uiNode.NodeKey, uiNode.PaneID)
+		t.Fatalf("runtimeInterfaceNode() = %s/%s, want review:messenger/%%10", uiNode.NodeKey, uiNode.PaneID)
+	}
+}
+
+// TestRuntimeInterfaceNodeUnsetResolvesNoTarget (#764 X4): with no
+// interface_node configured, no node is the escalation target even when a node
+// is literally named "messenger"; there is no built-in name.
+func TestRuntimeInterfaceNodeUnsetResolvesNoTarget(t *testing.T) {
+	nodes := map[string]discovery.NodeInfo{
+		"review:messenger": {PaneID: "%10", SessionName: "review"},
+		"review:worker":    {PaneID: "%11", SessionName: "review"},
+	}
+	for _, tc := range []struct {
+		name          string
+		interfaceNode string
+		wantKey       string
+		wantOK        bool
+	}{
+		{name: "unset", interfaceNode: ""},
+		{name: "blank", interfaceNode: "   "},
+		{name: "messenger when configured", interfaceNode: "messenger", wantKey: "review:messenger", wantOK: true},
+		{name: "other name when configured", interfaceNode: "mouthpiece"},
+		{name: "configured worker", interfaceNode: "worker", wantKey: "review:worker", wantOK: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{InterfaceNode: tc.interfaceNode}
+			got, ok := runtimeInterfaceNode(cfg, nodes, "review")
+			if ok != tc.wantOK || got.NodeKey != tc.wantKey {
+				t.Fatalf("runtimeInterfaceNode(%q) = (%q, %v), want (%q, %v)", tc.interfaceNode, got.NodeKey, ok, tc.wantKey, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestMaybePushEscalationUnsetInterfaceNodeSendsNothing (#764 X4): a runtime
+// whose config has no interface_node never pushes an escalation, even with a
+// tripped dead-letter threshold and a node literally named "messenger".
+func TestMaybePushEscalationUnsetInterfaceNodeSendsNothing(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx", "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	if err := writeRuntimeMarkdown(filepath.Join(sessionDir, "dead-letter", "bad.md")); err != nil {
+		t.Fatalf("write dead-letter: %v", err)
+	}
+	now := time.Date(2026, time.July, 13, 9, 5, 0, 0, time.UTC)
+	var sent []string
+	rt := escalationTestRuntime(sessionDir, "review", "%1", &sent)
+	rt.cfg.InterfaceNode = ""
+	rt.cfg.EscalationDeadLetterCount = 1
+
+	rt.maybePushEscalation(now)
+	rt.maybePushEscalation(now.Add(2 * time.Second))
+
+	if len(sent) != 0 {
+		t.Fatalf("sent %d escalation notification(s) with no interface_node, want 0: %v", len(sent), sent)
 	}
 }
 
@@ -228,7 +284,7 @@ func TestMaybePushEscalationSendsPaneNotificationOncePerTripSet(t *testing.T) {
 			return nil
 		},
 	}
-	rt.cfg.UINode = "messenger"
+	rt.cfg.InterfaceNode = "messenger"
 	rt.cfg.Nodes = map[string]config.NodeConfig{"messenger": {}}
 	rt.cfg.EscalationCheckIntervalSeconds = 1
 	rt.cfg.EscalationDeadLetterCount = 1
@@ -271,7 +327,7 @@ func escalationTestRuntime(sessionDir, sessionName, uiPaneID string, sent *[]str
 			return nil
 		},
 	}
-	rt.cfg.UINode = "messenger"
+	rt.cfg.InterfaceNode = "messenger"
 	rt.cfg.Nodes = map[string]config.NodeConfig{"messenger": {}}
 	rt.cfg.EscalationCheckIntervalSeconds = 1
 	return rt

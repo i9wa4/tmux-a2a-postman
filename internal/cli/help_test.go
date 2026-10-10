@@ -138,7 +138,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"pane hints answer that delivery reached a recipient inbox",
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",
-		"ui_node                          Optional target filter for startup auto-PING; prefer Mermaid class <node> ui_node",
+		"interface_node                   The one human-facing node (startup PING target, verdict-debt exemption, escalation target); prefer Mermaid class <node> interface_node; omitted = no interface node",
 		"auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)",
 		"message_footer                   Header guidance before the sender body separator",
 		"draft_template                   Structured envelope for stored send-heredoc Markdown",

@@ -125,8 +125,9 @@ func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T)
 	notificationDoc := readRepoFile(t, "docs/design/notification.md")
 	assertContainsNormalized(t, notificationDoc, "The daemon delivers mail to the recipient inbox, sends a pane hint to that recipient when delivery succeeds, and emits auto-PING messages when the daemon starts or when a node appears.")
 	assertContainsNormalized(t, notificationDoc, "If the same role reappears with a new pane ID, that replacement pane is treated as newly appeared.")
-	assertContainsNormalized(t, notificationDoc, "`ui_node` is not a general escalation channel.")
-	assertContainsNormalized(t, notificationDoc, "The narrowing is intentional startup-noise control: an explicit non-empty `ui_node` declares the human-facing bootstrap entry point")
+	assertContainsNormalized(t, notificationDoc, "`interface_node` is not a general escalation channel.")
+	assertContainsNormalized(t, notificationDoc, "There is no embedded default and no `ui_node` alias")
+	assertContainsNormalized(t, notificationDoc, "The narrowing is intentional startup-noise control: an explicit non-empty `interface_node` declares the human-facing bootstrap entry point")
 	assertContainsNormalized(t, notificationDoc, "The remaining notification-related public settings are")
 	assertContainsNormalized(t, notificationDoc, "Stored message Markdown is an envelope.")
 	assertContainsNormalized(t, notificationDoc, "Sender Message")
@@ -486,12 +487,13 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	assertContainsNormalized(t, designDoc, "`postman.toml` is optional.")
 	assertContainsNormalized(t, designDoc, "A minimal `postman.md` may contain only a Mermaid `edges` section.")
 	assertContainsNormalized(t, designDoc, "Nodes referenced by those edges are materialized with empty `NodeConfig` values.")
-	assertContainsNormalized(t, designDoc, "marked in Mermaid with the `ui_node` class")
+	assertContainsNormalized(t, designDoc, "marked in Mermaid with the `interface_node` class")
 
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
 	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
 	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
-	assertContainsNormalized(t, configHelp, "Mermaid class <node> ui_node")
+	assertContainsNormalized(t, configHelp, "Mermaid class <node> interface_node")
+	assertContainsNormalized(t, configHelp, "There is no default and no ui_node alias")
 }
 
 func TestArchivedBodyReadPublicDocsContract(t *testing.T) {

@@ -80,8 +80,7 @@ type Config struct {
 	// Global settings
 	Edges                          []string                        `toml:"edges"`
 	ReplyCommand                   string                          `toml:"reply_command"`
-	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING; deprecated alias of InterfaceNode (#764)
-	InterfaceNode                  string                          `toml:"interface_node"`           // #764: canonical mouthpiece designation; ui_node is a one-cycle-deprecated legacy alias
+	InterfaceNode                  string                          `toml:"interface_node"`           // #764: the one human-facing node (startup PING target, verdict-debt exemption, escalation target); omitted = no interface node (fail closed); the legacy ui_node key is warned about and ignored
 	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
 	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
 	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
@@ -103,7 +102,6 @@ type Config struct {
 	AllowShellTemplates bool `toml:"allow_shell_templates"`
 
 	directTemplateRootTrust map[string]bool
-	uiNodeSet               bool
 	interfaceNodeSet        bool
 	verdictGraceSecondsSet  bool
 	verdictDebtCapSet       bool
@@ -415,20 +413,12 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func (cfg *Config) HasExplicitUINodeSetting() bool {
-	if cfg == nil {
-		return false
-	}
-	return cfg.uiNodeSet
-}
-
-// HasExplicitInterfaceNodeSetting reports whether interface_node (#764's
-// canonical mouthpiece designation) has a resolved, non-default value: either
-// set directly, or derived from the legacy ui_node alias by
-// resolveInterfaceNodeDesignation. It does NOT distinguish "set directly" from
-// "derived from ui_node"; callers that need that distinction must inspect
-// cfg.InterfaceNode/cfg.UINode equality and the resolution diagnostics
-// themselves.
+// HasExplicitInterfaceNodeSetting reports whether an interface_node was
+// declared by an operator (TOML [postman], postman.md frontmatter, or the
+// postman.md Mermaid interface_node class), including an explicit empty value.
+// Unset means no interface node: nothing is exempted, escalated to, or used to
+// narrow the startup PING. The legacy ui_node key and its markdown forms are
+// never consulted here (#764).
 func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
 	if cfg == nil {
 		return false
@@ -436,41 +426,44 @@ func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
 	return cfg.interfaceNodeSet
 }
 
-// resolveInterfaceNodeDesignation reconciles the legacy ui_node TOML key
-// with the new canonical interface_node key (#764 scope item 1), following
-// Diplomat's proposed migration/compat path (#764 scope item 6):
-//   - interface_node set, ui_node unset: derive ui_node from interface_node.
-//   - ui_node set, interface_node unset: derive interface_node from
-//     ui_node, and emit a non-silent one-cycle deprecation diagnostic.
-//   - both set, same value: valid, no diagnostic.
-//   - both set, different values: emit a non-silent conflict diagnostic;
-//     neither value is silently preferred over the other.
-//
-// Every runtime reader of the designation uses cfg.UINode (escalation
-// routing, verdict-debt exemption, FilterToUINode); interface_node is the
-// canonical INPUT but ui_node remains the single resolved RUNTIME value, so
-// this function must run after every layer (TOML, node files, markdown
-// frontmatter/Mermaid overlay) that can set either key has been merged into
-// cfg, not just after the TOML [postman] section.
-//
-// Diagnostics use log.Printf (stderr), matching warnDeprecatedKeys's
-// existing channel choice (#764 E-7): several CLI commands emit structured
-// JSON on stdout, so a config-resolution diagnostic must never write there.
-func resolveInterfaceNodeDesignation(cfg *Config, path string) {
-	switch {
-	case cfg.interfaceNodeSet && cfg.uiNodeSet:
-		if cfg.InterfaceNode != cfg.UINode {
-			log.Printf("WARNING: %s: conflicting designation settings: interface_node=%q vs legacy ui_node=%q; interface_node wins as the canonical value (#764)", path, cfg.InterfaceNode, cfg.UINode)
-			cfg.UINode = cfg.InterfaceNode
-		}
-	case cfg.interfaceNodeSet && !cfg.uiNodeSet:
-		cfg.UINode = cfg.InterfaceNode
-		cfg.uiNodeSet = true
-	case !cfg.interfaceNodeSet && cfg.uiNodeSet:
-		log.Printf("WARNING: %s: deprecated config key \"ui_node\"; use \"interface_node\" instead (#764, one-release-cycle deprecation window)", path)
-		cfg.InterfaceNode = cfg.UINode
-		cfg.interfaceNodeSet = true
+// ConfiguredInterfaceNode returns the interface node name with surrounding
+// whitespace removed, or "" when none is configured (nil Config, unset, empty,
+// or whitespace-only). Every runtime reader (verdict exemption, escalation
+// target, startup PING selectors, diagnostics) must use this accessor instead of
+// the raw InterfaceNode field so a value such as " messenger " or "   " is
+// interpreted the same way everywhere (#764). HasExplicitInterfaceNodeSetting
+// is independent of this value: an explicit whitespace-only setting stays
+// explicit but names no node.
+func (cfg *Config) ConfiguredInterfaceNode() string {
+	if cfg == nil {
+		return ""
 	}
+	return strings.TrimSpace(cfg.InterfaceNode)
+}
+
+// NoInterfaceNodeDiagnostic is the one operator-visible message for the
+// fail-closed state: no usable interface_node was configured (omitted, or
+// explicitly empty). It is surfaced once on stderr at daemon start and in
+// get-status (#764 S1).
+const NoInterfaceNodeDiagnostic = "no interface_node configured: no verdict exemption, no escalation push target"
+
+// InterfaceNodeDiagnostic returns NoInterfaceNodeDiagnostic when no usable
+// interface node is configured, and "" when one is. A nil Config is treated as
+// unconfigured.
+func (cfg *Config) InterfaceNodeDiagnostic() string {
+	if cfg.ConfiguredInterfaceNode() == "" {
+		return NoInterfaceNodeDiagnostic
+	}
+	return ""
+}
+
+// warnLegacyUINode logs one stderr diagnostic for a legacy ui_node form that
+// the loader ignored. The source names the file and the exact form so an
+// operator can find and migrate it. Diagnostics use log.Printf (stderr),
+// matching warnDeprecatedKeys: several CLI commands emit structured JSON on
+// stdout, so a config diagnostic must never write there.
+func warnLegacyUINode(source, form string) {
+	log.Printf("WARNING: %s: legacy %s is ignored; ui_node is no longer an alias, use interface_node instead; with no interface_node there is no interface node (#764)", source, form)
 }
 
 func (cfg *Config) EffectiveVerdictGraceSeconds(fallback int) int {
@@ -733,10 +726,6 @@ func mergeConfig(base, override *Config) {
 	if override.ReplyCommand != "" {
 		base.ReplyCommand = override.ReplyCommand
 	}
-	if override.UINode != "" || override.uiNodeSet {
-		base.UINode = override.UINode
-		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
-	}
 	if override.InterfaceNode != "" || override.interfaceNodeSet {
 		base.InterfaceNode = override.InterfaceNode
 		base.interfaceNodeSet = base.interfaceNodeSet || override.interfaceNodeSet
@@ -944,7 +933,9 @@ func LoadConfig(path string) (*Config, error) {
 			if err := md.PrimitiveDecode(postmanPrim, cfg); err != nil {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
-			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			if tomlHasField(md, "postman", "ui_node") {
+				warnLegacyUINode(configPath, "TOML key [postman] ui_node")
+			}
 			cfg.interfaceNodeSet = tomlHasField(md, "postman", "interface_node")
 			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
 			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
@@ -1038,19 +1029,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
-	// #764 E-2: resolve ui_node/interface_node once every layer that can set
-	// either key (TOML [postman], nodes/*.toml, XDG markdown frontmatter and
-	// Mermaid overlay) has been merged into cfg, not immediately after the
-	// TOML [postman] section alone.
-	resolveInterfaceNodeDesignation(cfg, configPath)
-
 	cfg.initDirectTemplateRootTrust()
 
 	cfg.ensureNodesForEdges()
 
 	// Embedded defaults intentionally allow an empty topology. Preserve that
 	// behavior only when there is no XDG or explicit TOML base and overlays only
-	// tweak global settings such as ui_node.
+	// tweak global settings such as interface_node.
 	if path == "" && xdgPath == "" && len(cfg.Nodes) == 0 && len(cfg.Edges) == 0 {
 		return cfg, nil
 	}
