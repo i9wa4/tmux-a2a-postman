@@ -114,7 +114,7 @@ func TestRuntimeReconcileKeepsSamePaneIDInDifferentTabsRoutable(t *testing.T) {
 		TerminalID:     paneID + ":terminal-2",
 		WorkspaceID:    "workspace-1",
 		TabID:          tabTwo,
-		Metadata:       map[string]string{"postman.node": "critic", multiplexer.HerdrPaneContextIDMetadataKey: "ctx-tab-2"},
+		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "critic", multiplexer.HerdrPaneContextIDMetadataKey: "ctx-tab-2"},
 		Env:            map[string]string{},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		PostmanSession: sessionName,
@@ -601,7 +601,7 @@ func TestRuntimeReconcileFinalNodesIgnoresOlderSuccessfulDiscoveryAfterNewerSucc
 		TerminalID:     "workspace-1:pane-old-2:terminal",
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-old",
-		Metadata:       map[string]string{"postman.node": "worker-2"},
+		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker-2"},
 		Env:            map[string]string{},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		PostmanSession: "work",
@@ -1323,7 +1323,7 @@ func TestRuntimeDiscoverDoesNotRegisterDuplicateHerdrClaims(t *testing.T) {
 		TerminalID:  "workspace-1:pane-2:terminal",
 		WorkspaceID: "workspace-1",
 		TabID:       "workspace-1:tab-1",
-		Metadata:    map[string]string{"postman.node": "worker"},
+		Metadata:    map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 		ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 	})
 	cfg := config.DefaultConfig()
@@ -1826,7 +1826,11 @@ func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 	if _, err := writeClient.WritePaneText(context.Background(), "workspace-1:pane-1", "body"); err != nil {
 		t.Fatalf("WritePaneText() error = %v", err)
 	}
-	if _, err := writeClient.SetWorkspaceMetadata(context.Background(), "workspace-1", "postman.session_owner.work", "ctx:123"); err != nil {
+	ownerKey, err := multiplexer.HerdrSessionOwnerMetadataKey("work")
+	if err != nil {
+		t.Fatalf("HerdrSessionOwnerMetadataKey() error = %v", err)
+	}
+	if _, err := writeClient.SetWorkspaceMetadata(context.Background(), "workspace-1", ownerKey, "ctx:123"); err != nil {
 		t.Fatalf("SetWorkspaceMetadata() error = %v", err)
 	}
 
@@ -1898,7 +1902,11 @@ func validRuntimeHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
 func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwner string) multiplexer.HerdrSessionSnapshot {
 	workspaceMetadata := map[string]string{}
 	if sessionOwner != "" {
-		workspaceMetadata["postman.session_owner."+sessionName] = sessionOwner
+		ownerKey, err := multiplexer.HerdrSessionOwnerMetadataKey(sessionName)
+		if err != nil {
+			panic(err)
+		}
+		workspaceMetadata[ownerKey] = sessionOwner
 	}
 	return multiplexer.HerdrSessionSnapshot{
 		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
@@ -1916,7 +1924,7 @@ func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwn
 			TerminalID:     paneID + ":terminal",
 			WorkspaceID:    workspaceID,
 			TabID:          tabID,
-			Metadata:       map[string]string{"postman.node": "worker"},
+			Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 			Env:            map[string]string{},
 			ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 			PostmanSession: sessionName,
@@ -1988,7 +1996,7 @@ func handleFakeHerdrSocketConn(conn net.Conn, methods chan<- string) {
 					"focused":        true,
 					"agent_status":   "working",
 					"revision":       1,
-					"metadata":       map[string]string{"postman.node": "worker"},
+					"metadata":       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 					"process_info":   map[string]interface{}{"pane_id": "workspace-1:pane-1", "foreground_processes": []map[string]interface{}{{"pid": 123, "name": "codex"}}},
 					"terminal_title": "worker",
 				}},

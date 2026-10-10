@@ -4,8 +4,69 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 )
+
+func herdrOwnerKeyForTest(t *testing.T, sessionName string) string {
+	t.Helper()
+	key, err := HerdrSessionOwnerMetadataKey(sessionName)
+	if err != nil {
+		t.Fatalf("HerdrSessionOwnerMetadataKey(%q) error = %v", sessionName, err)
+	}
+	return key
+}
+
+func TestHerdrMetadataTokenKeysSatisfyHerdrGrammar(t *testing.T) {
+	for _, key := range []string{
+		herdrOwnerKeyForTest(t, "work"),
+		herdrOwnerKeyForTest(t, strings.Repeat("long-session-name-", 20)),
+		HerdrPaneContextIDMetadataKey,
+		HerdrPostmanNodeMetadataKey,
+	} {
+		t.Run(key, func(t *testing.T) {
+			if err := validateHerdrMetadataToken(key); err != nil {
+				t.Fatalf("validateHerdrMetadataToken(%q) error = %v", key, err)
+			}
+		})
+	}
+}
+
+func TestHerdrSessionOwnerMetadataKeyIsPerSessionAndStable(t *testing.T) {
+	work := herdrOwnerKeyForTest(t, "work")
+	other := herdrOwnerKeyForTest(t, "other")
+	if work == other {
+		t.Fatalf("owner keys for distinct sessions are equal: %q", work)
+	}
+	if again := herdrOwnerKeyForTest(t, "work"); again != work {
+		t.Fatalf("owner key is not stable: %q then %q", work, again)
+	}
+	if !strings.HasPrefix(work, herdrSessionOwnerMetadataKeyPrefix) {
+		t.Fatalf("owner key %q lacks prefix %q", work, herdrSessionOwnerMetadataKeyPrefix)
+	}
+	for _, bad := range []string{"", "   ", "bad\x1bname"} {
+		if _, err := HerdrSessionOwnerMetadataKey(bad); err == nil {
+			t.Fatalf("HerdrSessionOwnerMetadataKey(%q) error = nil, want rejection", bad)
+		}
+	}
+}
+
+func TestValidateHerdrMetadataTokenRejectsInvalidKeys(t *testing.T) {
+	for _, key := range []string{
+		"",
+		"postman" + ".session_owner",
+		"postman/context",
+		"postman context",
+		"postman_context_é",
+		strings.Repeat("a", 33),
+	} {
+		t.Run(key, func(t *testing.T) {
+			if err := validateHerdrMetadataToken(key); err == nil {
+				t.Fatalf("validateHerdrMetadataToken(%q) error = nil, want rejection", key)
+			}
+		})
+	}
+}
 
 func TestHerdrBackendSendPaneInputRequiresWriteGateBeforeClientCall(t *testing.T) {
 	client := &fakeHerdrWriteClient{fakeHerdrReadClient: fakeHerdrReadClient{
@@ -131,7 +192,7 @@ func TestHerdrBackendSendPaneInputRequiresSnapshotContainmentBeforeWrite(t *test
 
 func TestHerdrBackendSessionOwnerMarkerUsesWorkspaceMetadata(t *testing.T) {
 	snapshot := validHerdrSessionSnapshot()
-	snapshot.Workspaces[0].Metadata = map[string]string{HerdrSessionOwnerMetadataKey + ".work": "ctx-1:123"}
+	snapshot.Workspaces[0].Metadata = map[string]string{herdrOwnerKeyForTest(t, "work"): "ctx-1:123"}
 	client := &fakeHerdrReadClient{snapshot: snapshot}
 	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
 
@@ -141,6 +202,23 @@ func TestHerdrBackendSessionOwnerMarkerUsesWorkspaceMetadata(t *testing.T) {
 	}
 	if got != "ctx-1:123" {
 		t.Fatalf("SessionOwnerMarker() = %q, want marker", got)
+	}
+}
+
+func TestHerdrBackendSessionOwnerMarkerIgnoresLegacySessionSuffixedMetadata(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	// The real prior key: "postman.session_owner." + session name (invalid under Herdr 0.8.2).
+	legacyKey := "postman" + ".session_owner.work"
+	snapshot.Workspaces[0].Metadata = map[string]string{legacyKey: "ctx-1:123"}
+	client := &fakeHerdrReadClient{snapshot: snapshot}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	got, err := backend.SessionOwnerMarker(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("SessionOwnerMarker() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("SessionOwnerMarker() = %q, want no legacy marker", got)
 	}
 }
 
@@ -159,7 +237,7 @@ func TestHerdrBackendSetAndClearSessionOwnerMarkerUseWorkspaceMetadata(t *testin
 	}
 	if client.setWorkspaceMetadataCalls != 1 ||
 		client.setWorkspaceMetadataID != "workspace-1" ||
-		client.setWorkspaceMetadataKey != HerdrSessionOwnerMetadataKey+".work" ||
+		client.setWorkspaceMetadataKey != herdrOwnerKeyForTest(t, "work") ||
 		client.setWorkspaceMetadataValue != "ctx-1:123" {
 		t.Fatalf("set workspace metadata = calls:%d id:%q key:%q value:%q, want session marker",
 			client.setWorkspaceMetadataCalls,
@@ -173,7 +251,7 @@ func TestHerdrBackendSetAndClearSessionOwnerMarkerUseWorkspaceMetadata(t *testin
 	}
 	if client.clearWorkspaceMetadataCalls != 1 ||
 		client.clearWorkspaceMetadataID != "workspace-1" ||
-		client.clearWorkspaceMetadataKey != HerdrSessionOwnerMetadataKey+".work" {
+		client.clearWorkspaceMetadataKey != herdrOwnerKeyForTest(t, "work") {
 		t.Fatalf("clear workspace metadata = calls:%d id:%q key:%q, want session marker clear",
 			client.clearWorkspaceMetadataCalls,
 			client.clearWorkspaceMetadataID,
@@ -306,6 +384,86 @@ func TestHerdrBackendSetAndClearPaneOwnerMarkerUsePaneMetadata(t *testing.T) {
 			client.clearPaneMetadataCalls,
 			client.clearPaneMetadataID,
 			client.clearPaneMetadataKey)
+	}
+}
+
+// statefulWorkspaceMetadataClient applies workspace metadata writes to the
+// snapshot it serves, so tests can read back what set and clear did.
+type statefulWorkspaceMetadataClient struct {
+	fakeHerdrWriteClient
+
+	metadata map[string]string
+}
+
+func (c *statefulWorkspaceMetadataClient) SessionSnapshot(ctx context.Context) (HerdrSessionSnapshot, error) {
+	snapshot, err := c.fakeHerdrWriteClient.SessionSnapshot(ctx)
+	if err != nil {
+		return snapshot, err
+	}
+	workspaces := make([]HerdrWorkspaceSnapshot, len(snapshot.Workspaces))
+	copy(workspaces, snapshot.Workspaces)
+	for i := range workspaces {
+		metadata := make(map[string]string, len(c.metadata))
+		for key, value := range c.metadata {
+			metadata[key] = value
+		}
+		workspaces[i].Metadata = metadata
+	}
+	snapshot.Workspaces = workspaces
+	return snapshot, nil
+}
+
+func (c *statefulWorkspaceMetadataClient) SetWorkspaceMetadata(ctx context.Context, workspaceID string, key string, value string) (HerdrWriteResult, error) {
+	c.metadata[key] = value
+	return c.fakeHerdrWriteClient.SetWorkspaceMetadata(ctx, workspaceID, key, value)
+}
+
+func (c *statefulWorkspaceMetadataClient) ClearWorkspaceMetadata(ctx context.Context, workspaceID string, key string) (HerdrWriteResult, error) {
+	delete(c.metadata, key)
+	return c.fakeHerdrWriteClient.ClearWorkspaceMetadata(ctx, workspaceID, key)
+}
+
+func TestHerdrBackendSessionOwnerMarkersAreIsolatedPerSessionInSharedWorkspace(t *testing.T) {
+	client := &statefulWorkspaceMetadataClient{
+		fakeHerdrWriteClient: fakeHerdrWriteClient{fakeHerdrReadClient: fakeHerdrReadClient{
+			snapshot: validHerdrSessionSnapshot(),
+		}},
+		metadata: map[string]string{},
+	}
+	newBackend := func(sessionName string) HerdrBackend {
+		config := validHerdrReadConfig()
+		config.Runtime.SessionName = sessionName
+		config.Policy.AllowedSessions = []string{"work", "other"}
+		return HerdrBackend{Config: config, Client: client, InputSanitizer: passThroughHerdrInput}
+	}
+	work := newBackend("work")
+	other := newBackend("other")
+	ctx := context.Background()
+
+	if err := work.SetSessionOwnerMarker(ctx, "ctx-work", "work", 111); err != nil {
+		t.Fatalf("work SetSessionOwnerMarker() error = %v", err)
+	}
+	if err := other.SetSessionOwnerMarker(ctx, "ctx-other", "other", 222); err != nil {
+		t.Fatalf("other SetSessionOwnerMarker() error = %v", err)
+	}
+	if got, err := work.SessionOwnerMarker(ctx, "work"); err != nil || got != "ctx-work:111" {
+		t.Fatalf("work SessionOwnerMarker() = %q, %v; want ctx-work:111 after other session wrote", got, err)
+	}
+	if got, err := other.SessionOwnerMarker(ctx, "other"); err != nil || got != "ctx-other:222" {
+		t.Fatalf("other SessionOwnerMarker() = %q, %v; want ctx-other:222", got, err)
+	}
+
+	if err := work.ClearSessionOwnerMarker(ctx, "work"); err != nil {
+		t.Fatalf("work ClearSessionOwnerMarker() error = %v", err)
+	}
+	if got, err := work.SessionOwnerMarker(ctx, "work"); err != nil || got != "" {
+		t.Fatalf("work SessionOwnerMarker() after clear = %q, %v; want empty", got, err)
+	}
+	if got, err := other.SessionOwnerMarker(ctx, "other"); err != nil || got != "ctx-other:222" {
+		t.Fatalf("other SessionOwnerMarker() after work clear = %q, %v; want live marker ctx-other:222", got, err)
+	}
+	if len(client.metadata) != 1 {
+		t.Fatalf("workspace metadata = %#v, want only other session's key", client.metadata)
 	}
 }
 
