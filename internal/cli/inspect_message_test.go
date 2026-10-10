@@ -136,13 +136,17 @@ func inspectJournalFullForFixture(t *testing.T, fixture inspectMessageFixtureSta
 	recordDeadLetter = func(filename, content string) {
 		t.Helper()
 		seq++
-		deadName := strings.TrimSuffix(filename, ".md") + "-dl-pop-failed.md"
-		if _, err := writer.AppendEvent(projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		// The shape handleDaemonSubmitPopDeadLetter journals for a daemon pop whose
+		// archive verification failed (internal/daemon/daemon.go): OperatorVisible,
+		// MessageID = file name, SourcePath = read/<file name>, a suffixed
+		// dead-letter Path and the message bytes as Content.
+		deadName := strings.TrimSuffix(filename, ".md") + "-dl-pop-verification-exhausted.md"
+		if _, err := writer.AppendEvent(projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 			MessageID:  filename,
 			From:       "orchestrator",
 			To:         "worker",
 			Path:       filepath.Join("dead-letter", deadName),
-			SourcePath: filepath.Join("inbox", "worker", filename),
+			SourcePath: filepath.Join("read", filename),
 			Content:    content,
 		}, now.Add(time.Duration(seq)*time.Second)); err != nil {
 			t.Fatalf("AppendEvent(dead-lettered): %v", err)
@@ -388,6 +392,22 @@ func TestRunInspectMessageClaimedProofFollowsJournaledReads(t *testing.T) {
 		deliver, _, recordDeadLetter := inspectJournalFullForFixture(t, fixture)
 		filename := "20260501-120005-from-orchestrator-to-worker.md"
 		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		deliver(filename, content)
+		recordDeadLetter(filename, content)
+		writeLegacyReadArchive(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+
+	// F-007b: legacy content has no embedded messageId, so the id parsed from the
+	// projected dead-letter CONTENT falls back to the suffixed dead-letter file
+	// name and never matches the original read/ file name. The veto must come from
+	// the dead-letter event itself (SourcePath read/<file name>, MessageID = file
+	// name). Same real failed-pop event shape, old mtime, no sync.
+	t.Run("old read archive of an id-less dead-lettered message is not legacy", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		deliver, _, recordDeadLetter := inspectJournalFullForFixture(t, fixture)
+		filename := "20260501-120006-from-orchestrator-to-worker.md"
+		content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\n" + secretBody + "\n"
 		deliver(filename, content)
 		recordDeadLetter(filename, content)
 		writeLegacyReadArchive(t, filepath.Join(fixture.sessionDir, "read", filename), content)

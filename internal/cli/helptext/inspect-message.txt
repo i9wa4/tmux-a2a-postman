@@ -24,8 +24,8 @@ Search scope:
   claimed when the journal has a read event for that exact path and message id
   in the current session generation (the same fact the projection sync uses to
   keep the archive). When the journal says nothing about the archive (no read
-  for the path, no unconsumed delivery of the message, no dead letter for it, no
-  empty-content read for the path), an archive whose file modification time is
+  for the path, no unconsumed delivery of the message, no dead letter for the
+  message or for that read/ path, no empty-content read for the path), an archive whose file modification time is
   before 2026-06-30 is accepted as a legacy archive; the file name's date is
   never used, and the cutoff date is a heuristic, not a verified start of
   journaled reads. A message the journal shows as delivered without a matching

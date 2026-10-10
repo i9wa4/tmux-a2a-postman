@@ -177,11 +177,15 @@ type inspectMessageClaimEvidence struct {
 	// delivered holds the message ids the journal still shows as delivered to an
 	// inbox: a delivered event that no read (or dead-letter) event has consumed.
 	delivered map[string]bool
-	// deadLettered holds the message ids of messages the journal shows as
-	// dead-lettered in the current generation. A dead-letter event consumes the
-	// delivered entry, so such a message is no longer in delivered even though its
-	// pop never produced a read (a pop that failed after the archive rename, or
-	// whose verification failed, leaves a read/ archive and a dead letter).
+	// deadLettered holds the message ids parsed from the CONTENT of the projected
+	// dead letters of the current generation (the embedded messageId when the
+	// content has one). A dead-letter event consumes the delivered entry, so such
+	// a message is no longer in delivered even though its pop never produced a read
+	// (a pop that failed after the archive rename, or whose verification failed,
+	// leaves a read/ archive and a dead letter). Content without an embedded id
+	// falls back to the suffixed dead-letter file name here, so the original
+	// name is matched through the dead-letter events themselves instead (see
+	// projection.IsDeadLetteredSource and IsDeadLetteredMessage).
 	deadLettered map[string]bool
 	// projected is the current-generation projection itself, kept for the
 	// tombstoned-read lookup. It is the zero value when the session has no usable
@@ -279,6 +283,16 @@ func inspectMessageClaimProven(path, filename, messageID string, evidence inspec
 		return false
 	}
 	if evidence.delivered[messageID] || evidence.deadLettered[messageID] {
+		return false
+	}
+	// The dead-letter event itself names the original message: its SourcePath is
+	// read/<file name> and its MessageID is the file name for a failed daemon pop,
+	// whatever the message content carries. This covers content without an
+	// embedded message id, whose id above falls back to the suffixed dead-letter
+	// file name and would miss the original read/ file name.
+	if evidence.projected.IsDeadLetteredSource("read/"+filename) ||
+		evidence.projected.IsDeadLetteredMessage(filename) ||
+		evidence.projected.IsDeadLetteredMessage(messageID) {
 		return false
 	}
 	info, err := os.Stat(path)
