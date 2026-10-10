@@ -1,6 +1,7 @@
 package projection
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -664,7 +665,7 @@ func TestValidateCommandApprovalReplySlotReconciliationRejectsUnsafeEvidence(t *
 
 func TestValidateCommandApprovalReplySlotReconciliationRejectsAmbiguousAndRepairsPostExpiryDecisions(t *testing.T) {
 	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
-	t.Run("duplicate effective decisions", func(t *testing.T) {
+	t.Run("bound duplicate with the same decision does not block repair", func(t *testing.T) {
 		sessionDir := t.TempDir()
 		writer, repair := appendReconcileableCommandApprovalSlot(t, sessionDir, now, journal.ApprovalDecisionRejected)
 		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
@@ -683,8 +684,129 @@ func TestValidateCommandApprovalReplySlotReconciliationRejectsAmbiguousAndRepair
 		if err != nil || !ok {
 			t.Fatalf("ValidateCommandApprovalReplySlotReconciliation() = (%#v, %v, %v)", plan, ok, err)
 		}
-		if plan.Status != "rejected" {
-			t.Fatalf("plan = %#v, want rejected duplicate decision", plan)
+		if plan.Status != "ready" {
+			t.Fatalf("plan = %#v, want ready despite an identical bound duplicate", plan)
+		}
+		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalReplySlotReconciledEventType, journal.VisibilityOperatorVisible, repair, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(4*time.Second)); err != nil {
+			t.Fatalf("AppendEventWithOptions(reconciliation): %v", err)
+		}
+		assertCommandApprovalReplySlotForProjection(t, sessionDir, repair.InputRequestID, false)
+	})
+
+	t.Run("approved then expired then second identical late approval keeps repair", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writer, repair := appendCommandApprovalSlotWithoutDecision(t, sessionDir, now)
+		var firstDecision journal.Event
+		for i, at := range []time.Duration{5 * time.Second, 6 * time.Second} {
+			event, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+				Reviewer:         "approver",
+				ReviewerAddress:  "review:approver",
+				RequesterAddress: "review:worker",
+				Decision:         journal.ApprovalDecisionApproved,
+				MessageID:        fmt.Sprintf("decision-%d.md", i),
+				InputRequestID:   repair.InputRequestID,
+				CommandHash:      repair.CommandHash,
+			}, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(at))
+			if err != nil {
+				t.Fatalf("AppendEventWithOptions(late decision %d): %v", i, err)
+			}
+			if i == 0 {
+				firstDecision = event
+			}
+		}
+		repair.DecisionEventID = firstDecision.EventID
+
+		plan, ok, err := ValidateCommandApprovalReplySlotReconciliation(sessionDir, "review", repair, now.Add(10*time.Minute))
+		if err != nil || !ok {
+			t.Fatalf("ValidateCommandApprovalReplySlotReconciliation() = (%#v, %v, %v)", plan, ok, err)
+		}
+		if plan.Status != "ready" {
+			t.Fatalf("plan = %#v, want ready after a re-sent identical late approval", plan)
+		}
+		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalReplySlotReconciledEventType, journal.VisibilityOperatorVisible, repair, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(11*time.Minute)); err != nil {
+			t.Fatalf("AppendEventWithOptions(reconciliation): %v", err)
+		}
+		// The applied repair must survive replay with the duplicate present.
+		assertCommandApprovalReplySlotForProjection(t, sessionDir, repair.InputRequestID, false)
+		assertLateApprovalNotExecutable(t, sessionDir, repair.ThreadID, now.Add(12*time.Minute))
+	})
+
+	t.Run("retry on the same thread keeps the earlier generation's repair applied", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writer, repair := appendReconcileableCommandApprovalSlot(t, sessionDir, now, journal.ApprovalDecisionRejected)
+		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalReplySlotReconciledEventType, journal.VisibilityOperatorVisible, repair, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(3*time.Second)); err != nil {
+			t.Fatalf("AppendEventWithOptions(reconciliation A): %v", err)
+		}
+
+		// Retry mints request B on the SAME deterministic thread id.
+		const retryInputRequestID = "ireq_reconcile_retry"
+		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+			Requester:              repair.Requester,
+			RequesterAddress:       repair.RequesterAddress,
+			Reviewer:               "orchestrator",
+			CommandApproverNode:    repair.Approver,
+			CommandApproverAddress: repair.ApproverAddress,
+			Mode:                   "blocking",
+			Label:                  "protected",
+			CommandHash:            repair.CommandHash,
+			InputRequestID:         retryInputRequestID,
+			ExpiresAt:              now.Add(time.Hour).Format(time.RFC3339Nano),
+		}, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(20*time.Second)); err != nil {
+			t.Fatalf("AppendEventWithOptions(retry request): %v", err)
+		}
+		retry := commandApprovalInputContent(repair.Requester, repair.Approver, "request-retry.md", "required", repair.ThreadID, retryInputRequestID, "", repair.CommandHash, "approval requested again")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "request-retry.md", repair.Requester, repair.Approver, retry, now.Add(21*time.Second))
+		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+			Reviewer:         "approver",
+			ReviewerAddress:  "review:approver",
+			RequesterAddress: "review:worker",
+			Decision:         journal.ApprovalDecisionApproved,
+			MessageID:        "decision-retry.md",
+			InputRequestID:   retryInputRequestID,
+			CommandHash:      repair.CommandHash,
+		}, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(22*time.Second)); err != nil {
+			t.Fatalf("AppendEventWithOptions(retry decision): %v", err)
+		}
+
+		state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(10*time.Minute), DefaultInputRequestStaleAfterSeconds)
+		if err != nil || !ok {
+			t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+		}
+		if hasInputRequest(state.InputRequired, repair.InputRequestID) || hasInputRequest(state.WaitingOnInput, repair.InputRequestID) {
+			t.Fatalf("generation A repair was dropped by the retry: %#v", state)
+		}
+		if !hasInputRequest(state.InputRequired, retryInputRequestID) {
+			t.Fatalf("generation B slot was affected by A's repair: %#v", state.InputRequired)
+		}
+		plan, ok, err := ValidateCommandApprovalReplySlotReconciliation(sessionDir, "review", repair, now.Add(10*time.Minute))
+		if err != nil || !ok {
+			t.Fatalf("ValidateCommandApprovalReplySlotReconciliation() = (%#v, %v, %v)", plan, ok, err)
+		}
+		if plan.Status != "already_reconciled" {
+			t.Fatalf("plan = %#v, want already_reconciled for generation A", plan)
+		}
+	})
+
+	t.Run("wrong-principal and unbound decisions do not block repair", func(t *testing.T) {
+		sessionDir := t.TempDir()
+		writer, repair := appendReconcileableCommandApprovalSlot(t, sessionDir, now, journal.ApprovalDecisionRejected)
+		for i, payload := range []journal.CommandApprovalDecisionPayload{
+			{Reviewer: "intruder", ReviewerAddress: "review:intruder", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionApproved, InputRequestID: repair.InputRequestID, CommandHash: repair.CommandHash},
+			{Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionApproved, InputRequestID: "ireq_other", CommandHash: repair.CommandHash},
+			{Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionApproved, InputRequestID: repair.InputRequestID, CommandHash: "sha256:other"},
+		} {
+			payload.MessageID = fmt.Sprintf("noise-%d.md", i)
+			if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, payload, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(time.Duration(3+i)*time.Second)); err != nil {
+				t.Fatalf("AppendEventWithOptions(noise %d): %v", i, err)
+			}
+		}
+
+		plan, ok, err := ValidateCommandApprovalReplySlotReconciliation(sessionDir, "review", repair, now.Add(10*time.Minute))
+		if err != nil || !ok {
+			t.Fatalf("ValidateCommandApprovalReplySlotReconciliation() = (%#v, %v, %v)", plan, ok, err)
+		}
+		if plan.Status != "ready" {
+			t.Fatalf("plan = %#v, want ready: wrong-principal and unbound events must be ignored", plan)
 		}
 	})
 
@@ -781,6 +903,47 @@ func TestValidateCommandApprovalReplySlotReconciliationRejectsAmbiguousAndRepair
 			t.Fatalf("plan = %#v, want closed-slot rejection", plan)
 		}
 	})
+}
+
+// TestLateApprovalIsNotExecutableAtExpiryBoundary pins the execution side of
+// the late-decision rule at the exact boundary (F-743-6): an approval observed
+// at or just past ExpiresAt projects expired, while one just before still reads
+// approved, so reply-slot closure never widens what may execute.
+func TestLateApprovalIsNotExecutableAtExpiryBoundary(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, repair := appendCommandApprovalSlotWithoutDecision(t, sessionDir, now)
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+		Reviewer:         "approver",
+		ReviewerAddress:  "review:approver",
+		RequesterAddress: "review:worker",
+		Decision:         journal.ApprovalDecisionApproved,
+		MessageID:        "decision.md",
+		InputRequestID:   repair.InputRequestID,
+		CommandHash:      repair.CommandHash,
+	}, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(5*time.Second)); err != nil {
+		t.Fatalf("AppendEventWithOptions(late decision): %v", err)
+	}
+	expiresAt := now.Add(4 * time.Second)
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		want CommandApprovalStatus
+	}{
+		{name: "just before expiry", at: expiresAt.Add(-time.Nanosecond), want: CommandApprovalStatusApproved},
+		{name: "at expiry", at: expiresAt, want: CommandApprovalStatusExpired},
+		{name: "just past expiry", at: expiresAt.Add(time.Nanosecond), want: CommandApprovalStatusExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			approvals, ok, err := ProjectCommandApprovalState(sessionDir, tc.at)
+			if err != nil || !ok {
+				t.Fatalf("ProjectCommandApprovalState() = (%#v, %v, %v)", approvals, ok, err)
+			}
+			if got := approvals.Threads[repair.ThreadID].Status; got != tc.want {
+				t.Fatalf("status at %s = %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
 }
 
 // assertLateApprovalNotExecutable proves reply-slot closure never grants

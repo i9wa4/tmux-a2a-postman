@@ -94,7 +94,7 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 		return CommandApprovalReplySlotReconciliationPlan{}, false, err
 	}
 	commandApprovalThreads := make(map[string]CommandApprovalThread)
-	effectiveCommandApprovalDecisions := make(map[string][]journal.Event)
+	repairEvidence := newCommandApprovalRepairEvidence()
 	commandApprovalOpenings := make(map[string]map[string]InputRequestDetail)
 	var matchingReconciliation journal.Event
 	sawLease := false
@@ -112,6 +112,7 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 			if err := applyCommandApprovalRequest(commandApprovalThreads, event); err != nil {
 				return CommandApprovalReplySlotReconciliationPlan{}, false, err
 			}
+			repairEvidence.recordRequest(commandApprovalThreads, event)
 		case journal.CommandApprovalDecidedEventType:
 			if err := applyCommandApprovalDecision(commandApprovalThreads, event); err != nil {
 				return CommandApprovalReplySlotReconciliationPlan{}, false, err
@@ -119,10 +120,9 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 			// Reply-slot closure is independent of execution effectiveness: a
 			// correctly bound terminal decision closes the reply obligation even if
 			// it arrived after expiry (execution stays governed by expiry/claim).
-			// Every decision observed on a terminal thread is counted, so a later
-			// conflicting decision makes the evidence ambiguous and blocks repair.
-			if commandApprovalThreadTerminal(commandApprovalThreads[event.ThreadID]) {
-				effectiveCommandApprovalDecisions[event.ThreadID] = append(effectiveCommandApprovalDecisions[event.ThreadID], event)
+			// Evidence is kept per request generation, not per thread.
+			if err := repairEvidence.recordDecision(event); err != nil {
+				return CommandApprovalReplySlotReconciliationPlan{}, false, err
 			}
 		case journal.CommandApprovalReplySlotReconciledEventType:
 			var existing journal.CommandApprovalReplySlotReconciledPayload
@@ -150,19 +150,18 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 		plan.Reason = "current session journal is incomplete"
 		return plan, false, nil
 	}
-	decisions := effectiveCommandApprovalDecisions[repair.ThreadID]
-	if len(decisions) != 1 {
-		plan.Reason = "expected exactly one effective terminal command approval decision"
-		return plan, true, nil
-	}
-	decision := decisions[0]
-	plan.DecisionAt = decision.OccurredAt
-	thread, exists := commandApprovalThreads[repair.ThreadID]
+	thread, exists := repairEvidence.snapshot(repair.ThreadID, repair.InputRequestID)
 	if !exists {
 		plan.Reason = "command approval request not found"
 		return plan, true, nil
 	}
-	if decision.EventID != repair.DecisionEventID || thread.InputRequestID != repair.InputRequestID || thread.CommandHash != repair.CommandHash || thread.Requester != repair.Requester || thread.RequesterAddress != repair.RequesterAddress || thread.CommandApproverNode != repair.Approver || thread.CommandApproverAddress != repair.ApproverAddress {
+	decision, ok := repairEvidence.effectiveDecision(repair.ThreadID, repair.InputRequestID)
+	if !ok {
+		plan.Reason = "expected exactly one effective terminal command approval decision (identical bound duplicates count once; missing or conflicting bound decisions do not)"
+		return plan, true, nil
+	}
+	plan.DecisionAt = decision.OccurredAt
+	if decision.EventID != repair.DecisionEventID || thread.CommandHash != repair.CommandHash || thread.Requester != repair.Requester || thread.RequesterAddress != repair.RequesterAddress || thread.CommandApproverNode != repair.Approver || thread.CommandApproverAddress != repair.ApproverAddress {
 		plan.Reason = "reconciliation tuple does not match recorded request and decision"
 		return plan, true, nil
 	}
@@ -241,7 +240,7 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	infoUnread := make(map[string]InputRequestDetail)
 	commandApprovalThreads := make(map[string]CommandApprovalThread)
 	acceptedCommandApprovalDecisions := make(map[commandApprovalReplySlotKey]string)
-	effectiveCommandApprovalDecisions := make(map[string][]journal.Event)
+	repairEvidence := newCommandApprovalRepairEvidence()
 	pendingCommandApprovalReplies := make(map[commandApprovalReplySlotKey]commandApprovalPendingReply)
 	pendingCommandApprovalReconciliations := make([]journal.CommandApprovalReplySlotReconciledPayload, 0)
 	commandApprovalOpenings := make(map[string]map[string]InputRequestDetail)
@@ -265,6 +264,7 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 			if err := applyCommandApprovalRequest(commandApprovalThreads, event); err != nil {
 				return MessageInputRequestState{}, false, err
 			}
+			repairEvidence.recordRequest(commandApprovalThreads, event)
 			continue
 		case journal.CommandApprovalDecidedEventType:
 			var payload journal.CommandApprovalDecisionPayload
@@ -275,8 +275,8 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				return MessageInputRequestState{}, false, err
 			}
 			thread := commandApprovalThreads[event.ThreadID]
-			if commandApprovalThreadTerminal(thread) {
-				effectiveCommandApprovalDecisions[event.ThreadID] = append(effectiveCommandApprovalDecisions[event.ThreadID], event)
+			if err := repairEvidence.recordDecision(event); err != nil {
+				return MessageInputRequestState{}, false, err
 			}
 			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok {
 				acceptedCommandApprovalDecisions[key] = event.OccurredAt
@@ -383,7 +383,7 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 		return MessageInputRequestState{}, false, nil
 	}
 	for _, repair := range pendingCommandApprovalReconciliations {
-		decision, ok := validateCommandApprovalReconciliationForProjection(repair, commandApprovalThreads, effectiveCommandApprovalDecisions, commandApprovalOpenings, openInboundExact, openOutboundExact, satisfactionExact)
+		decision, ok := validateCommandApprovalReconciliationForProjection(repair, repairEvidence, commandApprovalOpenings, openInboundExact, openOutboundExact, satisfactionExact)
 		if !ok {
 			continue
 		}
@@ -402,8 +402,94 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	return projected, true, nil
 }
 
-func commandApprovalThreadTerminal(thread CommandApprovalThread) bool {
-	return thread.Status == CommandApprovalStatusApproved || thread.Status == CommandApprovalStatusRejected
+// commandApprovalGenerationKey identifies one command-approval request
+// generation. Retrying an expired or rejected command mints a fresh request
+// (new input_request_id) on the same deterministic thread, so the thread id
+// alone cannot identify the request a repair or decision belongs to.
+type commandApprovalGenerationKey struct {
+	ThreadID       string
+	InputRequestID string
+}
+
+type commandApprovalBoundDecision struct {
+	event    journal.Event
+	decision journal.ApprovalDecision
+}
+
+// commandApprovalRepairEvidence collects, per request generation, the request
+// snapshot recorded by that generation's own request event and every decision
+// event that is correctly bound to it. Reconciliation is validated against this
+// evidence rather than the latest thread entry, so a later retry on the same
+// thread neither invalidates an earlier generation's repair nor lends its own
+// decisions to it.
+type commandApprovalRepairEvidence struct {
+	snapshots map[commandApprovalGenerationKey]CommandApprovalThread
+	decisions map[commandApprovalGenerationKey][]commandApprovalBoundDecision
+}
+
+func newCommandApprovalRepairEvidence() *commandApprovalRepairEvidence {
+	return &commandApprovalRepairEvidence{
+		snapshots: make(map[commandApprovalGenerationKey]CommandApprovalThread),
+		decisions: make(map[commandApprovalGenerationKey][]commandApprovalBoundDecision),
+	}
+}
+
+// recordRequest snapshots the generation a request event just created. It must
+// run right after applyCommandApprovalRequest for the same event.
+func (e *commandApprovalRepairEvidence) recordRequest(threads map[string]CommandApprovalThread, event journal.Event) {
+	thread, ok := threads[event.ThreadID]
+	if !ok || thread.InputRequestID == "" {
+		return
+	}
+	e.snapshots[commandApprovalGenerationKey{ThreadID: event.ThreadID, InputRequestID: thread.InputRequestID}] = thread
+}
+
+// recordDecision keeps a decision only when it is correctly bound to the
+// recorded generation: same thread, input_request_id and command hash, and the
+// recorded approver principal. Unbound or wrong-principal events are ignored.
+func (e *commandApprovalRepairEvidence) recordDecision(event journal.Event) error {
+	var payload journal.CommandApprovalDecisionPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return err
+	}
+	if payload.InputRequestID == "" {
+		return nil
+	}
+	snapshot, ok := e.snapshots[commandApprovalGenerationKey{ThreadID: event.ThreadID, InputRequestID: payload.InputRequestID}]
+	if !ok || snapshot.CommandHash == "" || payload.CommandHash != snapshot.CommandHash {
+		return nil
+	}
+	if matches, _ := commandApprovalDecisionMatchesThreadIdentity(snapshot, payload); !matches {
+		return nil
+	}
+	if payload.Decision != journal.ApprovalDecisionApproved && payload.Decision != journal.ApprovalDecisionRejected {
+		return nil
+	}
+	key := commandApprovalGenerationKey{ThreadID: event.ThreadID, InputRequestID: payload.InputRequestID}
+	e.decisions[key] = append(e.decisions[key], commandApprovalBoundDecision{event: event, decision: payload.Decision})
+	return nil
+}
+
+func (e *commandApprovalRepairEvidence) snapshot(threadID, inputRequestID string) (CommandApprovalThread, bool) {
+	snapshot, ok := e.snapshots[commandApprovalGenerationKey{ThreadID: threadID, InputRequestID: inputRequestID}]
+	return snapshot, ok
+}
+
+// effectiveDecision returns the first bound decision of the generation. Bound
+// duplicates with the same decision value are one decision (a re-sent late
+// APPROVED must not block repair); a bound decision with a different value, or
+// no bound decision at all, fails closed.
+func (e *commandApprovalRepairEvidence) effectiveDecision(threadID, inputRequestID string) (journal.Event, bool) {
+	bound := e.decisions[commandApprovalGenerationKey{ThreadID: threadID, InputRequestID: inputRequestID}]
+	if len(bound) == 0 {
+		return journal.Event{}, false
+	}
+	for _, candidate := range bound[1:] {
+		if candidate.decision != bound[0].decision {
+			return journal.Event{}, false
+		}
+	}
+	return bound[0].event, true
 }
 
 func missingCommandApprovalReplySlotReconciliationField(repair journal.CommandApprovalReplySlotReconciledPayload) string {
@@ -454,17 +540,21 @@ func commandApprovalOpenSlot(state MessageInputRequestState, inputRequestID stri
 	return InputRequestDetail{}, false
 }
 
-func validateCommandApprovalReconciliationForProjection(repair journal.CommandApprovalReplySlotReconciledPayload, threads map[string]CommandApprovalThread, decisions map[string][]journal.Event, openings map[string]map[string]InputRequestDetail, openInbound, openOutbound, satisfaction map[string]InputRequestDetail) (journal.Event, bool) {
+func validateCommandApprovalReconciliationForProjection(repair journal.CommandApprovalReplySlotReconciledPayload, evidence *commandApprovalRepairEvidence, openings map[string]map[string]InputRequestDetail, openInbound, openOutbound, satisfaction map[string]InputRequestDetail) (journal.Event, bool) {
 	if missingCommandApprovalReplySlotReconciliationField(repair) != "" {
 		return journal.Event{}, false
 	}
-	thread, exists := threads[repair.ThreadID]
-	effectiveDecisions := decisions[repair.ThreadID]
-	if !exists || len(effectiveDecisions) != 1 {
+	// Same generation-bound rule as ValidateCommandApprovalReplySlotReconciliation,
+	// so a repair that validated at apply time never drops on replay.
+	thread, exists := evidence.snapshot(repair.ThreadID, repair.InputRequestID)
+	if !exists {
 		return journal.Event{}, false
 	}
-	decision := effectiveDecisions[0]
-	if decision.EventID != repair.DecisionEventID || thread.InputRequestID != repair.InputRequestID || thread.CommandHash != repair.CommandHash || thread.Requester != repair.Requester || thread.RequesterAddress != repair.RequesterAddress || thread.CommandApproverNode != repair.Approver || thread.CommandApproverAddress != repair.ApproverAddress {
+	decision, ok := evidence.effectiveDecision(repair.ThreadID, repair.InputRequestID)
+	if !ok {
+		return journal.Event{}, false
+	}
+	if decision.EventID != repair.DecisionEventID || thread.CommandHash != repair.CommandHash || thread.Requester != repair.Requester || thread.RequesterAddress != repair.RequesterAddress || thread.CommandApproverNode != repair.Approver || thread.CommandApproverAddress != repair.ApproverAddress {
 		return journal.Event{}, false
 	}
 	if opening, ok := uniqueCommandApprovalOpening(openings, repair.InputRequestID); !ok || !commandApprovalOpeningMatchesRepair(opening, repair) {
