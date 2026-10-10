@@ -93,6 +93,53 @@ reason, expiry, approval thread id, decision, and exit status. Full command
 text is omitted by default. Add `--store-command-text` only when the command
 body is safe to keep in the local audit log.
 
+### 2.1. Positional argv fallback (#838)
+
+`--command <bash>` is the documented interface: its value is trimmed of
+leading/trailing whitespace and passed to `bash -lc`, with no further
+reconstruction.
+
+When `--command` is omitted, trailing positional arguments after `--`
+become the command, with a rule based on how many there are:
+
+- **Exactly one** positional argument is legacy, unchanged shell source: the
+  same text and the same command digest as before #838 (joining a single
+  element with any separator is a no-op). Like `--command`, the final command
+  text is trimmed of leading and trailing whitespace, so a one-element
+  invocation with surrounding whitespace runs and is digested trimmed.
+  Operators, pipes and expansions inside that one argument keep their shell
+  meaning.
+- **Two or more** positional arguments are each individually POSIX-single-
+  quoted and space-joined, reconstructing their original argv boundaries.
+  Because every element is quoted, an operator or expansion placed in its own
+  element (`;`, `&&`, `|`, `$(...)`, `$HOME`) is a literal argument to the
+  program named by the first element, not a shell operator. Use one argument
+  or `--command` when shell operators are intended.
+
+Before this fix, positional arguments of any count were joined with an
+unquoted space (`strings.Join(fs.Args(), " ")`). For two or more arguments,
+this lost their original boundaries: an invocation such as
+`execute-bash ... -- bash -c "<script>"` collapsed to the flat string
+`bash -c <script>`. When `bash -lc` re-parsed that string, its leading `bash
+-c` consumed only the single next word of `<script>` as the nested shell's
+own script text (bash -c's script argument is always just one word; every
+later word becomes a positional parameter `$0`, `$1`, ... of that inner
+invocation, not more of the script) — the inner shell's stdout is still
+inherited by the caller, so nothing is silently discarded, but its script
+was the wrong, truncated one. The outer shell then resumed at the next
+operator or statement in the flattened text, so the visible effect varied
+with the content: a dropped leading word, a misinterpreted `cd`, a
+multi-word flag value re-split into extra positional arguments for whatever
+program followed, and so on — not one single uniform failure mode.
+
+**Upgrade note:** the two-or-more-argument case changes the reconstructed
+command text, so its digest and default approval thread id also change
+relative to pre-#838 behavior. A pending approval minted before upgrading
+will not match the new digest; reusing its old `--thread-id` yields
+`digest_mismatch`, and a fresh request is required. The one-argument case is
+unaffected. Prefer `--command <bash>` for any script with more than one
+shell operation; it needs no argv reconstruction at all.
+
 ## 3. Modes
 
 `advisory` records the request and audit metadata, warns when approval is not

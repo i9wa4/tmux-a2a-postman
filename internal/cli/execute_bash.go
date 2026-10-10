@@ -174,6 +174,15 @@ func RunExecuteBash(args []string) error {
 	return runExecuteBashWithContext(defaultCommandContext(), args)
 }
 
+// posixSingleQuote wraps s in POSIX single quotes, escaping any embedded
+// single quote using the standard close-escape-reopen sequence, so that
+// space-joining multiple quoted elements reconstructs their original argv
+// token boundaries when the joined string is later re-parsed by a shell
+// (see #838).
+func posixSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	ctx = ctx.withDefaults()
 	if err := rejectRemovedExecuteBashFlags(args); err != nil {
@@ -251,7 +260,54 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	}
 	commandText := strings.TrimSpace(*command)
 	if commandText == "" {
-		commandText = strings.TrimSpace(strings.Join(fs.Args(), " "))
+		positional := fs.Args()
+		for _, arg := range positional {
+			if strings.ContainsRune(arg, 0) {
+				return fmt.Errorf("positional command must not contain a NUL byte")
+			}
+		}
+		if len(positional) > 0 && strings.TrimSpace(positional[0]) == "" {
+			return fmt.Errorf("positional command's first argument must not be empty")
+		}
+		// #838 I-1: exactly one positional element is legacy, unchanged
+		// verbatim shell source -- the pre-#838 strings.Join of a single
+		// element was always that element itself (joining one item inserts
+		// no separator), so this path keeps the same commandText and the
+		// same digest for every existing `-- '<shell source>'` caller.
+		//
+		// Two or more positional elements are the case #838 actually fixes:
+		// before this change, joining them with an unquoted space lost their
+		// original argv boundaries, so runBashCommand's `bash -lc
+		// <commandText>` could re-tokenize the flattened string differently
+		// than intended. Concretely, for `-- bash -c "<script>"`, bash -c's
+		// script argument is only the single next WORD after -c (here, the
+		// first word of the unquoted <script>); every later word becomes a
+		// positional parameter ($0, $1, ...) of that inner invocation rather
+		// than more of the script, and the inner shell's stdout is still
+		// inherited (not discarded) -- it just reflects the wrong, truncated
+		// script. The outer shell then resumes at the next operator/
+		// statement in the flattened text, so the visible effect varies with
+		// the content (a dropped leading word, a misinterpreted `cd`, a
+		// flag value re-split into extra positional arguments for whatever
+		// program follows, etc.), not a single uniform failure mode.
+		// Individually POSIX-single-quoting each element before joining
+		// reconstructs the original argv boundaries, so this case now
+		// changes commandText (and therefore its digest and default thread
+		// id) relative to pre-#838 behavior -- see docs/command-approvals.md
+		// for the upgrade note.
+		switch len(positional) {
+		case 0:
+			// commandText stays ""; reported by the check below.
+		case 1:
+			commandText = positional[0]
+		default:
+			quotedArgs := make([]string, len(positional))
+			for i, arg := range positional {
+				quotedArgs[i] = posixSingleQuote(arg)
+			}
+			commandText = strings.Join(quotedArgs, " ")
+		}
+		commandText = strings.TrimSpace(commandText)
 	}
 	if commandText == "" {
 		return fmt.Errorf("--command or trailing bash command is required")
