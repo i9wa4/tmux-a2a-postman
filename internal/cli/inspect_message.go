@@ -13,7 +13,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
-	"github.com/i9wa4/tmux-a2a-postman/internal/store"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 type inspectMessageOutput struct {
@@ -93,7 +93,7 @@ func RunInspectMessage(args []string) error {
 		switch {
 		case unproven > 0:
 			output.Status = "not_claimed"
-			output.Reason = "no_pop_receipt"
+			output.Reason = "no_journaled_read"
 		case unpopped:
 			output.Status = "not_claimed"
 			output.Reason = "unread_inbox"
@@ -144,23 +144,58 @@ func resolveInspectMessageSessionDir(contextID, sessionName, configPath string) 
 	return filepath.Join(baseDir, contextID, sessionName), contextID, sessionName, nil
 }
 
-// inspectMessageReceiptEraStart is the first day on which pop receipts exist in
-// released builds (receipts were added by PR #591, merged 2026-06-28). Archives
-// of messages created before this day cannot have a receipt, so they are
-// accepted as claimed on read/ presence alone. Two days of slack absorb the
-// filename timestamp's time zone and a pop by a not-yet-upgraded binary.
-var inspectMessageReceiptEraStart = time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+// inspectMessageLegacyArchiveCutoff separates archives that predate journaled
+// read events from current ones. It is compared with the archive FILE's
+// modification time, which pop's rename preserves from the delivery time, never
+// with the timestamp in the file name: a message that is named long ago but
+// delivered and popped (or orphaned) now has a recent file time. The date is a
+// heuristic (pop receipts, PR #591, merged 2026-06-28, are the nearest marker;
+// two days of slack are added).
+var inspectMessageLegacyArchiveCutoff = time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+
+// inspectMessageClaimEvidence is what the journal says about popped messages in
+// the current session generation.
+type inspectMessageClaimEvidence struct {
+	// reads maps "read/<file name>" to the message id recorded by the journaled
+	// mailbox_projection_read event for that path. It is derived from
+	// projection.ProjectMailboxProjection, the same source that decides which
+	// files the projection sync keeps under read/.
+	reads map[string]string
+}
+
+// loadInspectMessageClaimEvidence reads the claim evidence. A session without a
+// usable journal yields empty evidence (only the legacy rule can then apply); a
+// journal that cannot be replayed is an error, so the command fails closed.
+func loadInspectMessageClaimEvidence(sessionDir string) (inspectMessageClaimEvidence, error) {
+	evidence := inspectMessageClaimEvidence{reads: map[string]string{}}
+	projected, ok, err := projection.ProjectMailboxProjection(sessionDir)
+	if err != nil {
+		return evidence, fmt.Errorf("reading journaled read events: %w", err)
+	}
+	if !ok {
+		return evidence, nil
+	}
+	for _, file := range projected.Read {
+		path := filepath.ToSlash(file.Path)
+		evidence.reads[path] = parseMessageContent(file.Content, filepath.Base(path)).MessageID
+	}
+	return evidence, nil
+}
 
 // findInspectMessageMatches returns only claimed messages: those archived under
-// read/ AND proven to have been popped successfully (see
-// inspectMessageClaimProven). Unread inbox mail is consumed through pop, so its
-// content is never returned here (see inspectMessageHasUnpoppedCopy). The second
-// result counts read/ files that carry the id but lack the success proof; only
-// their existence is reported, never their content.
+// read/ AND proven to have been popped (see inspectMessageClaimProven). Unread
+// inbox mail is consumed through pop, so its content is never returned here (see
+// inspectMessageHasUnpoppedCopy). The second result counts read/ files that carry
+// the id but lack the proof; only their existence is reported, never their
+// content.
 func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, int, error) {
+	evidence, err := loadInspectMessageClaimEvidence(sessionDir)
+	if err != nil {
+		return nil, 0, err
+	}
 	var matches []inspectMessageMatch
 	unproven := 0
-	if err := inspectMessageReadDir(filepath.Join(sessionDir, "read"), id, &matches, &unproven); err != nil {
+	if err := inspectMessageReadDir(filepath.Join(sessionDir, "read"), id, evidence, &matches, &unproven); err != nil {
 		return nil, 0, err
 	}
 	sort.Slice(matches, func(i, j int) bool {
@@ -170,36 +205,32 @@ func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, in
 }
 
 // inspectMessageClaimProven decides whether a read/ archive is evidence of a
-// successful pop. A read/ file alone is not: a pop that failed after the archive
-// rename (the #802 rollback race) can leave an orphan there. pop writes its
-// receipt (read/<id>.pop.json) only after the daemon returned the message and
-// right before it prints the result, and a receipt write error makes pop fail
-// (internal/cli/pop.go writePopMessageOutputWithOps), so a valid receipt for this
-// message id proves the caller received the pop result.
+// successful pop. A read/ file alone is not: a pop that fails after the archive
+// rename (the #802 rollback race) can leave an orphan there.
 //
-// Archives created before receipts existed have none; they are accepted by the
-// era rule above. The orphan race can only occur in builds that write receipts,
-// so a newer archive without a valid receipt is never accepted. The receipt is
-// ordinary same-user filesystem state, not a security boundary.
-func inspectMessageClaimProven(path, filename, content string) bool {
-	messageID := parseMessageContent(content, filename).MessageID
-	if receiptPath := store.PlanPopReceipt(path).ReceiptPath; receiptPath != "" {
-		if data, err := os.ReadFile(receiptPath); err == nil {
-			var receipt struct {
-				Status    string `json:"status"`
-				MessageID string `json:"message_id"`
-			}
-			if json.Unmarshal(data, &receipt) == nil && receipt.Status == "message" && receipt.MessageID == messageID {
-				return true
-			}
-		}
+// Proof is the journaled read event for exactly this path, recorded for this
+// message id, in the current session generation. It is the fact the projection
+// sync itself uses to keep the archive under read/, so it survives sync (a pop
+// receipt file does not: sync deletes unjournaled files under read/).
+//
+// If the journal has a read for this path, the journal alone decides; the
+// legacy rule never overrides it. Only when the journal has nothing for the path
+// is an archive whose file time predates inspectMessageLegacyArchiveCutoff
+// accepted, because archives from before journaled reads have no event.
+//
+// Known residual (#802, not closable from this command): a journaled read can
+// also come from the daemon read watcher replaying an orphan archive, and a
+// journaled read whose stdout delivery to the caller failed still counts as
+// claimed because the system consumed the message.
+func inspectMessageClaimProven(path, filename, messageID string, evidence inspectMessageClaimEvidence) bool {
+	if recorded, ok := evidence.reads["read/"+filename]; ok {
+		return recorded == messageID
 	}
-	if len(filename) >= len("20060102-150405") {
-		if created, err := time.Parse("20060102-150405", filename[:len("20060102-150405")]); err == nil {
-			return created.Before(inspectMessageReceiptEraStart)
-		}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
 	}
-	return false
+	return info.ModTime().Before(inspectMessageLegacyArchiveCutoff)
 }
 
 // inspectMessageHasUnpoppedCopy reports whether an unread inbox message carries
@@ -213,7 +244,7 @@ func inspectMessageHasUnpoppedCopy(sessionDir, id string) (bool, error) {
 	return len(unread) > 0, nil
 }
 
-func inspectMessageReadDir(readDir, id string, matches *[]inspectMessageMatch, unproven *int) error {
+func inspectMessageReadDir(readDir, id string, evidence inspectMessageClaimEvidence, matches *[]inspectMessageMatch, unproven *int) error {
 	entries, err := os.ReadDir(readDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -233,7 +264,7 @@ func inspectMessageReadDir(readDir, id string, matches *[]inspectMessageMatch, u
 		if !inspectMessageMatchesID(string(content), entry.Name(), id) {
 			continue
 		}
-		if !inspectMessageClaimProven(path, entry.Name(), string(content)) {
+		if !inspectMessageClaimProven(path, entry.Name(), parseMessageContent(string(content), entry.Name()).MessageID, evidence) {
 			*unproven++
 			continue
 		}

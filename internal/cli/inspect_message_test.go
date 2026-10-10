@@ -1,13 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
+	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 )
 
 // An unread inbox message has not been claimed with pop, so inspect-message must
@@ -74,7 +79,7 @@ func TestRunInspectMessageIgnoresUnreadCopyWhenReadCopyExists(t *testing.T) {
 	filename := "20260506-010108-from-orchestrator-to-worker.md"
 	content := inspectMessageFixture("orchestrator", "worker", filename, nil, "popped body")
 	readPath := filepath.Join(fixture.sessionDir, "read", filename)
-	writeInspectMessageFile(t, readPath, content)
+	writeLegacyReadArchive(t, readPath, content)
 	writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "inbox", "worker", filename), content)
 
 	got := runInspectMessageForFixture(t, fixture, filename)
@@ -83,16 +88,62 @@ func TestRunInspectMessageIgnoresUnreadCopyWhenReadCopyExists(t *testing.T) {
 	}
 }
 
-// A read/ file alone is not proof of a successful pop: a pop that failed after
-// the archive rename can leave an orphan there (#802 rollback race). Archives
-// from the receipt era need a valid pop receipt for this message id.
-func TestRunInspectMessageRequiresPopReceiptForReceiptEraArchives(t *testing.T) {
-	secretBody := "ORPHAN-BODY-MARKER"
-	writeReceipt := func(t *testing.T, fixture inspectMessageFixtureState, filename, contents string) {
-		t.Helper()
-		stem := strings.TrimSuffix(filename, filepath.Ext(filename))
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", stem+".pop.json"), contents)
+// inspectJournalForFixture opens the fixture session's journal so a test can
+// record the delivery and read events the production pop path journals.
+func inspectJournalForFixture(t *testing.T, fixture inspectMessageFixtureState) (deliver func(filename, content string), recordRead func(path, messageID, content string)) {
+	t.Helper()
+	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(fixture.sessionDir, fixture.contextID, fixture.sessionName, 1, now)
+	if err != nil {
+		t.Fatalf("OpenShadowWriter() error = %v", err)
 	}
+	seq := 0
+	deliver = func(filename, content string) {
+		t.Helper()
+		seq++
+		if _, err := writer.AppendEvent(projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+			MessageID: filename,
+			From:      "orchestrator",
+			To:        "worker",
+			Path:      filepath.Join("inbox", "worker", filename),
+			Content:   content,
+		}, now.Add(time.Duration(seq)*time.Second)); err != nil {
+			t.Fatalf("AppendEvent(delivered): %v", err)
+		}
+	}
+	recordRead = func(path, messageID, content string) {
+		t.Helper()
+		seq++
+		if _, err := writer.AppendEvent(projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+			MessageID: messageID,
+			From:      "orchestrator",
+			To:        "worker",
+			Path:      path,
+			Content:   content,
+		}, now.Add(time.Duration(seq)*time.Second)); err != nil {
+			t.Fatalf("AppendEvent(read): %v", err)
+		}
+	}
+	return deliver, recordRead
+}
+
+// writeLegacyReadArchive writes a read/ archive and backdates it before the
+// journal era, the shape of archives that predate journaled read events.
+func writeLegacyReadArchive(t *testing.T, path, content string) {
+	t.Helper()
+	writeInspectMessageFile(t, path, content)
+	old := time.Date(2026, time.May, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("Chtimes(%s): %v", path, err)
+	}
+}
+
+// A read/ file alone is not proof of a successful pop: a pop that failed after
+// the archive rename can leave an orphan there (#802 rollback race). The proof
+// is the same journaled read event that keeps the archive alive through the
+// projection sync (#875).
+func TestRunInspectMessageClaimedProofFollowsJournaledReads(t *testing.T) {
+	secretBody := "ORPHAN-BODY-MARKER"
 	assertRefused := func(t *testing.T, fixture inspectMessageFixtureState, filename, wantReason string) {
 		t.Helper()
 		stdout, stderr, err := captureCommandOutput(t, func() error {
@@ -115,60 +166,167 @@ func TestRunInspectMessageRequiresPopReceiptForReceiptEraArchives(t *testing.T) 
 		}
 	}
 
-	t.Run("orphan read without receipt", func(t *testing.T) {
+	t.Run("orphan read with no journaled read", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
+		deliver, _ := inspectJournalForFixture(t, fixture)
 		filename := "20261009-120000-from-orchestrator-to-worker.md"
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
-		assertRefused(t, fixture, filename, "no_pop_receipt")
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		deliver(filename, content)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		assertRefused(t, fixture, filename, "no_journaled_read")
 	})
 
 	t.Run("orphan read plus unread inbox copy", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
+		deliver, _ := inspectJournalForFixture(t, fixture)
 		filename := "20261009-120001-from-orchestrator-to-worker.md"
 		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		deliver(filename, content)
 		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
 		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "inbox", "worker", filename), content)
-		assertRefused(t, fixture, filename, "no_pop_receipt")
+		assertRefused(t, fixture, filename, "no_journaled_read")
 	})
 
-	t.Run("receipt for a different message id", func(t *testing.T) {
+	t.Run("journaled read for a different message does not prove the file", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
-		filename := "20261009-120002-from-orchestrator-to-worker.md"
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
-		writeReceipt(t, fixture, filename, `{"status":"message","message_id":"20261009-999999-from-someone-else.md"}`)
-		assertRefused(t, fixture, filename, "no_pop_receipt")
+		deliver, recordRead := inspectJournalForFixture(t, fixture)
+		orphan := "20261009-120002-from-orchestrator-to-worker.md"
+		other := "20261009-120003-from-orchestrator-to-worker.md"
+		orphanContent := inspectMessageFixture("orchestrator", "worker", orphan, nil, secretBody)
+		otherContent := inspectMessageFixture("orchestrator", "worker", other, nil, "another popped message")
+		deliver(orphan, orphanContent)
+		deliver(other, otherContent)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", orphan), orphanContent)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", other), otherContent)
+		recordRead(filepath.Join("read", other), other, otherContent)
+		assertRefused(t, fixture, orphan, "no_journaled_read")
 	})
 
-	t.Run("unparseable receipt", func(t *testing.T) {
+	t.Run("journaled read at the path but for another message id", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
-		filename := "20261009-120003-from-orchestrator-to-worker.md"
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
-		writeReceipt(t, fixture, filename, "not json")
-		assertRefused(t, fixture, filename, "no_pop_receipt")
-	})
-
-	t.Run("valid receipt is found", func(t *testing.T) {
-		fixture := writeInspectMessageFixture(t)
+		deliver, recordRead := inspectJournalForFixture(t, fixture)
 		filename := "20261009-120004-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		deliver(filename, content)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		// The journal's read at this path carries a different message's content.
+		recordRead(filepath.Join("read", filename), "20261009-999999-from-someone-else.md", inspectMessageFixture("orchestrator", "worker", "20261009-999999-from-someone-else.md", nil, "someone else's body"))
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+
+	t.Run("journaled read is found and agrees with the projection", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		deliver, recordRead := inspectJournalForFixture(t, fixture)
+		filename := "20261009-120005-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, "popped body")
+		deliver(filename, content)
 		readPath := filepath.Join(fixture.sessionDir, "read", filename)
-		writeInspectMessageFile(t, readPath, inspectMessageFixture("orchestrator", "worker", filename, nil, "popped body"))
-		writeReceipt(t, fixture, filename, `{"status":"message","message_id":"`+filename+`"}`)
+		writeInspectMessageFile(t, readPath, content)
+		recordRead(filepath.Join("read", filename), filename, content)
 		got := runInspectMessageForFixture(t, fixture, filename)
 		if got.Status != "found" || got.MatchCount != 1 || got.Message == nil || got.Message.MarkdownPath != readPath {
-			t.Fatalf("inspect output = %#v, want the receipted read archive", got)
+			t.Fatalf("inspect output = %#v, want the journaled read archive", got)
+		}
+		projected, ok, err := projection.ProjectMailboxProjection(fixture.sessionDir)
+		if err != nil || !ok {
+			t.Fatalf("ProjectMailboxProjection() = (_, %v, %v)", ok, err)
+		}
+		inProjection := false
+		for _, file := range projected.Read {
+			if filepath.ToSlash(file.Path) == "read/"+filename {
+				inProjection = true
+			}
+		}
+		if !inProjection {
+			t.Fatalf("claimed message is not in the projection read set: %#v", projected.Read)
 		}
 	})
 
-	t.Run("archive older than receipts needs none", func(t *testing.T) {
+	// G875-2: an old-named message that was delivered and then orphaned now has a
+	// recent file time, so the date fallback must not accept it while the journal
+	// has no read for it.
+	t.Run("old-named orphan is not legacy", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
+		deliver, _ := inspectJournalForFixture(t, fixture)
 		filename := "20260501-120000-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		deliver(filename, content)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+
+	t.Run("backdated archive without journal evidence is legacy", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		_, _ = inspectJournalForFixture(t, fixture)
+		filename := "20260501-120001-from-orchestrator-to-worker.md"
 		readPath := filepath.Join(fixture.sessionDir, "read", filename)
-		writeInspectMessageFile(t, readPath, inspectMessageFixture("orchestrator", "worker", filename, nil, "legacy body"))
+		writeLegacyReadArchive(t, readPath, inspectMessageFixture("orchestrator", "worker", filename, nil, "legacy body"))
 		got := runInspectMessageForFixture(t, fixture, filename)
 		if got.Status != "found" || got.Message == nil || got.Message.MarkdownPath != readPath {
-			t.Fatalf("inspect output = %#v, want the legacy read archive found without a receipt", got)
+			t.Fatalf("inspect output = %#v, want the legacy read archive found", got)
 		}
 	})
+
+	t.Run("journal decides when it has a read for the path, even for a backdated file", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		_, recordRead := inspectJournalForFixture(t, fixture)
+		filename := "20260501-120002-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		writeLegacyReadArchive(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		recordRead(filepath.Join("read", filename), "20261009-999999-from-someone-else.md", inspectMessageFixture("orchestrator", "worker", "20261009-999999-from-someone-else.md", nil, "someone else's body"))
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+
+	t.Run("recent archive in a session with no journal is not claimed", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20261009-120006-from-orchestrator-to-worker.md"
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+}
+
+// O4 (#875): the real pop path, the real projection sync, then inspect-message.
+// This is the sequence that broke the pop-receipt proof: sync deletes files
+// under read/ that no journaled event accounts for, including receipts.
+func TestRunInspectMessageFindsRealPopAfterProjectionSync(t *testing.T) {
+	fixture := writeInspectMessageFixture(t)
+	deliver, recordRead := inspectJournalForFixture(t, fixture)
+	filename := "20261009-130000-from-orchestrator-to-worker.md"
+	body := "REAL-POP-BODY-MARKER"
+	content := inspectMessageFixture("orchestrator", "worker", filename, nil, body)
+	inboxDir := filepath.Join(fixture.sessionDir, "inbox", "worker")
+	writeInspectMessageFile(t, filepath.Join(inboxDir, filename), content)
+	deliver(filename, content)
+
+	var popOut bytes.Buffer
+	if err := runPopWithContext(commandContext{
+		stdout:           &popOut,
+		resolveInboxPath: func(args []string) (string, error) { return inboxDir, nil },
+		loadConfig:       func(path string) (*config.Config, error) { return config.DefaultConfig(), nil },
+		contextOwnsSession: func(baseDir, resolvedContextID, name string) bool {
+			return false
+		},
+	}, []string{"--context-id", fixture.contextID}); err != nil {
+		t.Fatalf("runPopWithContext: %v", err)
+	}
+	if !strings.Contains(popOut.String(), filename) {
+		t.Fatalf("pop output does not name the message: %s", popOut.String())
+	}
+	readPath := filepath.Join(fixture.sessionDir, "read", filename)
+	archived, err := os.ReadFile(readPath)
+	if err != nil {
+		t.Fatalf("archived file missing after pop: %v", err)
+	}
+	// The daemon or its read watcher journals the read event with content.
+	recordRead(filepath.Join("read", filename), filename, string(archived))
+	if err := projection.SyncMailboxProjection(fixture.sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection: %v", err)
+	}
+
+	got := runInspectMessageForFixture(t, fixture, filename)
+	if got.Status != "found" || got.MatchCount != 1 || got.Message == nil || got.Message.MarkdownPath != readPath {
+		t.Fatalf("inspect output after pop and sync = %#v, want the popped message found", got)
+	}
 }
 
 func TestRunInspectMessageFindsReadMessageAfterInputRequestSatisfied(t *testing.T) {
@@ -180,7 +338,7 @@ func TestRunInspectMessageFindsReadMessageAfterInputRequestSatisfied(t *testing.
 		"fills_input_request_id": "ireq_123",
 	}, "DONE: handled")
 	readPath := filepath.Join(fixture.sessionDir, "read", filename)
-	writeInspectMessageFile(t, readPath, content)
+	writeLegacyReadArchive(t, readPath, content)
 
 	got := runInspectMessageForFixture(t, fixture, filename)
 	if got.Status != "found" || got.MatchCount != 1 || got.Message == nil {
@@ -214,7 +372,7 @@ func TestRunInspectMessageFindsStoredMessageAfterInspectInputIsClosed(t *testing
 		"input_request_id": inputRequestID,
 	}, "Original request body")
 	readPath := filepath.Join(fixture.baseDir, fixture.contextID, fixture.sessionName, "read", messageID)
-	writeInspectMessageFile(t, readPath, content)
+	writeLegacyReadArchive(t, readPath, content)
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunInspectMessage([]string{
@@ -241,7 +399,7 @@ func TestRunInspectMessageOutputModes(t *testing.T) {
 	filename := "20260506-010103-from-orchestrator-to-worker.md"
 	content := inspectMessageFixture("orchestrator", "worker", filename, nil, "Body line one\n\nBody line two")
 	readPath := filepath.Join(fixture.sessionDir, "read", filename)
-	writeInspectMessageFile(t, readPath, content)
+	writeLegacyReadArchive(t, readPath, content)
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunInspectMessage([]string{
@@ -316,7 +474,7 @@ func TestRunInspectMessageBodyReturnsSenderBodyAfterEnvelopeSeparator(t *testing
 		"",
 	}, "\n") + senderBody
 	readPath := filepath.Join(fixture.sessionDir, "read", filename)
-	writeInspectMessageFile(t, readPath, content)
+	writeLegacyReadArchive(t, readPath, content)
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunInspectMessage([]string{
@@ -340,7 +498,7 @@ func TestRunInspectMessageBodyKeepsOrdinaryMarkdownHorizontalRule(t *testing.T) 
 	body := "Intro\n\n---\n\nDetails"
 	content := inspectMessageFixture("orchestrator", "worker", filename, nil, body)
 	readPath := filepath.Join(fixture.sessionDir, "read", filename)
-	writeInspectMessageFile(t, readPath, content)
+	writeLegacyReadArchive(t, readPath, content)
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
 		return RunInspectMessage([]string{
@@ -372,9 +530,8 @@ func TestRunInspectMessageReturnsNotFoundAndAmbiguous(t *testing.T) {
 		filename := "20260506-010104-from-orchestrator-to-worker.md"
 		content := inspectMessageFixture("orchestrator", "worker", filename, nil, "duplicate")
 		// Two archived files that carry the same messageId in their metadata.
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
-		// The copy keeps a pre-receipt timestamp prefix so both archives count as claimed.
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", "20260504-000000-copy-of-"+filename), content)
+		writeLegacyReadArchive(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		writeLegacyReadArchive(t, filepath.Join(fixture.sessionDir, "read", "20260504-000000-copy-of-"+filename), content)
 
 		got := runInspectMessageForFixture(t, fixture, filename)
 		if got.Status != "ambiguous" || got.MatchCount != 2 || got.Message != nil {
