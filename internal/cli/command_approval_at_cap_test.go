@@ -128,7 +128,9 @@ func TestRunExecuteBashBlockingApproverInboxAtCapFailsClosed(t *testing.T) {
 	// Each attempt must leave exactly one command_execution_decided event with
 	// the same thread and command hash and a non-empty decision and reason, so
 	// the at-cap refusal is auditable per attempt (Guardian F840A-1).
-	var wantCommandHash string
+	// The expected hash comes from the command itself, never from an emitted
+	// payload, so a consistently wrong recorded hash cannot pass.
+	wantCommandHash := commandDigest(commandText)
 	assertDecisionEvents := func(label string, want int) {
 		t.Helper()
 		var decided []journal.CommandExecutionDecisionPayload
@@ -148,12 +150,6 @@ func TestRunExecuteBashBlockingApproverInboxAtCapFailsClosed(t *testing.T) {
 		for i, payload := range decided {
 			if payload.ApprovalThread != threadID {
 				t.Fatalf("%s: decided[%d].ApprovalThread = %q, want %q", label, i, payload.ApprovalThread, threadID)
-			}
-			if payload.CommandHash == "" {
-				t.Fatalf("%s: decided[%d].CommandHash is empty", label, i)
-			}
-			if wantCommandHash == "" {
-				wantCommandHash = payload.CommandHash
 			}
 			if payload.CommandHash != wantCommandHash {
 				t.Fatalf("%s: decided[%d].CommandHash = %q, want %q (same command on every attempt)", label, i, payload.CommandHash, wantCommandHash)
@@ -228,8 +224,10 @@ func TestRunExecuteBashBlockingApproverInboxAtCapFailsClosed(t *testing.T) {
 	// Anchor each frontmatter key to its own line: a bare substring check for
 	// "input_request_id: <id>" would also match "fills_input_request_id: <id>"
 	// (Guardian F840A-2).
-	threadLine := regexp.MustCompile(`(?m)^\s*thread_id: ` + regexp.QuoteMeta(threadID) + `\s*$`)
-	requestLine := regexp.MustCompile(`(?m)^\s*input_request_id: ` + regexp.QuoteMeta(firstInputRequestID) + `\s*$`)
+	// Frontmatter params are indented by exactly two spaces; a looser pattern
+	// could match an instruction line in the message body.
+	threadLine := regexp.MustCompile(`(?m)^ {2}thread_id: ` + regexp.QuoteMeta(threadID) + `$`)
+	requestLine := regexp.MustCompile(`(?m)^ {2}input_request_id: ` + regexp.QuoteMeta(firstInputRequestID) + `$`)
 	delivered := false
 	for _, name := range listInbox() {
 		body, readErr := os.ReadFile(filepath.Join(inboxDir, name))
