@@ -3625,7 +3625,11 @@ func daemonHerdrConfig() config.HerdrConfig {
 func daemonHerdrSnapshot(sessionOwner string) multiplexer.HerdrSessionSnapshot {
 	snapshot := daemonEmptyHerdrSnapshot()
 	if sessionOwner != "" {
-		snapshot.Workspaces[0].Metadata[multiplexer.HerdrSessionOwnerMetadataKey] = sessionOwner
+		ownerKey, err := multiplexer.HerdrSessionOwnerMetadataKey("work")
+		if err != nil {
+			panic(err)
+		}
+		snapshot.Workspaces[0].Metadata[ownerKey] = sessionOwner
 	}
 	snapshot.Panes = []multiplexer.HerdrPaneSnapshot{daemonHerdrPane("workspace-1:pane-1")}
 	return snapshot

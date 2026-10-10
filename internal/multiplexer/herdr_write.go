@@ -2,6 +2,8 @@ package multiplexer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -13,9 +15,13 @@ import (
 const (
 	// Match tmux delivery's Codex submit key; literal Enter may insert a newline.
 	HerdrKeySubmit                = "C-m"
-	HerdrSessionOwnerMetadataKey  = "postman_owner"
 	HerdrPaneContextIDMetadataKey = "postman_context"
 	HerdrPostmanNodeMetadataKey   = "postman_node"
+
+	// herdrSessionOwnerMetadataKeyPrefix plus herdrSessionOwnerHashLen hex
+	// characters stays within Herdr's 32-byte metadata token limit.
+	herdrSessionOwnerMetadataKeyPrefix = "postman_owner_"
+	herdrSessionOwnerHashLen           = 16
 )
 
 var (
@@ -173,11 +179,20 @@ func (b HerdrBackend) validateConfiguredWorkspaceInSnapshot(ctx context.Context)
 	return err
 }
 
+// HerdrSessionOwnerMetadataKey returns the per-session workspace metadata key.
+// Session names are not valid Herdr tokens, so the key carries a stable hash
+// of the name: two sessions sharing one workspace never read, overwrite, or
+// clear each other's owner marker.
+func HerdrSessionOwnerMetadataKey(sessionName string) (string, error) {
+	return herdrSessionOwnerMetadataKey(sessionName)
+}
+
 func herdrSessionOwnerMetadataKey(sessionName string) (string, error) {
 	if _, err := sanitizeHerdrMetadataValue(sessionName); err != nil {
 		return "", fmt.Errorf("invalid herdr session owner metadata value: %w", err)
 	}
-	return validatedHerdrMetadataToken(HerdrSessionOwnerMetadataKey)
+	sum := sha256.Sum256([]byte(sessionName))
+	return validatedHerdrMetadataToken(herdrSessionOwnerMetadataKeyPrefix + hex.EncodeToString(sum[:])[:herdrSessionOwnerHashLen])
 }
 
 func herdrPaneContextMetadataKey() (string, error) {

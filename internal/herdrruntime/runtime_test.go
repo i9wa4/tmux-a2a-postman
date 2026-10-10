@@ -1826,7 +1826,11 @@ func TestSocketClientRoundTripsSnapshotAndWriteMutations(t *testing.T) {
 	if _, err := writeClient.WritePaneText(context.Background(), "workspace-1:pane-1", "body"); err != nil {
 		t.Fatalf("WritePaneText() error = %v", err)
 	}
-	if _, err := writeClient.SetWorkspaceMetadata(context.Background(), "workspace-1", multiplexer.HerdrSessionOwnerMetadataKey, "ctx:123"); err != nil {
+	ownerKey, err := multiplexer.HerdrSessionOwnerMetadataKey("work")
+	if err != nil {
+		t.Fatalf("HerdrSessionOwnerMetadataKey() error = %v", err)
+	}
+	if _, err := writeClient.SetWorkspaceMetadata(context.Background(), "workspace-1", ownerKey, "ctx:123"); err != nil {
 		t.Fatalf("SetWorkspaceMetadata() error = %v", err)
 	}
 
@@ -1898,7 +1902,11 @@ func validRuntimeHerdrSnapshot() multiplexer.HerdrSessionSnapshot {
 func runtimeHerdrSnapshotFor(sessionName, workspaceID, tabID, paneID, sessionOwner string) multiplexer.HerdrSessionSnapshot {
 	workspaceMetadata := map[string]string{}
 	if sessionOwner != "" {
-		workspaceMetadata[multiplexer.HerdrSessionOwnerMetadataKey] = sessionOwner
+		ownerKey, err := multiplexer.HerdrSessionOwnerMetadataKey(sessionName)
+		if err != nil {
+			panic(err)
+		}
+		workspaceMetadata[ownerKey] = sessionOwner
 	}
 	return multiplexer.HerdrSessionSnapshot{
 		Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
