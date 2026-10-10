@@ -23,18 +23,20 @@ Search scope:
   Searches archived `read/` messages that pop claimed. A read/ archive counts as
   claimed when the journal has a read event for that exact path and message id
   in the current session generation (the same fact the projection sync uses to
-  keep the archive). When the journal has no read for the path and does not show
-  the message as delivered, an archive whose file modification time is before
-  2026-06-30 is accepted as a legacy archive; the file name's date is never
-  used, and the cutoff date is a heuristic, not a verified start of journaled
-  reads. A message the journal shows as delivered without a matching read is
-  never accepted that way. Pop receipt files are not used: the sync deletes
-  them.
+  keep the archive). When the journal says nothing about the archive (no read
+  for the path, no unconsumed delivery of the message, no empty-content read for
+  the path), an archive whose file modification time is before 2026-06-30 is
+  accepted as a legacy archive; the file name's date is never used, and the
+  cutoff date is a heuristic, not a verified start of journaled reads. A message
+  the journal shows as delivered without a matching read, or whose only read has
+  empty content, is never accepted that way, however old the file time is. Pop
+  receipt files are not used: the sync deletes them.
   Known limits: a read event recorded by the daemon read watcher for an orphan
   archive still counts (#802), and a journaled read whose output never reached
   the caller still counts as claimed. A pop whose only journaled read event has
   empty content (a racing recorder or the direct pop path) is reported as
-  not_claimed although the archive is kept. A pre-journal archive of a message
+  not_claimed, whatever its file time, although the archive is kept. A
+  pre-journal archive of a message
   that the journal still shows as delivered is also reported as not_claimed.
   Unread `inbox/<node>/` mail is never returned: consume it with pop first.
   The command is read-only: it does not move inbox mail, mark messages read, or

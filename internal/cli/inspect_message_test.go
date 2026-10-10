@@ -308,6 +308,51 @@ func TestRunInspectMessageClaimedProofFollowsJournaledReads(t *testing.T) {
 		assertRefused(t, fixture, filename, "no_journaled_read")
 	})
 
+	// F-001 (round 2): pop's rename keeps the INBOX file's time on the archive, so
+	// a real pop of a message whose inbox file has an old time yields an archive
+	// with a pre-cutoff mtime. With a tombstoned (empty-content) journaled read the
+	// legacy fallback must not accept it either: not_claimed, archive retained.
+	t.Run("old-mtime real pop with an empty-content journaled read stays not claimed", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		deliver, recordRead := inspectJournalForFixture(t, fixture)
+		filename := "20260501-120004-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		inboxDir := filepath.Join(fixture.sessionDir, "inbox", "worker")
+		inboxPath := filepath.Join(inboxDir, filename)
+		writeLegacyReadArchive(t, inboxPath, content) // old file time on the INBOX file
+		// Delivered, then consumed by the read event below; the old file time
+		// survives pop's rename.
+		deliver(filename, content)
+
+		var popOut bytes.Buffer
+		if err := runPopWithContext(commandContext{
+			stdout:           &popOut,
+			resolveInboxPath: func(args []string) (string, error) { return inboxDir, nil },
+			loadConfig:       func(path string) (*config.Config, error) { return config.DefaultConfig(), nil },
+			contextOwnsSession: func(baseDir, resolvedContextID, name string) bool {
+				return false
+			},
+		}, []string{"--context-id", fixture.contextID}); err != nil {
+			t.Fatalf("runPopWithContext: %v", err)
+		}
+		readPath := filepath.Join(fixture.sessionDir, "read", filename)
+		info, err := os.Stat(readPath)
+		if err != nil {
+			t.Fatalf("archived file missing after pop: %v", err)
+		}
+		if !info.ModTime().Before(time.Date(2026, time.June, 30, 0, 0, 0, 0, time.UTC)) {
+			t.Fatalf("archive mtime = %v, want the old inbox file time preserved by pop's rename", info.ModTime())
+		}
+		recordRead(filepath.Join("read", filename), filename, "")
+		if err := projection.SyncMailboxProjection(fixture.sessionDir); err != nil {
+			t.Fatalf("SyncMailboxProjection: %v", err)
+		}
+		if _, err := os.Stat(readPath); err != nil {
+			t.Fatalf("sync removed the archive of an empty-content read: %v", err)
+		}
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+
 	t.Run("backdated archive without journal evidence is legacy", func(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
 		_, _ = inspectJournalForFixture(t, fixture)

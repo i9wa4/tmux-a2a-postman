@@ -27,6 +27,16 @@ type MailboxProjection struct {
 	tombstonedRead map[string]bool
 }
 
+// IsTombstonedRead reports whether, in the current session generation, the
+// journal holds a first read event with EMPTY content for the given read path
+// (for example "read/<file name>"). Such a read leaves no projected.Read entry
+// and no projected.Inbox entry, but the projection sync keeps the archive file
+// at that path. Callers that must not guess about such an archive (inspect-message)
+// use this to tell it apart from an archive the journal never mentions.
+func (p MailboxProjection) IsTombstonedRead(path string) bool {
+	return p.tombstonedRead[pathKey(path)]
+}
+
 type mailboxProjectionMarker struct {
 	SessionKey string `json:"session_key"`
 	Generation int    `json:"generation"`

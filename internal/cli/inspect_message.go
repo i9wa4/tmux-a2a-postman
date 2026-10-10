@@ -146,18 +146,21 @@ func resolveInspectMessageSessionDir(contextID, sessionName, configPath string) 
 
 // inspectMessageLegacyArchiveCutoff separates archives that predate journaled
 // read events from current ones. It is compared with the archive FILE's
-// modification time, never with the timestamp in the file name: a message that
-// is named long ago but delivered and popped (or orphaned) now has a recent
-// delivery time in its file name only, while the file time is the time the
-// archive was last written.
+// modification time, never with the timestamp in the file NAME. The file name
+// carries the time the message was created, so an old name says nothing about
+// when the message was popped; the file time can also be recent for a message
+// with an old name (it was delivered or popped now). Conversely the file time can
+// be OLD for a recent pop: a rename preserves it, so pop keeps the inbox file's
+// time on the archive.
 //
 // The date itself is a conservative heuristic, NOT a verified provenance: the
 // earliest commit that mentions the mailbox_projection_read event type is
 // b76ce69 (2026-05-03, a CLI output change), and pop receipts (PR #591, merged
 // 2026-06-28) are only the nearest marker; two days of slack are added. When
-// journaled read events really began is unverified. A rename preserves the file
-// time, so a backdated orphan is possible; inspectMessageClaimProven therefore
-// refuses this fallback for any message the journal shows as delivered.
+// journaled read events really began is unverified. Because an old file time
+// does not prove an old message, inspectMessageClaimProven refuses this fallback
+// whenever the journal says anything about the message: a read for the path, a
+// delivery no read consumed, or a tombstoned (empty-content) read for the path.
 var inspectMessageLegacyArchiveCutoff = time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
 
 // inspectMessageClaimEvidence is what the journal says about popped messages in
@@ -167,12 +170,16 @@ type inspectMessageClaimEvidence struct {
 	// mailbox_projection_read event for that path. It is derived from
 	// projection.ProjectMailboxProjection, the same source that decides which
 	// files the projection sync keeps under read/. A first read event with empty
-	// content is a tombstone there and is NOT in this map (see
-	// inspectMessageClaimProven).
+	// content is a tombstone there and is NOT in this map; it is visible through
+	// projected.IsTombstonedRead (see inspectMessageClaimProven).
 	reads map[string]string
 	// delivered holds the message ids the journal still shows as delivered to an
 	// inbox: a delivered event that no read (or dead-letter) event has consumed.
 	delivered map[string]bool
+	// projected is the current-generation projection itself, kept for the
+	// tombstoned-read lookup. It is the zero value when the session has no usable
+	// journal.
+	projected projection.MailboxProjection
 }
 
 // loadInspectMessageClaimEvidence reads the claim evidence. A session without a
@@ -187,6 +194,7 @@ func loadInspectMessageClaimEvidence(sessionDir string) (inspectMessageClaimEvid
 	if !ok {
 		return evidence, nil
 	}
+	evidence.projected = projected
 	for _, file := range projected.Read {
 		path := filepath.ToSlash(file.Path)
 		evidence.reads[path] = parseMessageContent(file.Content, filepath.Base(path)).MessageID
@@ -229,19 +237,22 @@ func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, in
 // sync itself uses to keep the archive under read/, so it survives sync (a pop
 // receipt file does not: sync deletes unjournaled files under read/).
 //
-// If the journal has a read for this path, the journal alone decides; the
-// legacy rule never overrides it. Only when the journal has nothing for the path
-// AND does not show the message as delivered is an archive whose file time
-// predates inspectMessageLegacyArchiveCutoff accepted, because archives from
-// before journaled reads have no events at all. A delivered message with no
-// matching read is an orphan (or an unfinished pop), however old its file time.
+// If the journal has a read for this path, the journal alone decides. The legacy
+// rule is only a last resort for archives the journal never mentions: it is
+// refused when the journal shows the message as delivered with no read (an
+// orphan or an unfinished pop) and when the path is a tombstoned read (a first
+// read event with empty content, see below), however old the file time is,
+// because a rename keeps the inbox file's time on the archive. Only an archive
+// the journal does not mention at all, whose file time predates
+// inspectMessageLegacyArchiveCutoff, is accepted: archives from before journaled
+// reads have no events.
 //
 // Known limits (fail closed or residual, not closable from this command):
 //   - A journaled read with EMPTY content (a racing shadow recorder, or the
 //     non-owner direct-pop path) is a tombstone in the projection, not a read, so
-//     a message popped that way is reported as not claimed even though the
-//     archive is kept (false negative; the projection records no message id for a
-//     tombstone to match against).
+//     a message popped that way is reported as not claimed whatever its file time,
+//     even though the archive is kept (false negative; the projection records no
+//     message id for a tombstone to match against).
 //   - A journaled read can also come from the daemon read watcher replaying an
 //     orphan archive (#802), and a journaled read whose stdout delivery to the
 //     caller failed still counts as claimed because the system consumed the
@@ -249,6 +260,9 @@ func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, in
 func inspectMessageClaimProven(path, filename, messageID string, evidence inspectMessageClaimEvidence) bool {
 	if recorded, ok := evidence.reads["read/"+filename]; ok {
 		return recorded == messageID
+	}
+	if evidence.projected.IsTombstonedRead("read/" + filename) {
+		return false
 	}
 	if evidence.delivered[messageID] {
 		return false
