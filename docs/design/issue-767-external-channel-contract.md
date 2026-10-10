@@ -66,7 +66,7 @@ identifiers. This table is the single source of truth for each:
 | Pending-decision token             | Node, when it emits an "acknowledged, pending" response                                                 | Issued in the pending response; presented on status poll and on answer submission; referenced by the final response. Maps back to exactly one exchange ID                                                                                                 | One pending decision instance within one exchange                                  | Expiry, or a rebind (epoch bump) per A-3     |
 | Report sequence / catch-up cursor  | Node, as one referent whose scope is the A-1 stream (binding-wide or per-conversation; A-1 is deferred) | Outbound report (sequence number); reconnect/catch-up (cursor)                                                                                                                                                                                            | The A-1 stream within one (binding, epoch) pair, identical in both uses -- see A-1 | A rebind (epoch bump) per A-3                |
 | Delivery acknowledgement           | External channel                                                                                        | N/A (channel-to-node signal, not part of the node-authored flows)                                                                                                                                                                                         | One delivery attempt                                                               | N/A -- a transport-layer fact, not revocable |
-| Inbound acceptance acknowledgement | Node                                                                                                    | Response to an inbound request (returns the minted exchange ID) and to an answer submission (accepted, or rejected with a reason)                                                                                                                         | One inbound request or one answer submission                                       | N/A -- a work-layer fact once given          |
+| Inbound acceptance acknowledgement | Node                                                                                                    | Response to an inbound request (returns the minted exchange ID) and to an accepted answer submission (a rejection is not this acknowledgement)                                                                                                            | One inbound request or one answer submission                                       | N/A -- a work-layer fact once given          |
 | Report-action acknowledgement      | External channel / human                                                                                | Implicit response to outbound report                                                                                                                                                                                                                      | One outbound report                                                                | N/A -- a work-layer fact once given          |
 
 ## 3. Four entities (abstract contract, channel-independent)
@@ -203,15 +203,21 @@ Status must be independently pollable, not only push-delivered.
 ID, the pending-decision token, the entity 3 action scope/revision digest
 and approval-context snapshot, and an idempotency key (scoped as in 4.1).
 The node returns an explicit result: accepted, or rejected with a reason.
-That result is an instance of the inbound acceptance acknowledgement, not
-a fourth acknowledgement kind. A repeat of the same key with the same
-payload is idempotent: same result, no second side effect. A repeat of the
-same key with a changed payload is rejected with an explicit reason
-(mirroring negative outcome 1 in section 5). Rejection reasons are the
-three decision outcomes of section 5 item 3 (denied, expired, superseded),
-an entity 3 mismatch, and the S-5 refusals (unauthorized, no active
-binding). This design fixes the required fields and semantics, not an
-encoding.
+Only an accepted submission receives the inbound acceptance
+acknowledgement (not a fourth acknowledgement kind). A rejected submission
+is an explicit rejection that carries its reason, and it is not that
+acknowledgement. A repeat of the same key with the same payload is
+idempotent: same result, no second side effect. A repeat of the same key
+with a changed payload is rejected with an explicit reason (mirroring
+negative outcome 1 in section 5); this idempotency conflict is one of the
+rejection reasons. Submission rejection reasons include: an entity 3
+mismatch; the idempotency conflict above; an expired token or a superseded
+decision (the section 5 item 3 outcomes that can arise at submission); and
+the S-5 refusals (unauthorized, no active binding). The list is not a
+complete taxonomy (see section 6). A human DENIED decision is not a
+submission rejection: it is a decision outcome (section 5 item 3) that
+follows an accepted submission and is reported through the final response.
+This design fixes the required fields and semantics, not an encoding.
 
 - **S-3 (HIGH, security)**: holding a pending-decision token must NOT by
   itself confer authority to act. A status-poll or answer-submission
