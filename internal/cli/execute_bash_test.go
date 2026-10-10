@@ -351,11 +351,10 @@ func TestRunExecuteBashStoreCommandTextOptIn(t *testing.T) {
 
 func TestRunExecuteBashStoreCommandTextDoesNotLeakToApprovalMailbox(t *testing.T) {
 	policy := config.CommandApprovalPolicy{
-		Requester:          "worker",
-		Reviewer:           "orchestrator",
-		Label:              "protected",
-		Mode:               "blocking",
-		ApprovalTTLSeconds: 1e8,
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
 	}
 	fixture := newExecuteBashFixture(t, policy)
 	approverInfo := discovery.NodeInfo{SessionName: fixture.sessionName, SessionDir: fixture.sessionDir}
@@ -418,11 +417,10 @@ func TestRunExecuteBashStoreCommandTextDoesNotLeakToApprovalMailbox(t *testing.T
 
 func TestRunExecuteBashCommandApprovalABCLifecycleRejectsWithoutExecution(t *testing.T) {
 	policy := config.CommandApprovalPolicy{
-		Requester:          "worker",
-		Reviewer:           "orchestrator",
-		Label:              "protected",
-		Mode:               "blocking",
-		ApprovalTTLSeconds: 1e8,
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Mode:      "blocking",
 	}
 	fixture := newExecuteBashFixture(t, policy)
 	manager := journal.NewManager(fixture.contextID, os.Getpid())

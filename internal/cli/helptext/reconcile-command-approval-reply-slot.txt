@@ -27,5 +27,14 @@ Required evidence:
   --approver-address       Fully-qualified approver address
   --decision-event-id      Recorded terminal decision event id
 
-Rejection is default. Missing, mismatched, pending, ambiguous, wrong-principal,
-post-expiry, non-command, and already-closed slots are rejected.
+A correctly bound terminal decision closes the reply slot even when it arrived
+after the approval expired; reconciliation repairs that stale slot. Closing the
+slot never makes an expired approval executable: execution stays governed by
+expiry and claim.
+
+Rejection is default. Missing, mismatched, pending, ambiguous (more than one
+terminal decision), wrong-principal, non-command, and slots that are not
+currently open are rejected (status=rejected, reason names the failed check).
+When a matching reconciliation event already exists the plan reports
+status=already_reconciled with the existing event id; that is distinct from a
+closed-slot rejection and appends nothing.

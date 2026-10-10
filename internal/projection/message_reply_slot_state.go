@@ -116,8 +116,12 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 			if err := applyCommandApprovalDecision(commandApprovalThreads, event); err != nil {
 				return CommandApprovalReplySlotReconciliationPlan{}, false, err
 			}
-			thread := commandApprovalThreads[event.ThreadID]
-			if (thread.Status == CommandApprovalStatusApproved || thread.Status == CommandApprovalStatusRejected) && commandApprovalDecisionOccurredBeforeExpiry(thread, event.OccurredAt) {
+			// Reply-slot closure is independent of execution effectiveness: a
+			// correctly bound terminal decision closes the reply obligation even if
+			// it arrived after expiry (execution stays governed by expiry/claim).
+			// Every decision observed on a terminal thread is counted, so a later
+			// conflicting decision makes the evidence ambiguous and blocks repair.
+			if commandApprovalThreadTerminal(commandApprovalThreads[event.ThreadID]) {
 				effectiveCommandApprovalDecisions[event.ThreadID] = append(effectiveCommandApprovalDecisions[event.ThreadID], event)
 			}
 		case journal.CommandApprovalReplySlotReconciledEventType:
@@ -271,11 +275,10 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				return MessageInputRequestState{}, false, err
 			}
 			thread := commandApprovalThreads[event.ThreadID]
-			preExpiryDecision := commandApprovalDecisionOccurredBeforeExpiry(thread, event.OccurredAt)
-			if (thread.Status == CommandApprovalStatusApproved || thread.Status == CommandApprovalStatusRejected) && preExpiryDecision {
+			if commandApprovalThreadTerminal(thread) {
 				effectiveCommandApprovalDecisions[event.ThreadID] = append(effectiveCommandApprovalDecisions[event.ThreadID], event)
 			}
-			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok && preExpiryDecision {
+			if key, ok := acceptedCommandApprovalReplySlotKey(event.ThreadID, thread, payload); ok {
 				acceptedCommandApprovalDecisions[key] = event.OccurredAt
 				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			}
@@ -399,13 +402,8 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	return projected, true, nil
 }
 
-func commandApprovalDecisionOccurredBeforeExpiry(thread CommandApprovalThread, occurredAt string) bool {
-	if thread.ExpiresAt == "" {
-		return true
-	}
-	expiresAt, expiresErr := time.Parse(time.RFC3339Nano, thread.ExpiresAt)
-	decidedAt, decidedErr := time.Parse(time.RFC3339Nano, occurredAt)
-	return expiresErr == nil && decidedErr == nil && !decidedAt.After(expiresAt)
+func commandApprovalThreadTerminal(thread CommandApprovalThread) bool {
+	return thread.Status == CommandApprovalStatusApproved || thread.Status == CommandApprovalStatusRejected
 }
 
 func missingCommandApprovalReplySlotReconciliationField(repair journal.CommandApprovalReplySlotReconciledPayload) string {
