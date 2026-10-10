@@ -128,7 +128,7 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if !strings.Contains(got, "version                    Print the build version JSON") {
 		t.Fatalf("usage missing version command: %q", got)
 	}
-	if !strings.Contains(got, "inspect-message            Inspect persisted message content by id") {
+	if !strings.Contains(got, "inspect-message            Inspect claimed (popped) message content by id") {
 		t.Fatalf("usage missing inspect-message command: %q", got)
 	}
 	for _, hidden := range []string{"\n  status", "\n  read", "\n  todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {

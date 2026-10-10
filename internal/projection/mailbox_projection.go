@@ -25,6 +25,40 @@ type MailboxProjection struct {
 	DeadLetter     map[string]ProjectedFile
 	managedPost    map[string]bool
 	tombstonedRead map[string]bool
+
+	// deadLetteredSources and deadLetteredIDs remember, from the journaled
+	// dead-letter events themselves (not from the projected dead-letter file
+	// name or content), which source paths and message ids were dead-lettered in
+	// the current generation. The projected DeadLetter file keeps only the
+	// suffixed dead-letter path and the content, so a message whose content has
+	// no embedded id could not be matched back to its original name.
+	deadLetteredSources map[string]bool
+	deadLetteredIDs     map[string]bool
+}
+
+// IsDeadLetteredSource reports whether, in the current session generation, a
+// journaled dead-letter event names the given path (for example
+// "read/<file name>") as its source. A pop that fails after the archive rename
+// journals exactly that shape (SourcePath read/<file name>).
+func (p MailboxProjection) IsDeadLetteredSource(path string) bool {
+	return p.deadLetteredSources[pathKey(path)]
+}
+
+// IsDeadLetteredMessage reports whether, in the current session generation, a
+// journaled dead-letter event carries the given message id (the file name for
+// messages popped through the daemon-submit pop path).
+func (p MailboxProjection) IsDeadLetteredMessage(messageID string) bool {
+	return messageID != "" && p.deadLetteredIDs[messageID]
+}
+
+// IsTombstonedRead reports whether, in the current session generation, the
+// journal holds a first read event with EMPTY content for the given read path
+// (for example "read/<file name>"). Such a read leaves no projected.Read entry
+// and no projected.Inbox entry, but the projection sync keeps the archive file
+// at that path. Callers that must not guess about such an archive (inspect-message)
+// use this to tell it apart from an archive the journal never mentions.
+func (p MailboxProjection) IsTombstonedRead(path string) bool {
+	return p.tombstonedRead[pathKey(path)]
 }
 
 type mailboxProjectionMarker struct {
@@ -82,6 +116,9 @@ func projectMailboxProjectionForState(sessionDir string, state journal.SessionSt
 		DeadLetter:     make(map[string]ProjectedFile),
 		managedPost:    make(map[string]bool),
 		tombstonedRead: make(map[string]bool),
+
+		deadLetteredSources: make(map[string]bool),
+		deadLetteredIDs:     make(map[string]bool),
 	}
 	sawLease := false
 	sawResolution := false
@@ -170,6 +207,12 @@ func projectMailboxProjectionForState(sessionDir string, state journal.SessionSt
 				return MailboxProjection{}, false, fmt.Errorf("invalid read path %q", payload.Path)
 			}
 		case MailboxProjectionDeadLetteredEventType:
+			if isAllowedProjectionPath(payload.SourcePath) {
+				projected.deadLetteredSources[pathKey(payload.SourcePath)] = true
+			}
+			if payload.MessageID != "" {
+				projected.deadLetteredIDs[payload.MessageID] = true
+			}
 			rememberManagedPost(projected.managedPost, payload.SourcePath)
 			delete(projected.Post, pathKey(payload.SourcePath))
 			// #762/F-013 is the first producer that can dead-letter a
