@@ -8,14 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 )
 
 type inspectMessageOutput struct {
 	Status      string                `json:"status"`
+	Reason      string                `json:"reason,omitempty"`
 	ID          string                `json:"id"`
 	MatchCount  int                   `json:"match_count"`
 	Message     *inspectMessageMatch  `json:"message,omitempty"`
@@ -69,7 +72,7 @@ func RunInspectMessage(args []string) error {
 	if err != nil {
 		return err
 	}
-	matches, err := findInspectMessageMatches(sessionDir, *id)
+	matches, unproven, err := findInspectMessageMatches(sessionDir, *id)
 	if err != nil {
 		return err
 	}
@@ -83,6 +86,18 @@ func RunInspectMessage(args []string) error {
 	}
 	switch len(matches) {
 	case 0:
+		unpopped, err := inspectMessageHasUnpoppedCopy(sessionDir, *id)
+		if err != nil {
+			return err
+		}
+		switch {
+		case unproven > 0:
+			output.Status = "not_claimed"
+			output.Reason = "no_pop_receipt"
+		case unpopped:
+			output.Status = "not_claimed"
+			output.Reason = "unread_inbox"
+		}
 	case 1:
 		output.Status = "found"
 		output.Message = &matches[0]
@@ -129,21 +144,76 @@ func resolveInspectMessageSessionDir(contextID, sessionName, configPath string) 
 	return filepath.Join(baseDir, contextID, sessionName), contextID, sessionName, nil
 }
 
-func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, error) {
+// inspectMessageReceiptEraStart is the first day on which pop receipts exist in
+// released builds (receipts were added by PR #591, merged 2026-06-28). Archives
+// of messages created before this day cannot have a receipt, so they are
+// accepted as claimed on read/ presence alone. Two days of slack absorb the
+// filename timestamp's time zone and a pop by a not-yet-upgraded binary.
+var inspectMessageReceiptEraStart = time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
+
+// findInspectMessageMatches returns only claimed messages: those archived under
+// read/ AND proven to have been popped successfully (see
+// inspectMessageClaimProven). Unread inbox mail is consumed through pop, so its
+// content is never returned here (see inspectMessageHasUnpoppedCopy). The second
+// result counts read/ files that carry the id but lack the success proof; only
+// their existence is reported, never their content.
+func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, int, error) {
 	var matches []inspectMessageMatch
-	if err := inspectMessageReadDir(filepath.Join(sessionDir, "read"), id, &matches); err != nil {
-		return nil, err
-	}
-	if err := inspectMessageInboxDir(filepath.Join(sessionDir, "inbox"), id, &matches); err != nil {
-		return nil, err
+	unproven := 0
+	if err := inspectMessageReadDir(filepath.Join(sessionDir, "read"), id, &matches, &unproven); err != nil {
+		return nil, 0, err
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		return matches[i].MarkdownPath < matches[j].MarkdownPath
 	})
-	return matches, nil
+	return matches, unproven, nil
 }
 
-func inspectMessageReadDir(readDir, id string, matches *[]inspectMessageMatch) error {
+// inspectMessageClaimProven decides whether a read/ archive is evidence of a
+// successful pop. A read/ file alone is not: a pop that failed after the archive
+// rename (the #802 rollback race) can leave an orphan there. pop writes its
+// receipt (read/<id>.pop.json) only after the daemon returned the message and
+// right before it prints the result, and a receipt write error makes pop fail
+// (internal/cli/pop.go writePopMessageOutputWithOps), so a valid receipt for this
+// message id proves the caller received the pop result.
+//
+// Archives created before receipts existed have none; they are accepted by the
+// era rule above. The orphan race can only occur in builds that write receipts,
+// so a newer archive without a valid receipt is never accepted. The receipt is
+// ordinary same-user filesystem state, not a security boundary.
+func inspectMessageClaimProven(path, filename, content string) bool {
+	messageID := parseMessageContent(content, filename).MessageID
+	if receiptPath := store.PlanPopReceipt(path).ReceiptPath; receiptPath != "" {
+		if data, err := os.ReadFile(receiptPath); err == nil {
+			var receipt struct {
+				Status    string `json:"status"`
+				MessageID string `json:"message_id"`
+			}
+			if json.Unmarshal(data, &receipt) == nil && receipt.Status == "message" && receipt.MessageID == messageID {
+				return true
+			}
+		}
+	}
+	if len(filename) >= len("20060102-150405") {
+		if created, err := time.Parse("20060102-150405", filename[:len("20060102-150405")]); err == nil {
+			return created.Before(inspectMessageReceiptEraStart)
+		}
+	}
+	return false
+}
+
+// inspectMessageHasUnpoppedCopy reports whether an unread inbox message carries
+// the id. It only answers existence so the caller can say "not_claimed"; the
+// matched content is discarded and never reaches the output.
+func inspectMessageHasUnpoppedCopy(sessionDir, id string) (bool, error) {
+	var unread []inspectMessageMatch
+	if err := inspectMessageInboxDir(filepath.Join(sessionDir, "inbox"), id, &unread); err != nil {
+		return false, err
+	}
+	return len(unread) > 0, nil
+}
+
+func inspectMessageReadDir(readDir, id string, matches *[]inspectMessageMatch, unproven *int) error {
 	entries, err := os.ReadDir(readDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -155,7 +225,19 @@ func inspectMessageReadDir(readDir, id string, matches *[]inspectMessageMatch) e
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
 			continue
 		}
-		if err := appendInspectMessageMatch(filepath.Join(readDir, entry.Name()), entry.Name(), "read", "", id, matches); err != nil {
+		path := filepath.Join(readDir, entry.Name())
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading message: %w", err)
+		}
+		if !inspectMessageMatchesID(string(content), entry.Name(), id) {
+			continue
+		}
+		if !inspectMessageClaimProven(path, entry.Name(), string(content)) {
+			*unproven++
+			continue
+		}
+		if err := appendInspectMessageMatch(path, entry.Name(), "read", "", id, matches); err != nil {
 			return err
 		}
 	}
@@ -232,6 +314,9 @@ func inspectMessageMatchesID(content, filename, id string) bool {
 }
 
 func writeInspectMessagePlainOutput(output inspectMessageOutput, pathOnly, bodyOnly bool) error {
+	if output.Status == "not_claimed" {
+		return fmt.Errorf("not_claimed (%s): message id %q has no proof of a successful pop; claim it with pop first", output.Reason, output.ID)
+	}
 	if output.Status != "found" || output.Message == nil {
 		return fmt.Errorf("%s: message id %q matched %d files", output.Status, output.ID, output.MatchCount)
 	}

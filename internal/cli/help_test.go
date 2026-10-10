@@ -40,7 +40,7 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "version                    Print the build version JSON") {
 		t.Fatalf("stdout missing version overview line: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "inspect-message            Inspect persisted message content by id") {
+	if !strings.Contains(stdout.String(), "inspect-message            Inspect claimed (popped) message content by id") {
 		t.Fatalf("stdout missing inspect-message overview line: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "inspect-daemon-submit      Inspect daemon-submit timeout state by id") {

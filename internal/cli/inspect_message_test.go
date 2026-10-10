@@ -10,13 +10,16 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 )
 
-func TestRunInspectMessageFindsUnreadMessageWithoutMovingIt(t *testing.T) {
+// An unread inbox message has not been claimed with pop, so inspect-message must
+// not expose its content (#875: pop is the only way to consume mail).
+func TestRunInspectMessageRefusesUnpoppedInboxMessage(t *testing.T) {
 	fixture := writeInspectMessageFixture(t)
 	filename := "20260506-010101-from-orchestrator-to-worker.md"
+	secretBody := "UNPOPPED-BODY-MARKER please inspect this"
 	content := inspectMessageFixture("orchestrator", "worker", filename, map[string]string{
 		"replyPolicy":      "required",
 		"input_request_id": "ireq_123",
-	}, "Please inspect this")
+	}, secretBody)
 	inboxPath := filepath.Join(fixture.sessionDir, "inbox", "worker", filename)
 	writeInspectMessageFile(t, inboxPath, content)
 
@@ -34,24 +37,138 @@ func TestRunInspectMessageFindsUnreadMessageWithoutMovingIt(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	got := decodeInspectMessageOutputForTest(t, stdout)
-	if got.Status != "found" || got.MatchCount != 1 || got.Message == nil {
-		t.Fatalf("inspect output = %#v, want one found message", got)
+	if got.Status != "not_claimed" || got.Message != nil || len(got.Matches) != 0 {
+		t.Fatalf("inspect output = %#v, want not_claimed with no message content", got)
 	}
-	if got.Message.StorageState != "unread" || got.Message.Node != "worker" {
-		t.Fatalf("message state/node = %q/%q, want unread/worker", got.Message.StorageState, got.Message.Node)
-	}
-	if got.Message.MarkdownPath != inboxPath {
-		t.Fatalf("markdown_path = %q, want %q", got.Message.MarkdownPath, inboxPath)
-	}
-	if got.Message.MessageID != filename || got.Message.From != "orchestrator" || got.Message.To != "worker" {
-		t.Fatalf("message routing = %#v, want parsed metadata", got.Message)
-	}
-	if got.Message.ReplyPolicy != "required" || got.Message.InputRequestID != "ireq_123" {
-		t.Fatalf("input metadata = %#v, want reply policy and input request id", got.Message)
+	for _, leaked := range []string{secretBody, "ireq_123", inboxPath} {
+		if strings.Contains(stdout, leaked) {
+			t.Fatalf("not_claimed output leaked %q: %s", leaked, stdout)
+		}
 	}
 	if _, err := os.Stat(inboxPath); err != nil {
 		t.Fatalf("inspect-message must not move unread inbox file: %v", err)
 	}
+
+	for _, mode := range []string{"--path", "--body"} {
+		stdout, _, err := captureCommandOutput(t, func() error {
+			return RunInspectMessage([]string{
+				"--context-id", fixture.contextID,
+				"--session", fixture.sessionName,
+				"--id", filename,
+				mode,
+			})
+		})
+		if err == nil || !strings.Contains(err.Error(), "not_claimed") {
+			t.Fatalf("RunInspectMessage(%s) error = %v, want a not_claimed refusal", mode, err)
+		}
+		if strings.Contains(stdout, secretBody) || strings.Contains(stdout, inboxPath) {
+			t.Fatalf("RunInspectMessage(%s) stdout leaked unpopped content: %q", mode, stdout)
+		}
+	}
+}
+
+// Once the message was popped (archived under read/), the read copy is the only
+// match even if an unread copy with the same id is still in the inbox.
+func TestRunInspectMessageIgnoresUnreadCopyWhenReadCopyExists(t *testing.T) {
+	fixture := writeInspectMessageFixture(t)
+	filename := "20260506-010108-from-orchestrator-to-worker.md"
+	content := inspectMessageFixture("orchestrator", "worker", filename, nil, "popped body")
+	readPath := filepath.Join(fixture.sessionDir, "read", filename)
+	writeInspectMessageFile(t, readPath, content)
+	writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "inbox", "worker", filename), content)
+
+	got := runInspectMessageForFixture(t, fixture, filename)
+	if got.Status != "found" || got.MatchCount != 1 || got.Message == nil || got.Message.StorageState != "read" || got.Message.MarkdownPath != readPath {
+		t.Fatalf("inspect output = %#v, want exactly the read copy", got)
+	}
+}
+
+// A read/ file alone is not proof of a successful pop: a pop that failed after
+// the archive rename can leave an orphan there (#802 rollback race). Archives
+// from the receipt era need a valid pop receipt for this message id.
+func TestRunInspectMessageRequiresPopReceiptForReceiptEraArchives(t *testing.T) {
+	secretBody := "ORPHAN-BODY-MARKER"
+	writeReceipt := func(t *testing.T, fixture inspectMessageFixtureState, filename, contents string) {
+		t.Helper()
+		stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", stem+".pop.json"), contents)
+	}
+	assertRefused := func(t *testing.T, fixture inspectMessageFixtureState, filename, wantReason string) {
+		t.Helper()
+		stdout, stderr, err := captureCommandOutput(t, func() error {
+			return RunInspectMessage([]string{"--context-id", fixture.contextID, "--session", fixture.sessionName, "--id", filename})
+		})
+		if err != nil || stderr != "" {
+			t.Fatalf("RunInspectMessage() error = %v stderr=%q", err, stderr)
+		}
+		got := decodeInspectMessageOutputForTest(t, stdout)
+		if got.Status != "not_claimed" || got.Reason != wantReason || got.Message != nil || len(got.Matches) != 0 {
+			t.Fatalf("inspect output = %#v, want not_claimed/%s with no message content", got, wantReason)
+		}
+		if strings.Contains(stdout, secretBody) || strings.Contains(stdout, "read/") {
+			t.Fatalf("not_claimed output leaked content or a path: %s", stdout)
+		}
+		if _, _, err := captureCommandOutput(t, func() error {
+			return RunInspectMessage([]string{"--context-id", fixture.contextID, "--session", fixture.sessionName, "--id", filename, "--body"})
+		}); err == nil || !strings.Contains(err.Error(), "not_claimed") {
+			t.Fatalf("RunInspectMessage(--body) error = %v, want a not_claimed refusal", err)
+		}
+	}
+
+	t.Run("orphan read without receipt", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20261009-120000-from-orchestrator-to-worker.md"
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
+		assertRefused(t, fixture, filename, "no_pop_receipt")
+	})
+
+	t.Run("orphan read plus unread inbox copy", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20261009-120001-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "inbox", "worker", filename), content)
+		assertRefused(t, fixture, filename, "no_pop_receipt")
+	})
+
+	t.Run("receipt for a different message id", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20261009-120002-from-orchestrator-to-worker.md"
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
+		writeReceipt(t, fixture, filename, `{"status":"message","message_id":"20261009-999999-from-someone-else.md"}`)
+		assertRefused(t, fixture, filename, "no_pop_receipt")
+	})
+
+	t.Run("unparseable receipt", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20261009-120003-from-orchestrator-to-worker.md"
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody))
+		writeReceipt(t, fixture, filename, "not json")
+		assertRefused(t, fixture, filename, "no_pop_receipt")
+	})
+
+	t.Run("valid receipt is found", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20261009-120004-from-orchestrator-to-worker.md"
+		readPath := filepath.Join(fixture.sessionDir, "read", filename)
+		writeInspectMessageFile(t, readPath, inspectMessageFixture("orchestrator", "worker", filename, nil, "popped body"))
+		writeReceipt(t, fixture, filename, `{"status":"message","message_id":"`+filename+`"}`)
+		got := runInspectMessageForFixture(t, fixture, filename)
+		if got.Status != "found" || got.MatchCount != 1 || got.Message == nil || got.Message.MarkdownPath != readPath {
+			t.Fatalf("inspect output = %#v, want the receipted read archive", got)
+		}
+	})
+
+	t.Run("archive older than receipts needs none", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		filename := "20260501-120000-from-orchestrator-to-worker.md"
+		readPath := filepath.Join(fixture.sessionDir, "read", filename)
+		writeInspectMessageFile(t, readPath, inspectMessageFixture("orchestrator", "worker", filename, nil, "legacy body"))
+		got := runInspectMessageForFixture(t, fixture, filename)
+		if got.Status != "found" || got.Message == nil || got.Message.MarkdownPath != readPath {
+			t.Fatalf("inspect output = %#v, want the legacy read archive found without a receipt", got)
+		}
+	})
 }
 
 func TestRunInspectMessageFindsReadMessageAfterInputRequestSatisfied(t *testing.T) {
@@ -254,8 +371,10 @@ func TestRunInspectMessageReturnsNotFoundAndAmbiguous(t *testing.T) {
 		fixture := writeInspectMessageFixture(t)
 		filename := "20260506-010104-from-orchestrator-to-worker.md"
 		content := inspectMessageFixture("orchestrator", "worker", filename, nil, "duplicate")
+		// Two archived files that carry the same messageId in their metadata.
 		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", filename), content)
-		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "inbox", "worker", filename), content)
+		// The copy keeps a pre-receipt timestamp prefix so both archives count as claimed.
+		writeInspectMessageFile(t, filepath.Join(fixture.sessionDir, "read", "20260504-000000-copy-of-"+filename), content)
 
 		got := runInspectMessageForFixture(t, fixture, filename)
 		if got.Status != "ambiguous" || got.MatchCount != 2 || got.Message != nil {

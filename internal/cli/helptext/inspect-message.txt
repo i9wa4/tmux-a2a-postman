@@ -1,4 +1,4 @@
-inspect-message — inspect persisted message content by id
+inspect-message — inspect claimed (popped) message content by id
 
 Usage:
   tmux-a2a-postman inspect-message --id <message_id>
@@ -10,13 +10,20 @@ Usage:
 
 Output:
   JSON status object by default.
-  status is "found" when exactly one unread or read message matches the id.
+  status is "found" when exactly one claimed (popped) message matches the id.
   status is "not_found" when no persisted message matches the id.
-  status is "ambiguous" when more than one persisted message matches the id.
+  status is "not_claimed" when the id only matches mail without proof of a
+  successful pop: reason "unread_inbox" for unread inbox mail, reason
+  "no_pop_receipt" for a read/ archive without a valid pop receipt. No content,
+  path, or metadata of that message is returned.
+  status is "ambiguous" when more than one claimed message matches the id.
 
 Search scope:
   Current context and tmux session only.
-  Searches unread `inbox/<node>/` messages and archived `read/` messages.
+  Searches archived `read/` messages that pop claimed. A read/ archive counts as
+  claimed when pop's receipt (`read/<id>.pop.json`) names the same message id;
+  archives created before receipts existed (before 2026-06-30) need none.
+  Unread `inbox/<node>/` mail is never returned: consume it with pop first.
   The command is read-only: it does not move inbox mail, mark messages read, or
   satisfy input requests.
 
@@ -41,6 +48,7 @@ Modes:
   --json prints the default structured JSON explicitly.
   --path prints only the matched Markdown path when there is exactly one match.
   --body prints only the matched Markdown body when there is exactly one match.
+  --path and --body fail with a not_claimed error for unpopped inbox mail.
 
 Use inspect-input for currently open reply-required work. Use inspect-message
 when you already know a historical message_id and need the stored message after
