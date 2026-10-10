@@ -55,7 +55,14 @@ func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogS
 
 		key := strings.ToLower(strings.TrimSpace(keyNode.Value))
 		switch key {
-		case "interface_node", "ui_node", "reply_command": // ui_node is surfaced only so the loader can warn and ignore it (#764)
+		case "ui_node":
+			// Legacy key (#764): only its presence is recorded so the loader can warn
+			// and ignore it. The value may be any YAML kind (scalar, sequence,
+			// mapping, null); it is never parsed, so it cannot make the whole
+			// postman.md overlay fail to load and drop interface_node, edges or
+			// skill_path.
+			scalars[key] = ""
+		case "interface_node", "reply_command":
 			value, err := parseYAMLScalarString(valueNode)
 			if err != nil {
 				return nil, nil, nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")

@@ -70,11 +70,11 @@ func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
 }
 
 func restrictPingTargetsToConfiguredInterfaceNode(nodes map[string]discovery.NodeInfo, cfg *config.Config) (map[string]discovery.NodeInfo, bool) {
-	if cfg == nil || !cfg.HasExplicitInterfaceNodeSetting() || cfg.InterfaceNode == "" {
+	if !cfg.HasExplicitInterfaceNodeSetting() || cfg.ConfiguredInterfaceNode() == "" {
 		return cliutil.FilterToInterfaceNode(nodes, ""), true
 	}
 
-	filtered := cliutil.FilterToInterfaceNode(nodes, cfg.InterfaceNode)
+	filtered := cliutil.FilterToInterfaceNode(nodes, cfg.ConfiguredInterfaceNode())
 	return filtered, len(filtered) > 0
 }
 

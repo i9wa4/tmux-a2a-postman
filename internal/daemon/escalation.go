@@ -306,13 +306,13 @@ func runtimeInterfaceNode(cfg *config.Config, nodes map[string]discovery.NodeInf
 	discovery.NodeInfo
 }, bool,
 ) {
-	if cfg == nil || strings.TrimSpace(cfg.InterfaceNode) == "" {
+	uiNode := cfg.ConfiguredInterfaceNode()
+	if uiNode == "" {
 		return struct {
 			NodeKey string
 			discovery.NodeInfo
 		}{}, false
 	}
-	uiNode := strings.TrimSpace(cfg.InterfaceNode)
 	nodeKeys := make([]string, 0, len(nodes))
 	for nodeKey := range nodes {
 		nodeKeys = append(nodeKeys, nodeKey)

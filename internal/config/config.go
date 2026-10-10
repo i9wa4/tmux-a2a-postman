@@ -426,6 +426,21 @@ func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
 	return cfg.interfaceNodeSet
 }
 
+// ConfiguredInterfaceNode returns the interface node name with surrounding
+// whitespace removed, or "" when none is configured (nil Config, unset, empty,
+// or whitespace-only). Every runtime reader (verdict exemption, escalation
+// target, startup PING selectors, diagnostics) must use this accessor instead of
+// the raw InterfaceNode field so a value such as " messenger " or "   " is
+// interpreted the same way everywhere (#764). HasExplicitInterfaceNodeSetting
+// is independent of this value: an explicit whitespace-only setting stays
+// explicit but names no node.
+func (cfg *Config) ConfiguredInterfaceNode() string {
+	if cfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.InterfaceNode)
+}
+
 // NoInterfaceNodeDiagnostic is the one operator-visible message for the
 // fail-closed state: no usable interface_node was configured (omitted, or
 // explicitly empty). It is surfaced once on stderr at daemon start and in
@@ -436,7 +451,7 @@ const NoInterfaceNodeDiagnostic = "no interface_node configured: no verdict exem
 // interface node is configured, and "" when one is. A nil Config is treated as
 // unconfigured.
 func (cfg *Config) InterfaceNodeDiagnostic() string {
-	if cfg == nil || strings.TrimSpace(cfg.InterfaceNode) == "" {
+	if cfg.ConfiguredInterfaceNode() == "" {
 		return NoInterfaceNodeDiagnostic
 	}
 	return ""

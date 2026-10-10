@@ -22,6 +22,8 @@ func TestBuildInterfaceNodeStatus(t *testing.T) {
 		{name: "blank", cfg: &config.Config{InterfaceNode: "  "}, wantMarker: true},
 		{name: "embedded default", cfg: config.DefaultConfig(), wantMarker: true},
 		{name: "configured", cfg: &config.Config{InterfaceNode: "messenger"}, wantMarker: false},
+		{name: "padded name is configured (F-002)", cfg: &config.Config{InterfaceNode: " messenger "}, wantMarker: false},
+		{name: "tab-only is unconfigured (F-002)", cfg: &config.Config{InterfaceNode: "\t"}, wantMarker: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

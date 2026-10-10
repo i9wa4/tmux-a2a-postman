@@ -506,7 +506,7 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	} else if err := verdictgate.Enforce(sessionDir, sender, filename, content, verdictgate.Options{
 		GraceSeconds:        cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
 		DebtCap:             cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
-		ExemptInterfaceNode: cfg.InterfaceNode,
+		ExemptInterfaceNode: cfg.ConfiguredInterfaceNode(),
 		RecordTimeout:       verdictgate.RecordTimeoutWithCurrentLease,
 	}); err != nil {
 		return err

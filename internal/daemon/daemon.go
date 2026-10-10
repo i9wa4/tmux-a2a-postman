@@ -293,7 +293,7 @@ func configureVerdictGateFromConfig(cfg *config.Config) {
 	verdictDebtCap = cfg.EffectiveVerdictDebtCap(verdictDebtCap)
 	// Unconditional: a reload that drops interface_node must also drop the
 	// exemption instead of keeping the previous process-global value.
-	verdictExemptInterfaceNode = cfg.InterfaceNode
+	verdictExemptInterfaceNode = cfg.ConfiguredInterfaceNode()
 }
 
 // daemonPopArchiveVerify is a package-level indirection so tests can inject

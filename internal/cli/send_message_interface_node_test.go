@@ -27,6 +27,8 @@ func TestRunSendHeredoc_DirectPathVerdictExemptionFollowsInterfaceNode(t *testin
 		{name: "interface_node messenger exempts messenger", interfaceLine: `interface_node = "messenger"`, wantExempt: true},
 		{name: "other interface_node does not exempt messenger", interfaceLine: `interface_node = "worker"`, wantExempt: false},
 		{name: "legacy ui_node does not exempt messenger", interfaceLine: `ui_node = "messenger"`, wantExempt: false},
+		{name: "padded interface_node messenger exempts messenger (F-002)", interfaceLine: `interface_node = " messenger "`, wantExempt: true},
+		{name: "whitespace-only interface_node exempts nobody (F-002)", interfaceLine: `interface_node = "   "`, wantExempt: false},
 	}
 
 	for i, tc := range tests {
