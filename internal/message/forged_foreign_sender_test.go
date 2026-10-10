@@ -356,26 +356,34 @@ func TestDeliverMessage_CommandApprovalDecisionForgedQualifiedApproverDeniedLegi
 	}
 }
 
-// T7: malformed sender spellings never reach delivery. The filename parser
-// rejects empty or malformed nodes and empty sessions BEFORE the foreign-sender
-// guard (parse-error dead letter). A session name that merely contains
-// whitespace ("sess-a :node") is syntactically valid for the parser, but it
-// names a session different from the physical one, so the guard dead-letters it
-// as a forged sender. Either way: dead-lettered exactly once, never delivered.
+// T7: malformed sender spellings never reach delivery. The expected outcome of
+// each spelling is a LITERAL in the table below, not derived from the parser
+// under test: the filename parser rejects four of the spellings (an empty node,
+// an empty session, an extra ":" segment and a whitespace-led node) BEFORE the
+// foreign-sender guard (parse-error dead letter). A session name that merely
+// contains whitespace ("sess-a :node") is syntactically valid for the parser,
+// but it names a session different from the physical one ("sess-a"), so the
+// guard dead-letters it as a forged sender. Either way: dead-lettered exactly
+// once, never delivered. The parser verdict is asserted independently so a
+// parser change cannot silently move a spelling between the two outcomes.
 func TestDeliverMessage_MalformedQualifiedSendersNeverDelivered(t *testing.T) {
-	for _, from := range []string{
-		":node",
-		"sess-a:sess-b:node",
-		"sess-a :node",
-		"sess-a: node",
-		"sess-b:",
+	for _, tc := range []struct {
+		from           string
+		wantParseError bool
+		wantSuffix     string
+		otherSuffix    string
+	}{
+		{from: ":node", wantParseError: true, wantSuffix: dlSuffixParseError, otherSuffix: dlSuffixForgedSender},
+		{from: "sess-a:sess-b:node", wantParseError: true, wantSuffix: dlSuffixParseError, otherSuffix: dlSuffixForgedSender},
+		{from: "sess-a: node", wantParseError: true, wantSuffix: dlSuffixParseError, otherSuffix: dlSuffixForgedSender},
+		{from: "sess-b:", wantParseError: true, wantSuffix: dlSuffixParseError, otherSuffix: dlSuffixForgedSender},
+		{from: "sess-a :node", wantParseError: false, wantSuffix: dlSuffixForgedSender, otherSuffix: dlSuffixParseError},
 	} {
+		from, wantSuffix, otherSuffix := tc.from, tc.wantSuffix, tc.otherSuffix
 		t.Run(from, func(t *testing.T) {
 			filename := "20260709-120500-r0007-from-" + from + "-to-sess-a:worker.md"
-			_, parseErr := ParseMessageFilename(filename)
-			wantSuffix, otherSuffix := dlSuffixParseError, dlSuffixForgedSender
-			if parseErr == nil {
-				wantSuffix, otherSuffix = dlSuffixForgedSender, dlSuffixParseError
+			if _, parseErr := ParseMessageFilename(filename); (parseErr != nil) != tc.wantParseError {
+				t.Fatalf("ParseMessageFilename(%q) error = %v, want parse error = %v", filename, parseErr, tc.wantParseError)
 			}
 
 			sessionA := filepath.Join(t.TempDir(), "sess-a")
