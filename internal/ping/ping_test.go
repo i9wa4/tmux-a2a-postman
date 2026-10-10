@@ -513,8 +513,12 @@ func TestSendPingToNode_NotificationAttemptedOnDelivery(t *testing.T) {
 	argsLog := string(argsData)
 	for _, want := range []string{
 		"display-message -t %99 -p #{pane_current_command}",
-		"set-buffer",
-		"paste-buffer -t %99",
+		"set-buffer -b ",
+		// #800/F-030: paste-buffer, run-shell (delay), and send-keys are
+		// chained onto set-buffer's own line via a uniquely-named buffer
+		// (paste-buffer -b <name> -d -t %99), not separate invocations.
+		"paste-buffer -b ",
+		"-d -t %99",
 		"send-keys -t %99 C-m",
 	} {
 		if !strings.Contains(argsLog, want) {

@@ -3,6 +3,7 @@ package message
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -35,6 +36,16 @@ const (
 	deadLetterReasonRecipientSessionDisabled = "recipient session disabled"
 	deadLetterReasonForeignSession           = "foreign session"
 	deadLetterReasonMissingEvidence          = "missing-evidence"
+
+	// DeadLetterReasonPopVerificationExhausted is exported (unlike its
+	// siblings above): internal/daemon's handleDaemonSubmitPop applies it
+	// directly via store.PlanDeadLetterMessage / a dedicated atomic write
+	// helper (#755 F-013). That failure is detected at pop time on the
+	// recipient's own already-delivered inbox, not during the post-to-inbox
+	// delivery pipeline planDeliveryPolicy models, so planDeliveryPolicy
+	// itself cannot produce it -- only this naming convention is shared
+	// with it.
+	DeadLetterReasonPopVerificationExhausted = "pop verification failed repeatedly"
 )
 
 // Dead-letter filename suffixes appended before .md extension (Issue #206).
@@ -50,6 +61,10 @@ const (
 	dlSuffixForeignSession   = "-dl-foreign-session"
 	dlSuffixForgedSender     = "-dl-forged-sender"
 	dlSuffixMissingEvidence  = "-dl-missing-evidence"
+
+	// DlSuffixPopVerificationExhausted is exported for the same reason as
+	// DeadLetterReasonPopVerificationExhausted above (#755 F-013).
+	DlSuffixPopVerificationExhausted = "-dl-pop-verification-exhausted"
 )
 
 // inboxQueueCap is the maximum number of messages allowed in a recipient inbox
@@ -60,6 +75,12 @@ const (
 	deadLetterReasonQueueFull = "inbox queue full"
 	dlSuffixQueueFull         = "-dl-queue-full"
 )
+
+// errInboxCountFailed (C-5) identifies DeliverMessage's fail-closed
+// countInboxMessages error specifically, so a caller (and a test) can tell
+// it apart from any other error that might arise elsewhere in the same
+// admission-fence callback.
+var errInboxCountFailed = errors.New("inbox message count failed")
 
 // deadLetterDst builds the dead-letter destination path with reason suffix.
 // Transforms "msg.md" → "msg-dl-{reason}.md" in dead-letter/ directory.
@@ -423,10 +444,87 @@ func isTrustedCommandApprovalDecision(requesterSessionDir, requesterSessionName,
 		thread.RequesterAddress == nodeaddr.Full(to, requesterSessionName)
 }
 
-func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) error {
-	if err := moveToDeadLetter(srcPath, dstPath); err != nil {
-		return err
+// moveToDeadLetterWithProjection re-validates and performs a stale post/
+// entry's dead-letter move atomically under the SOURCE session's roots gate
+// (P2-2b), matching moveToDeadLetterForDecision's gating: a dead-letter move
+// touches only sessionDir's own post/ and dead-letter/ directories, so
+// gating any other session here would be pointless and risks foreign lock
+// state.
+//
+// Staleness is re-checked, the payload is re-read, and the dead-letter
+// directory is created, all INSIDE the same gated critical section as the
+// rename (Guardian F1/F2): an exclusive generation transition (quarantine)
+// can replace post/ between DrainStalePost's earlier, ungated directory
+// listing/mtime check and this call, so a fresh same-name file must never
+// be judged stale, read, moved, or have its directory recreated using a
+// decision made before the gate was held. A false "moved" return with a nil
+// error means the entry no longer exists or is no longer stale at gate time
+// -- a legitimate skip, not a failure. DrainStalePost (#840 part 2 P2-2b) is
+// this function's only caller.
+func moveToDeadLetterWithProjection(sessionDir, sessionName, postDir, deadLetterDir, entryName string, ttl time.Duration) (moved bool, err error) {
+	srcPath := filepath.Join(postDir, entryName)
+	var (
+		content  string
+		from, to string
+		dstPath  string
+	)
+	gateErr := withSessionRootsGates(sessionDir, sessionDir, func() error {
+		fi, statErr := os.Stat(srcPath)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				// Already gone (drained by a concurrent caller, quarantined
+				// away, or never existed) -- a legitimate skip, not a
+				// failure.
+				return nil
+			}
+			// Any other stat failure (permission, I/O, etc.) is a real
+			// error the caller must log, not a silent skip.
+			return statErr
+		}
+		if time.Since(fi.ModTime()) <= ttl {
+			// A fresh same-name file replaced the one seen stale before the
+			// gate was acquired; it must never be drained.
+			return nil
+		}
+		raw, readErr := os.ReadFile(srcPath)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				return nil
+			}
+			return readErr
+		}
+		content = string(raw)
+		if info, parseErr := ParseMessageFilename(entryName); parseErr == nil && info != nil {
+			from, to = info.From, info.To
+		}
+		if mkErr := os.MkdirAll(deadLetterDir, 0o700); mkErr != nil {
+			return mkErr
+		}
+		dstPath = deadLetterDst(sessionDir, entryName, DlSuffixTTLExpired)
+		if mvErr := moveToDeadLetter(srcPath, dstPath); mvErr != nil {
+			return mvErr
+		}
+		moved = true
+		return nil
+	})
+	if gateErr != nil {
+		return false, gateErr
 	}
+	if moved {
+		finishDeadLetterRecord(sessionDir, sessionName, srcPath, dstPath, entryName, from, to, content)
+	}
+	return moved, nil
+}
+
+// finishDeadLetterRecord records the journal/projection/msgtrace side effects
+// for an ALREADY-MOVED dead-letter file. Per the DeliverMessage locking
+// protocol documented there (B-1), this must run only after every session
+// roots gate held during the move itself has been released, since
+// syncMailboxProjectionWithTrace below takes the exclusive roots gate
+// internally on a generation change and would self-deadlock (or, for a
+// different session's gate, needlessly nest) if called while a gate from the
+// move is still held.
+func finishDeadLetterRecord(sessionDir, sessionName, srcPath, dstPath, messageID, from, to, content string) {
 	fields := msgtrace.FromContent(messageID, shadowRelativePath(sessionDir, dstPath), sessionName, content)
 	if fields.Sender == "" {
 		fields.Sender = from
@@ -447,8 +545,91 @@ func moveToDeadLetterWithProjection(sessionDir, sessionName, srcPath, dstPath, m
 		Content:       content,
 	})
 	syncMailboxProjectionWithTrace(sessionDir, fields)
-	return nil
 }
+
+// aboutToRequestSessionGatesForTest fires, when set, immediately before
+// withSessionRootsGates requests its first shared roots gate.
+var aboutToRequestSessionGatesForTest func()
+
+// insideSessionRootsGatesForTest fires, when set, immediately after
+// withSessionRootsGates has acquired every gate it needs and is about to
+// run the protected body -- i.e. the moment a caller has actually entered
+// its gated section. Tests use a bounded wait-then-assert that this has NOT
+// fired while an external holder still holds a conflicting gate (the same
+// non-sleep, non-ordering-inference pattern established in
+// internal/store/mailbox_roots_test.go's contenderStarted proof), never a
+// sleep and never end-of-run ordering, which a scheduler can satisfy by
+// coincidence even against a broken (no-op) gate (B-5).
+var insideSessionRootsGatesForTest func()
+
+// sortedDistinctSessionDirs returns {a} when a and b are the same directory,
+// otherwise both in a deterministic (lexically sorted) order. Sorting gives
+// every concurrent caller the same acquisition order for the same pair of
+// sessions, which is what makes nesting two independent per-session gates
+// deadlock-free. C-4: both inputs are run through filepath.Clean first, so
+// two spellings of the same directory (e.g. a trailing slash or a "./"
+// segment) always compare and dedupe identically -- without this, a valid
+// local sender's dir could fail the "same directory" check against its own
+// differently-spelled session dir and be treated as foreign, and two
+// concurrent callers could compute different acquisition orders for what is
+// actually the same pair of directories.
+func sortedDistinctSessionDirs(a, b string) []string {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return []string{a}
+	}
+	if a < b {
+		return []string{a, b}
+	}
+	return []string{b, a}
+}
+
+// withSessionRootsGates acquires store.WithMailboxRootsShared for the source
+// and recipient session directories, in sortedDistinctSessionDirs order
+// (once, if they are the same directory), then runs fn. It is DeliverMessage
+// and its dead-letter/notification bypass-writer helpers' entry point for
+// their own mutation paths (P2-2a), and DrainStalePost's dead-letter move
+// also goes through it via moveToDeadLetterWithProjection (P2-2b); it does
+// not claim to cover every writer in this package beyond these. It must
+// never be called
+// while any session roots gate or admission fence is already held by the
+// caller: nesting here is between two DIFFERENT sessions' gates only, never
+// a second acquisition of a gate/fence the caller itself already holds.
+func withSessionRootsGates(sourceSessionDir, recipientSessionDir string, fn func() error) error {
+	if aboutToRequestSessionGatesForTest != nil {
+		aboutToRequestSessionGatesForTest()
+	}
+	protected := fn
+	if insideSessionRootsGatesForTest != nil {
+		protected = func() error {
+			insideSessionRootsGatesForTest()
+			return fn()
+		}
+	}
+	gate := func(dir string, next func() error) error {
+		if skipSessionRootsGateForDirForTest != nil && skipSessionRootsGateForDirForTest(dir) {
+			return next()
+		}
+		return store.WithMailboxRootsShared(dir, next)
+	}
+	dirs := sortedDistinctSessionDirs(sourceSessionDir, recipientSessionDir)
+	if len(dirs) == 1 {
+		return gate(dirs[0], protected)
+	}
+	return gate(dirs[0], func() error {
+		return gate(dirs[1], protected)
+	})
+}
+
+// skipSessionRootsGateForDirForTest, when set, reports whether
+// withSessionRootsGates should skip acquiring the real gate for a specific
+// (already-cleaned) session directory, running the protected body directly
+// for that directory instead. It exists solely for the C-1(c) demonstration
+// that a SPECIFIC session's gate -- not just "some" gate -- is load-bearing
+// for a given call site: a test removes only the source directory's gate
+// (leaving the recipient's real) and confirms the cross-session blocking
+// test then fails, which a blanket no-op-lock patch cannot distinguish.
+var skipSessionRootsGateForDirForTest func(dir string) bool
 
 func deadLetterFailureReason(deadLetterPath string) string {
 	base := strings.TrimSuffix(filepath.Base(deadLetterPath), ".md")
@@ -512,13 +693,31 @@ func deadLetterDecisionDestination(sessionDir, filename string, decision deliver
 	return deadLetterDst(sessionDir, filename, decision.DeadLetterSuffix)
 }
 
+// moveToDeadLetterForDecision performs DeliverMessage's dead-letter move
+// under the SOURCE session's roots gate ONLY (C-2): a dead-letter move
+// touches only sessionDir's own post/ and dead-letter/ directories, never
+// the recipient's, so gating the recipient session here would let a
+// blocked, invalid, or missing recipient session stall or fail source
+// dead-lettering -- the message would stay in post/ and retry indefinitely
+// -- and would create lock state in a foreign session for no reason. The
+// gate is released before the journal/projection side effects run
+// (finishDeadLetterRecord), never held across them. The ordinary
+// (non-dead-letter) cross-session delivery rename in DeliverMessage is
+// unaffected by this and still takes both sorted session gates, since that
+// rename genuinely touches both session directories.
 func moveToDeadLetterForDecision(sessionDir, sessionName, postPath, dst, filename string, info *MessageInfo, content string) error {
 	from, to := "", ""
 	if info != nil {
 		from = info.From
 		to = info.To
 	}
-	return moveToDeadLetterWithProjection(sessionDir, sessionName, postPath, dst, filename, from, to, content)
+	if err := withSessionRootsGates(sessionDir, sessionDir, func() error {
+		return moveToDeadLetter(postPath, dst)
+	}); err != nil {
+		return err
+	}
+	finishDeadLetterRecord(sessionDir, sessionName, postPath, dst, filename, from, to, content)
+	return nil
 }
 
 // MessageInfo holds parsed information from a message filename.
@@ -649,10 +848,38 @@ func ParseMessageFilename(filename string) (*MessageInfo, error) {
 	}, nil
 }
 
-func writeRoutingDeniedWarning(sourceSessionDir, contextID string, info *MessageInfo, senderSimpleName, senderFullName string, adjacency map[string][]string, cfg *config.Config) {
-	senderInbox := filepath.Join(sourceSessionDir, "inbox", senderSimpleName)
-	if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
-		return
+// P2-2a (docs/design/mailbox-overflow-policy.md §2.1): by the time this is
+// called, senderFullName has already been through resolveRuntimeNode
+// (DeliverMessage's sender-resolution check) and confirmed non-dead-letter,
+// so it is already known; this re-validates anyway for defense in depth
+// against any future caller that skips that path. The write is serialized
+// under this recipient's admission fence (claim-only; no sequence is
+// issued here), preceded by the session-level mailbox roots gate taken
+// SHARED, per the documented lock order.
+// writeRoutingDeniedWarning writes a best-effort edge-violation warning back
+// into the sender's own inbox under sourceSessionDir. B-4: senderFullName is
+// the already-resolved full address (resolveRuntimeNode was run on it by
+// the caller), but the resolution is re-validated here, including that the
+// resolved node's own SessionDir equals sourceSessionDir -- the session this
+// warning writes into -- rejecting a sender that resolves to a DIFFERENT
+// session's node even if it shares senderSimpleName with a local one. B-3:
+// the target inbox's message count is read under the same admission fence
+// as the write and the write is suppressed (never dead-lettered or
+// recursed) at inboxQueueCap; a durable, cap-independent signal is deferred
+// to slice (c).
+func writeRoutingDeniedWarning(sourceSessionDir, contextID string, info *MessageInfo, senderSimpleName, senderFullName string, adjacency map[string][]string, cfg *config.Config, knownNodes map[string]discovery.NodeInfo, sourceSessionName string) directInboxWriteOutcome {
+	resolution := resolveRuntimeNode(senderFullName, sourceSessionName, knownNodes)
+	if !resolution.Found {
+		log.Printf("postman: routing-denied warning skipped: sender %q is not a known node\n", senderFullName)
+		return directInboxWriteOutcomeSkippedUnknownSender
+	}
+	resolvedNode, ok := knownNodes[resolution.Address]
+	// C-4: compare canonicalized paths (see sortedDistinctSessionDirs) so a
+	// differently-spelled but identical session dir is never mistaken for a
+	// foreign one.
+	if !ok || filepath.Clean(resolvedNode.SessionDir) != filepath.Clean(sourceSessionDir) {
+		log.Printf("postman: routing-denied warning skipped: sender %q resolved outside the target session (resolved session %q)\n", senderFullName, resolvedNode.SessionName)
+		return directInboxWriteOutcomeSkippedForeignSession
 	}
 
 	var neighbors []string
@@ -696,8 +923,41 @@ func writeRoutingDeniedWarning(sourceSessionDir, contextID string, info *Message
 		)
 		warnContent += replyInstructions
 	}
-	warnPath := filepath.Join(senderInbox, warnFilename)
-	_ = os.WriteFile(warnPath, []byte(warnContent), 0o600)
+
+	// Best-effort write, matching the prior unconditional os.WriteFile's
+	// discarded error.
+	senderInbox := filepath.Join(sourceSessionDir, "inbox", senderSimpleName)
+	result := directInboxWriteOutcomeWriteError
+	fenceErr := withSessionRootsGates(sourceSessionDir, sourceSessionDir, func() error {
+		_, err := store.WithAdmissionFence(sourceSessionDir, senderSimpleName, func(*store.AdmissionHandle) error {
+			count, countErr := countInboxMessages(senderInbox)
+			if countErr != nil {
+				log.Printf("postman: WARNING: routing-denied warning skipped for %s: inbox count failed: %v\n", senderFullName, countErr)
+				result = directInboxWriteOutcomeCountError
+				return nil
+			}
+			if count >= inboxQueueCap {
+				log.Printf("postman: routing-denied warning suppressed at cap: sender=%s attempted_recipient=%s (cap=%d, current=%d)\n", senderFullName, info.To, inboxQueueCap, count)
+				result = directInboxWriteOutcomeSuppressedAtCap
+				return nil
+			}
+			if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
+				return mkErr
+			}
+			warnPath := filepath.Join(senderInbox, warnFilename)
+			if writeErr := os.WriteFile(warnPath, []byte(warnContent), 0o600); writeErr != nil {
+				return writeErr
+			}
+			result = directInboxWriteOutcomeWritten
+			return nil
+		})
+		return err
+	})
+	if fenceErr != nil {
+		log.Printf("postman: WARNING: failed to write routing-denied warning for %s: %v\n", senderFullName, fenceErr)
+		return directInboxWriteOutcomeWriteError
+	}
+	return result
 }
 
 // DeliverMessage moves a message from post/ to the recipient's inbox/ or dead-letter/.
@@ -792,7 +1052,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 				if decision.SendDeadLetterNotification {
-					sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+					sendDeadLetterNotification(sourceSessionDir, contextID, info.From, decision.DeadLetterReason, filename, filepath.Base(dst), knownNodes, sourceSessionName)
 				}
 				emitDeliveryDecisionEvent(events, decision, info, filename)
 				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
@@ -806,7 +1066,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 				dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 				if decision.SendDeadLetterNotification {
-					sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+					sendDeadLetterNotification(sourceSessionDir, contextID, info.From, decision.DeadLetterReason, filename, filepath.Base(dst), knownNodes, sourceSessionName)
 				}
 				emitDeliveryDecisionEvent(events, decision, info, filename)
 				return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
@@ -831,7 +1091,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		if decision.SendDeadLetterNotification {
-			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, decision.DeadLetterReason, filename, filepath.Base(dst), knownNodes, sourceSessionName)
 		}
 		// Issue #53: Notify dead-letter event
 		emitDeliveryDecisionEvent(events, decision, info, filename)
@@ -846,7 +1106,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
 		dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 		if decision.SendDeadLetterNotification {
-			sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, decision.DeadLetterReason, filename, filepath.Base(dst), knownNodes, sourceSessionName)
 		}
 		log.Printf("postman: F4: dead-lettering %s — recipient session %q is foreign (daemon session: %q)\n", filename, nodeInfo.SessionName, daemonSession)
 		emitDeliveryDecisionEvent(events, decision, info, filename)
@@ -910,7 +1170,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			}
 			// Issue #80: Send warning message back to sender
 			if decision.SendRoutingWarning {
-				writeRoutingDeniedWarning(sourceSessionDir, contextID, info, senderSimpleName, senderFullName, adjacency, cfg)
+				writeRoutingDeniedWarning(sourceSessionDir, contextID, info, senderSimpleName, senderFullName, adjacency, cfg, knownNodes, sourceSessionName)
 			}
 
 			// Routing denied: move to dead-letter/ in source session
@@ -935,7 +1195,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 			log.Printf("📨 postman: sender session %s disabled (moved to dead-letter/)\n", senderSessionName)
 			if decision.SendDeadLetterNotification {
-				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+				sendDeadLetterNotification(sourceSessionDir, contextID, info.From, decision.DeadLetterReason, filename, filepath.Base(dst), knownNodes, sourceSessionName)
 			}
 			// Issue #53: Notify dead-letter event
 			emitDeliveryDecisionEvent(events, decision, info, filename)
@@ -949,7 +1209,7 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
 			log.Printf("📨 postman: recipient session %s disabled (moved to dead-letter/)\n", recipientSessionName)
 			if decision.SendDeadLetterNotification {
-				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+				sendDeadLetterNotification(sourceSessionDir, contextID, info.From, decision.DeadLetterReason, filename, filepath.Base(dst), knownNodes, sourceSessionName)
 			}
 			// Issue #53: Notify dead-letter event
 			emitDeliveryDecisionEvent(events, decision, info, filename)
@@ -961,26 +1221,80 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 	recipientSessionDir := nodeInfo.SessionDir
 	recipientInbox := filepath.Join(recipientSessionDir, "inbox", recipientSimpleName)
 
-	// Enforce inbox queue cap: dead-letter overflow beyond inboxQueueCap.
-	// Protects agent-session nodes from unbounded queue growth (#agent-session).
-	if count, countErr := countInboxMessages(recipientInbox); countErr == nil {
-		policyInput.QueueChecked = true
-		policyInput.QueueCount = count
-		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
-			dst := deadLetterDecisionDestination(sourceSessionDir, filename, decision)
-			if decision.SendDeadLetterNotification {
-				sendDeadLetterNotification(sourceSessionDir, contextID, senderSimpleName, decision.DeadLetterReason, filename, filepath.Base(dst))
+	// P2-2a (docs/design/mailbox-overflow-policy.md §2.1): the queue-cap
+	// decision and the actual inbox delivery below must be one atomic
+	// operation under this recipient's admission fence, preceded by shared
+	// mailbox roots gates on BOTH sourceSessionDir and recipientSessionDir
+	// (sortedDistinctSessionDirs order, once if the same directory -- B-1):
+	// DeliverPostToInbox below renames the file out of sourceSessionDir's
+	// post/ directly into recipientSessionDir's inbox/ in one os.Rename, so
+	// a concurrent quarantine transition on EITHER session must be excluded,
+	// not just the recipient's. Without the fence itself, two concurrent
+	// deliveries could both observe room under the cap and both admit,
+	// overflowing it -- the exact TOCTOU race the fence exists to close.
+	// recipientSimpleName was already confirmed against knownNodes via
+	// resolveRuntimeNode above (see recipientResolution) and the F4
+	// foreign-session check, so known-node validation always happens before
+	// this fence is ever requested. This slice uses the fence as a pure
+	// mutual-exclusion primitive (claim-only): it does not call
+	// NextAdmissionSequence/MarkCommitted, so no admission sequence is
+	// issued or consumed here; assigning and using a durable FIFO sequence
+	// is deferred to a dedicated future slice. B-2: a countInboxMessages
+	// failure fails CLOSED -- the message is left in post/ (no move is ever
+	// attempted) and the error propagates to the caller for a retry,
+	// matching docs/design/mailbox-overflow-policy.md §2.1's fail-closed
+	// rule; it must never silently skip the cap check and admit.
+	var (
+		deadLetterDecision deliveryDecision
+		deadLetterDst      string
+		deadLettered       bool
+		deliveredDst       string
+	)
+	fenceErr := withSessionRootsGates(sourceSessionDir, recipientSessionDir, func() error {
+		_, err := store.WithAdmissionFence(recipientSessionDir, recipientSimpleName, func(*store.AdmissionHandle) error {
+			// Enforce inbox queue cap: dead-letter overflow beyond inboxQueueCap.
+			// Protects agent-session nodes from unbounded queue growth (#agent-session).
+			count, countErr := countInboxMessages(recipientInbox)
+			if countErr != nil {
+				log.Printf("postman: WARNING: failed to count inbox messages for %s: %v (failing closed, message stays in post/)\n", recipientSimpleName, countErr)
+				// C-5: wrap with errInboxCountFailed so a caller (and a test)
+				// can tell "fail-closed counting" apart from any other error
+				// that might arise later in this fence callback -- a bare
+				// propagated countErr would be indistinguishable from, say,
+				// an error from the later rename hitting the same broken
+				// path, which could pass a test meant to prove this specific
+				// branch is reached.
+				return fmt.Errorf("%w for %s: %v", errInboxCountFailed, recipientSimpleName, countErr)
 			}
-			log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", info.To, inboxQueueCap, count, filename)
-			emitDeliveryDecisionEvent(events, decision, info, filename)
-			return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, dst, filename, info, messageContent)
-		}
-	}
-
-	dst, err := store.DeliverPostToInbox(postPath, recipientInbox, filename)
-	if err != nil {
+			policyInput.QueueChecked = true
+			policyInput.QueueCount = count
+			if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {
+				deadLetterDecision = decision
+				deadLetterDst = deadLetterDecisionDestination(sourceSessionDir, filename, decision)
+				deadLettered = true
+				return nil
+			}
+			dst, err := store.DeliverPostToInbox(postPath, recipientInbox, filename)
+			if err != nil {
+				return err
+			}
+			deliveredDst = dst
+			return nil
+		})
 		return err
+	})
+	if fenceErr != nil {
+		return fenceErr
 	}
+	if deadLettered {
+		if deadLetterDecision.SendDeadLetterNotification {
+			sendDeadLetterNotification(sourceSessionDir, contextID, info.From, deadLetterDecision.DeadLetterReason, filename, filepath.Base(deadLetterDst), knownNodes, sourceSessionName)
+		}
+		log.Printf("postman: inbox queue full for %s (cap=%d, current=%d): dead-lettering %s\n", info.To, inboxQueueCap, policyInput.QueueCount, filename)
+		emitDeliveryDecisionEvent(events, deadLetterDecision, info, filename)
+		return moveToDeadLetterForDecision(sourceSessionDir, sourceSessionName, postPath, deadLetterDst, filename, info, messageContent)
+	}
+	dst := deliveredDst
 	resultFields := deliveryTraceFieldsFromContent(filename, shadowRelativePath(recipientSessionDir, dst), recipientSessionName, contextID, messageContent, info)
 	resultFields.DeliveryAttempt = 1
 	resultFields.Result = "delivered"
@@ -1126,6 +1440,13 @@ var sendDeliveryNotificationHook = sendDeliveryNotification
 // testability: callers can inject a TmuxHandAdapter with a mock SendToPane.
 func deliverNotificationWithRetry(adapter controlplane.HandAdapter, target controlplane.Target, delivery controlplane.PaneDelivery, recipient string, knownNodes map[string]discovery.NodeInfo, filename string) {
 	if err := adapter.Deliver(target, delivery); err != nil {
+		// A stale-address retry cannot help an unresponsive-but-correctly-addressed
+		// pane, and re-delivering would re-paste the message and press Enter again
+		// against the same pane (#816 guardian F-039).
+		if errors.Is(err, notification.ErrPaneUnresponsive) {
+			log.Printf("postman: WARNING: pane notification failed: node=%s pane=%s session=%s msg=%s err=%v\n", recipient, target.Hand.Address, target.SessionName, filename, err)
+			return
+		}
 		// Retry once: look up a potentially refreshed PaneID from knownNodes (the
 		// daemon's discovery loop may have updated it since goroutine launch).
 		retryTarget := target
@@ -1195,18 +1516,74 @@ func shadowRelativePath(sessionDir, fullPath string) string {
 	return store.ShadowRelativePath(sessionDir, fullPath)
 }
 
+// directInboxWriteOutcome identifies what happened when one of the two
+// direct (non-DeliverPostToInbox) inbox writers below -- sendDeadLetterNotification
+// and writeRoutingDeniedWarning -- attempted its write (B-3/B-4).
+type directInboxWriteOutcome string
+
+const (
+	directInboxWriteOutcomeWritten               directInboxWriteOutcome = "written"
+	directInboxWriteOutcomeSkippedUnknownSender  directInboxWriteOutcome = "skipped-unknown-sender"
+	directInboxWriteOutcomeSkippedForeignSession directInboxWriteOutcome = "skipped-foreign-session"
+	directInboxWriteOutcomeSuppressedAtCap       directInboxWriteOutcome = "suppressed-at-cap"
+	directInboxWriteOutcomeCountError            directInboxWriteOutcome = "count-error"
+	directInboxWriteOutcomeWriteError            directInboxWriteOutcome = "write-error"
+)
+
+// resolveSenderWithinSession validates senderNode against knownNodes AND
+// confirms the resolved node's own SessionDir equals targetSessionDir (B-4):
+// a sender address that resolves to a DIFFERENT session's node -- for
+// example a forged or cross-session-qualified address that happens to share
+// a simple name with a node local to targetSessionDir -- must never be
+// treated as that local node. Returns the simple name to use for inbox
+// path-building and the outcome to use when the caller should skip (empty
+// senderSimpleName is returned alongside a non-written outcome).
+func resolveSenderWithinSession(senderNode, sourceSessionName, targetSessionDir string, knownNodes map[string]discovery.NodeInfo) (string, directInboxWriteOutcome) {
+	senderSimpleName := nodeaddr.Simple(senderNode)
+	resolution := resolveRuntimeNode(senderNode, sourceSessionName, knownNodes)
+	if !resolution.Found {
+		return senderSimpleName, directInboxWriteOutcomeSkippedUnknownSender
+	}
+	resolvedNode, ok := knownNodes[resolution.Address]
+	// C-4: compare canonicalized paths (see sortedDistinctSessionDirs) so a
+	// differently-spelled but identical session dir is never mistaken for a
+	// foreign one.
+	if !ok || filepath.Clean(resolvedNode.SessionDir) != filepath.Clean(targetSessionDir) {
+		return senderSimpleName, directInboxWriteOutcomeSkippedForeignSession
+	}
+	return senderSimpleName, directInboxWriteOutcomeWritten
+}
+
 // sendDeadLetterNotification writes a dead-letter notification directly to the
 // sender's inbox. Bypasses post/ to avoid re-triggering the daemon delivery loop.
-// Pattern follows the routing-denied notification at DeliverMessage:162-175.
+// Pattern follows writeRoutingDeniedWarning's routing-denied notification.
 // Issue #208: Extended with dead-letter path and recovery guidance.
 // deadLetterBasename is the actual basename of the dead-letter file (after rename).
-func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename, deadLetterBasename string) {
-	senderSimpleName := nodeaddr.Simple(senderNode)
-	senderInbox := filepath.Join(sessionDir, "inbox", senderSimpleName)
-	if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
-		log.Printf("postman: WARNING: failed to create dead-letter notification inbox for %s: %v\n", senderNode, mkErr)
-		return
+//
+// P2-2a (docs/design/mailbox-overflow-policy.md §2.1): some callers of this
+// function run before sender resolution has confirmed senderNode against
+// knownNodes (several dead-letter branches in DeliverMessage fire earlier
+// than the sender-resolution check), so senderNode cannot be assumed known
+// here. Known-node validation happens first, before any write or fence
+// acquisition, and additionally requires the resolved node's own session to
+// equal sessionDir -- the session this notification would write into (B-4):
+// an unresolved OR cross-session sender's write is skipped entirely rather
+// than creating an inbox directory for an arbitrary, possibly forged name.
+// A resolved, same-session sender's write is serialized under this
+// recipient's admission fence (claim-only; no sequence is issued here),
+// preceded by the session-level mailbox roots gate taken SHARED, per the
+// documented lock order; the target inbox's message count is read under
+// that same fence and the write is suppressed (never dead-lettered or
+// recursed into DeliverMessage) when it is already at inboxQueueCap (B-3). A
+// durable, cap-independent signal distinct from this best-effort notification
+// is deferred to slice (c).
+func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, originalFilename, deadLetterBasename string, knownNodes map[string]discovery.NodeInfo, sourceSessionName string) directInboxWriteOutcome {
+	senderSimpleName, outcome := resolveSenderWithinSession(senderNode, sourceSessionName, sessionDir, knownNodes)
+	if outcome != directInboxWriteOutcomeWritten {
+		log.Printf("postman: dead-letter notification skipped: sender %q is not a known node of the target session (%s)\n", senderNode, outcome)
+		return outcome
 	}
+
 	now := time.Now()
 	ts := now.Format("20060102-150405")
 	filename := fmt.Sprintf("%s-from-postman-to-%s.md", ts, senderSimpleName)
@@ -1223,10 +1600,39 @@ func sendDeadLetterNotification(sessionDir, contextID, senderNode, reason, origi
 		reason,
 		deadLetterPath,
 	)
-	notifPath := filepath.Join(senderInbox, filename)
-	if writeErr := os.WriteFile(notifPath, []byte(content), 0o600); writeErr != nil {
-		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, writeErr)
+
+	senderInbox := filepath.Join(sessionDir, "inbox", senderSimpleName)
+	result := directInboxWriteOutcomeWriteError
+	fenceErr := withSessionRootsGates(sessionDir, sessionDir, func() error {
+		_, err := store.WithAdmissionFence(sessionDir, senderSimpleName, func(*store.AdmissionHandle) error {
+			count, countErr := countInboxMessages(senderInbox)
+			if countErr != nil {
+				log.Printf("postman: WARNING: dead-letter notification skipped for %s: inbox count failed: %v\n", senderNode, countErr)
+				result = directInboxWriteOutcomeCountError
+				return nil
+			}
+			if count >= inboxQueueCap {
+				log.Printf("postman: dead-letter notification suppressed at cap: sender=%s reason=%q original=%s (cap=%d, current=%d)\n", senderNode, reason, originalFilename, inboxQueueCap, count)
+				result = directInboxWriteOutcomeSuppressedAtCap
+				return nil
+			}
+			if mkErr := os.MkdirAll(senderInbox, 0o700); mkErr != nil {
+				return mkErr
+			}
+			notifPath := filepath.Join(senderInbox, filename)
+			if writeErr := os.WriteFile(notifPath, []byte(content), 0o600); writeErr != nil {
+				return writeErr
+			}
+			result = directInboxWriteOutcomeWritten
+			return nil
+		})
+		return err
+	})
+	if fenceErr != nil {
+		log.Printf("postman: WARNING: failed to write dead-letter notification for %s: %v\n", senderNode, fenceErr)
+		return directInboxWriteOutcomeWriteError
 	}
+	return result
 }
 
 // ParseEnvelopeMetadata extracts selected fields from the params block inside
@@ -1248,11 +1654,8 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		return 0
 	}
 	deadLetterDir := filepath.Join(sessionDir, "dead-letter")
-	if mkErr := os.MkdirAll(deadLetterDir, 0o700); mkErr != nil {
-		log.Printf("postman: WARNING: failed to create dead-letter dir for TTL drain: %v\n", mkErr)
-		return 0
-	}
 	ttl := time.Duration(ttlSeconds * float64(time.Second))
+	sessionName := filepath.Base(sessionDir)
 	count := 0
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
@@ -1262,24 +1665,24 @@ func DrainStalePost(sessionDir string, ttlSeconds float64) int {
 		if err != nil {
 			continue
 		}
-		if time.Since(fi.ModTime()) > ttl {
-			src := filepath.Join(postDir, entry.Name())
-			dst := deadLetterDst(sessionDir, entry.Name(), DlSuffixTTLExpired)
-			info, _ := ParseMessageFilename(entry.Name())
-			content, readErr := os.ReadFile(src)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				log.Printf("postman: WARNING: failed to read stale post payload %s: %v\n", src, readErr)
-			}
-			from := ""
-			to := ""
-			if info != nil {
-				from = info.From
-				to = info.To
-			}
-			if err := moveToDeadLetterWithProjection(sessionDir, filepath.Base(sessionDir), src, dst, entry.Name(), from, to, string(content)); err == nil {
-				log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
-				count++
-			}
+		// This is a cheap, ungated pre-filter only, to avoid acquiring the
+		// roots gate for entries that are obviously not stale at listing
+		// time. The authoritative staleness decision -- and the payload
+		// read and move themselves -- happen inside
+		// moveToDeadLetterWithProjection's gated critical section (F1), so
+		// a false positive here (an entry replaced between this check and
+		// the gate) can never cause an incorrect drain.
+		if time.Since(fi.ModTime()) <= ttl {
+			continue
+		}
+		moved, mvErr := moveToDeadLetterWithProjection(sessionDir, sessionName, postDir, deadLetterDir, entry.Name(), ttl)
+		if mvErr != nil {
+			log.Printf("postman: WARNING: failed to drain stale post/ message %s: %v\n", entry.Name(), mvErr)
+			continue
+		}
+		if moved {
+			log.Printf("postman: drained stale post/ message: %s (TTL expired)\n", entry.Name())
+			count++
 		}
 	}
 	return count

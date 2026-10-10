@@ -441,8 +441,8 @@ func TestNewDaemonRuntimeConfiguresDaemonSubmitWorkerLimit(t *testing.T) {
 				"",
 				nil,
 			)
-			if got := cap(rt.daemonSubmitSem); got != tt.want {
-				t.Fatalf("daemonSubmitSem cap = %d, want %d", got, tt.want)
+			if got := rt.daemonSubmitWorkerLimit(); got != tt.want {
+				t.Fatalf("daemon submit worker limit = %d, want %d", got, tt.want)
 			}
 			if got := cap(rt.daemonSubmitResults); got != tt.want {
 				t.Fatalf("daemonSubmitResults cap = %d, want %d", got, tt.want)
@@ -1085,6 +1085,16 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
 
+	var logBuf bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	})
+
 	workerHarness := &daemonSubmitWorkerHarness{}
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	rt := &daemonRuntime{
@@ -1116,7 +1126,7 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	if got := len(workerHarness.workers); got != workerLimit {
 		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
 	}
-	if got := len(rt.daemonSubmitSem); got != workerLimit {
+	if got := rt.daemonSubmitActiveWorkerCount(); got != workerLimit {
 		t.Fatalf("active worker slots = %d, want %d", got, workerLimit)
 	}
 
@@ -1141,6 +1151,600 @@ func TestDispatchDaemonSubmitRequest_ReportsSaturationWhenWorkerLimitFull(t *tes
 	}
 	if !rt.daemonSubmitLastSaturatedAt.Equal(now) {
 		t.Fatalf("daemonSubmitLastSaturatedAt = %s, want %s", rt.daemonSubmitLastSaturatedAt, now)
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "event=request_workers_saturated") {
+		t.Fatalf("expected request_workers_saturated WARNING in log; got:\n%s", logged)
+	}
+	for _, want := range []string{
+		fmt.Sprintf("occupied_slots=%d", workerLimit),
+		fmt.Sprintf("worker_limit=%d", workerLimit),
+		"active_daemon_submit_sessions=",
+		"request=req-send-extra.json",
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("expected saturation WARNING to contain %q; got:\n%s", want, logged)
+		}
+	}
+}
+
+// TestScanDaemonSubmitResponses_EvictsStaleLateResponses covers the #796
+// mitigation: late daemon-submit response files must not accumulate
+// unboundedly. A response older than daemonSubmitLateResponseRetentionSeconds
+// is evicted from disk and excluded from the LateResponseCount snapshot; a
+// fresher one is kept and counted normally.
+func TestScanDaemonSubmitResponses_EvictsStaleLateResponses(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+
+	original := daemonSubmitLateResponseRetentionSeconds
+	daemonSubmitLateResponseRetentionSeconds = 3600
+	t.Cleanup(func() { daemonSubmitLateResponseRetentionSeconds = original })
+
+	if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+		RequestID: "req-stale",
+		Command:   projection.DaemonSubmitSend,
+		HandledAt: now.Add(-2 * time.Hour).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitResponse(stale): %v", err)
+	}
+	if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+		RequestID: "req-fresh",
+		Command:   projection.DaemonSubmitSend,
+		HandledAt: now.Add(-5 * time.Minute).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitResponse(fresh): %v", err)
+	}
+
+	var diagnostics status.DaemonSubmitRuntimeDiagnostics
+	scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
+
+	if diagnostics.LateResponseCount != 1 {
+		t.Fatalf("LateResponseCount = %d, want 1 (stale response should be evicted, not counted)", diagnostics.LateResponseCount)
+	}
+	if diagnostics.OldestLateResponseAgeSeconds != 300 {
+		t.Fatalf("OldestLateResponseAgeSeconds = %d, want 300 (only the fresh response should remain)", diagnostics.OldestLateResponseAgeSeconds)
+	}
+	if _, err := os.Stat(projection.DaemonSubmitResponsePath(sessionDir, "req-stale")); !os.IsNotExist(err) {
+		t.Fatalf("stale response file still exists on disk (stat err=%v), want evicted", err)
+	}
+	if _, err := os.Stat(projection.DaemonSubmitResponsePath(sessionDir, "req-fresh")); err != nil {
+		t.Fatalf("fresh response file missing: %v", err)
+	}
+
+	tombstone, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, "req-stale"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitEvicted(req-stale): %v", err)
+	}
+	if tombstone.RequestID != "req-stale" || tombstone.Command != projection.DaemonSubmitSend || tombstone.Reason != "retention_exceeded" {
+		t.Fatalf("tombstone = %#v, want request_id/command/reason populated", tombstone)
+	}
+	if tombstone.AgeSeconds < 3600 {
+		t.Fatalf("tombstone.AgeSeconds = %d, want >= 3600", tombstone.AgeSeconds)
+	}
+	if _, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, "req-fresh")); !os.IsNotExist(err) {
+		t.Fatalf("fresh response unexpectedly has a tombstone (err=%v)", err)
+	}
+}
+
+// TestScanDaemonSubmitResponses_EvictionRecordShapes is the #796 rework
+// F-008 table: each record shape that could previously either dodge
+// eviction (F-006, an "immortal" file) or silently vanish without leaving a
+// tombstone (F-007) now goes through the single daemonSubmitEffectiveAge
+// computation and must resolve to the same eviction outcome.
+func TestScanDaemonSubmitResponses_EvictionRecordShapes(t *testing.T) {
+	staleMTime := time.Now().Add(-2 * time.Hour)
+	freshMTime := time.Now().Add(-5 * time.Minute)
+
+	tests := []struct {
+		name                 string
+		write                func(t *testing.T, sessionDir string) (requestID string)
+		wantEvicted          bool
+		wantTombstoneCommand projection.DaemonSubmitCommand
+	}{
+		{
+			name: "valid_stale_handled_at",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+					RequestID: "req-valid-stale",
+					Command:   projection.DaemonSubmitSend,
+					HandledAt: time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano),
+				}); err != nil {
+					t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+				}
+				return "req-valid-stale"
+			},
+			wantEvicted:          true,
+			wantTombstoneCommand: projection.DaemonSubmitSend,
+		},
+		{
+			name: "valid_fresh_handled_at",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+					RequestID: "req-valid-fresh",
+					Command:   projection.DaemonSubmitSend,
+					HandledAt: time.Now().Add(-5 * time.Minute).Format(time.RFC3339Nano),
+				}); err != nil {
+					t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+				}
+				return "req-valid-fresh"
+			},
+			wantEvicted: false,
+		},
+		{
+			name: "malformed_nonempty_handled_at_falls_back_to_stale_mtime",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+					RequestID: "req-malformed",
+					Command:   projection.DaemonSubmitPop,
+					HandledAt: "not-a-timestamp",
+				}); err != nil {
+					t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+				}
+				path := projection.DaemonSubmitResponsePath(sessionDir, "req-malformed")
+				if err := os.Chtimes(path, staleMTime, staleMTime); err != nil {
+					t.Fatalf("Chtimes: %v", err)
+				}
+				return "req-malformed"
+			},
+			wantEvicted:          true,
+			wantTombstoneCommand: projection.DaemonSubmitPop,
+		},
+		{
+			name: "future_handled_at_falls_back_to_stale_mtime",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+					RequestID: "req-future",
+					Command:   projection.DaemonSubmitSend,
+					HandledAt: time.Now().Add(24 * time.Hour).Format(time.RFC3339Nano),
+				}); err != nil {
+					t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+				}
+				path := projection.DaemonSubmitResponsePath(sessionDir, "req-future")
+				if err := os.Chtimes(path, staleMTime, staleMTime); err != nil {
+					t.Fatalf("Chtimes: %v", err)
+				}
+				return "req-future"
+			},
+			wantEvicted:          true,
+			wantTombstoneCommand: projection.DaemonSubmitSend,
+		},
+		{
+			name: "empty_handled_at_via_stale_mtime",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+					RequestID: "req-empty",
+					Command:   projection.DaemonSubmitValidateSend,
+					HandledAt: "",
+				}); err != nil {
+					t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+				}
+				path := projection.DaemonSubmitResponsePath(sessionDir, "req-empty")
+				if err := os.Chtimes(path, staleMTime, staleMTime); err != nil {
+					t.Fatalf("Chtimes: %v", err)
+				}
+				return "req-empty"
+			},
+			wantEvicted:          true,
+			wantTombstoneCommand: projection.DaemonSubmitValidateSend,
+		},
+		{
+			name: "empty_handled_at_via_fresh_mtime_not_evicted",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+					RequestID: "req-empty-fresh",
+					Command:   projection.DaemonSubmitValidateSend,
+					HandledAt: "",
+				}); err != nil {
+					t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+				}
+				path := projection.DaemonSubmitResponsePath(sessionDir, "req-empty-fresh")
+				if err := os.Chtimes(path, freshMTime, freshMTime); err != nil {
+					t.Fatalf("Chtimes: %v", err)
+				}
+				return "req-empty-fresh"
+			},
+			wantEvicted: false,
+		},
+		{
+			name: "corrupt_json_via_stale_mtime",
+			write: func(t *testing.T, sessionDir string) string {
+				t.Helper()
+				if err := config.CreateSessionDirs(sessionDir); err != nil {
+					t.Fatalf("CreateSessionDirs: %v", err)
+				}
+				path := projection.DaemonSubmitResponsePath(sessionDir, "req-corrupt")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("MkdirAll: %v", err)
+				}
+				if err := os.WriteFile(path, []byte("{not valid json"), 0o600); err != nil {
+					t.Fatalf("WriteFile: %v", err)
+				}
+				if err := os.Chtimes(path, staleMTime, staleMTime); err != nil {
+					t.Fatalf("Chtimes: %v", err)
+				}
+				return "req-corrupt"
+			},
+			wantEvicted:          true,
+			wantTombstoneCommand: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionDir := t.TempDir()
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+			original := daemonSubmitLateResponseRetentionSeconds
+			daemonSubmitLateResponseRetentionSeconds = 3600
+			t.Cleanup(func() { daemonSubmitLateResponseRetentionSeconds = original })
+
+			requestID := tt.write(t, sessionDir)
+
+			var diagnostics status.DaemonSubmitRuntimeDiagnostics
+			scanDaemonSubmitResponses(sessionDir, time.Now(), &diagnostics)
+
+			_, statErr := os.Stat(projection.DaemonSubmitResponsePath(sessionDir, requestID))
+			evicted := os.IsNotExist(statErr)
+			if evicted != tt.wantEvicted {
+				t.Fatalf("evicted = %v, want %v (stat err=%v)", evicted, tt.wantEvicted, statErr)
+			}
+
+			tombstone, tombstoneErr := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, requestID))
+			if tt.wantEvicted {
+				if tombstoneErr != nil {
+					t.Fatalf("ReadDaemonSubmitEvicted(%s): %v, want tombstone present", requestID, tombstoneErr)
+				}
+				if tombstone.Command != tt.wantTombstoneCommand {
+					t.Fatalf("tombstone.Command = %q, want %q", tombstone.Command, tt.wantTombstoneCommand)
+				}
+				if diagnostics.LateResponseCount != 0 {
+					t.Fatalf("LateResponseCount = %d, want 0 (evicted record must not also be counted)", diagnostics.LateResponseCount)
+				}
+			} else {
+				if !os.IsNotExist(tombstoneErr) {
+					t.Fatalf("ReadDaemonSubmitEvicted(%s) err=%v, want no tombstone for a kept record", requestID, tombstoneErr)
+				}
+				if diagnostics.LateResponseCount != 1 {
+					t.Fatalf("LateResponseCount = %d, want 1 for a kept record", diagnostics.LateResponseCount)
+				}
+			}
+		})
+	}
+}
+
+// TestScanDaemonSubmitResponses_FailedRemoveLeavesResponseAndDoesNotDoubleCount
+// covers the failed-remove shape from F-008: if the response file cannot be
+// removed after a tombstone is written, the record must not be silently
+// double-counted or lost -- it stays in place and remains visible as an
+// ordinary late response next scan.
+func TestScanDaemonSubmitResponses_FailedRemoveLeavesResponseAndDoesNotDoubleCount(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now()
+
+	original := daemonSubmitLateResponseRetentionSeconds
+	daemonSubmitLateResponseRetentionSeconds = 3600
+	t.Cleanup(func() { daemonSubmitLateResponseRetentionSeconds = original })
+
+	if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+		RequestID: "req-undeletable",
+		Command:   projection.DaemonSubmitSend,
+		HandledAt: now.Add(-2 * time.Hour).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+	}
+
+	responsesDir := projection.DaemonSubmitResponsesDir(sessionDir)
+	if err := os.Chmod(responsesDir, 0o500); err != nil {
+		t.Fatalf("Chmod(responsesDir): %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(responsesDir, 0o700) })
+
+	var diagnostics status.DaemonSubmitRuntimeDiagnostics
+	scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
+
+	if _, err := os.Stat(projection.DaemonSubmitResponsePath(sessionDir, "req-undeletable")); err != nil {
+		t.Fatalf("response file missing after failed remove attempt: %v", err)
+	}
+	if diagnostics.LateResponseCount != 1 {
+		t.Fatalf("LateResponseCount = %d, want 1 (undeletable record falls through to ordinary counting)", diagnostics.LateResponseCount)
+	}
+
+	// Tombstone-before-delete is F-007's core safety property: the tombstone
+	// must exist even when the subsequent remove fails, proving the write
+	// order can't silently flip to delete-then-write without this failing.
+	tombstone, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, "req-undeletable"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitEvicted(req-undeletable): %v, want tombstone written before the failed remove", err)
+	}
+	if tombstone.Reason != "retention_exceeded" {
+		t.Fatalf("tombstone.Reason = %q, want retention_exceeded", tombstone.Reason)
+	}
+}
+
+// TestPruneDaemonSubmitEvictedTombstones covers F-014: the tombstone store
+// itself must stay bounded (an old tombstone is removed) without either
+// failure mode this feature exists to prevent -- never-expiring (unbounded
+// accumulation returns) or expiring immediately (F-007 silently defeated).
+// A tombstone with a malformed evicted_at must fail safe by being retained,
+// not removed, since we can't prove it's actually past retention.
+func TestPruneDaemonSubmitEvictedTombstones(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now()
+	retentionSeconds := 3600
+
+	writeTombstone := func(requestID, evictedAt string) {
+		if _, err := projection.WriteDaemonSubmitEvicted(sessionDir, projection.DaemonSubmitEvictedResponse{
+			RequestID:  requestID,
+			Command:    projection.DaemonSubmitSend,
+			EvictedAt:  evictedAt,
+			AgeSeconds: 7200,
+			Reason:     "retention_exceeded",
+		}); err != nil {
+			t.Fatalf("WriteDaemonSubmitEvicted(%s): %v", requestID, err)
+		}
+	}
+
+	writeTombstone("req-old", now.Add(-2*time.Hour).Format(time.RFC3339Nano))
+	writeTombstone("req-fresh", now.Add(-5*time.Minute).Format(time.RFC3339Nano))
+	writeTombstone("req-malformed", "not-a-timestamp")
+
+	pruneDaemonSubmitEvictedTombstones(sessionDir, now, retentionSeconds)
+
+	if _, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, "req-old")); !os.IsNotExist(err) {
+		t.Fatalf("req-old tombstone err=%v, want pruned (removed, past retention)", err)
+	}
+	if _, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, "req-fresh")); err != nil {
+		t.Fatalf("req-fresh tombstone err=%v, want retained (within retention)", err)
+	}
+	if _, err := projection.ReadDaemonSubmitEvicted(projection.DaemonSubmitEvictedPath(sessionDir, "req-malformed")); err != nil {
+		t.Fatalf("req-malformed tombstone err=%v, want retained (fails safe on malformed evicted_at)", err)
+	}
+}
+
+func TestScanDaemonSubmitResponses_RetentionDisabledKeepsAllResponses(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+
+	original := daemonSubmitLateResponseRetentionSeconds
+	daemonSubmitLateResponseRetentionSeconds = 0
+	t.Cleanup(func() { daemonSubmitLateResponseRetentionSeconds = original })
+
+	if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
+		RequestID: "req-very-old",
+		Command:   projection.DaemonSubmitSend,
+		HandledAt: now.Add(-48 * time.Hour).Format(time.RFC3339Nano),
+	}); err != nil {
+		t.Fatalf("WriteDaemonSubmitResponse: %v", err)
+	}
+
+	var diagnostics status.DaemonSubmitRuntimeDiagnostics
+	scanDaemonSubmitResponses(sessionDir, now, &diagnostics)
+
+	if diagnostics.LateResponseCount != 1 {
+		t.Fatalf("LateResponseCount = %d, want 1 (retention<=0 must disable eviction)", diagnostics.LateResponseCount)
+	}
+	if _, err := os.Stat(projection.DaemonSubmitResponsePath(sessionDir, "req-very-old")); err != nil {
+		t.Fatalf("response file evicted despite retention<=0: %v", err)
+	}
+}
+
+func TestDispatchDaemonSubmitRequest_IsolatesWorkerLimitsBySession(t *testing.T) {
+	baseDir := t.TempDir()
+	firstSessionDir := filepath.Join(baseDir, "first-session")
+	secondSessionDir := filepath.Join(baseDir, "second-session")
+	for _, sessionDir := range []string{firstSessionDir, secondSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	firstPath, err := projection.WriteDaemonSubmitRequest(firstSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "first-request",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now,
+		Filename:  "20260601-120000-r1111-from-orchestrator-to-worker.md",
+		Content:   "first session",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(first): %v", err)
+	}
+	secondPath, err := projection.WriteDaemonSubmitRequest(secondSessionDir, projection.DaemonSubmitRequest{
+		RequestID: "second-request",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: now,
+		Filename:  "20260601-120001-r2222-from-orchestrator-to-worker.md",
+		Content:   "second session",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest(second): %v", err)
+	}
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		cfg: &config.Config{DaemonSubmitWorkerLimit: 1},
+		processDaemonSubmit: func(string) (daemonSubmitProcessResult, error) {
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+
+	if status := rt.dispatchDaemonSubmitRequest(firstPath); status != daemonSubmitDispatched {
+		t.Fatalf("first session dispatch = %v, want dispatched", status)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(secondPath); status != daemonSubmitDispatched {
+		t.Fatalf("second session dispatch = %v, want dispatched despite first-session saturation", status)
+	}
+	if got := len(workerHarness.workers); got != 2 {
+		t.Fatalf("queued workers = %d, want 2", got)
+	}
+
+	workerHarness.runNext(t)
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	workerHarness.runNext(t)
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	if got := len(rt.daemonSubmitSems); got != 0 {
+		t.Fatalf("idle daemon-submit semaphores = %d, want 0", got)
+	}
+}
+
+func TestDispatchDaemonSubmitRequest_BoundsSessionWhenResultConsumerBlocked(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	paths := make([]string, 3)
+	for i := range paths {
+		path, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: fmt.Sprintf("backpressure-%d", i),
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: now,
+			Filename:  fmt.Sprintf("20260601-12000%d-r1111-from-orchestrator-to-worker.md", i),
+			Content:   "backpressure",
+		})
+		if err != nil {
+			t.Fatalf("WriteDaemonSubmitRequest(%d): %v", i, err)
+		}
+		paths[i] = path
+	}
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		cfg: &config.Config{DaemonSubmitWorkerLimit: 1},
+		processDaemonSubmit: func(string) (daemonSubmitProcessResult, error) {
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+	if status := rt.dispatchDaemonSubmitRequest(paths[0]); status != daemonSubmitDispatched {
+		t.Fatalf("first dispatch = %v, want dispatched", status)
+	}
+	workerHarness.runNext(t) // fills the one-result buffer.
+	if status := rt.dispatchDaemonSubmitRequest(paths[1]); status != daemonSubmitDispatched {
+		t.Fatalf("second dispatch = %v, want dispatched", status)
+	}
+	done := make(chan struct{})
+	go func() {
+		workerHarness.runNext(t)
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for rt.daemonSubmitActiveWorkerCount() != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("second worker did not retain its session slot behind result backpressure")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if status := rt.dispatchDaemonSubmitRequest(paths[2]); status != daemonSubmitDispatchSaturated {
+		t.Fatalf("third dispatch = %v, want saturated while a result handoff is blocked", status)
+	}
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second worker remained blocked after draining result")
+	}
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+	if status := rt.dispatchDaemonSubmitRequest(paths[2]); status != daemonSubmitDispatched {
+		t.Fatalf("third dispatch = %v, want dispatched after result handoff completes", status)
+	}
+	workerHarness.runNext(t)
+	rt.handleDaemonSubmitResult(waitForDaemonSubmitResult(t, rt))
+}
+
+func TestHandleDaemonSubmitResultPrunesSessionAfterWorkerRelease(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "result-before-release",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  "20260601-120000-r1111-from-orchestrator-to-worker.md",
+		Content:   "result-before-release",
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	published := make(chan struct{})
+	allowRelease := make(chan struct{})
+	handlerAtReleaseWait := make(chan struct{})
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		cfg: &config.Config{DaemonSubmitWorkerLimit: 1},
+		processDaemonSubmit: func(string) (daemonSubmitProcessResult, error) {
+			return daemonSubmitProcessResult{}, nil
+		},
+		launchDaemonSubmitWorker: workerHarness.launch,
+		afterDaemonSubmitResultPublish: func() {
+			close(published)
+			<-allowRelease
+		},
+		beforeDaemonSubmitReleaseWait: func() { close(handlerAtReleaseWait) },
+	}
+	if status := rt.dispatchDaemonSubmitRequest(requestPath); status != daemonSubmitDispatched {
+		t.Fatalf("dispatch = %v, want dispatched", status)
+	}
+	workerDone := make(chan struct{})
+	go func() {
+		workerHarness.runNext(t)
+		close(workerDone)
+	}()
+	select {
+	case <-published:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not publish its result")
+	}
+	result := waitForDaemonSubmitResult(t, rt)
+	handlerDone := make(chan struct{})
+	go func() {
+		rt.handleDaemonSubmitResult(result)
+		close(handlerDone)
+	}()
+	select {
+	case <-handlerAtReleaseWait:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not reach the post-result release wait")
+	}
+	if got := len(rt.daemonSubmitSems); got != 1 {
+		t.Fatalf("daemon-submit semaphores before release = %d, want 1", got)
+	}
+	close(allowRelease)
+	select {
+	case <-workerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not release its semaphore")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not prune after worker release")
+	}
+	if got := len(rt.daemonSubmitSems); got != 0 {
+		t.Fatalf("idle daemon-submit semaphores after release = %d, want 0", got)
 	}
 }
 
@@ -1908,7 +2512,7 @@ func TestDispatchPendingDaemonSubmitRequestsProcessesNodeSessionRequests(t *test
 	}
 }
 
-func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t *testing.T) {
+func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsWithoutCrossSessionCap(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	baseDir := filepath.Join(tmpDir, "state")
@@ -1967,16 +2571,66 @@ func TestDispatchPendingDaemonSubmitRequestsRoundRobinsSessionsUnderSaturation(t
 	}
 
 	rt.dispatchPendingDaemonSubmitRequests()
-	if got := len(workerHarness.workers); got != workerLimit {
-		t.Fatalf("queued workers = %d, want %d", got, workerLimit)
+	if got := len(workerHarness.workers); got != workerLimit+1 {
+		t.Fatalf("queued workers = %d, want %d", got, workerLimit+1)
 	}
 	for len(workerHarness.workers) > 0 {
 		workerHarness.runNext(t)
+		waitForDaemonSubmitResult(t, rt)
 	}
 
-	wantStarted := []string{"high-01", "low-01", "high-02", "high-03"}
+	wantStarted := []string{"high-01", "low-01", "high-02", "high-03", "high-04"}
 	if !reflect.DeepEqual(started, wantStarted) {
 		t.Fatalf("started requests = %#v, want round-robin order %#v", started, wantStarted)
+	}
+}
+
+func TestDispatchPendingDaemonSubmitRequestsSkipsSaturatedSession(t *testing.T) {
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "state")
+	contextID := "ctx-submit-saturated-scan"
+	firstSessionDir := filepath.Join(baseDir, contextID, "a-saturated")
+	secondSessionDir := filepath.Join(baseDir, contextID, "b-eligible")
+	for _, sessionDir := range []string{firstSessionDir, secondSessionDir} {
+		if err := config.CreateSessionDirs(sessionDir); err != nil {
+			t.Fatalf("CreateSessionDirs(%q): %v", sessionDir, err)
+		}
+	}
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	writeRequest := func(sessionDir, requestID string) string {
+		t.Helper()
+		path, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: requestID,
+			Command:   projection.DaemonSubmitSend,
+			CreatedAt: now,
+			Filename:  requestID + ".md",
+			Content:   requestID,
+		})
+		if err != nil {
+			t.Fatalf("WriteDaemonSubmitRequest(%q): %v", requestID, err)
+		}
+		return path
+	}
+	firstActivePath := writeRequest(firstSessionDir, "a-active")
+	writeRequest(firstSessionDir, "a-pending")
+	writeRequest(secondSessionDir, "b-pending")
+
+	workerHarness := &daemonSubmitWorkerHarness{}
+	rt := &daemonRuntime{
+		sessionDir: firstSessionDir,
+		cfg:        &config.Config{DaemonSubmitWorkerLimit: 1},
+		nodes: map[string]discovery.NodeInfo{
+			"b-eligible:worker": {SessionName: "b-eligible", SessionDir: secondSessionDir},
+		},
+		processDaemonSubmit:      func(string) (daemonSubmitProcessResult, error) { return daemonSubmitProcessResult{}, nil },
+		launchDaemonSubmitWorker: workerHarness.launch,
+	}
+	if status := rt.dispatchDaemonSubmitRequest(firstActivePath); status != daemonSubmitDispatched {
+		t.Fatalf("first session active dispatch = %v, want dispatched", status)
+	}
+	rt.dispatchPendingDaemonSubmitRequests()
+	if got := len(workerHarness.workers); got != 2 {
+		t.Fatalf("queued workers = %d, want saturated A plus eligible B", got)
 	}
 }
 
@@ -2986,11 +3640,11 @@ func daemonHerdrSnapshotForPane(paneID string) multiplexer.HerdrSessionSnapshot 
 func daemonHerdrPane(paneID string) multiplexer.HerdrPaneSnapshot {
 	return multiplexer.HerdrPaneSnapshot{
 		ID:             paneID,
+		TerminalID:     paneID + ":terminal",
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-1",
 		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
-		PostmanNode:    "worker",
 		PostmanSession: "work",
 	}
 }

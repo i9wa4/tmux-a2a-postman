@@ -65,7 +65,11 @@ daemon discovers tmux panes by title, routes messages through local files, and
 keeps an archive that agents can inspect later.
 
 Each tmux session is a separate project workspace. `ui_node` marks the role
-the human talks to first, while the daemon keeps routing, delivery, and
+the human talks to first (a provisional new `interface_node` TOML key is also
+accepted as the canonical spelling going forward; see #764 -- the final
+field name and `ui_node` deprecation timeline are not yet decided, and the
+Mermaid `ui_node` class below is unaffected for now), while the daemon keeps
+routing, delivery, and
 archived mail outside the agent panes.
 
 ## 2. Why Use It
@@ -124,9 +128,7 @@ assistants can discover postman commands while working:
 For Codex CLI:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message \
-  --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-session-operator \
+gh skill install i9wa4/tmux-a2a-postman postman-usage \
   --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
   --agent codex --scope user
@@ -135,9 +137,7 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
 For Claude Code:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-send-message \
-  --agent claude-code --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-session-operator \
+gh skill install i9wa4/tmux-a2a-postman postman-usage \
   --agent claude-code --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
   --agent claude-code --scope user
@@ -207,16 +207,14 @@ ordinary Markdown:
 #       - ping
 #       - compaction_ping
 #     skills:
-#       - postman-send-message
-#       - postman-session-operator
+#       - postman-usage
 #       - postman-config-auditor
 #   - path: ~/.claude/skills
 #     inject:
 #       - ping
 #       - compaction_ping
 #     skills:
-#       - postman-send-message
-#       - postman-session-operator
+#       - postman-usage
 #       - postman-config-auditor
 ---
 
@@ -349,22 +347,35 @@ decision, or no-action or no-op decision. `messageType: ping`,
 Truncated output from bounded stdout does not count as a complete read. To
 inspect archived mail later, use `inspect-message --id <message_id>`.
 
-Both `send-heredoc` and `pop` prefer daemon-mediated delivery when the running
-daemon owns the session and fall back to direct filesystem access for non-owned
-sessions. Both output a `submit_path` field (`daemon-submit` or `post`) that
-identifies which path was taken, including on empty `pop` results. Operators
-can use this field to detect when daemon mediation was bypassed.
+`send-heredoc` uses an atomic direct handoff to the session `post/` queue and
+reports `submit_path: post` after that handoff succeeds. For owned live
+sessions, ordinary sends do not enter daemon-submit; `--reply-required` sends
+first ask the owning daemon to validate verdict-debt policy. If that validation
+is rejected, times out, or the request/response fails, the command exits before
+creating a `post/` entry. A daemon consumes successful `post/` handoffs
+asynchronously when it is running: `processed` means consumption was observed,
+while `queued` means the local handoff succeeded but consumption was not yet
+observed. Do not blindly resend a queued message; inspect status, inbox/read
+state, archived message evidence, or recipient-side confirmation first.
 
-If a daemon-submit `send-heredoc` or `pop` times out, treat the result as
-unknown. The daemon may still commit the side effect after the CLI stops
-waiting, so inspect status, inbox/read state, archived message evidence, or
-recipient-side confirmation before retrying. Use
-`inspect-daemon-submit --id <request_id>` to look up the timed-out request, and
-use `get-status --debug` for bounded `daemon_submit` queue health, including
-pending, claimed, late response, worker, and saturation counts.
+To legitimately clear verdict debt through the normal CLI interface instead of
+waiting for the grace-period timeout fallback, stamp `--verdict <text>` and
+`--verdict-of <input_request_id>` (provided together) on an outgoing message
+addressed to the filler; this clears the matching debt item before that same
+send's own debt-cap check runs. `--verdict` must be a single line with no
+control characters. The verdict text is an operator-recorded stamp for the
+debt gate, not evidence that the filled request was actually re-checked.
+
+`pop` still uses daemon-submit when the running daemon owns the session and
+otherwise uses direct filesystem access. Its `submit_path` identifies that
+route, including on empty results. If daemon-submit `pop` times out, treat the
+result as unknown and inspect status or archived message evidence before
+retrying. Use `inspect-daemon-submit --id <request_id>` and
+`get-status --debug` for bounded daemon-submit queue health.
 Configure daemon-submit concurrency with
-`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers and
-values above 16 are clamped with a daemon warning.
+`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers per
+managed session, so a busy session cannot consume another session's submit
+slots. Values above 16 are clamped with a daemon warning.
 
 The daemon writes passive runtime memory snapshots to `postman.log` at startup
 and every 10 minutes. These `component=daemon_runtime
@@ -527,6 +538,7 @@ Detailed configuration references:
 - [evidence replay contract](docs/design/evidence-replay-contract.md)
 - [PING event timing](docs/ping-events.md)
 - [daemon session ownership](docs/design/daemon-session-model.md)
+- [Herdr read-only compatibility policy](docs/design/herdr-readonly-discovery-spike.md#4-compatibility-authority)
 
 Command help lives in the binary: `tmux-a2a-postman help`,
 `tmux-a2a-postman help commands`, and `tmux-a2a-postman help config`. Claude

@@ -10,6 +10,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 )
 
 type ProjectedFile struct {
@@ -39,16 +40,33 @@ const (
 	MailboxProjectionDeliveredEventType    = "mailbox_projection_delivered"
 	MailboxProjectionReadEventType         = "mailbox_projection_read"
 	MailboxProjectionDeadLetteredEventType = "mailbox_projection_dead_lettered"
+
+	// MailboxProjectionPopVerificationFailedEventType records a daemon-submit
+	// pop archive-readiness verification failure (#755 F-013), appended once
+	// per failed verifyDaemonPopArchiveReadable call so
+	// CountPopVerificationFailures can bound retries per message.
+	MailboxProjectionPopVerificationFailedEventType = "mailbox_projection_pop_verification_failed"
 )
 
 var mailboxProjectionRoots = []string{"post", "inbox", "read", "dead-letter"}
 
+// ProjectMailboxProjection re-derives the current session state itself
+// (via loadCurrentSessionState) and projects against it. Callers that
+// already hold a specific, freshly-read journal.SessionState under a lock
+// (P2-1R items 1-3) must use projectMailboxProjectionForState with that
+// SAME value instead: calling this function would re-read state
+// independently, reopening exactly the TOCTOU window the lock was meant
+// to close if anything changes state between the caller's read and this
+// function's own internal read (rework-2, R1-1/R1-2 follow-up).
 func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error) {
 	state, ok := loadCurrentSessionState(sessionDir)
 	if !ok {
 		return MailboxProjection{}, false, nil
 	}
+	return projectMailboxProjectionForState(sessionDir, state)
+}
 
+func projectMailboxProjectionForState(sessionDir string, state journal.SessionState) (MailboxProjection, bool, error) {
 	events, err := journal.Replay(sessionDir)
 	if err != nil {
 		return MailboxProjection{}, false, err
@@ -154,6 +172,15 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 		case MailboxProjectionDeadLetteredEventType:
 			rememberManagedPost(projected.managedPost, payload.SourcePath)
 			delete(projected.Post, pathKey(payload.SourcePath))
+			// #762/F-013 is the first producer that can dead-letter a
+			// message still living in projected.Inbox (one whose pop never
+			// reached a Read event because verification failed before it).
+			// Without this delete, syncDesiredMailboxFiles would write the
+			// message back into inbox/ on the next sync, resurrecting an
+			// already-dead-lettered message as unread and re-consumable --
+			// the identical hazard the Read case above was hardened
+			// against, now reachable through this handler too.
+			delete(projected.Inbox, inboxPathFromPayload(payload, state.TmuxSessionName))
 			if !setProjectedFile(projected.DeadLetter, payload.Path, payload.Content) {
 				return MailboxProjection{}, false, fmt.Errorf("invalid dead-letter path %q", payload.Path)
 			}
@@ -167,16 +194,105 @@ func ProjectMailboxProjection(sessionDir string) (MailboxProjection, bool, error
 	return projected, true, nil
 }
 
+// SyncMailboxProjection re-renders the mailbox projection onto disk for
+// the current session generation, quarantining a prior generation's
+// mailbox roots first if one is detected.
+//
+// P2-1R item 3 (rework 2, closing R1-1/R1-2): a prior generation's roots
+// are quarantined under the session-level mailbox roots gate
+// (store.WithMailboxRootsExclusive), held CONTINUOUSLY from re-reading
+// BOTH the marker and the session state through the root moves and the
+// final marker write below, so the decision to transition, the moves
+// themselves, and the commit of the new marker are one critical section.
+// Session state is re-read fresh under the gate every time (never a
+// value captured before the gate was acquired): a stale pre-gate read
+// reused inside the gate could commit a marker for a generation the
+// session had already moved past by the time the gate was granted,
+// silently losing newer-generation mail to a mislabeled quarantine on a
+// later call (R1-1). The common (non-transitioning) case is NOT lock-free
+// either: it is a mailbox-root writer (it calls syncMailboxProjectionBody,
+// which writes into every root and then writes the marker), so it must
+// hold the gate SHARED -- re-reading state and the marker fresh inside
+// that hold too -- rather than running ungated, which could otherwise
+// race a concurrent exclusive transition and regress the marker back to a
+// stale generation after the transition already moved the roots (R1-2).
+// If the shared hold discovers a transition is actually needed, it
+// releases first (never upgrading a shared hold to exclusive) and only
+// then takes the exclusive path. See also WithAdmissionFence's lock-order
+// doc: any future writer or claim path must hold this same gate SHARED
+// before taking its own recipient fence, and must never hold it (or any
+// recipient fence) while calling SyncMailboxProjection, which would
+// self-deadlock.
 func SyncMailboxProjection(sessionDir string) error {
-	state, ok := loadCurrentSessionState(sessionDir)
-	if !ok {
+	return syncMailboxProjectionSeam(sessionDir, nil, nil)
+}
+
+// syncMailboxProjectionSeam is SyncMailboxProjection plus two test-only
+// hooks: aboutToRequestExclusive fires immediately before requesting the
+// exclusive roots gate (P2-1R item 6(a)/6(f)), and duringFastPathHold
+// fires while the shared fast path is holding the gate, immediately
+// before running the sync body (item 6(g)). Either lets a disposable
+// fixture synchronize deterministically instead of relying on a sleep.
+func syncMailboxProjectionSeam(sessionDir string, aboutToRequestExclusive, duringFastPathHold func()) error {
+	if _, ok := loadCurrentSessionState(sessionDir); !ok {
 		return nil
 	}
-	if err := quarantineMailboxProjectionTrees(sessionDir, state); err != nil {
-		return err
+
+	transitionNeeded := false
+	fastPathErr := store.WithMailboxRootsShared(sessionDir, func() error {
+		curState, ok := loadCurrentSessionState(sessionDir)
+		if !ok {
+			return nil
+		}
+		if marker, ok := readMailboxProjectionMarker(sessionDir); ok &&
+			marker.SessionKey == curState.SessionKey && marker.Generation == curState.Generation {
+			if duringFastPathHold != nil {
+				duringFastPathHold()
+			}
+			return syncMailboxProjectionBody(sessionDir, curState)
+		}
+		transitionNeeded = true
+		return nil
+	})
+	if fastPathErr != nil {
+		return fastPathErr
+	}
+	if !transitionNeeded {
+		return nil
 	}
 
-	projected, ok, err := ProjectMailboxProjection(sessionDir)
+	if aboutToRequestExclusive != nil {
+		aboutToRequestExclusive()
+	}
+	return store.WithMailboxRootsExclusive(sessionDir, func() error {
+		curState, ok := loadCurrentSessionState(sessionDir)
+		if !ok {
+			return nil
+		}
+		marker, ok := readMailboxProjectionMarker(sessionDir)
+		switch {
+		case ok && marker.SessionKey == curState.SessionKey && marker.Generation == curState.Generation:
+			// Another caller already completed this transition while we
+			// waited for the gate; nothing left to move (P2-1R item 6(b)).
+		case ok:
+			if err := quarantineMailboxProjectionRoots(sessionDir, marker); err != nil {
+				return err
+			}
+		}
+		return syncMailboxProjectionBody(sessionDir, curState)
+	})
+}
+
+func syncMailboxProjectionBody(sessionDir string, state journal.SessionState) error {
+	// Use the caller's already-fresh state directly (projectMailboxProjectionForState),
+	// NOT the public ProjectMailboxProjection(sessionDir), which re-reads
+	// session state independently. A second independent read here would
+	// reopen the exact race rework-2 closes: state could be re-read as a
+	// newer generation than the one callers verified against the marker
+	// a moment earlier (under the shared or exclusive gate), projecting
+	// and syncing the wrong generation's content while writing a marker
+	// for a different one.
+	projected, ok, err := projectMailboxProjectionForState(sessionDir, state)
 	if err != nil {
 		return err
 	}
@@ -407,15 +523,41 @@ func writeMailboxProjectionMarker(sessionDir string, marker mailboxProjectionMar
 	return os.WriteFile(mailboxProjectionMarkerPath(sessionDir), data, 0o600)
 }
 
-func quarantineMailboxProjectionTrees(sessionDir string, state journal.SessionState) error {
-	marker, ok := readMailboxProjectionMarker(sessionDir)
-	if !ok {
-		return nil
-	}
-	if marker.SessionKey == state.SessionKey && marker.Generation == state.Generation {
-		return nil
-	}
+// quarantineMailboxProjectionRoots moves every non-empty mailbox root
+// (post, inbox, read, dead-letter) wholesale into
+// snapshot/quarantine/generation-<marker.Generation>/<root>, recreating an
+// empty root in its place. The caller must already hold the session-level
+// mailbox roots gate exclusively (store.WithMailboxRootsExclusive); this
+// function takes no per-recipient fence itself and creates no
+// per-recipient admission state (P2-1R items 1 and 3, closing P1-F1,
+// which found per-recipient fences structurally unable to cover these
+// roots or an unknown/first-use recipient).
+//
+// P2-1R item 4 (closing P1-F3): this is non-destructive and retry-safe. An
+// existing quarantine destination is NEVER deleted or overwritten; if
+// generation-<G>/<root> already exists (from an earlier successful move
+// into this same generation, e.g. a prior partial-transition attempt, or a
+// retry after new activity), the live root is moved to
+// generation-<G>/<root>.<k> for the smallest unused k >= 1 instead. A
+// mid-sequence failure (one root's rename erroring) returns the error
+// immediately with no further roots touched and the marker still
+// unwritten by the caller; a subsequent retry only moves roots that have
+// regained content, and never deletes anything already snapshotted.
+func quarantineMailboxProjectionRoots(sessionDir string, marker mailboxProjectionMarker) error {
+	return quarantineMailboxProjectionRootsWithOps(sessionDir, marker, osQuarantineOps)
+}
 
+// quarantineOps isolates the one fallible, destructive-if-wrong step
+// (moving a root into its quarantine destination) behind a function
+// field, so a disposable fixture can inject a failure for a specific root
+// without faking the filesystem wholesale (P2-1R item 6(c)).
+type quarantineOps struct {
+	rename func(oldpath, newpath string) error
+}
+
+var osQuarantineOps = quarantineOps{rename: os.Rename}
+
+func quarantineMailboxProjectionRootsWithOps(sessionDir string, marker mailboxProjectionMarker, ops quarantineOps) error {
 	quarantineRoot := filepath.Join(sessionDir, "snapshot", "quarantine", fmt.Sprintf("generation-%d", marker.Generation))
 	if err := ensureMailboxDir(filepath.Dir(quarantineRoot)); err != nil {
 		return err
@@ -436,18 +578,40 @@ func quarantineMailboxProjectionTrees(sessionDir string, state journal.SessionSt
 		if len(entries) == 0 {
 			continue
 		}
-		dst := filepath.Join(quarantineRoot, root)
-		if err := os.RemoveAll(dst); err != nil {
+
+		dst, err := nextFreeQuarantineDestination(quarantineRoot, root)
+		if err != nil {
 			return err
 		}
-		if err := os.Rename(src, dst); err != nil {
-			return err
+		if err := ops.rename(src, dst); err != nil {
+			return fmt.Errorf("quarantining %s: %w", root, err)
 		}
 		if err := ensureMailboxDir(src); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// nextFreeQuarantineDestination returns quarantineRoot/root if it does not
+// exist yet, or quarantineRoot/root.<k> for the smallest unused k >= 1
+// otherwise, so a repeated or retried move into the same generation can
+// never overwrite or merge into an existing snapshot (P2-1R item 4).
+func nextFreeQuarantineDestination(quarantineRoot, root string) (string, error) {
+	base := filepath.Join(quarantineRoot, root)
+	if _, err := os.Lstat(base); os.IsNotExist(err) {
+		return base, nil
+	} else if err != nil {
+		return "", fmt.Errorf("stat quarantine destination %s: %w", base, err)
+	}
+	for k := 1; ; k++ {
+		candidate := fmt.Sprintf("%s.%d", base, k)
+		if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("stat quarantine destination %s: %w", candidate, err)
+		}
+	}
 }
 
 func ensureMailboxDir(path string) error {

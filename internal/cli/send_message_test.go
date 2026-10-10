@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,11 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimecontext"
 )
+
+// sendPostAwaitTimeout bounds how long fake direct-post consumers wait for the
+// CLI to deposit a draft in the post directory. A one-second deadline can expire
+// before send preparation finishes on a loaded host.
+const sendPostAwaitTimeout = 10 * time.Second
 
 func shellSensitiveBodyForSendTest() string {
 	return "literal command substitution: $(printf SHOULD_NOT_RUN)\n" +
@@ -133,6 +139,22 @@ func testSendCommandContext(baseDir string, stdin io.Reader, stdout io.Writer) c
 			return "%1"
 		},
 	}
+}
+
+func stubDaemonValidateSendForTest(t *testing.T) {
+	t.Helper()
+
+	previous := defaultRoundTripDaemonSubmit
+	defaultRoundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+		if request.Command == projection.DaemonSubmitSend {
+			t.Fatalf("legacy daemon-submit send used before direct post: %#v", request)
+		}
+		if request.Command != projection.DaemonSubmitValidateSend {
+			t.Fatalf("daemon-submit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+		}
+		return projection.DaemonSubmitResponse{Command: request.Command, Filename: request.Filename}, nil
+	}
+	t.Cleanup(func() { defaultRoundTripDaemonSubmit = previous })
 }
 
 func createEvidenceRootForSendTest(t *testing.T) string {
@@ -295,17 +317,14 @@ func TestRunSendHeredocWithContextRejectsConfiguredTerminalStdin(t *testing.T) {
 	}
 }
 
-func TestRunSendHeredocWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *testing.T) {
+func TestRunSendHeredocWithContextUsesDirectPostWhenContextOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	var stdout strings.Builder
-	var captured projection.DaemonSubmitRequest
 	ctx := testSendCommandContext(tmpDir, strings.NewReader("daemon body"), &stdout)
 	ctx.contextOwnsSession = func(string, string, string) bool { return true }
 	ctx.roundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
-		captured = request
-		return projection.DaemonSubmitResponse{
-			Filename: request.Filename,
-		}, nil
+		t.Fatalf("roundTripDaemonSubmit called for owned-session send: %#v", request)
+		return projection.DaemonSubmitResponse{}, nil
 	}
 
 	err := runSendHeredocWithContext(ctx, []string{
@@ -315,16 +334,16 @@ func TestRunSendHeredocWithContextUsesDaemonSubmitDependencyWithoutDaemon(t *tes
 	if err != nil {
 		t.Fatalf("runSendHeredocWithContext: %v", err)
 	}
-	if captured.Command != projection.DaemonSubmitSend {
-		t.Fatalf("captured.Command = %q, want %q", captured.Command, projection.DaemonSubmitSend)
-	}
-	if !strings.Contains(captured.Content, "daemon body") {
-		t.Fatalf("daemon-submit content missing body:\n%s", captured.Content)
-	}
-
 	payload := decodeSendOutputForTest(t, stdout.String())
-	if payload.SubmitPath != projection.SubmitPathDaemon {
-		t.Fatalf("SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
+	}
+	content, err := os.ReadFile(filepath.Join(tmpDir, "ctx-send-daemon", "review", "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile direct post: %v", err)
+	}
+	if !strings.Contains(string(content), "daemon body") {
+		t.Fatalf("direct post missing body:\n%s", content)
 	}
 }
 
@@ -2106,6 +2125,7 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	now := time.Date(2026, time.May, 3, 9, 0, 0, 0, time.UTC)
 	writer, err := journal.OpenShadowWriter(sessionDir, contextID, "test-session", 101, now)
 	if err != nil {
@@ -2119,23 +2139,26 @@ role = "worker"
 	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, originalMessageID, "critic", "worker", requestContent, now.Add(2*time.Second))
 	appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionReadEventType, originalMessageID, "critic", "worker", requestContent, now.Add(3*time.Second))
 
-	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
+	delivered := make(chan string, 1)
 	go func() {
-		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
-		requestSeen <- request
-		appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, request.Filename, "worker", "critic", request.Content, now.Add(4*time.Second))
-		appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, request.Filename, "worker", "critic", request.Content, now.Add(5*time.Second))
-		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-			t.Errorf("Remove requestPath: %v", err)
+		filename, err := awaitMarkdownFile(t, filepath.Join(sessionDir, "post"), sendPostAwaitTimeout)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			delivered <- ""
+			return
 		}
-		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-			RequestID: request.RequestID,
-			Command:   request.Command,
-			HandledAt: time.Now().UTC().Format(time.RFC3339),
-			Filename:  request.Filename,
-		}); err != nil {
-			t.Errorf("WriteDaemonSubmitResponse: %v", err)
+		content, err := os.ReadFile(filepath.Join(sessionDir, "post", filename))
+		if err != nil {
+			t.Errorf("ReadFile post: %v", err)
+			return
 		}
+		appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionPostConsumedEventType, filename, "worker", "critic", string(content), now.Add(4*time.Second))
+		appendSessionStatusObligationEvent(t, writer, projection.MailboxProjectionDeliveredEventType, filename, "worker", "critic", string(content), now.Add(5*time.Second))
+		if err := os.Remove(filepath.Join(sessionDir, "post", filename)); err != nil {
+			t.Errorf("Remove post: %v", err)
+			return
+		}
+		delivered <- filename
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
@@ -2150,10 +2173,10 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
-	request := <-requestSeen
+	requestFilename := <-delivered
 	payload := decodeSendOutputForTest(t, stdout)
-	if payload.Sent != request.Filename {
-		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	if payload.Sent != requestFilename {
+		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, requestFilename)
 	}
 	if payload.Fill == nil {
 		t.Fatalf("payload.Fill = nil, want fill summary: %#v", payload)
@@ -3043,10 +3066,15 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, sendPostAwaitTimeout)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			return
+		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
@@ -3121,10 +3149,15 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(ownerSessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 
 	go func() {
 		postDir := filepath.Join(sessionDir, "post")
-		filename := awaitMarkdownFile(t, postDir, time.Second)
+		filename, err := awaitMarkdownFile(t, postDir, sendPostAwaitTimeout)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			return
+		}
 		deadLetterDir := filepath.Join(sessionDir, "dead-letter")
 		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
 			t.Errorf("MkdirAll deadLetterDir: %v", err)
@@ -3157,7 +3190,38 @@ role = "worker"
 	}
 }
 
-func TestRunSendMessage_UsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
+func TestObserveSendOutcome_RechecksDeadLetterAfterPostDisappears(t *testing.T) {
+	sessionDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sessionDir, "post"), 0o700); err != nil {
+		t.Fatalf("MkdirAll post: %v", err)
+	}
+	const filename = "20260817-000000-sabcd-r1234-from-worker-to-orchestrator.md"
+	postPath := filepath.Join(sessionDir, "post", filename)
+	if err := os.WriteFile(postPath, []byte("body"), 0o600); err != nil {
+		t.Fatalf("WriteFile post: %v", err)
+	}
+	t.Setenv("POSTMAN_HOME", sessionDir)
+	previous := observeSendOutcomeBeforePostStateCheckForTest
+	observeSendOutcomeBeforePostStateCheckForTest = func() {
+		observeSendOutcomeBeforePostStateCheckForTest = nil
+		deadLetterDir := filepath.Join(sessionDir, "dead-letter")
+		if err := os.MkdirAll(deadLetterDir, 0o700); err != nil {
+			t.Fatalf("MkdirAll dead-letter: %v", err)
+		}
+		if err := os.Rename(postPath, filepath.Join(deadLetterDir, strings.TrimSuffix(filename, ".md")+"-dl-test.md")); err != nil {
+			t.Fatalf("Rename dead-letter: %v", err)
+		}
+	}
+	t.Cleanup(func() { observeSendOutcomeBeforePostStateCheckForTest = previous })
+	ctx := testSendCommandContext(sessionDir, strings.NewReader(""), io.Discard)
+	ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+	_, err := observeSendOutcomeWithContext(ctx, sessionDir, "ctx", sessionDir, filename)
+	if err == nil || !strings.Contains(err.Error(), "message dead-lettered:") {
+		t.Fatalf("observeSendOutcomeWithContext() error = %v, want dead-letter error", err)
+	}
+}
+
+func TestRunSendMessage_UsesDirectPostWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -3177,84 +3241,51 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	sessionDir := filepath.Join(tmpDir, "ctx-send-submit", "test-session")
+	sessionDir := filepath.Join(tmpDir, "ctx-send-owned-direct", "test-session")
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
-	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit", "test-session") {
+	stubDaemonValidateSendForTest(t)
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-owned-direct", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
 	go func() {
-		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
-		requestSeen <- request
 		postDir := filepath.Join(sessionDir, "post")
-		if err := os.MkdirAll(postDir, 0o700); err != nil {
-			t.Errorf("MkdirAll postDir: %v", err)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
 			return
-		}
-		postPath := filepath.Join(postDir, request.Filename)
-		if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-			t.Errorf("WriteFile postPath: %v", err)
-			return
-		}
-		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-			t.Errorf("Remove requestPath: %v", err)
 		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
 			return
 		}
-		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+		if err := os.Rename(filepath.Join(postDir, filename), filepath.Join(inboxDir, filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
-		}
-		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-			RequestID: request.RequestID,
-			Command:   request.Command,
-			HandledAt: time.Now().UTC().Format(time.RFC3339),
-			Filename:  request.Filename,
-		}); err != nil {
-			t.Errorf("WriteDaemonSubmitResponse: %v", err)
 		}
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return runSendHeredocWithBody(t, "hello through submit", []string{
+		return runSendHeredocWithBody(t, "hello through direct post", []string{
 			"--config", configPath,
-			"--context-id", "ctx-send-submit",
+			"--context-id", "ctx-send-owned-direct",
 			"--to", "worker",
 		})
 	})
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
-	request := <-requestSeen
-	if request.Command != projection.DaemonSubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
-	}
-	if !strings.Contains(request.Filename, "-to-worker.md") {
-		t.Fatalf("request filename missing recipient: %q", request.Filename)
-	}
-	if request.Sender != "messenger" {
-		t.Fatalf("request.Sender = %q, want messenger", request.Sender)
-	}
-	if !strings.Contains(request.Content, "hello through submit") {
-		t.Fatalf("request content missing body:\n%s", request.Content)
-	}
 	payload := decodeSendOutputForTest(t, stdout)
-	if payload.Sent != request.Filename {
-		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
-	}
 	if payload.Status != string(sendStatusProcessed) {
 		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
 	}
-	if payload.ContextID != "ctx-send-submit" {
-		t.Fatalf("payload.ContextID = %q, want ctx-send-submit", payload.ContextID)
+	if payload.ContextID != "ctx-send-owned-direct" {
+		t.Fatalf("payload.ContextID = %q, want ctx-send-owned-direct", payload.ContextID)
 	}
 	if payload.Session != "test-session" {
 		t.Fatalf("payload.Session = %q, want test-session", payload.Session)
@@ -3265,16 +3296,15 @@ role = "worker"
 	if payload.To != "worker" {
 		t.Fatalf("payload.To = %q, want worker", payload.To)
 	}
-	if payload.SubmitPath != projection.SubmitPathDaemon {
-		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
 	}
-	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
-	if err == nil && len(postEntries) != 0 {
-		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "worker", payload.Sent)); err != nil {
+		t.Fatalf("Stat delivered direct post: %v", err)
 	}
 }
 
-func TestRunSendMessage_UsesDaemonSubmitForOwnedSessionInLegacyMode(t *testing.T) {
+func TestRunSendMessage_OwnedSessionDirectPostPreservesReplyAccounting(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -3294,126 +3324,60 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	sessionDir := filepath.Join(tmpDir, "ctx-send-submit-legacy", "test-session")
+	sessionDir := filepath.Join(tmpDir, "ctx-send-owned-direct-reply", "test-session")
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
-	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-legacy", "test-session") {
+	stubDaemonValidateSendForTest(t)
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-owned-direct-reply", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
-	serveDone := make(chan error, 1)
-	go func() {
-		deadline := time.Now().Add(2 * time.Second)
-		requestsDir := projection.DaemonSubmitRequestsDir(sessionDir)
-		for {
-			entries, err := os.ReadDir(requestsDir)
-			if err == nil {
-				for _, entry := range entries {
-					if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-						continue
-					}
-					requestPath := filepath.Join(requestsDir, entry.Name())
-					request, readErr := projection.ReadDaemonSubmitRequest(requestPath)
-					if readErr != nil {
-						serveDone <- fmt.Errorf("ReadDaemonSubmitRequest(%s): %w", requestPath, readErr)
-						return
-					}
-					requestSeen <- request
-					postDir := filepath.Join(sessionDir, "post")
-					if err := os.MkdirAll(postDir, 0o700); err != nil {
-						serveDone <- fmt.Errorf("MkdirAll postDir: %w", err)
-						return
-					}
-					postPath := filepath.Join(postDir, request.Filename)
-					if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-						serveDone <- fmt.Errorf("WriteFile postPath: %w", err)
-						return
-					}
-					if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-						serveDone <- fmt.Errorf("Remove requestPath: %w", err)
-						return
-					}
-					inboxDir := filepath.Join(sessionDir, "inbox", "worker")
-					if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-						serveDone <- fmt.Errorf("MkdirAll inboxDir: %w", err)
-						return
-					}
-					if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
-						serveDone <- fmt.Errorf("Rename post to inbox: %w", err)
-						return
-					}
-					if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-						RequestID: request.RequestID,
-						Command:   request.Command,
-						HandledAt: time.Now().UTC().Format(time.RFC3339),
-						Filename:  request.Filename,
-					}); err != nil {
-						serveDone <- fmt.Errorf("WriteDaemonSubmitResponse: %w", err)
-						return
-					}
-					serveDone <- nil
-					return
-				}
-			}
-			if time.Now().After(deadline) {
-				serveDone <- fmt.Errorf("timed out waiting for daemon submit request in %s", requestsDir)
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}()
-
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return runSendHeredocWithBody(t, "hello through submit in legacy mode", []string{
+		return runSendHeredocWithBody(t, "reply accounting survives owned direct post", []string{
 			"--config", configPath,
-			"--context-id", "ctx-send-submit-legacy",
-			"--to", "worker",
+			"--context-id", "ctx-send-owned-direct-reply",
+			"--to", "worker", "--reply-required",
 		})
 	})
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
-	if serveErr := <-serveDone; serveErr != nil {
-		t.Fatal(serveErr)
-	}
-	request := <-requestSeen
-	if request.Command != projection.DaemonSubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
-	}
-	if !strings.Contains(request.Content, "hello through submit in legacy mode") {
-		t.Fatalf("request content missing body:\n%s", request.Content)
-	}
 	payload := decodeSendOutputForTest(t, stdout)
-	if payload.Status != string(sendStatusProcessed) {
-		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
+	if payload.Status != string(sendStatusQueued) {
+		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusQueued)
 	}
 	if payload.Session != "test-session" {
 		t.Fatalf("payload.Session = %q, want test-session", payload.Session)
 	}
-	if payload.ContextID != "ctx-send-submit-legacy" {
-		t.Fatalf("payload.ContextID = %q, want ctx-send-submit-legacy", payload.ContextID)
+	if payload.ContextID != "ctx-send-owned-direct-reply" {
+		t.Fatalf("payload.ContextID = %q, want ctx-send-owned-direct-reply", payload.ContextID)
 	}
-	if payload.SubmitPath != projection.SubmitPathDaemon {
-		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
 	}
-	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
-	if err == nil && len(postEntries) != 0 {
-		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	if payload.InputRequestID == "" || payload.ReplyPolicy != "required" {
+		t.Fatalf("owned direct reply fields = %#v", payload)
+	}
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", payload.Sent))
+	if err != nil {
+		t.Fatalf("ReadFile direct post: %v", err)
+	}
+	for _, want := range []string{"replyPolicy: required", "input_request_id: " + payload.InputRequestID} {
+		if !strings.Contains(string(content), want) {
+			t.Fatalf("direct post missing %q:\n%s", want, content)
+		}
 	}
 }
 
 func TestRunSendHeredoc_DirectPathEnforcesVerdictGate(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Chdir(tmpDir)
-	t.Setenv("HOME", tmpDir)
-	t.Setenv("XDG_CONFIG_HOME", tmpDir)
 	configPath := filepath.Join(tmpDir, "postman.toml")
-	configContent := `[postman]
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
 edges = ["orchestrator --- worker"]
 verdict_debt_cap = 0
 verdict_grace_seconds = 3600
@@ -3423,22 +3387,29 @@ role = "orchestrator"
 
 [worker]
 role = "worker"
-`
+`, tmpDir)
 	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
-	installFakeTmuxForCLI(t, tmpDir, "test-session", "orchestrator")
-
 	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate", "test-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
 	}
-	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_direct_gate", time.Now().Add(-10*time.Second).UTC())
-	if config.ContextOwnsSession(tmpDir, "ctx-direct-verdict-gate", "test-session") {
-		t.Fatal("ContextOwnsSession() = true, want direct post path")
+	manager := journal.NewManager("ctx-direct-verdict-gate", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
 	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_direct_gate", time.Now().Add(-10*time.Second).UTC())
 
-	err := runSendHeredocWithBody(t, "new direct work", []string{
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new direct work"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.loadConfig = config.LoadConfig
+
+	err := runSendHeredocWithContext(ctx, []string{
 		"--config", configPath,
 		"--context-id", "ctx-direct-verdict-gate",
 		"--to", "worker",
@@ -3456,7 +3427,610 @@ role = "worker"
 	}
 }
 
-func TestRunSendMessage_DefaultJSONUsesDaemonSubmitWhenDaemonOwnsSession(t *testing.T) {
+// TestRunSendHeredoc_VerdictFlagsClearDebtAndAllowOtherwiseBlockedSend pins
+// #757: before --verdict/--verdict-of existed, an agent had no CLI-flag way
+// to legitimately clear its own verdict debt, so a reply-required send that
+// would otherwise be rejected by the debt-cap check (verdictgate.Enforce)
+// stayed blocked until the grace-period timeout fired. Stamping the same
+// outgoing reply-required message with --verdict and --verdict-of naming
+// the debt-owning input request now clears that debt item before the cap
+// check runs, letting the send through under a cap of 0.
+func TestRunSendHeredoc_VerdictFlagsClearDebtAndAllowOtherwiseBlockedSend(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`, tmpDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-flags-clear-debt", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-verdict-flags-clear-debt", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_verdict_flags", time.Now().Add(-10*time.Second).UTC())
+
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new work, verdict on the earlier fill attached"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.loadConfig = config.LoadConfig
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-flags-clear-debt",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: fill was correct",
+		"--verdict-of", "ireq_verdict_flags",
+	})
+	if err != nil {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want nil (verdict clears debt before the cap check)", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if err != nil {
+		t.Fatalf("ReadDir(post) error = %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("post/ has %d entries, want exactly 1 sent message", len(entries))
+	}
+	content, err := os.ReadFile(filepath.Join(sessionDir, "post", entries[0].Name()))
+	if err != nil {
+		t.Fatalf("ReadFile sent message: %v", err)
+	}
+	meta, err := envelope.ParseMetadata(string(content))
+	if err != nil {
+		t.Fatalf("ParseMetadata sent message: %v", err)
+	}
+	if meta.Verdict != "APPROVED: fill was correct" {
+		t.Fatalf("meta.Verdict = %q, want the --verdict value", meta.Verdict)
+	}
+	if meta.VerdictOf != "ireq_verdict_flags" {
+		t.Fatalf("meta.VerdictOf = %q, want the --verdict-of value", meta.VerdictOf)
+	}
+}
+
+func TestRunSendHeredoc_VerdictAndVerdictOfMustBeProvidedTogether(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	var stdoutVerdictOnly strings.Builder
+	ctxVerdictOnly := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdoutVerdictOnly)
+	if err := runSendHeredocWithContext(ctxVerdictOnly, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--verdict", "APPROVED: ok",
+	}); err == nil || !strings.Contains(err.Error(), "--verdict and --verdict-of must be provided together") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a paired-flag rejection", err)
+	}
+
+	var stdoutVerdictOfOnly strings.Builder
+	ctxVerdictOfOnly := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdoutVerdictOfOnly)
+	if err := runSendHeredocWithContext(ctxVerdictOfOnly, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--verdict-of", "ireq_orphan",
+	}); err == nil || !strings.Contains(err.Error(), "--verdict and --verdict-of must be provided together") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a paired-flag rejection", err)
+	}
+}
+
+// TestRunSendHeredoc_VerdictRejectsWhitespaceOnlyText pins guardian F-025:
+// a whitespace-only --verdict must be treated as absent (trimmed before the
+// paired-flag check), not silently written while failing to clear debt.
+func TestRunSendHeredoc_VerdictRejectsWhitespaceOnlyText(t *testing.T) {
+	tmpDir := t.TempDir()
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdout)
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--verdict", "   ",
+		"--verdict-of", "ireq_x",
+	})
+	if err == nil || !strings.Contains(err.Error(), "--verdict and --verdict-of must be provided together") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a paired-flag rejection for whitespace-only --verdict", err)
+	}
+}
+
+// TestRunSendHeredoc_VerdictRejectsUnsafeText pins guardian F-024: --verdict
+// is interpolated into a single unescaped frontmatter line
+// (message.EnsureEnvelopeParams -> envelope.EnsureParams), so a newline
+// could inject arbitrary params or, combined with a literal "---" line,
+// terminate the frontmatter block outright; a control character is
+// likewise unsafe. All three must be rejected before any file is written.
+func TestRunSendHeredoc_VerdictRejectsUnsafeText(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verdict string
+	}{
+		{name: "embedded newline", verdict: "APPROVED: ok\ninjected: yes"},
+		{name: "carriage return", verdict: "APPROVED: ok\rinjected: yes"},
+		{name: "frontmatter terminator injection", verdict: "APPROVED: ok\n---\nreplyPolicy: none"},
+		{name: "control character", verdict: "APPROVED: ok\x01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			sessionDir := filepath.Join(tmpDir, "ctx-verdict-unsafe", "test-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+			var stdout strings.Builder
+			ctx := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdout)
+
+			err := runSendHeredocWithContext(ctx, []string{
+				"--to", "worker",
+				"--no-reply",
+				"--context-id", "ctx-verdict-unsafe",
+				"--verdict", tc.verdict,
+				"--verdict-of", "ireq_unsafe",
+			})
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want unsafe --verdict text rejection")
+			}
+			if !strings.Contains(err.Error(), "--verdict") {
+				t.Fatalf("runSendHeredocWithContext() error = %v, want a --verdict-specific rejection", err)
+			}
+			postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+			if readErr == nil && len(postEntries) != 0 {
+				t.Fatalf("post/ has %d entries, want no file written for rejected unsafe --verdict text", len(postEntries))
+			}
+		})
+	}
+}
+
+// TestRunSendHeredoc_VerdictOfMalformedRejectedBeforeWrite confirms a
+// malformed --verdict-of token is rejected by the same validator
+// --fills-input-request-id uses, before any post/ file is written.
+func TestRunSendHeredoc_VerdictOfMalformedRejectedBeforeWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-malformed", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("body"), &stdout)
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--to", "worker",
+		"--no-reply",
+		"--context-id", "ctx-verdict-malformed",
+		"--verdict", "APPROVED: ok",
+		"--verdict-of", "not/a-valid-token",
+	})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want malformed --verdict-of rejection")
+	}
+	if !strings.Contains(err.Error(), "--verdict-of") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want a --verdict-of-specific rejection", err)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("post/ has %d entries, want no file written for rejected malformed --verdict-of", len(postEntries))
+	}
+}
+
+// TestRunSendHeredoc_VerdictWrongInputRequestIDLeavesDebtAndBlocks confirms
+// a well-formed but non-matching --verdict-of cannot clear someone else's
+// (or a made-up) debt item: the send stays blocked under a zero debt cap
+// exactly as it would with no verdict flags at all.
+func TestRunSendHeredoc_VerdictWrongInputRequestIDLeavesDebtAndBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`, tmpDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-wrong-id", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-verdict-wrong-id", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_real", time.Now().Add(-10*time.Second).UTC())
+
+	var stdout strings.Builder
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new work"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.loadConfig = config.LoadConfig
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-wrong-id",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: unrelated",
+		"--verdict-of", "ireq_not_the_real_one",
+	})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want debt-cap rejection for a non-matching --verdict-of")
+	}
+	if !strings.Contains(err.Error(), "verdict debt 1 above verdict_debt_cap=0") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want debt-cap verdict gate rejection", err)
+	}
+}
+
+// TestRunSendHeredoc_VerdictRepeatedSendIsIdempotent confirms clearing the
+// same debt item twice is a harmless no-op the second time, rather than an
+// error: applyOutgoingVerdict simply finds nothing left to remove.
+func TestRunSendHeredoc_VerdictRepeatedSendIsIdempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "postman.toml")
+	configContent := fmt.Sprintf(`[postman]
+base_dir = %q
+edges = ["orchestrator --- worker"]
+verdict_debt_cap = 0
+verdict_grace_seconds = 3600
+
+[orchestrator]
+role = "orchestrator"
+
+[worker]
+role = "worker"
+`, tmpDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("WriteFile config: %v", err)
+	}
+	sessionDir := filepath.Join(tmpDir, "ctx-verdict-repeat", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-verdict-repeat", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_repeat", time.Now().Add(-10*time.Second).UTC())
+
+	ctxFor := func(body string) commandContext {
+		var stdout strings.Builder
+		ctx := testSendCommandContext(tmpDir, strings.NewReader(body), &stdout)
+		ctx.getTmuxPaneName = func() string { return "orchestrator" }
+		ctx.getTmuxSessionName = func() string { return "test-session" }
+		ctx.loadConfig = config.LoadConfig
+		return ctx
+	}
+
+	firstErr := runSendHeredocWithContext(ctxFor("first send"), []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-repeat",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: first",
+		"--verdict-of", "ireq_repeat",
+	})
+	if firstErr != nil {
+		t.Fatalf("first send error = %v, want nil (clears debt)", firstErr)
+	}
+
+	secondErr := runSendHeredocWithContext(ctxFor("second send"), []string{
+		"--config", configPath,
+		"--context-id", "ctx-verdict-repeat",
+		"--to", "worker",
+		"--reply-required",
+		"--verdict", "APPROVED: second",
+		"--verdict-of", "ireq_repeat",
+	})
+	if secondErr != nil {
+		t.Fatalf("second send error = %v, want nil (idempotent no-op clear)", secondErr)
+	}
+}
+
+func TestRunSendHeredoc_LiveOwnedDirectPathUsesDaemonVerdictGate(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionDir := filepath.Join(tmpDir, "ctx-direct-verdict-gate-daemon", "test-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	manager := journal.NewManager("ctx-direct-verdict-gate-daemon", os.Getpid())
+	journal.InstallProcessManager(manager)
+	t.Cleanup(journal.ClearProcessManager)
+	if err := manager.Bootstrap(sessionDir, "test-session", time.Now().Add(-20*time.Second).UTC()); err != nil {
+		t.Fatalf("journal bootstrap failed: %v", err)
+	}
+	appendSendVerdictDebt(t, sessionDir, "test-session", "orchestrator", "worker", "ireq_daemon_gate", time.Now().Add(-10*time.Second).UTC())
+
+	var stdout strings.Builder
+	var validateCalls int
+	ctx := testSendCommandContext(tmpDir, strings.NewReader("new direct work"), &stdout)
+	ctx.getTmuxPaneName = func() string { return "orchestrator" }
+	ctx.getTmuxSessionName = func() string { return "test-session" }
+	ctx.contextOwnsSession = func(string, string, string) bool { return true }
+	ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+	ctx.loadConfig = func(string) (*config.Config, error) {
+		return &config.Config{
+			BaseDir:             tmpDir,
+			Edges:               []string{"orchestrator --- worker"},
+			VerdictDebtCap:      3,
+			VerdictGraceSeconds: 3600,
+		}, nil
+	}
+	ctx.roundTripDaemonSubmit = func(gotSessionDir string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+		if gotSessionDir != sessionDir {
+			t.Fatalf("roundTripDaemonSubmit sessionDir = %q, want %q", gotSessionDir, sessionDir)
+		}
+		if request.Command == projection.DaemonSubmitSend {
+			t.Fatalf("roundTripDaemonSubmit used legacy send command before direct post: %#v", request)
+		}
+		if request.Command != projection.DaemonSubmitValidateSend {
+			t.Fatalf("roundTripDaemonSubmit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+		}
+		validateCalls++
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("reply gate: verdict required before new reply-required send: requester %q has verdict debt 1 above verdict_debt_cap=0", "orchestrator")
+	}
+
+	err := runSendHeredocWithContext(ctx, []string{
+		"--context-id", "ctx-direct-verdict-gate-daemon",
+		"--to", "worker",
+		"--reply-required",
+	})
+	if err == nil {
+		t.Fatal("runSendHeredocWithContext() error = nil, want daemon verdict gate rejection")
+	}
+	if !strings.Contains(err.Error(), "verdict_debt_cap=0") {
+		t.Fatalf("runSendHeredocWithContext() error = %v, want daemon debt-cap rejection", err)
+	}
+	if validateCalls != 1 {
+		t.Fatalf("validateCalls = %d, want 1", validateCalls)
+	}
+	postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+	if readErr == nil && len(postEntries) != 0 {
+		t.Fatalf("direct post file written despite daemon verdict gate rejection: found %d entries", len(postEntries))
+	}
+}
+
+func TestRunSendHeredoc_LiveOwnedReplyRequiredValidationFailureLeavesNoPost(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		wantErr string
+	}{
+		{
+			name:    "rejection",
+			err:     fmt.Errorf("reply gate: verdict required before new reply-required send"),
+			wantErr: "daemon validate-send: reply gate:",
+		},
+		{
+			name:    "timeout",
+			err:     projection.DaemonSubmitResponseTimeoutError{RequestID: "req-timeout", Timeout: 25 * time.Millisecond},
+			wantErr: "daemon validate-send: timed out waiting for daemon submit response",
+		},
+		{
+			name:    "request response failure",
+			err:     fmt.Errorf("daemon response error: write failed"),
+			wantErr: "daemon validate-send: daemon response error: write failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			contextID := "ctx-direct-reply-required-validation-" + strings.ReplaceAll(tt.name, " ", "-")
+			sessionDir := filepath.Join(tmpDir, contextID, "test-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+
+			var validateCalls int
+			var stdout strings.Builder
+			ctx := testSendCommandContext(tmpDir, strings.NewReader("reply-required failure boundary"), &stdout)
+			ctx.getTmuxPaneName = func() string { return "orchestrator" }
+			ctx.getTmuxSessionName = func() string { return "test-session" }
+			ctx.contextOwnsSession = func(string, string, string) bool { return true }
+			ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+			ctx.loadConfig = func(string) (*config.Config, error) {
+				return &config.Config{
+					BaseDir:             tmpDir,
+					Edges:               []string{"orchestrator --- worker"},
+					VerdictDebtCap:      3,
+					VerdictGraceSeconds: 3600,
+				}, nil
+			}
+			ctx.roundTripDaemonSubmit = func(gotSessionDir string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+				if gotSessionDir != sessionDir {
+					t.Fatalf("roundTripDaemonSubmit sessionDir = %q, want %q", gotSessionDir, sessionDir)
+				}
+				if request.Command != projection.DaemonSubmitValidateSend {
+					t.Fatalf("roundTripDaemonSubmit Command = %q, want %q", request.Command, projection.DaemonSubmitValidateSend)
+				}
+				validateCalls++
+				return projection.DaemonSubmitResponse{}, tt.err
+			}
+
+			err := runSendHeredocWithContext(ctx, []string{
+				"--context-id", contextID,
+				"--to", "worker",
+				"--reply-required",
+			})
+			if err == nil {
+				t.Fatal("runSendHeredocWithContext() error = nil, want validation failure")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("runSendHeredocWithContext() error = %v, want substring %q", err, tt.wantErr)
+			}
+			if validateCalls != 1 {
+				t.Fatalf("validateCalls = %d, want 1", validateCalls)
+			}
+			postEntries, readErr := os.ReadDir(filepath.Join(sessionDir, "post"))
+			if readErr == nil && len(postEntries) != 0 {
+				t.Fatalf("post file written despite validation failure: found %d entries", len(postEntries))
+			}
+		})
+	}
+}
+
+func TestRunSendHeredoc_LiveOwnedDirectPostWorkloadMetricsComparesLegacyValidation(t *testing.T) {
+	tmpDir := t.TempDir()
+	contextID := "ctx-direct-workload"
+	sessionName := "test-session"
+	sessionDir := filepath.Join(tmpDir, contextID, sessionName)
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+
+	const iterations = 25
+	var clientWaits []time.Duration
+	var deliveryE2E []time.Duration
+	var directPostWrites int
+	var deliverySuccesses int
+	var deliveryTimeouts int
+	var deadLetters int
+	var daemonSubmitSendRequests int
+	var daemonSubmitValidateRequests int
+
+	for i := 0; i < iterations; i++ {
+		var stdout strings.Builder
+		postedAt := make(chan time.Time, 1)
+		deliveredAt := make(chan time.Time, 1)
+		go func() {
+			postDir := filepath.Join(sessionDir, "post")
+			filename, err := awaitMarkdownFile(t, postDir, time.Second)
+			if err != nil {
+				t.Errorf("awaitMarkdownFile: %v", err)
+				postedAt <- time.Time{}
+				deliveredAt <- time.Time{}
+				return
+			}
+			postPath := filepath.Join(postDir, filename)
+			postedAt <- time.Now()
+			inboxDir := filepath.Join(sessionDir, "inbox", "worker")
+			if err := os.MkdirAll(inboxDir, 0o700); err != nil {
+				t.Errorf("MkdirAll inboxDir: %v", err)
+				return
+			}
+			if err := os.Rename(postPath, filepath.Join(inboxDir, filename)); err != nil {
+				t.Errorf("Rename post to inbox: %v", err)
+				return
+			}
+			deliveredAt <- time.Now()
+		}()
+
+		ctx := testSendCommandContext(tmpDir, strings.NewReader(fmt.Sprintf("workload message %d", i)), &stdout)
+		ctx.getTmuxSessionName = func() string { return sessionName }
+		ctx.contextOwnsSession = func(string, string, string) bool { return true }
+		ctx.contextHasLiveDaemon = func(string, string) bool { return true }
+		ctx.roundTripDaemonSubmit = func(_ string, request projection.DaemonSubmitRequest, _ time.Duration) (projection.DaemonSubmitResponse, error) {
+			switch request.Command {
+			case projection.DaemonSubmitValidateSend:
+				daemonSubmitValidateRequests++
+			case projection.DaemonSubmitSend:
+				daemonSubmitSendRequests++
+			default:
+				t.Fatalf("unexpected daemon-submit command: %q", request.Command)
+			}
+			return projection.DaemonSubmitResponse{Command: request.Command, Filename: request.Filename}, nil
+		}
+
+		startedAt := time.Now()
+		err := runSendHeredocWithContext(ctx, []string{
+			"--context-id", contextID,
+			"--to", "worker",
+		})
+		clientWaits = append(clientWaits, time.Since(startedAt))
+		if err != nil {
+			t.Fatalf("runSendHeredocWithContext: %v", err)
+		}
+		payload := decodeSendOutputForTest(t, stdout.String())
+		if payload.SubmitPath != projection.SubmitPathPost {
+			t.Fatalf("SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
+		}
+		if payload.Status != string(sendStatusProcessed) {
+			t.Fatalf("Status = %q, want %q", payload.Status, sendStatusProcessed)
+		}
+		directPostWrites++
+		posted := <-postedAt
+		delivered := <-deliveredAt
+		deliveryE2E = append(deliveryE2E, delivered.Sub(startedAt))
+		if delivered.Before(posted) {
+			t.Fatalf("delivery completed before post write")
+		}
+		deliverySuccesses++
+	}
+
+	legacyDaemonSubmitValidateRequests := iterations
+	legacyDaemonSubmitHandlerWork := iterations
+	currentDaemonSubmitHandlerWork := daemonSubmitSendRequests + daemonSubmitValidateRequests
+	t.Logf("legacy_daemon_submit_validate_requests=%d current_daemon_submit_validate_requests=%d legacy_daemon_submit_handler_work=%d current_daemon_submit_handler_work=%d client_wait_p50_ms=%.3f client_wait_p95_ms=%.3f client_wait_p99_ms=%.3f delivery_e2e_p50_ms=%.3f delivery_e2e_p95_ms=%.3f delivery_e2e_p99_ms=%.3f direct_post_writes=%d daemon_submit_send_requests=%d delivery_successes=%d delivery_timeouts=%d dead_letters=%d",
+		legacyDaemonSubmitValidateRequests,
+		daemonSubmitValidateRequests,
+		legacyDaemonSubmitHandlerWork,
+		currentDaemonSubmitHandlerWork,
+		durationPercentileMillis(clientWaits, 50),
+		durationPercentileMillis(clientWaits, 95),
+		durationPercentileMillis(clientWaits, 99),
+		durationPercentileMillis(deliveryE2E, 50),
+		durationPercentileMillis(deliveryE2E, 95),
+		durationPercentileMillis(deliveryE2E, 99),
+		directPostWrites,
+		daemonSubmitSendRequests,
+		deliverySuccesses,
+		deliveryTimeouts,
+		deadLetters,
+	)
+	if daemonSubmitSendRequests != 0 {
+		t.Fatalf("daemonSubmitSendRequests = %d, want 0", daemonSubmitSendRequests)
+	}
+	if daemonSubmitValidateRequests != 0 {
+		t.Fatalf("daemonSubmitValidateRequests = %d, want 0", daemonSubmitValidateRequests)
+	}
+	if currentDaemonSubmitHandlerWork != 0 {
+		t.Fatalf("currentDaemonSubmitHandlerWork = %d, want 0", currentDaemonSubmitHandlerWork)
+	}
+	if directPostWrites != iterations || deliverySuccesses != iterations {
+		t.Fatalf("workload conservation failed: direct_post_writes=%d delivery_successes=%d", directPostWrites, deliverySuccesses)
+	}
+}
+
+func durationPercentileMillis(values []time.Duration, percentile int) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sorted := append([]time.Duration(nil), values...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	index := (len(sorted)*percentile + 99) / 100
+	if index <= 0 {
+		index = 1
+	}
+	if index > len(sorted) {
+		index = len(sorted)
+	}
+	return float64(sorted[index-1].Microseconds()) / 1000
+}
+
+func TestRunSendMessage_DefaultJSONUsesDirectPostWhenDaemonOwnsSession(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -3476,57 +4050,44 @@ role = "worker"
 	}
 	installFakeTmuxForCLI(t, tmpDir, "test-session", "messenger")
 
-	sessionDir := filepath.Join(tmpDir, "ctx-send-submit-json", "test-session")
+	sessionDir := filepath.Join(tmpDir, "ctx-send-owned-direct-json", "test-session")
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll sessionDir: %v", err)
 	}
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
-	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-json", "test-session") {
+	stubDaemonValidateSendForTest(t)
+	if !config.ContextOwnsSession(tmpDir, "ctx-send-owned-direct-json", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
+	delivered := make(chan string, 1)
 	go func() {
-		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
-		requestSeen <- request
 		postDir := filepath.Join(sessionDir, "post")
-		if err := os.MkdirAll(postDir, 0o700); err != nil {
-			t.Errorf("MkdirAll postDir: %v", err)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			delivered <- ""
 			return
-		}
-		postPath := filepath.Join(postDir, request.Filename)
-		if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-			t.Errorf("WriteFile postPath: %v", err)
-			return
-		}
-		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-			t.Errorf("Remove requestPath: %v", err)
 		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
 			return
 		}
-		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+		if err := os.Rename(filepath.Join(postDir, filename), filepath.Join(inboxDir, filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
+			return
 		}
-		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-			RequestID: request.RequestID,
-			Command:   request.Command,
-			HandledAt: time.Now().UTC().Format(time.RFC3339),
-			Filename:  request.Filename,
-		}); err != nil {
-			t.Errorf("WriteDaemonSubmitResponse: %v", err)
-		}
+		delivered <- filename
 	}()
 
 	replyTo := "20260503-090000-sabcd-r1234-from-worker-to-messenger.md"
 	stdout, stderr, err := captureCommandOutput(t, func() error {
-		return runSendHeredocWithBody(t, "hello through submit json", []string{
+		return runSendHeredocWithBody(t, "hello through direct post json", []string{
 			"--config", configPath,
-			"--context-id", "ctx-send-submit-json",
+			"--context-id", "ctx-send-owned-direct-json",
 			"--to", "worker", "--reply-required",
 			"--reply-to", replyTo,
 		})
@@ -3534,37 +4095,18 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
-	request := <-requestSeen
-	if request.Command != projection.DaemonSubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
-	}
-	if !strings.Contains(request.Filename, "-to-worker.md") {
-		t.Fatalf("request filename missing recipient: %q", request.Filename)
-	}
-	if !strings.Contains(request.Content, "hello through submit json") {
-		t.Fatalf("request content missing body:\n%s", request.Content)
-	}
-	for _, want := range []string{
-		"replyPolicy: required",
-		"replyTo: " + replyTo,
-	} {
-		if !strings.Contains(request.Content, want) {
-			t.Fatalf("request content missing %q:\n%s", want, request.Content)
-		}
-	}
-	assertNoGeneratedReplyPolicyMarker(t, request.Content, "daemon submit request content")
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	payload := decodeSendOutputForTest(t, stdout)
-	if payload.Sent != request.Filename {
-		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	if payload.Sent != <-delivered {
+		t.Fatalf("payload.Sent = %q, want direct-post filename", payload.Sent)
 	}
 	if payload.Status != string(sendStatusProcessed) {
 		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
 	}
-	if payload.ContextID != "ctx-send-submit-json" {
-		t.Fatalf("payload.ContextID = %q, want ctx-send-submit-json", payload.ContextID)
+	if payload.ContextID != "ctx-send-owned-direct-json" {
+		t.Fatalf("payload.ContextID = %q, want ctx-send-owned-direct-json", payload.ContextID)
 	}
 	if payload.Session != "test-session" {
 		t.Fatalf("payload.Session = %q, want test-session", payload.Session)
@@ -3581,12 +4123,11 @@ role = "worker"
 	if payload.ReplyTo != replyTo {
 		t.Fatalf("payload.ReplyTo = %q, want %q", payload.ReplyTo, replyTo)
 	}
-	if payload.SubmitPath != projection.SubmitPathDaemon {
-		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
 	}
-	postEntries, err := os.ReadDir(filepath.Join(sessionDir, "post"))
-	if err == nil && len(postEntries) != 0 {
-		t.Fatalf("direct post write bypassed daemon submit: found %d post entries", len(postEntries))
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "worker", payload.Sent)); err != nil {
+		t.Fatalf("Stat delivered direct post: %v", err)
 	}
 }
 
@@ -3851,7 +4392,7 @@ func TestValidateSendEvidenceFlagsBoundsTimeoutSeconds(t *testing.T) {
 	}
 }
 
-func TestRunSendMessage_DaemonSubmitResolvesGeneratedReplyPolicyMarker(t *testing.T) {
+func TestRunSendMessage_DirectPostResolvesGeneratedReplyPolicyMarker(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
 	t.Setenv("HOME", tmpDir)
@@ -3891,43 +4432,45 @@ role = "worker"
 	if err := config.WriteSessionPIDFile(filepath.Join(sessionDir, "postman.pid"), os.Getpid()); err != nil {
 		t.Fatalf("WriteFile postman.pid: %v", err)
 	}
+	stubDaemonValidateSendForTest(t)
 	if !config.ContextOwnsSession(tmpDir, "ctx-send-submit-marker-resolution", "test-session") {
 		t.Fatal("ContextOwnsSession() = false, want true")
 	}
 
-	requestSeen := make(chan projection.DaemonSubmitRequest, 1)
+	delivered := make(chan struct {
+		filename string
+		content  string
+	}, 1)
 	go func() {
-		requestPath, request := awaitDaemonSubmitRequest(t, sessionDir, time.Second)
-		requestSeen <- request
 		postDir := filepath.Join(sessionDir, "post")
-		if err := os.MkdirAll(postDir, 0o700); err != nil {
-			t.Errorf("MkdirAll postDir: %v", err)
+		filename, err := awaitMarkdownFile(t, postDir, time.Second)
+		if err != nil {
+			t.Errorf("awaitMarkdownFile: %v", err)
+			delivered <- struct {
+				filename string
+				content  string
+			}{}
 			return
 		}
-		postPath := filepath.Join(postDir, request.Filename)
-		if err := os.WriteFile(postPath, []byte(request.Content), 0o600); err != nil {
-			t.Errorf("WriteFile postPath: %v", err)
+		postPath := filepath.Join(postDir, filename)
+		content, err := os.ReadFile(postPath)
+		if err != nil {
+			t.Errorf("ReadFile postPath: %v", err)
 			return
-		}
-		if err := os.Remove(requestPath); err != nil && !os.IsNotExist(err) {
-			t.Errorf("Remove requestPath: %v", err)
 		}
 		inboxDir := filepath.Join(sessionDir, "inbox", "worker")
 		if err := os.MkdirAll(inboxDir, 0o700); err != nil {
 			t.Errorf("MkdirAll inboxDir: %v", err)
 			return
 		}
-		if err := os.Rename(postPath, filepath.Join(inboxDir, request.Filename)); err != nil {
+		if err := os.Rename(postPath, filepath.Join(inboxDir, filename)); err != nil {
 			t.Errorf("Rename post to inbox: %v", err)
+			return
 		}
-		if _, err := projection.WriteDaemonSubmitResponse(sessionDir, projection.DaemonSubmitResponse{
-			RequestID: request.RequestID,
-			Command:   request.Command,
-			HandledAt: time.Now().UTC().Format(time.RFC3339),
-			Filename:  request.Filename,
-		}); err != nil {
-			t.Errorf("WriteDaemonSubmitResponse: %v", err)
-		}
+		delivered <- struct {
+			filename string
+			content  string
+		}{filename: filename, content: string(content)}
 	}()
 
 	stdout, stderr, err := captureCommandOutput(t, func() error {
@@ -3940,25 +4483,22 @@ role = "worker"
 	if err != nil {
 		t.Fatalf("RunSendMessage: %v\nstderr=%s", err, stderr)
 	}
-	request := <-requestSeen
-	if request.Command != projection.DaemonSubmitSend {
-		t.Fatalf("request.Command = %q, want %q", request.Command, projection.DaemonSubmitSend)
-	}
+	post := <-delivered
 	for _, want := range []string{
 		"messageType: status_request",
 		"replyPolicy: required",
 	} {
-		if !strings.Contains(request.Content, want) {
-			t.Fatalf("request content missing %q:\n%s", want, request.Content)
+		if !strings.Contains(post.content, want) {
+			t.Fatalf("post content missing %q:\n%s", want, post.content)
 		}
 	}
-	assertNoGeneratedReplyPolicyMarker(t, request.Content, "daemon submit request content")
+	assertNoGeneratedReplyPolicyMarker(t, post.content, "post content")
 	if stderr != "" {
 		t.Fatalf("stderr = %q, want empty", stderr)
 	}
 	payload := decodeSendOutputForTest(t, stdout)
-	if payload.Sent != request.Filename {
-		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, request.Filename)
+	if payload.Sent != post.filename {
+		t.Fatalf("payload.Sent = %q, want %q", payload.Sent, post.filename)
 	}
 	if payload.Status != string(sendStatusProcessed) {
 		t.Fatalf("payload.Status = %q, want %q", payload.Status, sendStatusProcessed)
@@ -3966,8 +4506,8 @@ role = "worker"
 	if payload.ReplyPolicy != "required" {
 		t.Fatalf("payload.ReplyPolicy = %q, want required", payload.ReplyPolicy)
 	}
-	if payload.SubmitPath != projection.SubmitPathDaemon {
-		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathDaemon)
+	if payload.SubmitPath != projection.SubmitPathPost {
+		t.Fatalf("payload.SubmitPath = %q, want %q", payload.SubmitPath, projection.SubmitPathPost)
 	}
 }
 

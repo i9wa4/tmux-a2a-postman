@@ -80,8 +80,25 @@ func runPopWithContext(ctx commandContext, args []string) error {
 			remaining = 0
 		}
 		markdownPath := response.MarkdownPath
+		// Fall back to constructing the expected path from the trusted
+		// sessionDir plus the response's own filename when the daemon
+		// didn't populate markdown_path at all. This is the normal case
+		// during a daemon/CLI version skew (the daemon is long-running and
+		// the CLI is invoked fresh per command, so an upgraded CLI talking
+		// to a still-running older daemon that predates markdown_path is
+		// expected, not exotic) -- hard-failing here would break every pop
+		// during any such upgrade window. The constructed path still goes
+		// through the same validateDaemonPopArchive checks below: it is
+		// built from the trusted sessionDir plus response.Filename, and is
+		// inert until validateDaemonPopArchive validates response.Filename
+		// one statement later -- so the security property is unchanged;
+		// only the unconditional hard failure on an absent markdown_path is
+		// removed.
 		if markdownPath == "" && response.Filename != "" {
 			markdownPath = filepath.Join(sessionDir, "read", response.Filename)
+		}
+		if err := validateDaemonPopArchive(sessionDir, response, markdownPath); err != nil {
+			return err
 		}
 		return writePopMessageOutput(ctx.stdout, response.Content, response.Filename, markdownPath, intPtr(response.UnreadBefore), intPtr(remaining), *runtimeContextMode, popSessionDiagnosticsForSession(sessionDir), projection.SubmitPathDaemon, popReceiverContextOptions{
 			ContextID:       resolvedContextID,
@@ -136,6 +153,127 @@ func runPopWithContext(ctx commandContext, args []string) error {
 		Node:            nodeName,
 		CurrentIdentity: ctx.currentIdentity,
 	})
+}
+
+func validateDaemonPopArchive(sessionDir string, response projection.DaemonSubmitResponse, markdownPath string) error {
+	if sessionDir == "" || !filepath.IsAbs(sessionDir) {
+		return fmt.Errorf("daemon submit pop active session path must be absolute")
+	}
+	if response.Filename == "" {
+		return fmt.Errorf("daemon submit pop response missing filename")
+	}
+	if response.Filename != filepath.Base(response.Filename) || strings.ContainsAny(response.Filename, `/\`) {
+		return fmt.Errorf("daemon submit pop response filename must be a base name: %s", response.Filename)
+	}
+	if markdownPath == "" {
+		return fmt.Errorf("daemon submit pop response for %q missing archived markdown_path", response.Filename)
+	}
+	if !filepath.IsAbs(markdownPath) {
+		return fmt.Errorf("daemon submit pop archived markdown_path must be absolute: %s", markdownPath)
+	}
+	if markdownPath != filepath.Clean(markdownPath) {
+		return fmt.Errorf("daemon submit pop archived markdown_path must be canonical: %s", markdownPath)
+	}
+	readDir := filepath.Join(sessionDir, "read")
+	expectedPath := filepath.Join(readDir, response.Filename)
+	if markdownPath != expectedPath {
+		return fmt.Errorf("daemon submit pop archived markdown_path %s does not match expected active-session path %s", markdownPath, expectedPath)
+	}
+	// SECURITY-LOAD-BEARING, not just defense-in-depth: if readDir itself
+	// were a symlink to an attacker-controlled location, the textual check
+	// above (markdownPath == expectedPath, both built from the literal
+	// in-session "read" segment) would still pass, and the canonicalization
+	// comparison below would resolve BOTH sides through that same readDir
+	// symlink to the SAME attacker location -- they'd agree, and the
+	// substitution would succeed. Removing this check is a real,
+	// exploitable bypass, not a redundant safety net.
+	// TestDaemonPopArchiveCanonicalTargetsMatchAcceptsReadDirSymlinkWithoutLstatGuard
+	// pins this by calling the comparison helper directly, without this
+	// guard, and asserting it wrongly accepts the substitution.
+	if info, err := os.Lstat(readDir); err != nil {
+		return fmt.Errorf("daemon submit pop read directory unavailable at %s: %w", readDir, err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("daemon submit pop read directory is symlink: %s", readDir)
+	}
+	// DEFENSE-IN-DEPTH ONLY, unlike the readDir check above: the
+	// canonicalization comparison below already independently rejects a
+	// symlinked leaf on its own (see
+	// TestDaemonPopArchiveCanonicalTargetsMatchRejectsLeafSymlinkWithoutLstatGuard),
+	// because it resolves markdownPath's final component but not
+	// expectedPath's. This check exists to give a clearer, earlier
+	// "archived body is symlink" error before that comparison or the
+	// ReadFile below ever run.
+	if info, err := os.Lstat(expectedPath); err != nil {
+		return fmt.Errorf("daemon submit pop archived body unavailable at %s: %w", expectedPath, err)
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("daemon submit pop archived body is symlink: %s", expectedPath)
+	}
+	// This comparison's left side (canonicalPath) resolves every symlink in
+	// the ENTIRE markdownPath, including the final component, while the
+	// right side (canonicalExpectedPath) deliberately resolves only readDir's
+	// ancestors and then appends the filename literally, WITHOUT following a
+	// symlink at the final component. Do NOT "simplify" the right side to
+	// also fully resolve expectedPath (e.g. via
+	// filepath.EvalSymlinks(expectedPath)) -- since markdownPath ==
+	// expectedPath by this point (enforced above), that would make both
+	// sides identical by construction and silently disable the check
+	// entirely: a substituted leaf symlink would then resolve identically on
+	// both sides and be wrongly accepted.
+	// TestDaemonPopArchiveCanonicalTargetsMatchRejectsLeafSymlinkWithoutLstatGuard
+	// pins this: it calls the helper directly, without the os.Lstat(expectedPath)
+	// guard above, and would start failing the moment this asymmetry is
+	// removed. This comparison does NOT substitute for the os.Lstat(readDir)
+	// guard above, though: see
+	// TestDaemonPopArchiveCanonicalTargetsMatchAcceptsReadDirSymlinkWithoutLstatGuard,
+	// which shows the comparison alone wrongly accepts a readDir-symlink
+	// substitution.
+	matches, canonicalPath, canonicalExpectedPath, err := daemonPopArchiveCanonicalTargetsMatch(readDir, response.Filename, markdownPath)
+	if err != nil {
+		return err
+	}
+	if !matches {
+		return fmt.Errorf("daemon submit pop archived markdown_path canonical target %s does not match expected active-session path %s", canonicalPath, canonicalExpectedPath)
+	}
+	// A TOCTOU window exists between the os.Lstat check above and this
+	// ReadFile: exploiting it requires local write access to this session's
+	// own read/ directory (created 0700 for this session), so an attacker
+	// with that access already has what they'd gain from the race.
+	data, err := os.ReadFile(expectedPath)
+	if err != nil {
+		return fmt.Errorf("daemon submit pop archived body unavailable at %s: %w", expectedPath, err)
+	}
+	if string(data) != response.Content {
+		return fmt.Errorf("daemon submit pop archived body mismatch at %s", expectedPath)
+	}
+	return nil
+}
+
+// daemonPopArchiveCanonicalTargetsMatch reports whether markdownPath's fully
+// resolved location agrees with readDir's fully resolved location plus the
+// literal filename. It intentionally resolves the two sides asymmetrically:
+// markdownPath is resolved end to end (including its final component), while
+// the expected side only resolves readDir and then appends filename without
+// following any symlink there. This asymmetry is what makes the comparison
+// reject a leaf that is itself a symlink to a different file (the resolved
+// left side lands on the symlink's target; the literal right side does not)
+// while still tolerating legitimate symlinks in readDir's own ancestry (e.g.
+// macOS's /tmp -> /private/tmp), which get resolved identically on both
+// sides. Keep the asymmetry: resolving both sides the same way (e.g. calling
+// EvalSymlinks on the full expected path too) would make them agree by
+// construction and silently accept a substituted leaf. See
+// validateDaemonPopArchive's caller-side os.Lstat(expectedPath) check, which
+// still runs first and gives a clearer, earlier error for that case.
+func daemonPopArchiveCanonicalTargetsMatch(readDir, filename, markdownPath string) (matches bool, canonicalPath string, canonicalExpectedPath string, err error) {
+	canonicalReadDir, err := filepath.EvalSymlinks(readDir)
+	if err != nil {
+		return false, "", "", fmt.Errorf("daemon submit pop read directory canonicalization failed at %s: %w", readDir, err)
+	}
+	canonicalExpectedPath = filepath.Join(canonicalReadDir, filename)
+	canonicalPath, err = filepath.EvalSymlinks(markdownPath)
+	if err != nil {
+		return false, "", "", fmt.Errorf("daemon submit pop archived markdown_path canonicalization failed at %s: %w", markdownPath, err)
+	}
+	return canonicalPath == canonicalExpectedPath, canonicalPath, canonicalExpectedPath, nil
 }
 
 func archivePoppedMessage(absPath, filename string) (string, error) {

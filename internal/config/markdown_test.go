@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2016,6 +2018,44 @@ template = "from toml"
 	}
 	if cfg.Nodes["worker"].Template != "from markdown" {
 		t.Errorf("worker.Template: got %q, want %q", cfg.Nodes["worker"].Template, "from markdown")
+	}
+}
+
+// TestLoadConfig_InterfaceNodeReconciledAfterMarkdownOverlay (#764 E-2):
+// interface_node (set in TOML) and a divergent legacy ui_node (set only via
+// XDG markdown frontmatter, applied AFTER the TOML [postman] decode) must
+// still be reconciled, with interface_node winning as the canonical runtime
+// value -- proving resolveInterfaceNodeDesignation runs after every layer
+// is merged, not just after the TOML section.
+func TestLoadConfig_InterfaceNodeReconciledAfterMarkdownOverlay(t *testing.T) {
+	tmpDir := t.TempDir()
+	xdgDir, _ := setupXDGAndHome(t, tmpDir)
+
+	writeFile(t, filepath.Join(xdgDir, "postman.toml"), `
+[postman]
+interface_node = "orchestrator"
+
+[worker]
+template = "from toml"
+`)
+	writeFile(t, filepath.Join(xdgDir, "postman.md"), "---\nui_node: worker\n---\nbody")
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.UINode != "orchestrator" {
+		t.Errorf("UINode = %q, want %q (interface_node must win over markdown-set legacy ui_node)", cfg.UINode, "orchestrator")
+	}
+	if cfg.InterfaceNode != "orchestrator" {
+		t.Errorf("InterfaceNode = %q, want %q", cfg.InterfaceNode, "orchestrator")
+	}
+	if !strings.Contains(buf.String(), "conflicting designation settings") {
+		t.Errorf("expected a conflicting-designation warning, got: %q", buf.String())
 	}
 }
 

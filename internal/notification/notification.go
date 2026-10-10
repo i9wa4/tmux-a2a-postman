@@ -1,12 +1,14 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -17,15 +19,12 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
 )
 
-var (
-	defaultPaneNotifier = NewPaneNotifier(10 * time.Minute)
+// ErrPaneUnresponsive indicates the post-Enter verify-retry loop exhausted
+// maxRetries without evidence that the target pane processed the delivered
+// input (#816). The notification may still be visible in the input composer.
+var ErrPaneUnresponsive = errors.New("pane unresponsive: notification not submitted after verify retries")
 
-	// bufferMu serializes tmux set-buffer + paste-buffer pairs.
-	// tmux uses a single global paste buffer; concurrent SendToPane calls
-	// would race without this lock. The lock is held only for the two fast
-	// tmux commands (~1ms each); the expensive sleep + send-keys runs outside.
-	bufferMu sync.Mutex
-)
+var defaultPaneNotifier = NewPaneNotifier(10 * time.Minute)
 
 // PaneNotifier sends notifications to tmux panes with instance-scoped cooldown state.
 type PaneNotifier struct {
@@ -117,8 +116,9 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // Error handling: Logs errors but does not fail (graceful degradation).
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 // bypassCooldown skips the per-pane rate limit; direct message delivery passes true.
-// verifyDelay > 0 enables post-Enter capture comparison: after C-m, waits verifyDelay,
-// captures pane, waits again, captures again; if identical, retries C-m up to maxRetries.
+// verifyDelay > 0 enables post-Enter verification: it checks the visible input
+// composer for the notification, falling back to capture comparison when the
+// composer cannot be identified, and retries C-m up to maxRetries.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
 	return TmuxPaneSender{}.DeliverPane(PaneDelivery{
 		PaneID:         paneID,
@@ -165,28 +165,20 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 		return err
 	}
 
-	// 1-2. Set buffer + paste buffer (serialized via bufferMu to prevent
-	// global tmux paste-buffer race when deliveries run concurrently).
-	bufferMu.Lock()
-	if err := n.run("set-buffer", sanitized); err != nil {
-		bufferMu.Unlock()
-		n.warnf("⚠️  postman: WARNING: failed to set buffer for pane %s: %v\n", paneID, err)
-		return err
-	}
-	if err := n.run("paste-buffer", "-t", paneID); err != nil {
-		bufferMu.Unlock()
-		n.warnf("⚠️  postman: WARNING: failed to paste buffer to pane %s: %v\n", paneID, err)
-		return err
-	}
-	bufferMu.Unlock()
-
-	// 3. Wait enter_delay (runs outside bufferMu — parallel across panes)
-	n.sleepFor(enterDelay)
-
-	// 4. Send C-m to submit. C-m (carriage return) submits reliably in both Codex CLI and claude-chill.
-	// "Enter" key name adds a newline in Codex CLI multi-line readline instead of submitting (#126).
-	if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
-		n.warnf("⚠️  postman: WARNING: failed to send C-m to pane %s: %v\n", paneID, err)
+	// 1-4. Set buffer, paste it into the pane, and submit with C-m as one
+	// chained tmux invocation (#800). tmux executes a semicolon-separated
+	// command list for a single client atomically, so there is no longer a
+	// Go-level gap between these steps (previously separate exec.Command
+	// calls with an intervening time.Sleep) in which a daemon restart could
+	// leave text pasted with no Enter ever sent: this single process
+	// invocation either runs to completion or never starts. The enter delay
+	// (if any) runs inside the same invocation via tmux's own run-shell, so
+	// the whole sequence -- including the wait -- is one atomic call from
+	// the daemon's perspective. C-m (carriage return) submits reliably in
+	// both Codex CLI and claude-chill; the "Enter" key name adds a newline
+	// in Codex CLI multi-line readline instead of submitting (#126).
+	if err := n.run(atomicFirstEnterArgs(sanitized, paneID, enterDelay)...); err != nil {
+		n.warnf("⚠️  postman: WARNING: failed to paste and submit to pane %s: %v\n", paneID, err)
 		return err
 	}
 
@@ -198,28 +190,112 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 		}
 	}
 
-	// 6. Post-Enter verify: capture-compare-retry to detect swallowed Enter
+	// 6. Post-Enter verify: the input composer is stronger evidence than an
+	// arbitrary screen change. A spinner or footer can change while the
+	// notification remains unsent in the composer. Check after the final retry
+	// too, rather than reporting on the state before its Enter was sent.
 	if verifyDelay > 0 && maxRetries > 0 {
-		for retry := 0; retry < maxRetries; retry++ {
+		filename := notificationFilename(message)
+		for retry := 0; retry <= maxRetries; retry++ {
 			n.sleepFor(verifyDelay)
 			snapA, errA := n.capturePane(paneID)
 			if errA != nil {
-				break // cannot verify; skip
+				return nil // cannot verify
 			}
 			n.sleepFor(verifyDelay)
 			snapB, errB := n.capturePane(paneID)
 			if errB != nil {
-				break
+				return nil // cannot verify
 			}
-			if snapA != snapB {
-				break // pane content changed; Enter was accepted
+			if pending, known := composerHasNotification(snapB, filename); known {
+				if !pending {
+					return nil
+				}
+			} else if snapA != snapB {
+				return nil // no recognizable composer; retain the existing heuristic
 			}
-			// Pane unchanged — retry C-m silently so alt-screen TUI panes stay clean.
-			_ = n.run("send-keys", "-t", paneID, "C-m")
+			if retry == maxRetries {
+				return fmt.Errorf("%w: pane %s unchanged or notification still in composer after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
+			}
+			if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
+				return fmt.Errorf("failed to retry C-m for pane %s: %w", paneID, err)
+			}
 		}
 	}
 
 	return nil
+}
+
+func notificationFilename(message string) string {
+	const prefix = "You've got mail: "
+	start := strings.Index(message, prefix)
+	if start < 0 {
+		return ""
+	}
+	fields := strings.Fields(message[start+len(prefix):])
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], "`.,;: ")
+}
+
+// composerHasNotification examines only the last Claude or Codex input prompt
+// on the visible screen. An older submitted prompt may still appear in the
+// transcript while the current composer at the bottom is empty.
+func composerHasNotification(snapshot, filename string) (pending, known bool) {
+	if filename == "" {
+		return false, false
+	}
+	lines := strings.Split(snapshot, "\n")
+	lastPrompt := -1
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "❯") || strings.HasPrefix(trimmed, "›") {
+			lastPrompt = i
+		}
+	}
+	if lastPrompt < 0 {
+		return false, false
+	}
+	for _, line := range lines[lastPrompt:] {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "─") {
+			break
+		}
+		if strings.Contains(line, filename) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+// bufferSeq generates unique tmux buffer names for atomicFirstEnterArgs.
+var bufferSeq atomic.Uint64
+
+// nextBufferName returns a name for this process guaranteed not to collide
+// with another concurrent SendToPane call's buffer, another daemon process,
+// or a human/tool using tmux's unnamed default buffer (#800 F-030): tmux's
+// paste buffer is server-global and nothing in tmux's contract guarantees
+// one client's set-buffer+paste-buffer pair is indivisible against another
+// client's concurrent set-buffer -- a named buffer per call makes
+// non-collision structural rather than relying on the server's (unspecified)
+// internal scheduling.
+func nextBufferName() string {
+	return fmt.Sprintf("postman-notify-%d-%d", os.Getpid(), bufferSeq.Add(1))
+}
+
+// atomicFirstEnterArgs builds one chained tmux command line that sets a
+// uniquely-named paste buffer, pastes it into paneID (deleting the buffer
+// immediately after), and submits it with a real C-m keystroke (#800). The
+// enter delay, when positive, runs between paste and submit via tmux's own
+// run-shell so it stays inside this single invocation rather than a
+// Go-level time.Sleep between separate commands.
+func atomicFirstEnterArgs(sanitized, paneID string, enterDelay time.Duration) []string {
+	bufName := nextBufferName()
+	args := []string{"set-buffer", "-b", bufName, sanitized, ";", "paste-buffer", "-b", bufName, "-d", "-t", paneID}
+	if enterDelay > 0 {
+		args = append(args, ";", "run-shell", fmt.Sprintf("sleep %.3f", enterDelay.Seconds()))
+	}
+	return append(args, ";", "send-keys", "-t", paneID, "C-m")
 }
 
 func (n *PaneNotifier) nowTime() time.Time {
