@@ -160,7 +160,8 @@ func resolveInspectMessageSessionDir(contextID, sessionName, configPath string) 
 // journaled read events really began is unverified. Because an old file time
 // does not prove an old message, inspectMessageClaimProven refuses this fallback
 // whenever the journal says anything about the message: a read for the path, a
-// delivery no read consumed, or a tombstoned (empty-content) read for the path.
+// delivery no read consumed, a dead letter, or a tombstoned (empty-content) read
+// for the path.
 var inspectMessageLegacyArchiveCutoff = time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC)
 
 // inspectMessageClaimEvidence is what the journal says about popped messages in
@@ -176,6 +177,12 @@ type inspectMessageClaimEvidence struct {
 	// delivered holds the message ids the journal still shows as delivered to an
 	// inbox: a delivered event that no read (or dead-letter) event has consumed.
 	delivered map[string]bool
+	// deadLettered holds the message ids of messages the journal shows as
+	// dead-lettered in the current generation. A dead-letter event consumes the
+	// delivered entry, so such a message is no longer in delivered even though its
+	// pop never produced a read (a pop that failed after the archive rename, or
+	// whose verification failed, leaves a read/ archive and a dead letter).
+	deadLettered map[string]bool
 	// projected is the current-generation projection itself, kept for the
 	// tombstoned-read lookup. It is the zero value when the session has no usable
 	// journal.
@@ -186,7 +193,7 @@ type inspectMessageClaimEvidence struct {
 // usable journal yields empty evidence (only the legacy rule can then apply); a
 // journal that cannot be replayed is an error, so the command fails closed.
 func loadInspectMessageClaimEvidence(sessionDir string) (inspectMessageClaimEvidence, error) {
-	evidence := inspectMessageClaimEvidence{reads: map[string]string{}, delivered: map[string]bool{}}
+	evidence := inspectMessageClaimEvidence{reads: map[string]string{}, delivered: map[string]bool{}, deadLettered: map[string]bool{}}
 	projected, ok, err := projection.ProjectMailboxProjection(sessionDir)
 	if err != nil {
 		return evidence, fmt.Errorf("reading journaled read events: %w", err)
@@ -202,6 +209,10 @@ func loadInspectMessageClaimEvidence(sessionDir string) (inspectMessageClaimEvid
 	for _, file := range projected.Inbox {
 		path := filepath.ToSlash(file.Path)
 		evidence.delivered[parseMessageContent(file.Content, filepath.Base(path)).MessageID] = true
+	}
+	for _, file := range projected.DeadLetter {
+		path := filepath.ToSlash(file.Path)
+		evidence.deadLettered[parseMessageContent(file.Content, filepath.Base(path)).MessageID] = true
 	}
 	return evidence, nil
 }
@@ -240,8 +251,11 @@ func findInspectMessageMatches(sessionDir, id string) ([]inspectMessageMatch, in
 // If the journal has a read for this path, the journal alone decides. The legacy
 // rule is only a last resort for archives the journal never mentions: it is
 // refused when the journal shows the message as delivered with no read (an
-// orphan or an unfinished pop) and when the path is a tombstoned read (a first
-// read event with empty content, see below), however old the file time is,
+// orphan or an unfinished pop), when the journal shows it as dead-lettered (a pop
+// that failed after the archive rename leaves a read/ archive AND a dead letter,
+// and the dead-letter event consumes the delivered entry), and when the path is a
+// tombstoned read (a first read event with empty content, see below), however
+// old the file time is,
 // because a rename keeps the inbox file's time on the archive. Only an archive
 // the journal does not mention at all, whose file time predates
 // inspectMessageLegacyArchiveCutoff, is accepted: archives from before journaled
@@ -264,7 +278,7 @@ func inspectMessageClaimProven(path, filename, messageID string, evidence inspec
 	if evidence.projected.IsTombstonedRead("read/" + filename) {
 		return false
 	}
-	if evidence.delivered[messageID] {
+	if evidence.delivered[messageID] || evidence.deadLettered[messageID] {
 		return false
 	}
 	info, err := os.Stat(path)

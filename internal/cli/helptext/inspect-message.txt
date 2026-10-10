@@ -24,13 +24,14 @@ Search scope:
   claimed when the journal has a read event for that exact path and message id
   in the current session generation (the same fact the projection sync uses to
   keep the archive). When the journal says nothing about the archive (no read
-  for the path, no unconsumed delivery of the message, no empty-content read for
-  the path), an archive whose file modification time is before 2026-06-30 is
-  accepted as a legacy archive; the file name's date is never used, and the
-  cutoff date is a heuristic, not a verified start of journaled reads. A message
-  the journal shows as delivered without a matching read, or whose only read has
-  empty content, is never accepted that way, however old the file time is. Pop
-  receipt files are not used: the sync deletes them.
+  for the path, no unconsumed delivery of the message, no dead letter for it, no
+  empty-content read for the path), an archive whose file modification time is
+  before 2026-06-30 is accepted as a legacy archive; the file name's date is
+  never used, and the cutoff date is a heuristic, not a verified start of
+  journaled reads. A message the journal shows as delivered without a matching
+  read, as dead-lettered, or whose only read has empty content, is never
+  accepted that way, however old the file time is. Pop receipt files are not
+  used: the sync deletes them.
   Known limits: a read event recorded by the daemon read watcher for an orphan
   archive still counts (#802), and a journaled read whose output never reached
   the caller still counts as claimed. A pop whose only journaled read event has

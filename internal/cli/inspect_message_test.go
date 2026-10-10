@@ -92,6 +92,15 @@ func TestRunInspectMessageIgnoresUnreadCopyWhenReadCopyExists(t *testing.T) {
 // record the delivery and read events the production pop path journals.
 func inspectJournalForFixture(t *testing.T, fixture inspectMessageFixtureState) (deliver func(filename, content string), recordRead func(path, messageID, content string)) {
 	t.Helper()
+	deliver, recordRead, _ = inspectJournalFullForFixture(t, fixture)
+	return deliver, recordRead
+}
+
+// inspectJournalFullForFixture is inspectJournalForFixture plus a recorder for
+// the dead-letter event the pop failure path journals (the dead-letter event
+// consumes the delivered inbox entry, exactly like a read event does).
+func inspectJournalFullForFixture(t *testing.T, fixture inspectMessageFixtureState) (deliver func(filename, content string), recordRead func(path, messageID, content string), recordDeadLetter func(filename, content string)) {
+	t.Helper()
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	writer, err := journal.OpenShadowWriter(fixture.sessionDir, fixture.contextID, fixture.sessionName, 1, now)
 	if err != nil {
@@ -124,7 +133,22 @@ func inspectJournalForFixture(t *testing.T, fixture inspectMessageFixtureState) 
 			t.Fatalf("AppendEvent(read): %v", err)
 		}
 	}
-	return deliver, recordRead
+	recordDeadLetter = func(filename, content string) {
+		t.Helper()
+		seq++
+		deadName := strings.TrimSuffix(filename, ".md") + "-dl-pop-failed.md"
+		if _, err := writer.AppendEvent(projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+			MessageID:  filename,
+			From:       "orchestrator",
+			To:         "worker",
+			Path:       filepath.Join("dead-letter", deadName),
+			SourcePath: filepath.Join("inbox", "worker", filename),
+			Content:    content,
+		}, now.Add(time.Duration(seq)*time.Second)); err != nil {
+			t.Fatalf("AppendEvent(dead-lettered): %v", err)
+		}
+	}
+	return deliver, recordRead, recordDeadLetter
 }
 
 // writeLegacyReadArchive writes a read/ archive and backdates it before the
@@ -350,6 +374,23 @@ func TestRunInspectMessageClaimedProofFollowsJournaledReads(t *testing.T) {
 		if _, err := os.Stat(readPath); err != nil {
 			t.Fatalf("sync removed the archive of an empty-content read: %v", err)
 		}
+		assertRefused(t, fixture, filename, "no_journaled_read")
+	})
+
+	// F-007: a pop that fails after the archive rename (verification failure, the
+	// #802 rollback race) leaves a read/ archive AND a dead letter for the same
+	// message. The dead-letter event consumes the delivered inbox entry, and no
+	// sync has run to restore it, so the message is neither delivered nor read in
+	// the projection. With an old inbox file time the legacy fallback would accept
+	// it; the dead letter must veto that.
+	t.Run("old read archive of a delivered then dead-lettered message is not legacy", func(t *testing.T) {
+		fixture := writeInspectMessageFixture(t)
+		deliver, _, recordDeadLetter := inspectJournalFullForFixture(t, fixture)
+		filename := "20260501-120005-from-orchestrator-to-worker.md"
+		content := inspectMessageFixture("orchestrator", "worker", filename, nil, secretBody)
+		deliver(filename, content)
+		recordDeadLetter(filename, content)
+		writeLegacyReadArchive(t, filepath.Join(fixture.sessionDir, "read", filename), content)
 		assertRefused(t, fixture, filename, "no_journaled_read")
 	})
 
