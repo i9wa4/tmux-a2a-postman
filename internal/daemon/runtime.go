@@ -77,21 +77,24 @@ type daemonRuntime struct {
 	autoPingEventsMu sync.Mutex
 	activeAutoPings  map[string]bool
 
-	processDaemonSubmit           daemonSubmitProcessor
-	launchDaemonSubmitWorker      daemonSubmitWorkerLauncher
-	daemonSubmitSem               chan struct{}
-	daemonSubmitResults           chan daemonSubmitRuntimeResult
-	activeDaemonSubmitKeys        map[string]bool
-	daemonSubmitSaturationCount   int
-	daemonSubmitLastSaturatedAt   time.Time
-	scheduleRuntimeTimer          runtimeTimerScheduler
-	mailboxProjectionSyncMu       sync.Mutex
-	activeMailboxProjectionSyncs  map[string]bool
-	pendingMailboxProjectionSyncs map[string]bool
-	mailboxProjectionSyncWG       sync.WaitGroup
-	sendPaneNotification          paneNotificationSender
-	lastEscalationCheck           time.Time
-	lastEscalationPushKey         string
+	processDaemonSubmit            daemonSubmitProcessor
+	launchDaemonSubmitWorker       daemonSubmitWorkerLauncher
+	afterDaemonSubmitResultPublish func()
+	beforeDaemonSubmitReleaseWait  func()
+	daemonSubmitSems               map[string]chan struct{}
+	daemonSubmitResults            chan daemonSubmitRuntimeResult
+	activeDaemonSubmitKeys         map[string]bool
+	activeDaemonSubmitSessions     map[string]int
+	daemonSubmitSaturationCount    int
+	daemonSubmitLastSaturatedAt    time.Time
+	scheduleRuntimeTimer           runtimeTimerScheduler
+	mailboxProjectionSyncMu        sync.Mutex
+	activeMailboxProjectionSyncs   map[string]bool
+	pendingMailboxProjectionSyncs  map[string]bool
+	mailboxProjectionSyncWG        sync.WaitGroup
+	sendPaneNotification           paneNotificationSender
+	lastEscalationCheck            time.Time
+	lastEscalationPushKey          string
 }
 
 type daemonSubmitProcessor func(requestPath string) (daemonSubmitProcessResult, error)
@@ -109,6 +112,8 @@ type paneNotificationSender func(paneID string, message string, enterDelay time.
 type daemonSubmitRuntimeResult struct {
 	requestPath string
 	dispatchKey string
+	sessionKey  string
+	releaseDone <-chan struct{}
 	result      daemonSubmitProcessResult
 	err         error
 }
@@ -181,9 +186,10 @@ func newDaemonRuntime(
 		activeAutoPings:               make(map[string]bool),
 		processDaemonSubmit:           processDaemonSubmitRequest,
 		launchDaemonSubmitWorker:      defaultDaemonSubmitWorkerLauncher,
-		daemonSubmitSem:               make(chan struct{}, daemonSubmitWorkerLimit),
+		daemonSubmitSems:              make(map[string]chan struct{}),
 		daemonSubmitResults:           make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimit),
 		activeDaemonSubmitKeys:        make(map[string]bool),
+		activeDaemonSubmitSessions:    make(map[string]int),
 		scheduleRuntimeTimer:          defaultRuntimeTimerScheduler,
 		activeMailboxProjectionSyncs:  make(map[string]bool),
 		pendingMailboxProjectionSyncs: make(map[string]bool),
@@ -398,19 +404,24 @@ func (rt *daemonRuntime) handleWatcherEvent(event fswatcher.Event) {
 }
 
 func (rt *daemonRuntime) handleDaemonSubmitRequest(requestPath string) {
-	status := rt.dispatchDaemonSubmitRequest(requestPath)
-	if status == daemonSubmitDispatchSaturated {
-		request, _ := projection.ReadDaemonSubmitRequest(requestPath)
-		fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
-		fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
-		fields.DaemonSubmitRequestID = request.RequestID
-		fields.DaemonSubmitCommand = string(request.Command)
-		fields.SubmitPath = string(projection.SubmitPathDaemon)
-		fields.Result = "saturated"
-		msgtrace.Log("daemon_submit_saturate", fields)
-		log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s request=%s\n",
-			projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(requestPath))
-	}
+	rt.dispatchDaemonSubmitRequest(requestPath)
+}
+
+// logDaemonSubmitSaturation records a saturated dispatch with the session's
+// semaphore/slot state, so a recurrence is diagnosable from logs alone
+// without a live investigation (see #796).
+func (rt *daemonRuntime) logDaemonSubmitSaturation(requestPath, sessionKey string, sem chan struct{}) {
+	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
+	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), "", request.Content)
+	fields.TmuxSession = sessionNameForDaemonSubmitRequestPath(requestPath)
+	fields.DaemonSubmitRequestID = request.RequestID
+	fields.DaemonSubmitCommand = string(request.Command)
+	fields.SubmitPath = string(projection.SubmitPathDaemon)
+	fields.Result = "saturated"
+	msgtrace.Log("daemon_submit_saturate", fields)
+	log.Printf("postman: WARNING: component=%s event=request_workers_saturated submit_path=%s session=%s command=%s request=%s occupied_slots=%d worker_limit=%d active_daemon_submit_sessions=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionKey), request.Command, filepath.Base(requestPath),
+		len(sem), cap(sem), rt.activeDaemonSubmitSessions[sessionKey])
 }
 
 func (rt *daemonRuntime) recordDaemonSubmitSaturation() {
@@ -443,13 +454,17 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	if rt.activeDaemonSubmitKeys[dispatchKey] {
 		return daemonSubmitDispatchDeferred
 	}
+	sessionKey := daemonSubmitSessionKey(requestPath)
+	sem := rt.daemonSubmitSemForSession(sessionKey)
 	select {
-	case rt.daemonSubmitSem <- struct{}{}:
+	case sem <- struct{}{}:
 	default:
 		rt.recordDaemonSubmitSaturation()
+		rt.logDaemonSubmitSaturation(requestPath, sessionKey, sem)
 		return daemonSubmitDispatchSaturated
 	}
 	rt.activeDaemonSubmitKeys[dispatchKey] = true
+	rt.activeDaemonSubmitSessions[sessionKey]++
 	request, _ := projection.ReadDaemonSubmitRequest(requestPath)
 	fields := msgtrace.FromContent(request.Filename, filepath.Base(requestPath), sessionNameForDaemonSubmitRequestPath(requestPath), request.Content)
 	fields.DaemonSubmitRequestID = request.RequestID
@@ -457,18 +472,29 @@ func (rt *daemonRuntime) dispatchDaemonSubmitRequest(requestPath string) daemonS
 	fields.SubmitPath = string(projection.SubmitPathDaemon)
 	msgtrace.Log("daemon_submit_dispatch", fields)
 	processor := rt.processDaemonSubmit
+	afterResultPublish := rt.afterDaemonSubmitResultPublish
 
 	worker := func() {
+		releaseDone := make(chan struct{})
 		workerResult := daemonSubmitRuntimeResult{
 			requestPath: requestPath,
 			dispatchKey: dispatchKey,
+			sessionKey:  sessionKey,
+			releaseDone: releaseDone,
 		}
 		defer func() {
 			if r := recover(); r != nil {
 				workerResult.err = fmt.Errorf("panic processing %s: %v", filepath.Base(requestPath), r)
 			}
+			// Keep the originating session slot until the bounded runtime result
+			// handoff succeeds. This prevents result-pending work from escaping
+			// the session admission limit when the consumer is slow.
 			rt.daemonSubmitResults <- workerResult
-			<-rt.daemonSubmitSem
+			if afterResultPublish != nil {
+				afterResultPublish()
+			}
+			<-sem
+			close(releaseDone)
 		}()
 		workerResult.result, workerResult.err = processor(requestPath)
 	}
@@ -622,7 +648,7 @@ func (rt *daemonRuntime) runtimeCardinality() status.DaemonRuntimeCardinality {
 func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.DaemonSubmitRuntimeDiagnostics {
 	diagnostics := status.DaemonSubmitRuntimeDiagnostics{
 		WorkerLimit:        rt.daemonSubmitWorkerLimit(),
-		ActiveWorkerCount:  len(rt.daemonSubmitSem),
+		ActiveWorkerCount:  rt.daemonSubmitActiveWorkerCount(),
 		ActiveRequestCount: len(rt.activeDaemonSubmitKeys),
 		SaturationCount:    rt.daemonSubmitSaturationCount,
 	}
@@ -638,10 +664,38 @@ func (rt *daemonRuntime) daemonSubmitRuntimeDiagnostics(now time.Time) status.Da
 }
 
 func (rt *daemonRuntime) daemonSubmitWorkerLimit() int {
-	if rt.daemonSubmitSem != nil {
-		return cap(rt.daemonSubmitSem)
-	}
 	return daemonSubmitWorkerLimitFromConfig(rt.cfg)
+}
+
+func (rt *daemonRuntime) daemonSubmitActiveWorkerCount() int {
+	active := 0
+	for _, sem := range rt.daemonSubmitSems {
+		active += len(sem)
+	}
+	return active
+}
+
+// daemonSubmitMalformedSessionKey is a shared session key for requests whose
+// path does not resolve to a session directory. Falling back to requestPath
+// itself would give every malformed request its own always-fresh semaphore
+// (since request paths are unique), defeating per-session admission control
+// entirely; a single shared key keeps them bounded like any other session.
+const daemonSubmitMalformedSessionKey = "__malformed__"
+
+func daemonSubmitSessionKey(requestPath string) string {
+	if sessionDir, ok := daemonSubmitSessionDir(requestPath); ok {
+		return sessionDir
+	}
+	return daemonSubmitMalformedSessionKey
+}
+
+func (rt *daemonRuntime) daemonSubmitSemForSession(sessionKey string) chan struct{} {
+	if sem := rt.daemonSubmitSems[sessionKey]; sem != nil {
+		return sem
+	}
+	sem := make(chan struct{}, rt.daemonSubmitWorkerLimit())
+	rt.daemonSubmitSems[sessionKey] = sem
+	return sem
 }
 
 // nonDaemonDeliveryBudget returns the shared post/auto-PING/manual-PING
@@ -706,26 +760,127 @@ func scanDaemonSubmitResponses(sessionDir string, now time.Time, diagnostics *st
 	if err != nil {
 		return
 	}
+	retentionSeconds := int(daemonSubmitLateResponseRetentionSeconds)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		responsePath := filepath.Join(projection.DaemonSubmitResponsesDir(sessionDir), entry.Name())
-		response, err := projection.ReadDaemonSubmitResponse(responsePath)
-		if err == nil && response.Command == projection.DaemonSubmitRuntimeDiagnostics {
+		response, readErr := projection.ReadDaemonSubmitResponse(responsePath)
+		if readErr == nil && response.Command == projection.DaemonSubmitRuntimeDiagnostics {
 			continue
 		}
 
-		diagnostics.LateResponseCount++
-		if err == nil {
-			diagnostics.OldestLateResponseAgeSeconds = oldestDaemonSubmitAgeSeconds(diagnostics.OldestLateResponseAgeSeconds, response.HandledAt, now)
-			continue
+		ageSeconds, effectiveTime, ageKnown := daemonSubmitEffectiveAge(response, readErr, entry, now)
+		if ageKnown && retentionSeconds > 0 && ageSeconds >= retentionSeconds {
+			if evictDaemonSubmitResponse(sessionDir, entry.Name(), responsePath, response, readErr, effectiveTime, ageSeconds, retentionSeconds, now) {
+				continue
+			}
 		}
-		info, infoErr := entry.Info()
-		if infoErr == nil {
-			diagnostics.OldestLateResponseAgeSeconds = oldestDaemonSubmitAgeSecondsFromTime(diagnostics.OldestLateResponseAgeSeconds, info.ModTime(), now)
+
+		diagnostics.LateResponseCount++
+		if ageKnown && ageSeconds > diagnostics.OldestLateResponseAgeSeconds {
+			diagnostics.OldestLateResponseAgeSeconds = ageSeconds
 		}
 	}
+	pruneDaemonSubmitEvictedTombstones(sessionDir, now, retentionSeconds)
+}
+
+// daemonSubmitEffectiveAge computes ONE age value that drives both the
+// eviction decision and the reported diagnostics age: the parsed
+// response.HandledAt when it is present, parses cleanly, and is not in the
+// future; otherwise the response file's mtime. Using two different notions
+// of "age" in different branches (as an earlier version of this function
+// did) let a malformed or future HandledAt skip both branches and become
+// immortal -- see #796 rework F-006.
+func daemonSubmitEffectiveAge(response projection.DaemonSubmitResponse, readErr error, entry os.DirEntry, now time.Time) (ageSeconds int, effectiveTime time.Time, ok bool) {
+	if readErr == nil && response.HandledAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, response.HandledAt); err == nil && parsed.Before(now) {
+			return ageSecondsFromTime(parsed, now), parsed, true
+		}
+	}
+	info, err := entry.Info()
+	if err != nil {
+		return 0, time.Time{}, false
+	}
+	mtime := info.ModTime()
+	return ageSecondsFromTime(mtime, now), mtime, true
+}
+
+func ageSecondsFromTime(t time.Time, now time.Time) int {
+	if t.IsZero() || !t.Before(now) {
+		return 0
+	}
+	return int(now.Sub(t).Seconds())
+}
+
+// evictDaemonSubmitResponse persists a bounded tombstone before removing the
+// response file, so a client-timeout lookup after eviction can report
+// evicted_late_response instead of an indistinguishable not_found (#796
+// rework F-007). If the tombstone write fails, the response file is left in
+// place (falls through to being counted as an ordinary late response this
+// scan) rather than destroying evidence with no inspectable successor.
+func evictDaemonSubmitResponse(sessionDir, filename, responsePath string, response projection.DaemonSubmitResponse, readErr error, effectiveTime time.Time, ageSeconds, retentionSeconds int, now time.Time) bool {
+	command := response.Command
+	if readErr != nil {
+		command = ""
+	}
+	tombstone := projection.DaemonSubmitEvictedResponse{
+		RequestID:        strings.TrimSuffix(filename, ".json"),
+		Command:          command,
+		HandledAtOrMTime: effectiveTime.UTC().Format(time.RFC3339Nano),
+		AgeSeconds:       ageSeconds,
+		EvictedAt:        now.UTC().Format(time.RFC3339Nano),
+		Reason:           "retention_exceeded",
+	}
+	if _, err := projection.WriteDaemonSubmitEvicted(sessionDir, tombstone); err != nil {
+		return false
+	}
+	if removeErr := os.Remove(responsePath); removeErr != nil {
+		return false
+	}
+	logLateResponseEvicted(sessionDir, filename, ageSeconds, retentionSeconds)
+	return true
+}
+
+// pruneDaemonSubmitEvictedTombstones keeps the tombstone store bounded by
+// reusing the same retention window: a tombstone older than the retention
+// threshold (measured from its own EvictedAt) is removed. retentionSeconds
+// <= 0 (retention disabled) means responses are never evicted either, so
+// there is nothing to prune.
+func pruneDaemonSubmitEvictedTombstones(sessionDir string, now time.Time, retentionSeconds int) {
+	if retentionSeconds <= 0 {
+		return
+	}
+	entries, err := os.ReadDir(projection.DaemonSubmitEvictedDir(sessionDir))
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(projection.DaemonSubmitEvictedDir(sessionDir), entry.Name())
+		evicted, err := projection.ReadDaemonSubmitEvicted(path)
+		if err != nil {
+			continue
+		}
+		evictedAt, err := time.Parse(time.RFC3339Nano, evicted.EvictedAt)
+		if err != nil {
+			continue
+		}
+		if ageSecondsFromTime(evictedAt, now) >= retentionSeconds {
+			_ = os.Remove(path)
+		}
+	}
+}
+
+// logLateResponseEvicted records eviction of a daemon-submit response file
+// that has sat unclaimed past daemonSubmitLateResponseRetentionSeconds.
+// Without this, late responses accumulate indefinitely (see #796).
+func logLateResponseEvicted(sessionDir, filename string, ageSeconds, retentionSeconds int) {
+	log.Printf("postman: component=%s event=late_response_evicted submit_path=%s session=%s file=%s age_seconds=%d retention_seconds=%d\n",
+		projection.SubmitPathDaemon, projection.SubmitPathDaemon, filepath.Base(sessionDir), filename, ageSeconds, retentionSeconds)
 }
 
 func oldestDaemonSubmitAgeSeconds(current int, timestamp string, now time.Time) int {
@@ -760,14 +915,17 @@ func (rt *daemonRuntime) ensureDaemonSubmitRuntime() {
 	if rt.launchDaemonSubmitWorker == nil {
 		rt.launchDaemonSubmitWorker = defaultDaemonSubmitWorkerLauncher
 	}
-	if rt.daemonSubmitSem == nil {
-		rt.daemonSubmitSem = make(chan struct{}, daemonSubmitWorkerLimitFromConfig(rt.cfg))
+	if rt.daemonSubmitSems == nil {
+		rt.daemonSubmitSems = make(map[string]chan struct{})
 	}
 	if rt.daemonSubmitResults == nil {
 		rt.daemonSubmitResults = make(chan daemonSubmitRuntimeResult, daemonSubmitWorkerLimitFromConfig(rt.cfg))
 	}
 	if rt.activeDaemonSubmitKeys == nil {
 		rt.activeDaemonSubmitKeys = make(map[string]bool)
+	}
+	if rt.activeDaemonSubmitSessions == nil {
+		rt.activeDaemonSubmitSessions = make(map[string]int)
 	}
 }
 
@@ -803,6 +961,20 @@ func sessionNameForDaemonSubmitRequestPath(requestPath string) string {
 func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRuntimeResult) {
 	rt.ensureDaemonSubmitRuntime()
 	delete(rt.activeDaemonSubmitKeys, workerResult.dispatchKey)
+	if workerResult.sessionKey != "" {
+		if rt.activeDaemonSubmitSessions[workerResult.sessionKey] <= 1 {
+			delete(rt.activeDaemonSubmitSessions, workerResult.sessionKey)
+		} else {
+			rt.activeDaemonSubmitSessions[workerResult.sessionKey]--
+		}
+		if workerResult.releaseDone != nil {
+			if rt.beforeDaemonSubmitReleaseWait != nil {
+				rt.beforeDaemonSubmitReleaseWait()
+			}
+			<-workerResult.releaseDone
+		}
+		rt.pruneIdleDaemonSubmitSem(workerResult.sessionKey)
+	}
 	if workerResult.err != nil {
 		rt.events <- tui.DaemonEvent{
 			Type:    "error",
@@ -821,18 +993,31 @@ func (rt *daemonRuntime) handleDaemonSubmitResult(workerResult daemonSubmitRunti
 	rt.dispatchPendingDaemonSubmitRequests()
 }
 
+func (rt *daemonRuntime) pruneIdleDaemonSubmitSem(sessionKey string) {
+	if rt.activeDaemonSubmitSessions[sessionKey] != 0 {
+		return
+	}
+	if sem := rt.daemonSubmitSems[sessionKey]; sem != nil && len(sem) == 0 {
+		delete(rt.daemonSubmitSems, sessionKey)
+	}
+}
+
 func (rt *daemonRuntime) dispatchPendingDaemonSubmitRequests() {
 	pendingBySession := rt.pendingDaemonSubmitRequestsBySession()
 	for {
 		dispatchedInRound := false
 		for i := range pendingBySession {
 			pending := &pendingBySession[i]
+			if pending.saturated {
+				continue
+			}
 			for pending.next < len(pending.names) {
 				name := pending.names[pending.next]
 				pending.next++
 				status := rt.dispatchDaemonSubmitRequest(filepath.Join(pending.requestsDir, name))
 				if status == daemonSubmitDispatchSaturated {
-					return
+					pending.saturated = true
+					break
 				}
 				if status == daemonSubmitDispatched {
 					dispatchedInRound = true
@@ -850,6 +1035,7 @@ type pendingDaemonSubmitSessionRequests struct {
 	requestsDir string
 	names       []string
 	next        int
+	saturated   bool
 }
 
 func (rt *daemonRuntime) pendingDaemonSubmitRequestsBySession() []pendingDaemonSubmitSessionRequests {

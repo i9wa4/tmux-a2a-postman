@@ -32,29 +32,30 @@ type Config struct {
 	SessionScanInterval float64 `toml:"session_scan_interval_seconds"`
 	EnterDelay          float64 `toml:"enter_delay_seconds"`
 	TmuxTimeout         float64 `toml:"tmux_timeout_seconds"`
-	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter capture comparison (0 = disabled)
-	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries on pane capture unchanged (0 = disabled)
+	EnterVerifyDelay    float64 `toml:"enter_verify_delay_seconds"` // Delay for post-Enter input verification (0 = disabled)
+	EnterRetryMax       int     `toml:"enter_retry_max"`            // Max C-m retries when input remains pending (0 = disabled)
 
 	// Node state thresholds.
-	NodeActiveSeconds                float64 `toml:"node_active_seconds"`                   // 0-N seconds since pane change: active
-	NodeStaleSeconds                 float64 `toml:"node_stale_seconds"`                    // Memory cleanup threshold for pane capture
-	InputRequestStaleSeconds         float64 `toml:"input_request_stale_seconds"`           // Status projection threshold for stale unfilled input requests
-	VerdictGraceSeconds              float64 `toml:"verdict_grace_seconds"`                 // Grace period for requester verdict stamps after filled reply-required input requests
-	VerdictDebtCap                   int     `toml:"verdict_debt_cap"`                      // Maximum unstamped fills a requester may carry before new reply-required sends are refused
-	MessageTTLSeconds                float64 `toml:"message_ttl_seconds"`                   // Stale post/ drain TTL; 0 = disabled
-	RetentionPeriodDays              int     `toml:"retention_period_days"`                 // Inactive runtime cleanup threshold in days; 0 = disabled
-	DaemonSubmitQueueWarnThresholdMs int64   `toml:"daemon_submit_queue_warn_threshold_ms"` // Queue wait WARNING threshold in ms; 0 = use default (30 000)
-	AuditReviewProbabilityFloor      float64 `toml:"audit_review_probability_floor"`        // Nonzero minimum audit draw probability for accepted fills
-	AuditTarget                      string  `toml:"audit_target"`                          // Optional node that receives sampled audit review requests
-	MinDeliveryGapSeconds            float64 `toml:"min_delivery_gap_seconds"`              // Duplicate delivery rate limit; 0 = disabled
-	StartupDrainWindowSeconds        float64 `toml:"startup_drain_window_seconds"`          // Session-enabled bypass window after daemon start; 0 = disabled (#217)
-	AutoPingDelaySeconds             float64 `toml:"auto_ping_delay_seconds"`               // Delay from discovery/replacement to first auto-PING
-	DaemonSubmitWorkerLimit          int     `toml:"daemon_submit_worker_limit"`            // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
-	EscalationCheckIntervalSeconds   float64 `toml:"escalation_check_interval_seconds"`     // Threshold-push cadence; 0 = disabled
-	EscalationOldestOpenSeconds      float64 `toml:"escalation_oldest_open_seconds"`        // Oldest open input request threshold; 0 = disabled
-	EscalationDeadLetterCount        int     `toml:"escalation_dead_letter_count"`          // Dead-letter threshold; 0 = disabled
-	EscalationUnreadBacklogCount     int     `toml:"escalation_unread_backlog_count"`       // Per-node unread backlog threshold; 0 = disabled
-	EscalationStaleNodeSeconds       float64 `toml:"escalation_stale_node_seconds"`         // Stale node threshold; 0 = disabled
+	NodeActiveSeconds                        float64 `toml:"node_active_seconds"`                           // 0-N seconds since pane change: active
+	NodeStaleSeconds                         float64 `toml:"node_stale_seconds"`                            // Memory cleanup threshold for pane capture
+	InputRequestStaleSeconds                 float64 `toml:"input_request_stale_seconds"`                   // Status projection threshold for stale unfilled input requests
+	VerdictGraceSeconds                      float64 `toml:"verdict_grace_seconds"`                         // Grace period for requester verdict stamps after filled reply-required input requests
+	VerdictDebtCap                           int     `toml:"verdict_debt_cap"`                              // Maximum unstamped fills a requester may carry before new reply-required sends are refused
+	MessageTTLSeconds                        float64 `toml:"message_ttl_seconds"`                           // Stale post/ drain TTL; 0 = disabled
+	RetentionPeriodDays                      int     `toml:"retention_period_days"`                         // Inactive runtime cleanup threshold in days; 0 = disabled
+	DaemonSubmitQueueWarnThresholdMs         int64   `toml:"daemon_submit_queue_warn_threshold_ms"`         // Queue wait WARNING threshold in ms; 0 = use default (30 000)
+	DaemonSubmitLateResponseRetentionSeconds int64   `toml:"daemon_submit_late_response_retention_seconds"` // Late daemon-submit response file retention before eviction, in seconds; 0 = use default (3600)
+	AuditReviewProbabilityFloor              float64 `toml:"audit_review_probability_floor"`                // Nonzero minimum audit draw probability for accepted fills
+	AuditTarget                              string  `toml:"audit_target"`                                  // Optional node that receives sampled audit review requests
+	MinDeliveryGapSeconds                    float64 `toml:"min_delivery_gap_seconds"`                      // Duplicate delivery rate limit; 0 = disabled
+	StartupDrainWindowSeconds                float64 `toml:"startup_drain_window_seconds"`                  // Session-enabled bypass window after daemon start; 0 = disabled (#217)
+	AutoPingDelaySeconds                     float64 `toml:"auto_ping_delay_seconds"`                       // Delay from discovery/replacement to first auto-PING
+	DaemonSubmitWorkerLimit                  int     `toml:"daemon_submit_worker_limit"`                    // Daemon-submit worker concurrency; clamped to MaxDaemonSubmitWorkerLimit
+	EscalationCheckIntervalSeconds           float64 `toml:"escalation_check_interval_seconds"`             // Threshold-push cadence; 0 = disabled
+	EscalationOldestOpenSeconds              float64 `toml:"escalation_oldest_open_seconds"`                // Oldest open input request threshold; 0 = disabled
+	EscalationDeadLetterCount                int     `toml:"escalation_dead_letter_count"`                  // Dead-letter threshold; 0 = disabled
+	EscalationUnreadBacklogCount             int     `toml:"escalation_unread_backlog_count"`               // Per-node unread backlog threshold; 0 = disabled
+	EscalationStaleNodeSeconds               float64 `toml:"escalation_stale_node_seconds"`                 // Stale node threshold; 0 = disabled
 
 	// Pane capture settings (hybrid idle detection)
 	PaneCaptureEnabled         *bool   `toml:"pane_capture_enabled"` // nil = use default (true) (#219)
@@ -79,7 +80,8 @@ type Config struct {
 	// Global settings
 	Edges                          []string                        `toml:"edges"`
 	ReplyCommand                   string                          `toml:"reply_command"`
-	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING
+	UINode                         string                          `toml:"ui_node"`                  // Optional target filter for startup auto-PING; deprecated alias of InterfaceNode (#764)
+	InterfaceNode                  string                          `toml:"interface_node"`           // #764: canonical mouthpiece designation; ui_node is a one-cycle-deprecated legacy alias
 	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
 	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
 	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
@@ -102,6 +104,7 @@ type Config struct {
 
 	directTemplateRootTrust map[string]bool
 	uiNodeSet               bool
+	interfaceNodeSet        bool
 	verdictGraceSecondsSet  bool
 	verdictDebtCapSet       bool
 }
@@ -419,6 +422,57 @@ func (cfg *Config) HasExplicitUINodeSetting() bool {
 	return cfg.uiNodeSet
 }
 
+// HasExplicitInterfaceNodeSetting reports whether interface_node (#764's
+// canonical mouthpiece designation) has a resolved, non-default value: either
+// set directly, or derived from the legacy ui_node alias by
+// resolveInterfaceNodeDesignation. It does NOT distinguish "set directly" from
+// "derived from ui_node"; callers that need that distinction must inspect
+// cfg.InterfaceNode/cfg.UINode equality and the resolution diagnostics
+// themselves.
+func (cfg *Config) HasExplicitInterfaceNodeSetting() bool {
+	if cfg == nil {
+		return false
+	}
+	return cfg.interfaceNodeSet
+}
+
+// resolveInterfaceNodeDesignation reconciles the legacy ui_node TOML key
+// with the new canonical interface_node key (#764 scope item 1), following
+// Diplomat's proposed migration/compat path (#764 scope item 6):
+//   - interface_node set, ui_node unset: derive ui_node from interface_node.
+//   - ui_node set, interface_node unset: derive interface_node from
+//     ui_node, and emit a non-silent one-cycle deprecation diagnostic.
+//   - both set, same value: valid, no diagnostic.
+//   - both set, different values: emit a non-silent conflict diagnostic;
+//     neither value is silently preferred over the other.
+//
+// Every runtime reader of the designation uses cfg.UINode (escalation
+// routing, verdict-debt exemption, FilterToUINode); interface_node is the
+// canonical INPUT but ui_node remains the single resolved RUNTIME value, so
+// this function must run after every layer (TOML, node files, markdown
+// frontmatter/Mermaid overlay) that can set either key has been merged into
+// cfg, not just after the TOML [postman] section.
+//
+// Diagnostics use log.Printf (stderr), matching warnDeprecatedKeys's
+// existing channel choice (#764 E-7): several CLI commands emit structured
+// JSON on stdout, so a config-resolution diagnostic must never write there.
+func resolveInterfaceNodeDesignation(cfg *Config, path string) {
+	switch {
+	case cfg.interfaceNodeSet && cfg.uiNodeSet:
+		if cfg.InterfaceNode != cfg.UINode {
+			log.Printf("WARNING: %s: conflicting designation settings: interface_node=%q vs legacy ui_node=%q; interface_node wins as the canonical value (#764)", path, cfg.InterfaceNode, cfg.UINode)
+			cfg.UINode = cfg.InterfaceNode
+		}
+	case cfg.interfaceNodeSet && !cfg.uiNodeSet:
+		cfg.UINode = cfg.InterfaceNode
+		cfg.uiNodeSet = true
+	case !cfg.interfaceNodeSet && cfg.uiNodeSet:
+		log.Printf("WARNING: %s: deprecated config key \"ui_node\"; use \"interface_node\" instead (#764, one-release-cycle deprecation window)", path)
+		cfg.InterfaceNode = cfg.UINode
+		cfg.interfaceNodeSet = true
+	}
+}
+
 func (cfg *Config) EffectiveVerdictGraceSeconds(fallback int) int {
 	if cfg == nil {
 		return fallback
@@ -683,6 +737,10 @@ func mergeConfig(base, override *Config) {
 		base.UINode = override.UINode
 		base.uiNodeSet = base.uiNodeSet || override.uiNodeSet
 	}
+	if override.InterfaceNode != "" || override.interfaceNodeSet {
+		base.InterfaceNode = override.InterfaceNode
+		base.interfaceNodeSet = base.interfaceNodeSet || override.interfaceNodeSet
+	}
 	if override.CommandApproverNode != "" {
 		base.CommandApproverNode = override.CommandApproverNode
 	}
@@ -770,6 +828,9 @@ func mergeConfig(base, override *Config) {
 	}
 	if override.DaemonSubmitQueueWarnThresholdMs != 0 {
 		base.DaemonSubmitQueueWarnThresholdMs = override.DaemonSubmitQueueWarnThresholdMs
+	}
+	if override.DaemonSubmitLateResponseRetentionSeconds != 0 {
+		base.DaemonSubmitLateResponseRetentionSeconds = override.DaemonSubmitLateResponseRetentionSeconds
 	}
 	if override.DaemonSubmitWorkerLimit != 0 {
 		base.DaemonSubmitWorkerLimit = override.DaemonSubmitWorkerLimit
@@ -884,6 +945,7 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("decoding [postman] section: %w", err)
 			}
 			cfg.uiNodeSet = tomlHasField(md, "postman", "ui_node")
+			cfg.interfaceNodeSet = tomlHasField(md, "postman", "interface_node")
 			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
 			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")
 			cfg.DeprecatedCommandApproverNodes = deprecatedCommandApproverNodes(postmanPrim, md)
@@ -975,6 +1037,12 @@ func LoadConfig(path string) (*Config, error) {
 			log.Printf("warning: skipping %s: %v", xdgMarkdownPath, err)
 		}
 	}
+
+	// #764 E-2: resolve ui_node/interface_node once every layer that can set
+	// either key (TOML [postman], nodes/*.toml, XDG markdown frontmatter and
+	// Mermaid overlay) has been merged into cfg, not immediately after the
+	// TOML [postman] section alone.
+	resolveInterfaceNodeDesignation(cfg, configPath)
 
 	cfg.initDirectTemplateRootTrust()
 

@@ -255,6 +255,150 @@ func TestHerdrBackendDiscoveryQuarantinesStalePaneWithMissingTab(t *testing.T) {
 	}
 }
 
+func TestHerdrBackendDiscoveryQuarantinesPaneWithoutUsableTerminal(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Panes[0].TerminalID = ""
+	client := &fakeHerdrReadClient{ping: validHerdrEnvelope(), snapshot: snapshot}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(discovery.Layout.Groups) != 1 || len(discovery.Layout.Groups[0].Items) != 0 {
+		t.Fatalf("layout groups = %#v, want pane without terminal_id omitted", discovery.Layout.Groups)
+	}
+	if len(discovery.StalePanes) != 2 || discovery.StalePanes[0] != HerdrPaneID("workspace-1:pane-1") || discovery.StalePanes[1] != HerdrPaneID("workspace-1:pane-2") {
+		t.Fatalf("StalePanes = %#v, want unusable pane and stale pane", discovery.StalePanes)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+		t.Fatalf("focused pane = %q, want omitted for unusable pane", got)
+	}
+}
+
+func TestHerdrBackendDiscoveryQuarantinesPaneWithoutProcessUsability(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	client := &fakeHerdrReadClient{
+		ping:           validHerdrEnvelope(),
+		snapshot:       snapshot,
+		processInfoErr: ErrHerdrBackendUnavailable,
+	}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(discovery.Layout.Groups) != 1 || len(discovery.Layout.Groups[0].Items) != 0 {
+		t.Fatalf("layout groups = %#v, want process-unusable pane omitted", discovery.Layout.Groups)
+	}
+	if len(discovery.StalePanes) != 2 || discovery.StalePanes[0] != HerdrPaneID("workspace-1:pane-1") || discovery.StalePanes[1] != HerdrPaneID("workspace-1:pane-2") {
+		t.Fatalf("StalePanes = %#v, want process-unusable pane and stale pane", discovery.StalePanes)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+		t.Fatalf("focused pane = %q, want omitted for process-unusable pane", got)
+	}
+	if client.processInfoCalls != 1 || client.processInfoPane != "workspace-1:pane-1" {
+		t.Fatalf("process probe calls=%d pane=%q, want one probe for routable candidate", client.processInfoCalls, client.processInfoPane)
+	}
+}
+
+func TestHerdrBackendDiscoveryQuarantinesMismatchedProcessProbe(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	client := &fakeHerdrReadClient{
+		ping:     validHerdrEnvelope(),
+		snapshot: snapshot,
+		processInfo: HerdrPaneProcessInfoResult{
+			Envelope:    validHerdrEnvelope(),
+			ProcessInfo: HerdrPaneProcessInfo{PaneID: "other-pane"},
+		},
+	}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(discovery.Layout.Groups[0].Items) != 0 {
+		t.Fatalf("layout items = %#v, want mismatched process target omitted", discovery.Layout.Groups[0].Items)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+		t.Fatalf("focused pane = %q, want omitted for mismatched process target", got)
+	}
+}
+
+func TestHerdrBackendDiscoveryQuarantinesUnsupportedProcessProbeAndContinues(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	snapshot.Panes[1].Stale = false
+	snapshot.Panes[1].StaleReason = ""
+	snapshot.Panes[1].Metadata = map[string]string{"postman.node": "critic"}
+	snapshot.Panes[1].ProcessInfo = HerdrPaneProcessInfo{PaneID: snapshot.Panes[1].ID, ForegroundProcesses: []HerdrProcessInfo{{Name: "codex"}}}
+	snapshot.FocusedPaneID = snapshot.Panes[0].ID
+	client := &fakeHerdrReadClient{
+		ping:     validHerdrEnvelope(),
+		snapshot: snapshot,
+		processInfoByPane: map[string]HerdrPaneProcessInfoResult{
+			"workspace-1:pane-1": {
+				Envelope:    HerdrResponseEnvelope{ProtocolVersion: "unsupported", SchemaVersion: 1},
+				ProcessInfo: HerdrPaneProcessInfo{PaneID: "workspace-1:pane-1"},
+			},
+			"workspace-1:pane-2": {
+				Envelope:    validHerdrEnvelope(),
+				ProcessInfo: HerdrPaneProcessInfo{PaneID: "workspace-1:pane-2"},
+			},
+		},
+	}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	discovery, err := backend.Discover(context.Background(), "work")
+	if err != nil {
+		t.Fatalf("Discover() error = %v, want unsupported probe quarantined without aborting", err)
+	}
+	if len(discovery.Layout.Groups) != 1 || len(discovery.Layout.Groups[0].Items) != 1 {
+		t.Fatalf("layout groups = %#v, want unrelated valid pane only", discovery.Layout.Groups)
+	}
+	item := discovery.Layout.Groups[0].Items[0]
+	if item.ID != HerdrPaneID("workspace-1:pane-2") || item.LogicalName != "critic" {
+		t.Fatalf("layout item = %#v, want critic pane only", item)
+	}
+	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
+		t.Fatalf("focused pane = %q, want ghost focused pane omitted", got)
+	}
+	if len(discovery.StalePanes) != 1 || discovery.StalePanes[0] != HerdrPaneID("workspace-1:pane-1") {
+		t.Fatalf("StalePanes = %#v, want only unsupported probe candidate", discovery.StalePanes)
+	}
+}
+
+func TestHerdrBackendDiscoveryPropagatesCanceledProcessProbe(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	client := &fakeHerdrReadClient{
+		ping:           validHerdrEnvelope(),
+		snapshot:       snapshot,
+		processInfoErr: context.Canceled,
+	}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	_, err := backend.Discover(context.Background(), "work")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Discover() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestHerdrBackendDiscoveryPropagatesExpiredProcessProbe(t *testing.T) {
+	snapshot := validHerdrSessionSnapshot()
+	client := &fakeHerdrReadClient{
+		ping:           validHerdrEnvelope(),
+		snapshot:       snapshot,
+		processInfoErr: context.DeadlineExceeded,
+	}
+	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
+
+	_, err := backend.Discover(context.Background(), "work")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Discover() error = %v, want context deadline", err)
+	}
+}
+
 func TestHerdrBackendDiscoveryRejectsMissingWorkspaceRoot(t *testing.T) {
 	snapshot := validHerdrSessionSnapshot()
 	snapshot.Workspaces = nil
@@ -486,21 +630,22 @@ func TestNormalizeHerdrBackendErrorUnavailable(t *testing.T) {
 }
 
 type fakeHerdrReadClient struct {
-	ping             HerdrResponseEnvelope
-	pingErr          error
-	snapshot         HerdrSessionSnapshot
-	snapshotErr      error
-	readPane         HerdrPaneReadResult
-	readPaneErr      error
-	processInfo      HerdrPaneProcessInfoResult
-	processInfoErr   error
-	pingCalls        int
-	snapshotCalls    int
-	readPaneCalls    int
-	processInfoCalls int
-	readPaneID       string
-	readOptions      HerdrPaneReadOptions
-	processInfoPane  string
+	ping              HerdrResponseEnvelope
+	pingErr           error
+	snapshot          HerdrSessionSnapshot
+	snapshotErr       error
+	readPane          HerdrPaneReadResult
+	readPaneErr       error
+	processInfo       HerdrPaneProcessInfoResult
+	processInfoByPane map[string]HerdrPaneProcessInfoResult
+	processInfoErr    error
+	pingCalls         int
+	snapshotCalls     int
+	readPaneCalls     int
+	processInfoCalls  int
+	readPaneID        string
+	readOptions       HerdrPaneReadOptions
+	processInfoPane   string
 }
 
 func (f *fakeHerdrReadClient) Ping(context.Context) (HerdrResponseEnvelope, error) {
@@ -534,6 +679,21 @@ func (f *fakeHerdrReadClient) PaneProcessInfo(_ context.Context, paneID string) 
 	f.processInfoPane = paneID
 	if f.processInfoErr != nil {
 		return HerdrPaneProcessInfoResult{}, f.processInfoErr
+	}
+	if result, ok := f.processInfoByPane[paneID]; ok {
+		return result, nil
+	}
+	if f.processInfo.Envelope.ProtocolVersion == "" && f.processInfo.Envelope.SchemaVersion == 0 && f.processInfo.ProcessInfo.PaneID == "" && len(f.processInfo.ProcessInfo.ForegroundProcesses) == 0 {
+		return HerdrPaneProcessInfoResult{
+			Envelope: validHerdrEnvelope(),
+			ProcessInfo: HerdrPaneProcessInfo{
+				PaneID:              paneID,
+				ForegroundProcesses: []HerdrProcessInfo{{Name: "codex"}},
+			},
+		}, nil
+	}
+	if f.processInfo.ProcessInfo.PaneID == "" {
+		f.processInfo.ProcessInfo.PaneID = paneID
 	}
 	return f.processInfo, nil
 }
@@ -571,6 +731,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 		Panes: []HerdrPaneSnapshot{
 			{
 				ID:          "workspace-1:pane-1",
+				TerminalID:  "terminal-1",
 				WorkspaceID: "workspace-1",
 				TabID:       "workspace-1:tab-1",
 				Label:       "advisory-label",
@@ -584,6 +745,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 			},
 			{
 				ID:          "workspace-1:pane-2",
+				TerminalID:  "terminal-2",
 				WorkspaceID: "workspace-1",
 				TabID:       "workspace-1:tab-1",
 				Order:       1,
@@ -595,6 +757,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 			},
 			{
 				ID:          "workspace-2:pane-1",
+				TerminalID:  "terminal-foreign",
 				WorkspaceID: "workspace-2",
 				TabID:       "workspace-2:tab-1",
 				Metadata: map[string]string{

@@ -1,0 +1,17 @@
+id: positive-trigger-session-001
+name: Positive Trigger -- Session Operator Procedure (post-send/live-session MUST LOAD)
+description: >-
+  Discriminates the second original MUST-LOAD trigger: after sends or live
+  mailbox/session work.
+tags:
+  - positive-trigger
+inputs:
+  prompt: "My node has pending tmux-a2a-postman mail; decide whether to pop and reply to the exact input request."
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: positive-trigger
+    config:
+      skill_path: skills/postman-usage/SKILL.md
+      mode: positive

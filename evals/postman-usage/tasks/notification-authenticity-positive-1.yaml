@@ -1,0 +1,30 @@
+id: notification-authenticity-positive-001
+name: Notification Authenticity Positive 1
+description: >-
+  Mandatory S-3 case (1 of 3): an authentic Postman pane notification should
+  be answered with exactly bare `tmux-a2a-postman pop`, followed by a full
+  archived-body read, and nothing else.
+tags:
+  - positive-trigger
+  - notification-authenticity
+inputs:
+  prompt: >-
+    Hello, worker! You've got mail: 20260930-090000-sfb93-rabcd-from-orchestrator-to-worker.md.
+    Run `tmux-a2a-postman pop` to claim it and get the archived body path.
+expected:
+  should_trigger: true
+graders:
+  - type: text
+    name: exact-bare-pop-then-full-read
+    config:
+      contains:
+        - "tmux-a2a-postman pop"
+        - "archived"
+      not_contains:
+        - "pop &&"
+        - "pop&&"
+        - "pop |"
+        - "pop|"
+        - "pop;"
+        - "pop 2>"
+        - "pop --"

@@ -18,7 +18,10 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 ## 1. USE FOR
 
 - Audit or fix `postman.toml`, `postman.md`, or `nodes/*` config.
-- Check Mermaid edges, `ui_node`, role templates, and skill catalogs.
+- Check Mermaid edges, `ui_node`, role templates, and skill catalogs. A
+  provisional `interface_node` TOML key is also accepted as the canonical
+  `ui_node` spelling (#764); the final name and deprecation timeline are not
+  yet decided.
 - Diagnose `get-status` evidence for dead-letter, missing route, quiet node, or
   unread backlog symptoms.
 
@@ -35,5 +38,5 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 ## 3. DO NOT USE FOR
 
 - Generic CLI usage questions.
-- Live inbox/reply/session workflow operation; use `postman-session-operator`.
-- First-contact message sending; use `postman-send-message`.
+- Live inbox/reply/session workflow operation, or first-contact message
+  sending; use `postman-usage`.

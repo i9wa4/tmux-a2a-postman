@@ -65,8 +65,8 @@ scan_interval_seconds = 1.0          # Pane rescan interval
 session_scan_interval_seconds = 0.10 # Lightweight tmux session-list rescan interval
 tmux_timeout_seconds = 30.0          # Timeout for tmux commands
 enter_delay_seconds = 3.0            # Delay before sending Enter key
-enter_verify_delay_seconds = 3.0     # Delay for post-Enter capture comparison (0 = disabled)
-enter_retry_max = 2                  # Max C-m retries on unchanged pane capture (0 = disabled)
+enter_verify_delay_seconds = 3.0     # Delay for post-Enter input verification (0 = disabled)
+enter_retry_max = 2                  # Max C-m retries when input remains pending (0 = disabled)
 auto_ping_delay_seconds = 20.0       # Delay before first auto-PING for newly appeared/replacement nodes
 message_ttl_seconds = 600              # Stale post/ drain TTL in seconds (0 = disabled)
 retention_period_days = 30            # Inactive runtime cleanup threshold in days (0 = disabled)
@@ -81,6 +81,7 @@ input_request_stale_seconds = 3600 # Status projection threshold for stale unfil
 verdict_grace_seconds = 3600       # Grace period for requester verdict stamps after filled reply-required input requests
 verdict_debt_cap = 3               # Maximum unstamped fills before new reply-required sends are refused (<0 = disabled)
 daemon_submit_queue_warn_threshold_ms = 30000  # Queue wait WARNING threshold in ms (0 = use default 30 000)
+daemon_submit_late_response_retention_seconds = 3600  # Late daemon-submit response file retention before eviction, in seconds (0 = use default 3600)
 audit_review_probability_floor = 0.05 # Nonzero minimum audit draw probability for accepted fills
 audit_target = ""                 # Optional sampled audit target; defaults to configured command_approver_node when available
 escalation_check_interval_seconds = 0    # Threshold-push cadence; 0 disables escalation pushes
@@ -136,7 +137,8 @@ edges = []
 
 # Global settings
 reply_command = "tmux-a2a-postman send-heredoc --to <recipient>"
-ui_node = "messenger"            # Optional target filter for startup auto-PING
+ui_node = "messenger"            # Optional target filter for startup auto-PING; deprecated alias of interface_node (#764)
+interface_node = "messenger"     # #764: canonical mouthpiece designation; keep equal to ui_node during the deprecation window
 auto_enable_new_sessions = true    # Required default: auto-claim configured nodes in other tmux sessions so startup/discovery auto-PING reaches them
 # startup_guard_enabled = false    # TUI startup guard toggle; ALWAYS starts false at code level
 #                                  # regardless of this value (Issue #249). Press 'S' in TUI to arm.
@@ -148,8 +150,8 @@ auto_enable_new_sessions = true    # Required default: auto-claim configured nod
 # blocking approval fail closed. The approver is global; per-policy routing is
 # unsupported.
 
-# Command approval policies for execute-bash (Issue #484/#625/#626/#629). Optional; no policies means every
-# execute-bash invocation uses the advisory default.
+# Command approval policies for execute-bash (Issue #484/#625/#626/#629/#753). Optional; no policies means every
+# execute-bash invocation uses the blocking default.
 # [[postman.command_approval]]
 # requester = "worker"
 # label = "nix-build"

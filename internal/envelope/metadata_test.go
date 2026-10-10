@@ -645,6 +645,53 @@ func TestEnsureParamsInsertsExactInputRequestFields(t *testing.T) {
 	}
 }
 
+// TestEnsureParamsInsertsVerdictFields pins #757: verdict/verdictOf must be
+// insertable managed fields, matching what applyOutgoingVerdict
+// (internal/verdictgate/gate.go) already parses via ParseMetadata, so a CLI
+// flag has a real write path into frontmatter.
+func TestEnsureParamsInsertsVerdictFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"verdict":   "APPROVED: looks good",
+		"verdictOf": "ireq_123",
+	})
+
+	if !strings.Contains(got, "verdict: APPROVED: looks good") {
+		t.Fatalf("EnsureParams() missing verdict field:\n%s", got)
+	}
+	if !strings.Contains(got, "verdictOf: ireq_123") {
+		t.Fatalf("EnsureParams() missing verdictOf field:\n%s", got)
+	}
+
+	metadata, err := ParseMetadata(got)
+	if err != nil {
+		t.Fatalf("ParseMetadata() error = %v", err)
+	}
+	if metadata.Verdict != "APPROVED: looks good" {
+		t.Fatalf("metadata.Verdict = %q, want round-tripped value", metadata.Verdict)
+	}
+	if metadata.VerdictOf != "ireq_123" {
+		t.Fatalf("metadata.VerdictOf = %q, want round-tripped value", metadata.VerdictOf)
+	}
+}
+
+// TestEnsureParamsSkipsEmptyVerdictFields ensures an ordinary send that sets
+// neither --verdict nor --verdict-of does not grow every message with empty
+// verdict/verdictOf frontmatter lines.
+func TestEnsureParamsSkipsEmptyVerdictFields(t *testing.T) {
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n---\n\nplease review\n"
+
+	got := EnsureParams(content, map[string]string{
+		"verdict":   "",
+		"verdictOf": "",
+	})
+
+	if strings.Contains(got, "verdict:") || strings.Contains(got, "verdictOf:") {
+		t.Fatalf("EnsureParams() inserted empty verdict fields:\n%s", got)
+	}
+}
+
 func TestEnsureParamsInsertsCanonicalInputRequestWhenLegacyIdentityFieldExists(t *testing.T) {
 	legacyAlias := "obligation" + "_id"
 	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  " + legacyAlias + ": old\n---\n\nplease review\n"

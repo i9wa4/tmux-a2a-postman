@@ -97,10 +97,21 @@ Herdr responses must include explicit protocol and schema version evidence
 before postman consumes response fields. Unsupported, missing, zero, or
 unparseable versions are gate failures.
 
-Issue #658 must define the first accepted Herdr protocol/schema version values
-from the concrete response shape it consumes. Issue #659 must reuse the same
-policy and extend it only when write response schemas require additional
-versions.
+The accepted Herdr production socket boundary is protocol `20` with schema
+version `1`. The socket client obtains protocol evidence from the live `ping`
+response and schema evidence from `herdr api schema --json`. Those two sources
+must agree on protocol, and the schema version must be one of postman's
+explicitly supported versions before the client returns a compatibility
+envelope to the multiplexer. The `ping` release string must be nonempty for
+operator provenance, but it is informational and does not bind compatibility to
+a Herdr release or executable identity. A same-protocol but newer or otherwise
+unsupported schema version fails closed; it is not deferred to best effort
+decoding.
+
+Issue #658 defined the first accepted values from the concrete response shape
+it consumes. Issue #659 reuses the same policy and may extend it only when
+write response schemas require additional versions and matching socket-harness
+tests document the new source of truth.
 
 ## 6. Unavailable Backend Normalization
 

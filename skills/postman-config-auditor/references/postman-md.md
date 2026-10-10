@@ -107,14 +107,14 @@ skill_path:
       - ping
       - compaction_ping
     skills:
-      - postman-session-operator
+      - postman-usage
   - path: ~/.claude/skills
     inject: compaction_ping
   - path: ~/.codex/skills
     inject: compaction_ping
     skills:
       - postman-config-auditor
-      - postman-session-operator
+      - postman-usage
 ---
 ```
 

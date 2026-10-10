@@ -1,0 +1,15 @@
+id: negative-trigger-generic-001
+name: Negative Trigger -- Generic Unrelated Content
+description: Content unrelated to Postman should not trigger postman-usage.
+tags:
+  - negative-trigger
+inputs:
+  prompt: "Summarize why tmux panes are useful for terminal workflows."
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: negative-trigger
+    config:
+      skill_path: skills/postman-usage/SKILL.md
+      mode: negative

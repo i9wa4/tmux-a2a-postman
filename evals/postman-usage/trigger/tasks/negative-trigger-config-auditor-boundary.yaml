@@ -1,0 +1,17 @@
+id: negative-trigger-config-auditor-boundary-001
+name: Negative Trigger -- postman-config-auditor Boundary
+description: >-
+  postman.md/topology auditing is postman-config-auditor's territory, not
+  postman-usage's DO NOT USE FOR boundary.
+tags:
+  - negative-trigger
+inputs:
+  prompt: "Fix a wrong node name in postman.md's skill_path frontmatter."
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: negative-trigger
+    config:
+      skill_path: skills/postman-usage/SKILL.md
+      mode: negative
