@@ -74,6 +74,31 @@ func TestCommandCombinedOutputTimesOut(t *testing.T) {
 	}
 }
 
+// TestZeroValueCommandAppliesDefaultTimeout pins the #871 mitigation: a
+// Command with no explicit Timeout must still be bounded, so a hung tmux
+// server cannot stall the daemon's single dispatcher loop.
+func TestZeroValueCommandAppliesDefaultTimeout(t *testing.T) {
+	binPath := writeExecutable(t, "tmux", "#!/bin/sh\nwhile :; do :; done\n")
+	original := tmuxrunner.DefaultTimeout
+	tmuxrunner.DefaultTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { tmuxrunner.DefaultTimeout = original })
+
+	for name, run := range map[string]func() error{
+		"CombinedOutput": func() error { _, err := tmuxrunner.Command{Binary: binPath}.CombinedOutput("list-panes"); return err },
+		"Output":         func() error { _, err := tmuxrunner.Command{Binary: binPath}.Output("list-panes"); return err },
+		"Run":            func() error { return tmuxrunner.Command{Binary: binPath}.Run("list-panes") },
+	} {
+		start := time.Now()
+		err := run()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("%s error = %v, want context deadline exceeded", name, err)
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Fatalf("%s took %s, want bounded by the default timeout", name, elapsed)
+		}
+	}
+}
+
 func writeExecutable(t *testing.T, name, content string) string {
 	t.Helper()
 
