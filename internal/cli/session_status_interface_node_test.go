@@ -59,9 +59,10 @@ func TestBuildInterfaceNodeStatus_JSONShape(t *testing.T) {
 
 // TestInterfaceNodeDiagnosticText (#764 S1) pins the operator-visible wording.
 func TestInterfaceNodeDiagnosticText(t *testing.T) {
+	diagnostic := config.NoInterfaceNodeDiagnostic
 	for _, want := range []string{"no interface_node configured", "no verdict exemption", "no escalation push target"} {
-		if !strings.Contains(config.NoInterfaceNodeDiagnostic, want) {
-			t.Fatalf("diagnostic %q missing %q", config.NoInterfaceNodeDiagnostic, want)
+		if !strings.Contains(diagnostic, want) {
+			t.Fatalf("diagnostic %q missing %q", diagnostic, want)
 		}
 	}
 }
