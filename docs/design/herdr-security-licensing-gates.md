@@ -22,7 +22,7 @@ Herdr reads and writes are separate capabilities.
 
 Read capabilities include:
 
-- opening or selecting `HERDR_SOCKET_PATH`;
+- opening or selecting the configured `socket_path`;
 - discovery reads such as `session.snapshot` and workspace/tab/pane layout
   enumeration;
 - pane-targeted reads such as CLI or socket APIs like `pane.read`;
@@ -54,8 +54,8 @@ future Herdr paths.
 The read gate fails closed unless all are true:
 
 - read access is explicitly enabled by policy;
-- `HERDR_SOCKET_PATH`, Herdr named session, and workspace ID are present in the
-  runtime identity;
+- the configured `socket_path`, Herdr named session, and workspace ID are
+  present in the runtime identity;
 - socket path, named session, and workspace ID match explicit allowlists;
 - the response protocol version is supported before response fields are trusted;
 - the response schema version is supported before response fields are trusted.
@@ -80,10 +80,12 @@ planning artifacts to record that legal/compliance review is still pending.
 
 Allowlists must be exact matches, not pattern or prefix checks:
 
-- socket path: exact `HERDR_SOCKET_PATH`;
+- socket path: the configured `socket_path` must exactly match an
+  `allowed_socket_paths` entry;
 - session: exact Herdr named session; the configured `session_name` must
   exactly match an `allowed_sessions` entry;
-- workspace: exact Herdr workspace ID.
+- workspace: the configured `workspace_id` must exactly match an
+  `allowed_workspace_ids` entry.
 
 Tab and pane IDs are required only for pane-targeted reads and writes. They are
 not global allowlist roots. They must be scoped under an allowlisted

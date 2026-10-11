@@ -17,7 +17,7 @@ markers through Herdr in this phase.
 The zero-value Herdr read configuration is disabled. A caller must explicitly
 construct `multiplexer.HerdrReadConfig{Enabled: true, ...}` with:
 
-- `HERDR_SOCKET_PATH`;
+- the configured socket path (`[postman.herdr]` `socket_path`);
 - Herdr named session;
 - Herdr workspace ID;
 - socket/session/workspace allowlists;
@@ -46,7 +46,7 @@ unavailable backend instead of a tmux failure.
 ## 4. Compatibility Authority
 
 The compatibility source of truth is the protocol/schema pair observed from the
-Herdr server reached through `HERDR_SOCKET_PATH` and corroborated by the
+Herdr server reached through the configured socket path and corroborated by the
 `herdr api schema --json` command visible on `PATH`. Postman does not treat
 either source as authoritative by itself:
 
