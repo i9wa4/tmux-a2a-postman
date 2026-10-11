@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -4503,6 +4505,862 @@ func findExecutionCompletedPayload(t *testing.T, sessionDir string) journal.Comm
 	}
 	t.Fatal("missing command execution completed event")
 	return journal.CommandExecutionCompletedPayload{}
+}
+
+// #838: a positional fallback rule based on argument count. Exactly one
+// positional element is legacy, unchanged verbatim shell source (joining a
+// single element with any separator is a no-op, so this path's commandText
+// and digest match pre-#838 behavior exactly). Two or more positional
+// elements must be individually shell-quoted before joining, or bash -lc
+// re-tokenizes the flattened string differently than the original argv:
+// bash -c's script argument is always just the single next word, so extra
+// words become that inner invocation's own positional parameters instead of
+// more of the intended script, and the outer shell resumes at the next
+// operator -- the visible effect varies with the content, not one single
+// uniform failure mode.
+
+func TestPosixSingleQuoteEscapesEmbeddedQuotesAndSpecialChars(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "plain word", in: "bash", want: "'bash'"},
+		{name: "embedded space", in: "cd /tmp", want: "'cd /tmp'"},
+		{name: "single quote", in: "it's", want: `'it'\''s'`},
+		{name: "multiple single quotes", in: "'a'b'", want: `''\''a'\''b'\'''`},
+		{name: "dollar and backtick left literal", in: "$HOME `pwd`", want: "'$HOME `pwd`'"},
+		{name: "double quote left literal", in: `say "hi"`, want: `'say "hi"'`},
+		{name: "empty string", in: "", want: "''"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := posixSingleQuote(tc.in); got != tc.want {
+				t.Fatalf("posixSingleQuote(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPosixSingleQuoteRoundTripsThroughRealBash proves the quoting is not
+// merely self-consistent (a test that only compares against the same
+// implementation would be tautological) but genuinely reconstructs the
+// original argv boundaries when the joined string is re-parsed by the real
+// `bash -lc` invocation production code uses (runBashCommand).
+//
+// Each subtest captures the script's own stdout to a temp file (via
+// runBashCommandCapturingScriptStdout) rather than asserting against the
+// test process's inherited stdout directly, since bash -lc runs as a login
+// shell whose profile could otherwise pollute the assertion (#838 E-1).
+func TestPosixSingleQuoteRoundTripsThroughRealBash(t *testing.T) {
+	quoteJoin := func(argv []string) string {
+		quoted := make([]string, len(argv))
+		for i, a := range argv {
+			quoted[i] = posixSingleQuote(a)
+		}
+		return strings.Join(quoted, " ")
+	}
+
+	t.Run("multiline script preserves every statement", func(t *testing.T) {
+		script := "echo line1\necho line2\nif true; then\n  echo line3-in-if\nfi"
+		commandText := quoteJoin([]string{"bash", "-c", script})
+
+		want := "line1\nline2\nline3-in-if\n"
+		if got := runBashCommandCapturingScriptStdout(t, commandText); got != want {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("cd chain takes effect on both cd statements", func(t *testing.T) {
+		dir := t.TempDir()
+		script := fmt.Sprintf("cd /tmp && pwd && cd %s && pwd", posixSingleQuote(dir))
+		commandText := quoteJoin([]string{"bash", "-c", script})
+
+		want := "/tmp\n" + dir + "\n"
+		if got := runBashCommandCapturingScriptStdout(t, commandText); got != want {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("multiword argv with shell special characters survives as one word", func(t *testing.T) {
+		// Each of these positional elements must arrive at the script
+		// unchanged, including the embedded spaces, single quote, and
+		// dollar sign, none of which should be reinterpreted by the
+		// reconstructing shell.
+		commandText := quoteJoin([]string{"printf", "%s", "it's $HOME literally, not expanded"})
+
+		want := "it's $HOME literally, not expanded"
+		if got := runBashCommandCapturingScriptStdout(t, commandText); got != want {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+	})
+
+	// A multi-word argument containing a word-initial '#' must survive as
+	// one argument; joined unquoted, bash would treat '#gamma delta' as a
+	// comment.
+	t.Run("multiword flag value with a hash character survives as one argument", func(t *testing.T) {
+		value := "alpha beta #gamma delta"
+		commandText := quoteJoin([]string{"printf", "%s", value})
+
+		if got := runBashCommandCapturingScriptStdout(t, commandText); got != value {
+			t.Fatalf("stdout = %q, want %q -- a multi-word argument must survive as one argument, not be re-split or truncated at '#'", got, value)
+		}
+	})
+
+	// Operators and expansions placed in their OWN separate positional
+	// elements are individually quoted too, so they arrive as literal data
+	// words to whatever program argv[0] names -- not as shell operators or
+	// variable expansions. This is the correct, expected consequence of
+	// reconstructing argv boundaries, and is worth locking in explicitly so
+	// a caller who assumed "&&" or "$HOME" as a separate element would be
+	// treated specially is not surprised.
+	t.Run("operators and expansions in their own element stay literal arguments", func(t *testing.T) {
+		commandText := quoteJoin([]string{"echo", "$HOME", "&&", "echo", "done"})
+
+		want := "$HOME && echo done\n"
+		if got := runBashCommandCapturingScriptStdout(t, commandText); got != want {
+			t.Fatalf("stdout = %q, want %q -- echo must receive these as four literal arguments, not a shell operator plus a second command", got, want)
+		}
+	})
+}
+
+// runBashCommandCapturingScriptStdout wraps commandText in a brace group
+// redirected to a temp file, so the script's own stdout is captured on disk
+// instead of asserted directly against bash -lc's inherited stdout -- which
+// could otherwise be polluted by login-profile startup output (#838 E-1).
+func runBashCommandCapturingScriptStdout(t *testing.T, commandText string) string {
+	t.Helper()
+	outFile := filepath.Join(t.TempDir(), "stdout.txt")
+	wrapped := "{ " + commandText + "\n} > " + posixSingleQuote(outFile)
+
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runBashCommand(wrapped, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("runBashCommand() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr: %s)", exitCode, stderr.String())
+	}
+	data, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", outFile, err)
+	}
+	return string(data)
+}
+
+// newExecuteBashFixtureWithBash builds a standard fixture and then restores
+// the PATH that was in effect before the fixture ran tmuxtest.InstallMissing
+// (#845), which replaces PATH with an empty directory. Tests that execute the
+// captured commandText through the real runBashCommand need "bash" and the
+// ordinary coreutils to resolve. The restored baseline PATH still starts with
+// the poison "tmux" shim installed by TestMain (lockDownPATHAgainstRealTmux),
+// so a real tmux binary stays unreachable.
+func newExecuteBashFixtureWithBash(t *testing.T, policies ...config.CommandApprovalPolicy) *executeBashFixture {
+	t.Helper()
+	baselinePath := os.Getenv("PATH")
+	fixture := newExecuteBashFixture(t, policies...)
+	t.Setenv("PATH", baselinePath)
+	return fixture
+}
+
+// TestRunExecuteBashPositionalSingleElementIsVerbatimShellSourceWithUnchangedDigest
+// covers #838 I-1: exactly one positional element must still be run as
+// verbatim shell source -- including its own internal shell operators and
+// pipes -- and must produce the exact same commandText and digest as the
+// pre-#838 (and --command) code paths, since joining a single element with
+// any separator never changes it.
+func TestRunExecuteBashPositionalSingleElementIsVerbatimShellSourceWithUnchangedDigest(t *testing.T) {
+	fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+	source := "echo one && echo two | tr a-z A-Z"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "single positional element stays verbatim shell source",
+		"--", source,
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	// Hand-written expectation, independent of posixSingleQuote: a single
+	// positional element is untouched, not quoted.
+	if got := fixture.commands[0]; got != source {
+		t.Fatalf("command = %q, want verbatim %q (unquoted)", got, source)
+	}
+	if got, want := commandDigest(fixture.commands[0]), commandDigest(source); got != want {
+		t.Fatalf("commandDigest = %q, want %q (must match the pre-#838/--command digest for the same text)", got, want)
+	}
+
+	// The reconstruction must also genuinely execute as the compound shell
+	// source it is, not as a single literal program name.
+	if want, got := "one\nTWO\n", runBashCommandCapturingScriptStdout(t, fixture.commands[0]); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+// TestRunExecuteBashPositionalMultiElementReconstructsMultilineScript and
+// TestRunExecuteBashPositionalMultiElementReconstructsCdChain use
+// hand-written expected strings rather than calling posixSingleQuote, so a
+// bug in that helper could not make a test built from the same helper agree
+// with buggy production output (#838 I-3).
+func TestRunExecuteBashPositionalMultiElementReconstructsMultilineScript(t *testing.T) {
+	fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+	script := "echo line1\necho line2"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "positional multiline regression",
+		"--",
+		"bash", "-c", script,
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v", err)
+	}
+	if fixture.runCount != 1 {
+		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	}
+	want := "'bash' '-c' 'echo line1\necho line2'"
+	if got := fixture.commands[0]; got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+
+	if want, got := "line1\nline2\n", runBashCommandCapturingScriptStdout(t, fixture.commands[0]); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestRunExecuteBashPositionalMultiElementReconstructsCdChain(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+	script := "cd /tmp && pwd && cd /elsewhere && pwd"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "positional cd-chain regression",
+		"--",
+		"bash", "-c", script,
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v", err)
+	}
+	want := "'bash' '-c' 'cd /tmp && pwd && cd /elsewhere && pwd'"
+	if got := fixture.commands[0]; got != want {
+		t.Fatalf("command = %q, want %q", got, want)
+	}
+}
+
+// TestRunExecuteBashPositionalMultiElementRealEndToEndFileEffect runs the
+// full production pipeline (parsing, policy, digest, approval) for a
+// multi-element positional command, captures the exact commandText it
+// produced, and then executes THAT captured text through the real
+// runBashCommand (not a re-derivation in the test), asserting a genuine
+// file-system effect -- the strongest possible proof the reconstruction is
+// correct end to end (#838 I-3). It checks for a file effect and an exit
+// code rather than exact stdout, since bash -lc runs as a login shell and
+// the caller's own shell profile may print unrelated banner text to stdout.
+func TestRunExecuteBashPositionalMultiElementRealEndToEndFileEffect(t *testing.T) {
+	fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+	marker := filepath.Join(t.TempDir(), "execute-bash-838-marker.txt")
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "real end-to-end multi-element file effect",
+		"--",
+		"bash", "-c", fmt.Sprintf("touch %s", posixSingleQuote(marker)),
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v", err)
+	}
+	if len(fixture.commands) != 1 {
+		t.Fatalf("commands = %#v, want exactly one", fixture.commands)
+	}
+
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("marker file already exists before the real execution; test setup is wrong")
+	}
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runBashCommand(fixture.commands[0], &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("runBashCommand() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0 (stderr: %s)", exitCode, stderr.String())
+	}
+	if _, statErr := os.Stat(marker); statErr != nil {
+		t.Fatalf("marker file was not created by the reconstructed command: %v", statErr)
+	}
+}
+
+// TestRunExecuteBashPositionalRealRunPreservesByteExactArgv is the #838 R1
+// real-run fixture: for each argument vector it drives the full production
+// pipeline, captures the exact commandText it produced, asserts that text
+// against a hand-written expectation (independent of posixSingleQuote), then
+// executes THAT captured text through the real runBashCommand into a tiny
+// recorder program that writes argc and every argument NUL-terminated to a
+// file. The recorded argc and bytes must equal the input argv exactly, so any
+// re-splitting, dropped empty argument, expansion or operator interpretation
+// shows up as a boundary or content difference.
+func TestRunExecuteBashPositionalRealRunPreservesByteExactArgv(t *testing.T) {
+	recorder := filepath.Join(t.TempDir(), "record-argv.sh")
+	script := "#!/bin/sh\nprintf '%s\\0' \"$#\" \"$@\" > \"$ARGV_RECORD_OUT\"\n"
+	if err := os.WriteFile(recorder, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(recorder) error = %v", err)
+	}
+	quotedRecorder := "'" + recorder + "'"
+
+	cases := []struct {
+		name        string
+		args        []string
+		wantCommand string
+	}{
+		{
+			name:        "empty later argument keeps its boundary",
+			args:        []string{"a", "", "b"},
+			wantCommand: quotedRecorder + " 'a' '' 'b'",
+		},
+		{
+			name:        "single quote",
+			args:        []string{"it's"},
+			wantCommand: quotedRecorder + " 'it'\\''s'",
+		},
+		{
+			name:        "double quotes and backslashes",
+			args:        []string{`say "hi" \n \\ \$HOME`},
+			wantCommand: quotedRecorder + ` 'say "hi" \n \\ \$HOME'`,
+		},
+		{
+			name:        "newline tab and carriage return inside one argument",
+			args:        []string{"l1\nl2\tcol\rcr", "second"},
+			wantCommand: quotedRecorder + " 'l1\nl2\tcol\rcr' 'second'",
+		},
+		{
+			name:        "unicode",
+			args:        []string{"日本語", "é ü"},
+			wantCommand: quotedRecorder + " '日本語' 'é ü'",
+		},
+		{
+			name:        "leading dash arguments stay arguments",
+			args:        []string{"-n", "--flag=x", "-"},
+			wantCommand: quotedRecorder + " '-n' '--flag=x' '-'",
+		},
+		{
+			name:        "shell operators in their own arguments stay literal",
+			args:        []string{";", "&&", "|", "||", ">", "$(echo pwned)", "`echo pwned`", "$HOME", "*", "~"},
+			wantCommand: quotedRecorder + " ';' '&&' '|' '||' '>' '$(echo pwned)' '`echo pwned`' '$HOME' '*' '~'",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newExecuteBashFixtureWithBash(t, config.CommandApprovalPolicy{
+				Requester: "worker",
+				Label:     "low-risk",
+				Category:  "diagnostic",
+				Mode:      "advisory",
+			})
+			out := filepath.Join(t.TempDir(), "argv.bin")
+			t.Setenv("ARGV_RECORD_OUT", out)
+
+			cliArgs := append([]string{"--label", "low-risk", "--category", "diagnostic", "--mode", "advisory", "--reason", "byte-exact argv", "--", recorder}, tc.args...)
+			if err := runExecuteBashWithContext(fixture.context(), fixture.args(cliArgs...)); err != nil {
+				t.Fatalf("runExecuteBashWithContext() error = %v", err)
+			}
+			if len(fixture.commands) != 1 {
+				t.Fatalf("commands = %#v, want exactly one", fixture.commands)
+			}
+			if got := fixture.commands[0]; got != tc.wantCommand {
+				t.Fatalf("commandText = %q, want %q", got, tc.wantCommand)
+			}
+
+			var stdout, stderr bytes.Buffer
+			exitCode, err := runBashCommand(fixture.commands[0], &stdout, &stderr)
+			if err != nil {
+				t.Fatalf("runBashCommand() error = %v", err)
+			}
+			if exitCode != 0 {
+				t.Fatalf("exitCode = %d, want 0 (stderr: %s)", exitCode, stderr.String())
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatalf("ReadFile(%s) error = %v (the recorder never ran, so the argv did not reach it)", out, err)
+			}
+			fields := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+			if wantArgc := fmt.Sprintf("%d", len(tc.args)); fields[0] != wantArgc {
+				t.Fatalf("recorded argc = %q, want %q (recorded fields: %q)", fields[0], wantArgc, fields)
+			}
+			got := fields[1:]
+			if len(tc.args) == 0 {
+				got = nil
+			}
+			if len(got) != len(tc.args) {
+				t.Fatalf("recorded %d arguments %q, want %d %q", len(got), got, len(tc.args), tc.args)
+			}
+			for i := range tc.args {
+				if got[i] != tc.args[i] {
+					t.Fatalf("argument %d = %q, want byte-exact %q", i, got[i], tc.args[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRunExecuteBashPositionalArgvHashIsDeterministic(t *testing.T) {
+	buildCommandText := func(t *testing.T) string {
+		t.Helper()
+		fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+			Requester: "worker",
+			Label:     "low-risk",
+			Category:  "diagnostic",
+			Mode:      "advisory",
+		})
+		err := runExecuteBashWithContext(fixture.context(), fixture.args(
+			"--label", "low-risk",
+			"--category", "diagnostic",
+			"--mode", "advisory",
+			"--reason", "positional determinism regression",
+			"--",
+			"bash", "-c", "cd /tmp && pwd",
+		))
+		if err != nil {
+			t.Fatalf("runExecuteBashWithContext() error = %v", err)
+		}
+		if len(fixture.commands) != 1 {
+			t.Fatalf("commands = %#v, want exactly one", fixture.commands)
+		}
+		return fixture.commands[0]
+	}
+
+	first := buildCommandText(t)
+	second := buildCommandText(t)
+	if first != second {
+		t.Fatalf("reconstructed command text is not deterministic: %q vs %q", first, second)
+	}
+	if commandDigest(first) != commandDigest(second) {
+		t.Fatalf("commandDigest is not deterministic for identical positional argv")
+	}
+}
+
+// TestRunExecuteBashPositionalDigestChangesForMultiElementOnly documents the
+// #838 upgrade/migration note (I-4): a two-or-more-element positional
+// invocation now has a different commandText and digest than the pre-#838
+// unquoted join would have produced, so a pending approval minted before
+// upgrading needs a fresh request. A one-element invocation is unaffected,
+// since joining a single element never differs between the old and new
+// logic.
+func TestRunExecuteBashPositionalDigestChangesForMultiElementOnly(t *testing.T) {
+	legacyDigest := func(argv []string) string {
+		return commandDigest(strings.TrimSpace(strings.Join(argv, " ")))
+	}
+	productionDigest := func(t *testing.T, argv []string) string {
+		t.Helper()
+		fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+			Requester: "worker",
+			Label:     "low-risk",
+			Category:  "diagnostic",
+			Mode:      "advisory",
+		})
+		args := fixture.args(
+			"--label", "low-risk",
+			"--category", "diagnostic",
+			"--mode", "advisory",
+			"--reason", "digest-change evidence",
+			"--",
+		)
+		args = append(args, argv...)
+		if err := runExecuteBashWithContext(fixture.context(), args); err != nil {
+			t.Fatalf("runExecuteBashWithContext() error = %v", err)
+		}
+		return commandDigest(fixture.commands[0])
+	}
+
+	t.Run("multi-element digest changes", func(t *testing.T) {
+		argv := []string{"bash", "-c", "cd /tmp && pwd"}
+		legacy := legacyDigest(argv)
+		current := productionDigest(t, argv)
+		if legacy == current {
+			t.Fatalf("expected the multi-element digest to change after #838, got the same digest %q for both old and new reconstruction", legacy)
+		}
+	})
+
+	t.Run("single-element digest is unchanged", func(t *testing.T) {
+		argv := []string{"echo one && echo two"}
+		legacy := legacyDigest(argv)
+		current := productionDigest(t, argv)
+		if legacy != current {
+			t.Fatalf("expected the single-element digest to stay the same, got legacy=%q current=%q", legacy, current)
+		}
+	})
+}
+
+// TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest is the #838 R2
+// upgrade-boundary fixture. An approval thread minted BEFORE the upgrade
+// carries the digest of the old unquoted join. After the upgrade the same
+// multi-element invocation reconstructs different command text, so reusing the
+// old thread id must end as digest_mismatch with zero runs and no new mint,
+// whether the old thread is still pending or already approved. A thread minted
+// for the reconstructed text keeps hash continuity and runs exactly once.
+func TestRunExecuteBashPositionalUpgradeBoundaryOldJoinedDigest(t *testing.T) {
+	argv := []string{"bash", "-c", "cd /tmp && pwd"}
+	// Hand-written pre-#838 text: strings.Join(argv, " ") with no quoting.
+	oldJoinedText := "bash -c cd /tmp && pwd"
+	// Hand-written post-#838 text: every element POSIX-single-quoted.
+	reconstructedText := "'bash' '-c' 'cd /tmp && pwd'"
+	// Expected digests are computed here, independently of the production
+	// commandDigest helper, straight from the exact command text.
+	independentDigest := func(text string) string {
+		sum := sha256.Sum256([]byte(text))
+		return "sha256:" + hex.EncodeToString(sum[:])
+	}
+	oldDigest, newDigest := independentDigest(oldJoinedText), independentDigest(reconstructedText)
+	if oldDigest == newDigest {
+		t.Fatal("test setup: old joined text and reconstructed text must have different digests")
+	}
+	// recordedHashes returns every command_hash journaled for one event type.
+	recordedHashes := func(t *testing.T, fixture *executeBashFixture, eventType string) []string {
+		t.Helper()
+		var hashes []string
+		for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+			if event.Type != eventType {
+				continue
+			}
+			var payload struct {
+				CommandHash string `json:"command_hash"`
+			}
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("Unmarshal(%s payload): %v", eventType, err)
+			}
+			hashes = append(hashes, payload.CommandHash)
+		}
+		return hashes
+	}
+	assertAllHashes := func(t *testing.T, fixture *executeBashFixture, eventType, want string) {
+		t.Helper()
+		hashes := recordedHashes(t, fixture, eventType)
+		if len(hashes) == 0 {
+			t.Fatalf("no %s event recorded", eventType)
+		}
+		for i, got := range hashes {
+			if got != want {
+				t.Fatalf("%s[%d].command_hash = %q, want independent SHA-256 %q", eventType, i, got, want)
+			}
+		}
+	}
+
+	policyConfig := config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	}
+	policy := resolvedCommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Mode:      "blocking",
+		Label:     "protected",
+		Category:  "release",
+		TTL:       defaultCommandApprovalTTL,
+	}
+	requestedEvents := func(t *testing.T, fixture *executeBashFixture) int {
+		t.Helper()
+		count := 0
+		for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+			if event.Type == journal.CommandApprovalRequestedEventType {
+				count++
+			}
+		}
+		return count
+	}
+	runPositional := func(fixture *executeBashFixture, extra ...string) error {
+		args := fixture.args(append([]string{"--label", "protected", "--category", "release"}, extra...)...)
+		args = append(args, "--")
+		args = append(args, argv...)
+		return runExecuteBashWithContext(fixture.context(), args)
+	}
+
+	for _, state := range []struct {
+		name string
+		mint func(*testing.T, *executeBashFixture) string
+	}{
+		{
+			name: "pending thread minted with the old joined digest",
+			mint: func(t *testing.T, f *executeBashFixture) string {
+				return f.appendCommandApprovalRequest(t, policy, oldJoinedText, f.now.Add(15*time.Minute))
+			},
+		},
+		{
+			name: "approved thread minted with the old joined digest",
+			mint: func(t *testing.T, f *executeBashFixture) string {
+				return f.appendCommandApproval(t, policy, oldJoinedText, journal.ApprovalDecisionApproved, "orchestrator", f.now.Add(15*time.Minute))
+			},
+		},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			fixture := newExecuteBashFixture(t, policyConfig)
+			oldThreadID := state.mint(t, fixture)
+			before := requestedEvents(t, fixture)
+			// The old thread stores the independent SHA-256 of the OLD joined
+			// text, which differs from the digest of the reconstructed text.
+			assertAllHashes(t, fixture, journal.CommandApprovalRequestedEventType, oldDigest)
+
+			err := runPositional(fixture, "--thread-id", oldThreadID)
+			var outcomeErr commandApprovalOutcomeError
+			if !errors.As(err, &outcomeErr) || outcomeErr.status != "digest_mismatch" {
+				t.Fatalf("error = %#v, want commandApprovalOutcomeError{status: digest_mismatch}", err)
+			}
+			if fixture.runCount != 0 {
+				t.Fatalf("runCount = %d, want 0; the reconstructed command must not run under an old-digest approval", fixture.runCount)
+			}
+			if after := requestedEvents(t, fixture); after != before {
+				t.Fatalf("command_approval_requested events = %d, want unchanged %d (digest_mismatch must never mint)", after, before)
+			}
+			// Nothing was minted, decided, executed or completed for the new
+			// digest: every recorded request hash is still the old one, and no
+			// execution/completion event exists.
+			assertAllHashes(t, fixture, journal.CommandApprovalRequestedEventType, oldDigest)
+			for _, eventType := range []string{journal.CommandExecutionClaimedEventType, journal.CommandExecutionCompletedEventType} {
+				if hashes := recordedHashes(t, fixture, eventType); len(hashes) != 0 {
+					t.Fatalf("%s events = %v, want none after digest_mismatch", eventType, hashes)
+				}
+			}
+			// The refusal itself is audited: an execution decision may carry the
+			// attempted (new) digest, but only as a digest_mismatch refusal, never
+			// as an allowed run.
+			for _, event := range replayCommandEvents(t, fixture.sessionDir) {
+				if event.Type != journal.CommandExecutionDecidedEventType {
+					continue
+				}
+				var decided struct {
+					CommandHash string `json:"command_hash"`
+					Decision    string `json:"decision"`
+					Reason      string `json:"reason"`
+				}
+				if err := json.Unmarshal(event.Payload, &decided); err != nil {
+					t.Fatalf("Unmarshal(execution decision payload): %v", err)
+				}
+				if decided.CommandHash != newDigest {
+					continue
+				}
+				if decided.Decision != "blocked" {
+					t.Fatalf("execution decision for the NEW digest %q = %q under an old-digest approval, want blocked", decided.CommandHash, decided.Decision)
+				}
+				if !strings.Contains(strings.ToLower(decided.Reason), "digest") {
+					t.Fatalf("blocked execution decision reason = %q, want it to name the digest mismatch", decided.Reason)
+				}
+			}
+		})
+	}
+
+	t.Run("thread minted for the reconstructed text keeps hash continuity and runs once", func(t *testing.T) {
+		fixture := newExecuteBashFixture(t, policyConfig)
+		fixture.appendCommandApproval(t, policy, reconstructedText, journal.ApprovalDecisionApproved, "orchestrator", fixture.now.Add(15*time.Minute))
+		before := requestedEvents(t, fixture)
+
+		if err := runPositional(fixture); err != nil {
+			t.Fatalf("runExecuteBashWithContext() error = %v", err)
+		}
+		if fixture.runCount != 1 {
+			t.Fatalf("runCount = %d, want exactly 1", fixture.runCount)
+		}
+		if got := fixture.commands[0]; got != reconstructedText {
+			t.Fatalf("command = %q, want %q", got, reconstructedText)
+		}
+		if after := requestedEvents(t, fixture); after != before {
+			t.Fatalf("command_approval_requested events = %d, want unchanged %d (an approved matching thread must not mint)", after, before)
+		}
+		// Hash continuity: the request, the approval decision, the execution
+		// decision and the completion record all carry the independent SHA-256
+		// of the exact reconstructed command text.
+		for _, eventType := range []string{
+			journal.CommandApprovalRequestedEventType,
+			journal.CommandApprovalDecidedEventType,
+			journal.CommandExecutionDecidedEventType,
+			journal.CommandExecutionCompletedEventType,
+		} {
+			assertAllHashes(t, fixture, eventType, newDigest)
+		}
+	})
+}
+
+// #838 I-2: reject malformed positional input before any digest, thread, or
+// approval-request event is produced.
+
+func TestRunExecuteBashPositionalRejectsAllEmptyCommand(t *testing.T) {
+	cases := []struct {
+		name       string
+		positional []string
+	}{
+		{name: "no positional arguments", positional: nil},
+		{name: "one empty element", positional: []string{""}},
+		{name: "two empty elements", positional: []string{"", ""}},
+		{name: "one whitespace-only element", positional: []string{"   "}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+				Requester: "worker",
+				Label:     "low-risk",
+				Category:  "diagnostic",
+				Mode:      "advisory",
+			})
+			args := fixture.args(
+				"--label", "low-risk",
+				"--category", "diagnostic",
+				"--mode", "advisory",
+				"--reason", "reject all-empty or blank positional command",
+				"--",
+			)
+			args = append(args, tc.positional...)
+
+			err := runExecuteBashWithContext(fixture.context(), args)
+			if err == nil {
+				t.Fatal("runExecuteBashWithContext() error = nil, want a rejection")
+			}
+			if fixture.runCount != 0 {
+				t.Fatalf("runCount = %d, want 0", fixture.runCount)
+			}
+			assertNoCommandApprovalRequestedEvent(t, fixture.sessionDir)
+		})
+	}
+}
+
+func TestRunExecuteBashPositionalRejectsEmptyFirstElement(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "reject empty first positional element",
+		"--", "", "echo", "hi",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want a rejection for an empty first positional element")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+	assertNoCommandApprovalRequestedEvent(t, fixture.sessionDir)
+}
+
+func TestRunExecuteBashPositionalRejectsNULByte(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "reject a NUL byte in positional argv",
+		"--", "echo", "hi\x00there",
+	))
+	if err == nil {
+		t.Fatal("runExecuteBashWithContext() error = nil, want a rejection for a NUL byte in positional argv")
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
+	}
+	assertNoCommandApprovalRequestedEvent(t, fixture.sessionDir)
+}
+
+func assertNoCommandApprovalRequestedEvent(t *testing.T, sessionDir string) {
+	t.Helper()
+	for _, event := range replayCommandEvents(t, sessionDir) {
+		if event.Type == journal.CommandApprovalRequestedEventType {
+			t.Fatalf("unexpected command approval request event recorded: %s", event.Payload)
+		}
+	}
+}
+
+func TestRunExecuteBashCommandFlagTextAndHashUnchangedByPositionalFix(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+	commandText := "echo raw-command-untouched-by-838-fix"
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "--command path must stay unchanged except for trimming",
+		"--command", commandText,
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v", err)
+	}
+	if got := fixture.commands[0]; got != commandText {
+		t.Fatalf("command = %q, want unchanged %q (the #838 fix must only affect the positional fallback path)", got, commandText)
+	}
+	if got, want := commandDigest(fixture.commands[0]), commandDigest(commandText); got != want {
+		t.Fatalf("commandDigest = %q, want %q", got, want)
+	}
+}
+
+// TestRunExecuteBashCommandFlagIsTrimmedNotVerbatim locks in #838 I-4's
+// documentation correction: --command's value is trimmed of surrounding
+// whitespace, not used byte-for-byte as given.
+func TestRunExecuteBashCommandFlagIsTrimmedNotVerbatim(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Label:     "low-risk",
+		Category:  "diagnostic",
+		Mode:      "advisory",
+	})
+
+	err := runExecuteBashWithContext(fixture.context(), fixture.args(
+		"--label", "low-risk",
+		"--category", "diagnostic",
+		"--mode", "advisory",
+		"--reason", "--command is trimmed",
+		"--command", "  echo hi  ",
+	))
+	if err != nil {
+		t.Fatalf("runExecuteBashWithContext() error = %v", err)
+	}
+	if got, want := fixture.commands[0], "echo hi"; got != want {
+		t.Fatalf("command = %q, want trimmed %q", got, want)
+	}
 }
 
 // --- #831 REVIEW-831-R0 F-1 closure: cross-session principal binding ---

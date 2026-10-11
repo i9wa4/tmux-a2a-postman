@@ -150,11 +150,11 @@ func TestSocketClientSessionSnapshotUsesHerdrLineProtocol(t *testing.T) {
 	if snapshot.Panes[0].ID != "pane-1" || snapshot.Panes[0].TerminalID != "terminal-1" {
 		t.Fatalf("pane = %#v, want pane_id and terminal_id from Herdr snapshot", snapshot.Panes[0])
 	}
-	if snapshot.Workspaces[0].Metadata["postman.session"] != "work" {
-		t.Fatalf("workspace metadata = %#v, want postman.session token preserved", snapshot.Workspaces[0].Metadata)
+	if snapshot.Workspaces[0].Metadata["postman_session"] != "work" {
+		t.Fatalf("workspace metadata = %#v, want postman_session token preserved", snapshot.Workspaces[0].Metadata)
 	}
-	if snapshot.Panes[0].Metadata["postman.node"] != "worker" {
-		t.Fatalf("pane metadata = %#v, want postman.node token preserved", snapshot.Panes[0].Metadata)
+	if snapshot.Panes[0].Metadata["postman_node"] != "worker" {
+		t.Fatalf("pane metadata = %#v, want postman_node token preserved", snapshot.Panes[0].Metadata)
 	}
 	if snapshot.Envelope != herdr082SchemaEnvelope {
 		t.Fatalf("envelope = %#v, want negotiated compatibility envelope", snapshot.Envelope)
@@ -220,16 +220,16 @@ func TestSocketClientReadProcessAndWritesUseStrictTaggedResults(t *testing.T) {
 			return client.SendPaneKey(ctx, "pane-1", multiplexer.HerdrKeySubmit)
 		}},
 		{name: "set pane metadata", run: func(ctx context.Context) (multiplexer.HerdrWriteResult, error) {
-			return client.SetPaneMetadata(ctx, "pane-1", "postman.node", "worker")
+			return client.SetPaneMetadata(ctx, "pane-1", "postman_node", "worker")
 		}},
 		{name: "clear pane metadata", run: func(ctx context.Context) (multiplexer.HerdrWriteResult, error) {
-			return client.ClearPaneMetadata(ctx, "pane-1", "postman.node")
+			return client.ClearPaneMetadata(ctx, "pane-1", "postman_node")
 		}},
 		{name: "set workspace metadata", run: func(ctx context.Context) (multiplexer.HerdrWriteResult, error) {
-			return client.SetWorkspaceMetadata(ctx, "workspace-1", "postman.session", "work")
+			return client.SetWorkspaceMetadata(ctx, "workspace-1", "postman_session", "work")
 		}},
 		{name: "clear workspace metadata", run: func(ctx context.Context) (multiplexer.HerdrWriteResult, error) {
-			return client.ClearWorkspaceMetadata(ctx, "workspace-1", "postman.session")
+			return client.ClearWorkspaceMetadata(ctx, "workspace-1", "postman_session")
 		}},
 	}
 	for _, call := range writeCalls {
@@ -259,16 +259,16 @@ func TestSocketClientReadProcessAndWritesUseStrictTaggedResults(t *testing.T) {
 	}
 	assertRequestParams(t, <-requests, "ping", map[string]any{})
 	setPaneParams := assertRequestParams(t, <-requests, "pane.report_metadata", map[string]any{"pane_id": "pane-1", "source": "tmux-a2a-postman"})
-	assertTokenValue(t, setPaneParams, "postman.node", "worker")
+	assertTokenValue(t, setPaneParams, "postman_node", "worker")
 	assertRequestParams(t, <-requests, "ping", map[string]any{})
 	clearPaneParams := assertRequestParams(t, <-requests, "pane.report_metadata", map[string]any{"pane_id": "pane-1", "source": "tmux-a2a-postman"})
-	assertTokenValue(t, clearPaneParams, "postman.node", nil)
+	assertTokenValue(t, clearPaneParams, "postman_node", nil)
 	assertRequestParams(t, <-requests, "ping", map[string]any{})
 	setWorkspaceParams := assertRequestParams(t, <-requests, "workspace.report_metadata", map[string]any{"workspace_id": "workspace-1", "source": "tmux-a2a-postman"})
-	assertTokenValue(t, setWorkspaceParams, "postman.session", "work")
+	assertTokenValue(t, setWorkspaceParams, "postman_session", "work")
 	assertRequestParams(t, <-requests, "ping", map[string]any{})
 	clearWorkspaceParams := assertRequestParams(t, <-requests, "workspace.report_metadata", map[string]any{"workspace_id": "workspace-1", "source": "tmux-a2a-postman"})
-	assertTokenValue(t, clearWorkspaceParams, "postman.session", nil)
+	assertTokenValue(t, clearWorkspaceParams, "postman_session", nil)
 }
 
 func TestSocketClientRejectsMalformedTaggedResults(t *testing.T) {
@@ -389,7 +389,7 @@ func TestSocketClientSnapshotTokensPublishThroughDiscovery(t *testing.T) {
 	}
 	item := discovery.Layout.Groups[0].Items[0]
 	if item.LogicalName != "worker" || item.ID != multiplexer.HerdrPaneID("pane-1") {
-		t.Fatalf("layout item = %#v, want postman.node token published as worker pane", item)
+		t.Fatalf("layout item = %#v, want postman_node token published as worker pane", item)
 	}
 	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "pane-1" {
 		t.Fatalf("focused_pane_id = %q, want token-shaped supported pane", got)
@@ -414,8 +414,8 @@ func TestSocketClientDiscoveryQuarantinesDecodedPaneEvidence(t *testing.T) {
 			name: "stale pane",
 			snapshot: strings.Replace(
 				herdr082SnapshotFixture,
-				`"tokens":{"postman.node":"worker"}`,
-				`"tokens":{"postman.node":"worker"},"stale":true,"stale_reason":"missing terminal process"`,
+				`"tokens":{"postman_node":"worker"}`,
+				`"tokens":{"postman_node":"worker"},"stale":true,"stale_reason":"missing terminal process"`,
 				1,
 			),
 			wantStale: []multiplexer.ResourceID{
@@ -518,7 +518,7 @@ func TestSocketClientCompatibilityBoundsHangingSchemaCommand(t *testing.T) {
 	}
 }
 
-const herdr082SnapshotFixture = `{"version":"0.8.2","protocol":20,"focused_workspace_id":"workspace-1","focused_tab_id":"tab-1","focused_pane_id":"pane-1","workspaces":[{"workspace_id":"workspace-1","number":1,"label":"work","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"tab-1","agent_status":"working","tokens":{"postman.session":"work"}}],"tabs":[{"tab_id":"tab-1","workspace_id":"workspace-1","number":1,"label":"main","focused":true,"pane_count":1,"agent_status":"working"}],"panes":[{"pane_id":"pane-1","terminal_id":"terminal-1","workspace_id":"workspace-1","tab_id":"tab-1","focused":true,"agent_status":"working","revision":7,"tokens":{"postman.node":"worker"}}],"layouts":[],"agents":[]}`
+const herdr082SnapshotFixture = `{"version":"0.8.2","protocol":20,"focused_workspace_id":"workspace-1","focused_tab_id":"tab-1","focused_pane_id":"pane-1","workspaces":[{"workspace_id":"workspace-1","number":1,"label":"work","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"tab-1","agent_status":"working","tokens":{"postman_session":"work"}}],"tabs":[{"tab_id":"tab-1","workspace_id":"workspace-1","number":1,"label":"main","focused":true,"pane_count":1,"agent_status":"working"}],"panes":[{"pane_id":"pane-1","terminal_id":"terminal-1","workspace_id":"workspace-1","tab_id":"tab-1","focused":true,"agent_status":"working","revision":7,"tokens":{"postman_node":"worker"}}],"layouts":[],"agents":[]}`
 
 func herdr082PongFixtureWithID(id string) string {
 	return `{"id":"` + id + `","result":{"type":"pong","version":"0.8.2","protocol":20,"capabilities":{"live_handoff":true}}}` + "\n"
