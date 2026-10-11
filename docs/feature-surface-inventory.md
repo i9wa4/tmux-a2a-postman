@@ -17,7 +17,7 @@ Captures the state of `main` HEAD at time of writing.
 | `help [topic]`          | **Core**            | Help overview and topic pages                                       |
 | `inspect-input`         | Optional/diagnostic | Inspect open reply-required work by id                              |
 | `inspect-daemon-submit` | Optional/diagnostic | Inspect daemon-submit timeout state by id                           |
-| `inspect-message`       | Optional/diagnostic | Inspect persisted message content by id                             |
+| `inspect-message`       | Optional/diagnostic | Inspect claimed (popped) message content by id                      |
 | `capture-profile`       | Optional/diagnostic | Capture one explicit heap or goroutine profile from running daemon  |
 | `send`                  | Deprecated/disabled | Body-argv disabled; returns shell-expansion safety guidance only    |
 
