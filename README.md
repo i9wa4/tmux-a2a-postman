@@ -345,7 +345,9 @@ complete archived Markdown body before any handling, routing, reply, status
 decision, or no-action or no-op decision. `messageType: ping`,
 `replyPolicy: none`, and other metadata do not allow skipping the body.
 Truncated output from bounded stdout does not count as a complete read. To
-inspect archived mail later, use `inspect-message --id <message_id>`.
+inspect mail you already popped later, use `inspect-message --id <message_id>`;
+it never returns unread inbox mail (status `not_claimed`), so consume that with
+`pop` first.
 
 `send-heredoc` uses an atomic direct handoff to the session `post/` queue and
 reports `submit_path: post` after that handoff succeeds. For owned live

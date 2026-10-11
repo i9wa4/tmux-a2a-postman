@@ -22,8 +22,9 @@ MUST load after sending or live mailbox/session work; first contact uses
 3. Bounded status is only for explicit user status request, watchdog boundary,
    or concrete delivery trouble; never use status as a heartbeat.
 4. `tmux-a2a-postman inspect-message --id <message_id>` is read-only
-   historical lookup. Use `--path` for the stored Markdown path and `--body`
-   for sender-authored body text.
+   historical lookup of mail you already popped. Use `--path` for the stored
+   Markdown path and `--body` for sender-authored body text. It refuses
+   unpopped inbox mail (status `not_claimed`); consume that with `pop`.
 5. After every successful `pop` with `status=message`, read the complete
    archived Markdown body before any handling, routing, reply, status decision,
    or no-action or no-op decision. `messageType: ping`, `replyPolicy: none`,
