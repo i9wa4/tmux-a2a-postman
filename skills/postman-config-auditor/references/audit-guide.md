@@ -71,8 +71,9 @@ Important merge rules:
 - Confirm every intended route appears as a bidirectional `---` edge.
 - Confirm Mermaid `postman.md` edges use `---`, not arrows such as `-->`.
 - Confirm the human-facing node is marked in the Mermaid graph with
-  `class <node> ui_node` or `:::ui_node`, unless frontmatter intentionally
-  overrides or clears `ui_node`.
+  `class <node> interface_node` or `:::interface_node`, unless frontmatter
+  intentionally overrides or clears `interface_node`. Flag any remaining
+  `ui_node` form: it is ignored, so the node it names is NOT designated.
 - Confirm missing routes explain dead-letter behavior before blaming role
   templates.
 - If tree aliases such as `@parent`, `@parent/<node>`,
@@ -97,8 +98,11 @@ Important merge rules:
   frontmatter.
 - Confirm global frontmatter stays within the supported surface: scalar
   settings plus `skill_path` path entries.
-- Prefer keeping `ui_node` in the Mermaid `edges` graph. Treat frontmatter
-  `ui_node` as an explicit override.
+- Prefer keeping `interface_node` in the Mermaid `edges` graph. Treat
+  frontmatter `interface_node` as an explicit override. When `get-status` shows
+  an `interface_node` object with `configured: false`, no interface node is
+  configured: nothing is exempted from the verdict gate or used as an escalation
+  push target.
 - For normal role catalogs, confirm relative paths resolve from the declaring
   `postman.md` directory, `~/...` points to the current user's home directory,
   and each selected skill name maps to a subdirectory containing `SKILL.md`.

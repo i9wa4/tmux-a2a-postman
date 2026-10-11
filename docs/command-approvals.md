@@ -32,7 +32,8 @@ effective approval TTL (#831 D6).
 
 `reviewer` is a plain audit label with no topology meaning.
 `command_approver_node` is different: it names one real, configured node (same
-family as `ui_node`) by marking that node in the `postman.md` Mermaid graph:
+family as `interface_node`) by marking that node in the `postman.md` Mermaid
+graph:
 
 ````markdown
 ## `edges`

@@ -64,7 +64,8 @@ inspect-daemon-submit
     tmux-a2a-postman inspect-daemon-submit --id <request_id>
 
 inspect-message
-  Inspect persisted message metadata or content by message_id.
+  Inspect claimed (popped) message metadata or content by message_id.
+  Unread inbox mail is refused with status not_claimed.
   Output: JSON by default; --path and --body print focused text.
   Usage:
     tmux-a2a-postman inspect-message --id <message_id>

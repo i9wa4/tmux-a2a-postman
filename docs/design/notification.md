@@ -111,7 +111,7 @@ The remaining notification-related public settings are:
 | `message_footer`           | Reply guidance rendered before the sender body separator    |
 | `draft_template`           | Structured envelope for stored `send-heredoc` Markdown      |
 | `daemon_message_template`  | Structured envelope for daemon-originated PING mail         |
-| `ui_node`                  | Optional target filter for startup auto-PING                |
+| `interface_node`           | Human-facing node; no default, omitted = none (fail closed) |
 | `auto_enable_new_sessions` | Auto-enable sessions with configured node panes             |
 
 Stored message Markdown is an envelope. The default `send-heredoc` template
@@ -161,16 +161,21 @@ No separate claim/open alias exists today. The command name `pop` remains the
 canonical state-machine operation; the user-facing wording and `pop` JSON
 fields carry the clearer claim/open/message-file semantics.
 
-`ui_node` is not a general escalation channel. It is normally set by marking a
-node in the `postman.md` Mermaid graph with `class <node> ui_node`; inline
-`:::ui_node`, frontmatter, and TOML remain explicit override surfaces. When
-empty, startup auto-PING may target all discovered nodes. When explicitly set,
-startup auto-PING is limited to matching roles discovered in enabled sessions.
+`interface_node` is not a general escalation channel. It is normally set by
+marking a node in the `postman.md` Mermaid graph with
+`class <node> interface_node`; inline `:::interface_node`, frontmatter
+`interface_node:`, and TOML `[postman] interface_node` are the other explicit
+surfaces (frontmatter wins over the Mermaid class, which wins over TOML). There
+is no embedded default and no `ui_node` alias: the legacy `ui_node` forms are
+warned about and ignored. When empty or unset, startup auto-PING may target all
+discovered nodes, and no node is exempted from the verdict gate or used as an
+escalation push target (fail closed). When explicitly set, startup auto-PING is
+limited to matching roles discovered in enabled sessions.
 The narrowing is intentional startup-noise control: an explicit non-empty
-`ui_node` declares the human-facing bootstrap entry point, so the initial daemon
-PING does not fan out to non-UI agents and consume context before a human or
-operator involves them. Leaving `ui_node` unset or explicitly empty means no
-startup entry point was chosen, so startup auto-PING may fan out.
+`interface_node` declares the human-facing bootstrap entry point, so the initial
+daemon PING does not fan out to non-interface agents and consume context before
+a human or operator involves them. Leaving `interface_node` unset or explicitly
+empty means no startup entry point was chosen, so startup auto-PING may fan out.
 `auto_enable_new_sessions` defaults to true, so a single user daemon can
 discover project sessions that already have configured node panes.
 
