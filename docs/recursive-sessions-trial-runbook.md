@@ -1,16 +1,17 @@
-# Recursive Sessions: Validation Layers and Opt-In Trial Runbook
+# Recursive Sessions: Validation Layers and Opt-In Trial Outline
 
 Refs #768. This document separates two validation layers for the
 personal-organization model (top-level, owner/group, and repository sessions
-that each use the same role template with one mouthpiece) and gives the
-runbook for the second, opt-in layer.
+that each use the same node name and role text) and gives an OUTLINE for the
+second, opt-in layer. The outline is not yet an executable procedure; see
+section 3.
 
 ## 1. Two Layers, Two Kinds of Evidence
 
 | Layer                   | Measures                        | Needs a model | Where it lives                           |
 | ----------------------- | ------------------------------- | ------------- | ---------------------------------------- |
 | Deterministic scenario  | Postman transport and state     | No            | `go test` (see section 2)                |
-| Opt-in real-agent trial | Whether agents follow the rules | Yes           | This runbook (section 3), run by a human |
+| Opt-in real-agent trial | Whether agents follow the rules | Yes           | This outline (section 3), run by a human |
 
 A deterministic pass says the infrastructure routed and recorded correctly.
 It says nothing about whether real agents behave. A trial result says how
@@ -23,37 +24,53 @@ of infrastructure correctness.
 `internal/cli/tree_alias_exchange_test.go` uses the real producer
 (`send-heredoc --to <alias>`) and the real delivery consumer
 (`message.DeliverMessage`) across three registered levels. All three sessions
-use the same node name and the same template shape; only the session name,
+use the same node name and the same role text; only the session name,
 `workspace_tree` label and parent, and the edges differ.
 
 Covered:
 
 - `@parent`, `@parent/<node>`, `@child/<label>`, `@child/<session>`,
   `@child/<node>` (single child), and `@child/<label>/<node>` compile to the
-  declared relative and are delivered with exact `from`/`to`.
+  declared relative and are delivered with exact `from`/`to`; no other inbox,
+  post, draft, or dead-letter directory in any session holds anything.
 - Non-relatives (the root's parent, a grandchild, an unknown child, a leaf's
-  child, a malformed alias) are rejected with no draft left behind.
-- A four-hop request-down/result-up exchange stays inside the expected
-  inboxes: no cross-delivery between same-named mouthpieces and no
+  child) are rejected by the tree with the alias-layer reason, a malformed
+  alias with the alias syntax error, and the same holds when a direct
+  top-to-repo edge exists, so the tree alone refuses the send. A rejected send
+  leaves nothing behind in any session.
+- Four independent directed alias sends (down, down, up, up) stay inside the
+  expected inboxes: no cross-delivery between same-named nodes and no
   dead-letters.
 
 Not covered yet (explicitly open, not counted as passes):
 
+- Reply-slot return routing: the four sends above are plain sends with no
+  pop, `--reply-required`, `--reply-to`, or `--fills-input-request-id`
+  (hierarchical request/return linkage belongs to #765).
 - Scenarios that depend on `interface_node` (#764 slice A, #890), on
-  authorization (#624, #700), on hierarchical request/return linkage (#765),
-  on status and decision reporting (#766), or on the external human channel
-  (#767).
+  authorization (#624, #700), on status and decision reporting (#766), or on
+  the external human channel (#767).
 - Restart, timeout, late-response and duplicate-delivery recovery, reconnect,
   and loop-bound scenarios.
 - Anything involving a live daemon or real panes.
 
-## 3. Opt-In Real-Agent Trial
+## 3. Opt-In Real-Agent Trial (Outline Only)
 
-Run this only with an explicit decision to spend model time. Do not run it
-against the daemon or panes you use for real work, and do not write to any
-production or public surface as part of the trial.
+This section is an outline of what a trial must record and report. It is NOT
+a runnable procedure: the concrete, verified setup is later work. A runnable
+version must first specify, and verify against `tmux-a2a-postman help` on the
+version under test, at least:
 
-### 3.1. Provenance to record before starting
+- the configuration with `workspace_tree` and edges for three sessions;
+- a Postman base directory and tmux socket or namespace that are separate from
+  any daemon and panes used for real work;
+- the commands to start, inspect, and tear the trial down.
+
+Until that procedure exists and is verified, do not run a trial against the
+daemon or panes you use for real work, and do not write to any production or
+public surface as part of a trial.
+
+### 3.1. Provenance to record
 
 Record each item; write `unavailable` rather than leaving a gap.
 
@@ -67,18 +84,15 @@ Record each item; write `unavailable` rather than leaving a gap.
 - The workload: the literal request given at the top-level mouthpiece and its
   written acceptance criteria, fixed before the run.
 
-### 3.2. Procedure
+### 3.2. Shape of a run
 
-1. Start an isolated Postman context with three sessions registered as in
-   section 2. Use a scratch repository, not a real project.
-2. Give the workload to the top-level mouthpiece only. Do not message lower
-   levels directly; if you must, that is an intervention (section 3.3).
-3. Let the agents run to a result or to a decision request. Answer decision
-   requests through the top-level mouthpiece only.
-4. Stop at the first of: a returned result, an unresolved request that no
-   agent is working, or the time limit you set in advance.
-5. Collect the evidence bundle (section 3.4) before cleaning anything up.
-   Do not repair state by hand to make the report look better.
+1. Give the workload to the top-level mouthpiece only. Contacting a lower
+   level directly is an intervention (section 3.3).
+2. Answer decision requests through the top-level mouthpiece only.
+3. Stop at the first of: a returned result, an unresolved request that no
+   agent is working, or a time limit set in advance.
+4. Collect the evidence bundle (section 3.4) before cleaning anything up. Do
+   not repair state by hand to make the report look better.
 
 ### 3.3. Scoreboard
 
