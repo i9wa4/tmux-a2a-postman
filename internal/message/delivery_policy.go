@@ -1,6 +1,9 @@
 package message
 
-import "github.com/i9wa4/tmux-a2a-postman/internal/router"
+import (
+	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
+	"github.com/i9wa4/tmux-a2a-postman/internal/router"
+)
 
 type deliveryAction string
 
@@ -68,6 +71,9 @@ func planDeliveryPolicy(input deliveryPolicyInput) deliveryDecision {
 		return forgedSenderDecision()
 	}
 	if input.Info.From == "daemon" && input.DaemonSession != "" && input.SourceSessionName != input.DaemonSession {
+		return forgedSenderDecision()
+	}
+	if senderClaimsForeignSession(input.Info.From, input.SourceSessionName) {
 		return forgedSenderDecision()
 	}
 
@@ -200,6 +206,22 @@ func (input deliveryPolicyInput) evidencePresenceGateEligible() bool {
 		return false
 	}
 	return true
+}
+
+// senderClaimsForeignSession reports whether a post file names a sender that is
+// qualified with a session other than the session whose post/ directory holds
+// the file (M2-B1). Senders write into their own session's post/ and address
+// other sessions through the recipient, never through the sender field, so a
+// qualified sender naming a different session is always a forgery. This is a
+// purely syntactic comparison against the physical source session: it needs no
+// node discovery and runs before any routing, adjacency or session-enabled
+// check, so a forged B:node in A's post/ is never judged by B's edges or state.
+func senderClaimsForeignSession(from, sourceSessionName string) bool {
+	if from == "daemon" || sourceSessionName == "" {
+		return false
+	}
+	sessionName, _, qualified := nodeaddr.Split(from)
+	return qualified && sessionName != sourceSessionName
 }
 
 func forgedSenderDecision() deliveryDecision {
