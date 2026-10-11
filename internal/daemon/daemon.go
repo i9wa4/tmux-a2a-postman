@@ -59,6 +59,10 @@ var (
 	verdictGraceSeconds                            = defaultVerdictGraceSeconds
 	verdictDebtCap                                 = defaultVerdictDebtCap
 	verdictExemptInterfaceNode                     = "" // set from config; no built-in node name (#764, fail closed)
+	// verdictExemptOwnSession is the daemon's own session: the verdict-debt
+	// exemption applies to the interface node in THIS session only, never to a
+	// same-named peer's node (#624/#700 R2-2). Empty = unknown = nobody exempt.
+	verdictExemptOwnSession = ""
 )
 
 type filesystemWatcher interface {
@@ -279,6 +283,7 @@ func enforceVerdictGate(sessionDir, sender, filename, content string) error {
 		GraceSeconds:        verdictGraceSeconds,
 		DebtCap:             verdictDebtCap,
 		ExemptInterfaceNode: verdictExemptInterfaceNode,
+		ExemptOwnSession:    verdictExemptOwnSession,
 		RecordTimeout: func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error) {
 			return journal.RecordProcessMailboxPayloadIfAbsent(sessionDir, sessionName, projection.VerdictNoneTimeoutEventType, journal.VisibilityOperatorVisible, payload, equivalent, time.Now())
 		},
@@ -1229,6 +1234,7 @@ func runDaemonLoopWithWatcherEvents(
 		daemonSubmitLateResponseRetentionSeconds = cfg.DaemonSubmitLateResponseRetentionSeconds
 	}
 	configureVerdictGateFromConfig(cfg)
+	verdictExemptOwnSession = selfSession
 
 	// NOTE: Do not close(events) here. The channel is shared by multiple goroutines
 	// (UI pane monitoring, TUI commands handler, daemon loop). Closing it would cause

@@ -151,6 +151,26 @@ func ValidateConfig(cfg *Config) []ValidationError {
 				Severity: "error",
 			})
 		}
+		// Rule 4a: per-entry interface_node declaration (#624/#700). A peer
+		// declaration is a BARE node name; "session:node" is rejected so a
+		// declaration can never name another session's node. The same bare
+		// name across sessions is valid.
+		if declared := strings.TrimSpace(node.InterfaceNode); declared != "" {
+			switch {
+			case strings.Contains(declared, ":"):
+				errors = append(errors, ValidationError{
+					Field:    field + ".interface_node",
+					Message:  fmt.Sprintf("interface_node %q must be a bare node name; a session-qualified declaration is not allowed", declared),
+					Severity: "error",
+				})
+			case !binding.ValidateNodeName(declared):
+				errors = append(errors, ValidationError{
+					Field:    field + ".interface_node",
+					Message:  fmt.Sprintf("interface_node %q must match %s", declared, binding.NodeNamePattern),
+					Severity: "error",
+				})
+			}
+		}
 	}
 
 	// Rule 5: command_approver_node resolvability check (severity: warning, #626).

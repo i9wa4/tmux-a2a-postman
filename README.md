@@ -333,6 +333,17 @@ representative. Message footers keep the concrete `session:node` recipient and
 add relationship aliases, such as `@parent` or `@child/api`, when they are
 available.
 
+Configured `edges` still authorize sends exactly as before. In addition, a
+direct parent and child session can exchange mail over a derived interface
+edge: set `[postman] interface_node` for the daemon's own session, and a bare
+`interface_node` in the peer's `[[postman.workspace_tree]]` entry. The daemon's
+own entry may omit its declaration (the `[postman]` value designates it); if it
+sets one it must equal that value. The edge joins the two declared nodes, is
+evaluated on every send and delivery against the live view (discovered and
+unique node, enabled and owned session), and is never cached or merged into
+`edges`. `representative` stays an alias default only. See
+`tmux-a2a-postman help config`.
+
 Read the next inbox message:
 
 ```sh
