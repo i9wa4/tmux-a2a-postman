@@ -28,7 +28,7 @@ graph TD
     mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
 
     subgraph project_a["tmux session: project A"]
-        a_messenger["messenger\nui_node"]
+        a_messenger["messenger\ninterface_node"]
         a_orchestrator["orchestrator"]
         a_worker["worker"]
         a_reviewer["reviewer"]
@@ -39,7 +39,7 @@ graph TD
     end
 
     subgraph project_b["tmux session: project B"]
-        b_messenger["messenger\nui_node"]
+        b_messenger["messenger\ninterface_node"]
         b_orchestrator["orchestrator"]
         b_worker["worker"]
         b_reviewer["reviewer"]
@@ -64,13 +64,13 @@ graph TD
 daemon discovers tmux panes by title, routes messages through local files, and
 keeps an archive that agents can inspect later.
 
-Each tmux session is a separate project workspace. `ui_node` marks the role
-the human talks to first (a provisional new `interface_node` TOML key is also
-accepted as the canonical spelling going forward; see #764 -- the final
-field name and `ui_node` deprecation timeline are not yet decided, and the
-Mermaid `ui_node` class below is unaffected for now), while the daemon keeps
-routing, delivery, and
-archived mail outside the agent panes.
+Each tmux session is a separate project workspace. `interface_node` marks the
+role the human talks to first. It has no default: leave it out and there is no
+interface node (nothing is exempted, escalated to, or used to narrow the startup
+PING). Mark it with the Mermaid class shown below, the `postman.md` frontmatter
+key `interface_node:`, or `[postman] interface_node` in TOML. The old `ui_node`
+name is not an alias; any `ui_node` form is warned about and ignored. The
+daemon keeps routing, delivery, and archived mail outside the agent panes.
 
 ## 2. Why Use It
 
@@ -148,8 +148,8 @@ messages, inspect live session state, and audit config.
 
 Create tmux panes for a small conversation topology. In postman, the graph is
 the coordination map: nodes are tmux pane titles/agent roles, edges are the
-allowed conversation paths, and `ui_node` marks the role the human talks to
-first. The same graph appears in `postman.md`, so the screenshot and the
+allowed conversation paths, and `interface_node` marks the role the human talks
+to first. The same graph appears in `postman.md`, so the screenshot and the
 copyable config stay aligned:
 
 ```mermaid
@@ -157,8 +157,8 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- reviewer
-    class messenger ui_node
-    classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    class messenger interface_node
+    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
 
 ````text
@@ -167,8 +167,8 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- reviewer
-    class messenger ui_node
-    classDef ui_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    class messenger interface_node
+    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
 ```
 ````
 
@@ -225,8 +225,8 @@ graph LR
     messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- reviewer
-    class messenger ui_node
-    classDef ui_node fill:#e0f2fe
+    class messenger interface_node
+    classDef interface_node fill:#e0f2fe
 ```
 
 ## `common_template`
@@ -345,7 +345,9 @@ complete archived Markdown body before any handling, routing, reply, status
 decision, or no-action or no-op decision. `messageType: ping`,
 `replyPolicy: none`, and other metadata do not allow skipping the body.
 Truncated output from bounded stdout does not count as a complete read. To
-inspect archived mail later, use `inspect-message --id <message_id>`.
+inspect mail you already popped later, use `inspect-message --id <message_id>`;
+it never returns unread inbox mail (status `not_claimed`), so consume that with
+`pop` first.
 
 `send-heredoc` uses an atomic direct handoff to the session `post/` queue and
 reports `submit_path: post` after that handoff succeeds. For owned live
@@ -528,7 +530,7 @@ ambiguous.
 In `postman.md`, keep conversation edges in the Mermaid `edges` graph, durable
 role guidance under role headings, and optional `skill_path` catalogs in the
 frontmatter. Every node named in the graph is materialized automatically; mark
-the human-facing role with the Mermaid `ui_node` class.
+the human-facing role with the Mermaid `interface_node` class.
 
 Detailed configuration references:
 

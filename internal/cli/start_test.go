@@ -563,33 +563,13 @@ func TestRunStartWithFlags_RejectsCrossContextDaemonForSameSessionLock(t *testin
 	}
 }
 
-func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
+func TestRestrictPingTargetsToConfiguredInterfaceNode(t *testing.T) {
 	nodes := map[string]discovery.NodeInfo{
 		"review:messenger": {},
 		"review:worker":    {},
 	}
 
-	t.Run("embedded default does not narrow", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
-		t.Setenv("HOME", filepath.Join(tmpDir, "home"))
-		t.Chdir(tmpDir)
-
-		cfg, err := config.LoadConfig("")
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-
-		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
-		if !ok {
-			t.Fatal("embedded default should not report a missing ui_node target")
-		}
-		if len(filtered) != len(nodes) {
-			t.Fatalf("embedded default filtered %d nodes, want %d", len(filtered), len(nodes))
-		}
-	})
-
-	t.Run("explicit ui_node narrows to that node", func(t *testing.T) {
+	t.Run("legacy ui_node is ignored and does not narrow", func(t *testing.T) {
 		root := t.TempDir()
 		envRoot := t.TempDir()
 		configPath := filepath.Join(root, "postman.toml")
@@ -605,68 +585,118 @@ func TestRestrictPingTargetsToConfiguredUINode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadConfig: %v", err)
 		}
+		if cfg.HasExplicitInterfaceNodeSetting() || cfg.InterfaceNode != "" {
+			t.Fatalf("legacy ui_node must not set interface_node: explicit=%v value=%q", cfg.HasExplicitInterfaceNodeSetting(), cfg.InterfaceNode)
+		}
 
-		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
-		if !ok {
-			t.Fatal("explicit ui_node should be discoverable in the target set")
-		}
-		if len(filtered) != 1 {
-			t.Fatalf("explicit ui_node filtered %d nodes, want 1", len(filtered))
-		}
-		if _, exists := filtered["review:messenger"]; !exists {
-			t.Fatal("explicit ui_node filter did not keep messenger")
+		filtered, ok := restrictPingTargetsToConfiguredInterfaceNode(nodes, cfg)
+		if !ok || len(filtered) != len(nodes) {
+			t.Fatalf("legacy ui_node narrowed the startup PING: ok=%v filtered=%d, want fan-out of %d", ok, len(filtered), len(nodes))
 		}
 	})
 
-	t.Run("explicit missing ui_node blocks narrowing", func(t *testing.T) {
-		root := t.TempDir()
-		envRoot := t.TempDir()
-		configPath := filepath.Join(root, "postman.toml")
-		t.Chdir(root)
-		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
-		t.Setenv("HOME", filepath.Join(envRoot, "home"))
-		content := "[postman]\nui_node = \"critic\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
-		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
+	t.Run("embedded default does not narrow", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, "xdg"))
+		t.Setenv("HOME", filepath.Join(tmpDir, "home"))
+		t.Chdir(tmpDir)
 
-		cfg, err := config.LoadConfig(configPath)
+		cfg, err := config.LoadConfig("")
 		if err != nil {
 			t.Fatalf("LoadConfig: %v", err)
 		}
 
-		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
-		if ok {
-			t.Fatal("missing explicit ui_node should report failure")
-		}
-		if len(filtered) != 0 {
-			t.Fatalf("missing explicit ui_node filtered %d nodes, want 0", len(filtered))
-		}
-	})
-
-	t.Run("explicit empty ui_node keeps fanout", func(t *testing.T) {
-		root := t.TempDir()
-		envRoot := t.TempDir()
-		configPath := filepath.Join(root, "postman.toml")
-		t.Chdir(root)
-		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
-		t.Setenv("HOME", filepath.Join(envRoot, "home"))
-		content := "[postman]\nui_node = \"\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
-		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
+		if cfg.InterfaceNode != "" || cfg.HasExplicitInterfaceNodeSetting() {
+			t.Fatalf("embedded default must define no interface node: value=%q explicit=%v", cfg.InterfaceNode, cfg.HasExplicitInterfaceNodeSetting())
 		}
 
-		cfg, err := config.LoadConfig(configPath)
-		if err != nil {
-			t.Fatalf("LoadConfig: %v", err)
-		}
-
-		filtered, ok := restrictPingTargetsToConfiguredUINode(nodes, cfg)
+		filtered, ok := restrictPingTargetsToConfiguredInterfaceNode(nodes, cfg)
 		if !ok {
-			t.Fatal("explicit empty ui_node should not report a missing ui_node target")
+			t.Fatal("embedded default should not report a missing interface_node target")
 		}
 		if len(filtered) != len(nodes) {
-			t.Fatalf("explicit empty ui_node filtered %d nodes, want %d", len(filtered), len(nodes))
+			t.Fatalf("embedded default filtered %d nodes, want %d", len(filtered), len(nodes))
+		}
+	})
+
+	t.Run("explicit interface_node narrows to that node", func(t *testing.T) {
+		root := t.TempDir()
+		envRoot := t.TempDir()
+		configPath := filepath.Join(root, "postman.toml")
+		t.Chdir(root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
+		t.Setenv("HOME", filepath.Join(envRoot, "home"))
+		content := "[postman]\ninterface_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		cfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredInterfaceNode(nodes, cfg)
+		if !ok {
+			t.Fatal("explicit interface_node should be discoverable in the target set")
+		}
+		if len(filtered) != 1 {
+			t.Fatalf("explicit interface_node filtered %d nodes, want 1", len(filtered))
+		}
+		if _, exists := filtered["review:messenger"]; !exists {
+			t.Fatal("explicit interface_node filter did not keep messenger")
+		}
+	})
+
+	t.Run("explicit missing interface_node blocks narrowing", func(t *testing.T) {
+		root := t.TempDir()
+		envRoot := t.TempDir()
+		configPath := filepath.Join(root, "postman.toml")
+		t.Chdir(root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
+		t.Setenv("HOME", filepath.Join(envRoot, "home"))
+		content := "[postman]\ninterface_node = \"critic\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		cfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredInterfaceNode(nodes, cfg)
+		if ok {
+			t.Fatal("missing explicit interface_node should report failure")
+		}
+		if len(filtered) != 0 {
+			t.Fatalf("missing explicit interface_node filtered %d nodes, want 0", len(filtered))
+		}
+	})
+
+	t.Run("explicit empty interface_node keeps fanout", func(t *testing.T) {
+		root := t.TempDir()
+		envRoot := t.TempDir()
+		configPath := filepath.Join(root, "postman.toml")
+		t.Chdir(root)
+		t.Setenv("XDG_CONFIG_HOME", filepath.Join(envRoot, "xdg"))
+		t.Setenv("HOME", filepath.Join(envRoot, "home"))
+		content := "[postman]\ninterface_node = \"\"\nedges = [\"messenger --- worker\"]\n\n[messenger]\n[worker]\n"
+		if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		cfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			t.Fatalf("LoadConfig: %v", err)
+		}
+
+		filtered, ok := restrictPingTargetsToConfiguredInterfaceNode(nodes, cfg)
+		if !ok {
+			t.Fatal("explicit empty interface_node should not report a missing interface_node target")
+		}
+		if len(filtered) != len(nodes) {
+			t.Fatalf("explicit empty interface_node filtered %d nodes, want %d", len(filtered), len(nodes))
 		}
 	})
 }

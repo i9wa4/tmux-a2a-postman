@@ -84,7 +84,7 @@ Modes:
 Fail-open rule (command_approver_node):
   When no command_approver_node is configured by marking a real node in
   postman.md Mermaid edges with class <node> command_approver_node (same
-  family as ui_node), every mode above, including blocking, fails open. Every
+  family as interface_node), every mode above, including blocking, fails open. Every
   command runs and is recorded distinctly as auto_approved_no_reviewer rather
   than a real approval. The approver is global; per-policy approver routing is
   not supported. A configured but currently unresolvable

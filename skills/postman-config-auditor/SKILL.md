@@ -5,7 +5,7 @@ description: |
   USE FOR: Audit tmux-a2a-postman config, postman.md topology and syntax, node
   templates, skill_path catalogs, and postman.md versus SKILL.md boundaries.
   Use when reviewing or fixing postman.toml, postman.md, nodes/*, Mermaid
-  edges, ui_node, dead-letter routes, unread backlogs, skill catalog triggers,
+  edges, interface_node, dead-letter routes, unread backlogs, skill catalog triggers,
   or node renames. DO NOT USE FOR: generic CLI help; run tmux-a2a-postman help.
 ---
 
@@ -18,10 +18,10 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 ## 1. USE FOR
 
 - Audit or fix `postman.toml`, `postman.md`, or `nodes/*` config.
-- Check Mermaid edges, `ui_node`, role templates, and skill catalogs. A
-  provisional `interface_node` TOML key is also accepted as the canonical
-  `ui_node` spelling (#764); the final name and deprecation timeline are not
-  yet decided.
+- Check Mermaid edges, `interface_node`, role templates, and skill catalogs.
+  `interface_node` has no default and `ui_node` is not an alias: an omitted
+  `interface_node` means no interface node (fail closed), and any `ui_node`
+  form is warned about and ignored (#764).
 - Diagnose `get-status` evidence for dead-letter, missing route, quiet node, or
   unread backlog symptoms.
 

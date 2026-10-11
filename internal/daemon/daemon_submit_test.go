@@ -369,7 +369,11 @@ func TestProcessDaemonSubmitRequest_RejectsWrongRecipientPiggybackVerdict(t *tes
 	}
 }
 
-func TestProcessDaemonSubmitRequest_SendExemptsMessengerFromVerdictGate(t *testing.T) {
+// TestProcessDaemonSubmitRequest_SendDoesNotExemptMessengerWithoutInterfaceNode
+// (#764 X2/X3): with no interface_node configured there is no verdict-debt
+// exemption at all, so a node literally named "messenger" is gated like any
+// other requester. There is no built-in bypass name.
+func TestProcessDaemonSubmitRequest_SendDoesNotExemptMessengerWithoutInterfaceNode(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
@@ -379,11 +383,61 @@ func TestProcessDaemonSubmitRequest_SendExemptsMessengerFromVerdictGate(t *testi
 
 	originalGrace := verdictGraceSeconds
 	originalCap := verdictDebtCap
+	originalExempt := verdictExemptInterfaceNode
 	verdictGraceSeconds = 60
 	verdictDebtCap = 0
+	verdictExemptInterfaceNode = ""
 	t.Cleanup(func() {
 		verdictGraceSeconds = originalGrace
 		verdictDebtCap = originalCap
+		verdictExemptInterfaceNode = originalExempt
+	})
+
+	filename := "20260713-120001-from-messenger-to-worker.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-messenger-unexempt",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Sender:    "messenger",
+		Content:   verdictGateSendContent("messenger", "worker", filename, "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-messenger-unexempt"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "reply gate: verdict required") {
+		t.Fatalf("response.Error = %q, want verdict-gate rejection: messenger is not exempt without interface_node", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+		t.Fatalf("post file written for a non-exempt messenger send: %v", err)
+	}
+}
+
+func TestProcessDaemonSubmitRequest_SendExemptsConfiguredMessengerInterfaceNodeFromVerdictGate(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "messenger", "worker", "ireq_messenger", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	originalExempt := verdictExemptInterfaceNode
+	verdictGraceSeconds = 60
+	verdictDebtCap = 0
+	verdictExemptInterfaceNode = "messenger"
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+		verdictExemptInterfaceNode = originalExempt
 	})
 
 	filename := "20260713-120002-from-messenger-to-worker.md"
@@ -407,14 +461,14 @@ func TestProcessDaemonSubmitRequest_SendExemptsMessengerFromVerdictGate(t *testi
 		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
 	}
 	if response.Error != "" {
-		t.Fatalf("response.Error = %q, want messenger exemption", response.Error)
+		t.Fatalf("response.Error = %q, want messenger exemption when configured as interface_node", response.Error)
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); err != nil {
 		t.Fatalf("post file missing for exempt messenger send: %v", err)
 	}
 }
 
-func TestProcessDaemonSubmitRequest_SendExemptsConfiguredUINodeFromVerdictGate(t *testing.T) {
+func TestProcessDaemonSubmitRequest_SendExemptsConfiguredInterfaceNodeFromVerdictGate(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
@@ -424,14 +478,14 @@ func TestProcessDaemonSubmitRequest_SendExemptsConfiguredUINodeFromVerdictGate(t
 
 	originalGrace := verdictGraceSeconds
 	originalCap := verdictDebtCap
-	originalUINode := verdictExemptUINode
+	originalInterfaceNode := verdictExemptInterfaceNode
 	verdictGraceSeconds = 60
 	verdictDebtCap = 0
-	verdictExemptUINode = "human"
+	verdictExemptInterfaceNode = "human"
 	t.Cleanup(func() {
 		verdictGraceSeconds = originalGrace
 		verdictDebtCap = originalCap
-		verdictExemptUINode = originalUINode
+		verdictExemptInterfaceNode = originalInterfaceNode
 	})
 
 	filename := "20260713-120011-from-human-to-worker.md"
@@ -455,10 +509,10 @@ func TestProcessDaemonSubmitRequest_SendExemptsConfiguredUINodeFromVerdictGate(t
 		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
 	}
 	if response.Error != "" {
-		t.Fatalf("response.Error = %q, want configured UI node exemption", response.Error)
+		t.Fatalf("response.Error = %q, want configured interface node exemption", response.Error)
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); err != nil {
-		t.Fatalf("post file missing for exempt UI node send: %v", err)
+		t.Fatalf("post file missing for exempt interface node send: %v", err)
 	}
 }
 

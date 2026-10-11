@@ -254,7 +254,7 @@ func (rt *daemonRuntime) pushEscalationNotification(trips []escalationTrip) bool
 	if rt == nil || rt.cfg == nil || rt.sendPaneNotification == nil {
 		return false
 	}
-	uiNode, ok := runtimeUINode(rt.cfg, rt.nodes, rt.selfSession)
+	uiNode, ok := runtimeInterfaceNode(rt.cfg, rt.nodes, rt.selfSession)
 	if !ok || uiNode.PaneID == "" {
 		return false
 	}
@@ -301,18 +301,18 @@ func escalationEnterCount(cfg *config.Config, nodeName string) int {
 	})
 }
 
-func runtimeUINode(cfg *config.Config, nodes map[string]discovery.NodeInfo, selfSession string) (struct {
+func runtimeInterfaceNode(cfg *config.Config, nodes map[string]discovery.NodeInfo, selfSession string) (struct {
 	NodeKey string
 	discovery.NodeInfo
 }, bool,
 ) {
-	if cfg == nil || strings.TrimSpace(cfg.UINode) == "" {
+	uiNode := cfg.ConfiguredInterfaceNode()
+	if uiNode == "" {
 		return struct {
 			NodeKey string
 			discovery.NodeInfo
 		}{}, false
 	}
-	uiNode := strings.TrimSpace(cfg.UINode)
 	nodeKeys := make([]string, 0, len(nodes))
 	for nodeKey := range nodes {
 		nodeKeys = append(nodeKeys, nodeKey)
