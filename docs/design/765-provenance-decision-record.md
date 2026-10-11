@@ -79,10 +79,13 @@ re-verify the lines against its own base, because they drift.
   two-field form in its section 3 (`:66-87`).
 - E9. The merged #766 inventory names the two-field form as a prerequisite:
   `docs/design/766-hierarchical-status-inventory.md:92`.
-- E10. The archive layout for a delivered record is
-  `<context-id>/<session-name>/read/<message-id>.md` under the state
-  directory. This was observed in a live state directory and is not derived
-  from a source line here.
+- E10. A delivered record is archived at `read/<message-id>` under its
+  session directory, where message-id is the complete message filename
+  including its `.md` suffix. The filename is generated with that suffix
+  (`internal/message/message.go:744-766`), parsing requires it (`:780-785`),
+  pop archives to `read/<Filename>` (`internal/cli/pop.go:97-99` and
+  `:177-180`), and the popped message ID is the envelope message ID or else
+  the filename (`:460-475`).
 
 ## 3. Decisions
 
@@ -95,7 +98,9 @@ caused_by: <context-id>/<session-name>/<message-id>
 ```
 
 It names the delivered record, in the delegating node's own session, of the
-message that node was serving when it sent this one.
+message that node was serving when it sent this one. Here message-id is the
+complete message filename, including its `.md` suffix (E10), so the locator
+ends in `.md`; an implementation must not append a second suffix.
 
 - Per exchange, not per chain: siblings sent while serving one incoming
   message carry the same value and are told apart by their own message IDs.
@@ -104,10 +109,11 @@ message that node was serving when it sent this one.
 - The root of a chain is found by following links until a message has none.
   No cached root and no multi-cause field are introduced.
 
-Why a single string and not two fields. A message ID is not a locator
-without its context and session (E10), so a pair of context and message
-fields would still lack the session. One string names all three parts and
-needs one new key at the four places in E7 instead of two.
+Why a single string and not two fields. A message ID names a file inside a
+session directory (E10) and does not itself name the session, so a pair of
+context and message fields would still lack the session. One string names
+all three parts and needs one new key at the four places in E7 instead of
+two.
 
 Alternatives considered and rejected. `ReplyTo` is checked for syntax only and
 matched inside one session's reply slots (E2, E3), so reusing it for
@@ -167,9 +173,13 @@ cyclic instead of continuing. A reader never loops and never presents a
 truncated walk as complete.
 
 - A link that cannot be resolved (for example the older context directory is
-  gone) ends the walk and does not block the send. A loop that passes through
-  an unreadable context is therefore not detected; this is a stated residual,
-  not a claim of completeness.
+  gone, or the cited record is not found) ends the walk and does not block
+  the send. A loop that passes through an unreadable context is therefore not
+  detected; this is a stated residual, not a claim of completeness.
+- A reader that meets an unresolvable link reports it with its reason
+  (unresolved: context gone, or record not found). It never treats the last
+  message it could read as the chain root, because a root is a message with
+  no link, not a message whose link could not be followed.
 - A message returning to a node it came from is not a loop. A question back
   to the delegating node is a valid new exchange.
 - The send-time check guards against accidental forwarding loops. It does
@@ -308,12 +318,15 @@ Nothing in a "Provided" entry goes beyond the decision text above.
   Missing: cross-session hop authorization (#624, #700) and the concurrent
   flow fixtures F11 and F13.
 - "Restart, timeout, late response, duplicate relay, missing route, and loop
-  scenarios remain diagnosable without blind replay." Provided: D4 (loops),
-  D5 (duplicates), D6 (restart). Missing: the read-only diagnostic surface
-  named in D5 and D6 (slices P0, R2, R3); an owner for timeout and late
-  response diagnosis, which no decision here assigns; the retention rule and
-  the cross-context rule for restarts (owner to be assigned, #880 names the
-  topic); fixtures F7, F8 and F12.
+  scenarios remain diagnosable without blind replay." Provided: D4 (loops,
+  and the report of an unresolvable link), D5 (duplicates), D6 (restart).
+  Missing: the read-only diagnostic surface named in D5 and D6 (slices P0,
+  R2, R3), which must also report a missing route, meaning an unresolvable
+  cause link or an absent return slot, with a reason; its owner is to be
+  assigned. Also missing: an owner for timeout and late response diagnosis,
+  which no decision here assigns; the retention rule and the cross-context
+  rule for restarts (owner to be assigned, #880 names the topic); fixtures
+  F7, F8 and F12.
 - "Existing single-session flows remain compatible, and any new wire fields or
   migrations are documented." Provided: D1 (optional, additive). Missing: the
   four decode, insert, map and alias places kept in agreement (E7), a
@@ -409,9 +422,10 @@ such, because daemon work is outside this slice and needs its own owner.
 1. Slice P0, projection only. A read-only derivation of per-hop linkage from
    the fields that already exist (`reply_to`, `input_request_id` and
    `fills_input_request_id`, E1 and E2), with tests and a conformance table
-   against the merged #854 model. It adds no write path, mints no exchange
-   identifier, edits no daemon code, and leaves the return route on the
-   existing reply slot. It needs nothing from #764 or #700.
+   against this record's D2 return-route model (and E1 and E2). It adds no
+   write path, mints no exchange identifier, edits no daemon code, and leaves
+   the return route on the existing reply slot. It depends on nothing in the
+   work of #764 or #700.
 2. Slice R1, the envelope parameter and the sender CLI option (D1, D3, D4),
    proven for single-context chains. It touches the send command and the
    envelope metadata code (E4, E7). The #764 slice A change to the send
@@ -458,4 +472,3 @@ with #700 and #766, and is not bumped by a slice on its own.
   sender that names the caller's own session, archive retention, and whether a
   new envelope parameter appears in the typed pop output's generic frontmatter
   map.
-- E10 is an observation of the archive layout, not a source citation.
