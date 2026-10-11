@@ -1381,7 +1381,7 @@ func cliHerdrSnapshotWithPanes(paneIDs ...string) multiplexer.HerdrSessionSnapsh
 			TerminalID:  paneID + ":terminal",
 			WorkspaceID: "workspace-1",
 			TabID:       "workspace-1:tab-1",
-			Metadata:    map[string]string{"postman.node": "worker"},
+			Metadata:    map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 			ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		})
 	}
