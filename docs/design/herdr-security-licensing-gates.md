@@ -81,8 +81,8 @@ planning artifacts to record that legal/compliance review is still pending.
 Allowlists must be exact matches, not pattern or prefix checks:
 
 - socket path: exact `HERDR_SOCKET_PATH`;
-- session: exact Herdr named session; the `HERDR_SESSION` value in the postman
-  process environment must equal the allowlisted name;
+- session: exact Herdr named session; the configured `session_name` must
+  exactly match an `allowed_sessions` entry;
 - workspace: exact Herdr workspace ID.
 
 Tab and pane IDs are required only for pane-targeted reads and writes. They are
@@ -138,12 +138,13 @@ Herdr mapping for future implementation:
 
 - postman session maps to a configured logical session name plus an allowlisted
   Herdr named session and workspace ID;
-- postman node maps to postman-owned pane metadata (the `postman_node` key,
-  with the legacy `POSTMAN_NODE` and `TMUX_A2A_POSTMAN_NODE` keys read from the
-  same metadata map); the metadata map merges a pane's `metadata` and `tokens`
-  fields, and a pane's launch environment is not an identity source (the
-  postman process's own `HERDR_*` environment selects the session and runtime
-  scope, not the node);
+- postman node maps to postman-owned pane metadata: the first nonblank value
+  of the `postman_node`, `POSTMAN_NODE` and `TMUX_A2A_POSTMAN_NODE` keys, in
+  that order, from one metadata map that merges a pane's `metadata` and
+  `tokens` fields (a token overrides metadata on the same key). A pane's
+  launch environment is not an identity source, and the configured
+  `[postman.herdr]` `socket_path`, `session_name` and `workspace_id` select
+  the session and runtime scope, not the node;
 - Herdr pane labels are display/fallback evidence only, not authoritative
   identity;
 - backend-native resource evidence records Herdr workspace ID, tab ID, pane ID,
