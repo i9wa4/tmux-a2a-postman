@@ -3625,7 +3625,11 @@ func daemonHerdrConfig() config.HerdrConfig {
 func daemonHerdrSnapshot(sessionOwner string) multiplexer.HerdrSessionSnapshot {
 	snapshot := daemonEmptyHerdrSnapshot()
 	if sessionOwner != "" {
-		snapshot.Workspaces[0].Metadata["postman.session_owner.work"] = sessionOwner
+		ownerKey, err := multiplexer.HerdrSessionOwnerMetadataKey("work")
+		if err != nil {
+			panic(err)
+		}
+		snapshot.Workspaces[0].Metadata[ownerKey] = sessionOwner
 	}
 	snapshot.Panes = []multiplexer.HerdrPaneSnapshot{daemonHerdrPane("workspace-1:pane-1")}
 	return snapshot
@@ -3643,7 +3647,7 @@ func daemonHerdrPane(paneID string) multiplexer.HerdrPaneSnapshot {
 		TerminalID:     paneID + ":terminal",
 		WorkspaceID:    "workspace-1",
 		TabID:          "workspace-1:tab-1",
-		Metadata:       map[string]string{"postman.node": "worker"},
+		Metadata:       map[string]string{multiplexer.HerdrPostmanNodeMetadataKey: "worker"},
 		ProcessInfo:    multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 		PostmanSession: "work",
 	}
@@ -4377,14 +4381,14 @@ func TestBootstrap_QueuesAndDeliversStartupAutoPingForDiscoveredNode(t *testing.
 	waitForAutoPingPending(t, sessionDir, "review:worker", false)
 }
 
-func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitUINode(t *testing.T) {
+func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitInterfaceNode(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(baseDir, "xdg-config"))
 	t.Setenv("HOME", filepath.Join(baseDir, "home"))
 	t.Chdir(baseDir)
 
 	configPath := filepath.Join(baseDir, "postman.toml")
-	content := "[postman]\nui_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n"
+	content := "[postman]\ninterface_node = \"messenger\"\nedges = [\"messenger --- worker\"]\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("WriteFile config: %v", err)
 	}
@@ -4436,10 +4440,10 @@ func TestBootstrap_QueuesStartupAutoPingOnlyForExplicitUINode(t *testing.T) {
 		t.Fatal("ProjectAutoPingState() ok = false, want true")
 	}
 	if !state.Nodes["review:messenger"].Pending {
-		t.Fatal("startup auto-PING was not queued for explicit ui_node")
+		t.Fatal("startup auto-PING was not queued for explicit interface_node")
 	}
 	if state.Nodes["review:worker"].Pending {
-		t.Fatal("startup auto-PING was queued for non-ui_node worker")
+		t.Fatal("startup auto-PING was queued for non-interface_node worker")
 	}
 }
 

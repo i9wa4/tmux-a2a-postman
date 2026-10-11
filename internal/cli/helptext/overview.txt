@@ -31,10 +31,12 @@ Default operator surface:
   get-status-oneline         Print compact all-session status
   inspect-input              Inspect open reply-required work by id
   inspect-daemon-submit      Inspect daemon-submit timeout state by id
-  inspect-message            Inspect persisted message content by id
+  inspect-message            Inspect claimed (popped) message content by id
   backfill-verdict-events    Emit verdict_event JSONL rows from read archives
   execute-bash               Run bash through command approval choreography
   inspect-command-approvals  Inspect command approval threads
+  reconcile-command-approval-reply-slot
+                             Reconcile a proven terminal command-approval slot
   version                    Print the build version JSON
 
 Lifecycle and recovery:
@@ -51,12 +53,13 @@ Messaging Protocol:
   get-status-oneline                        Inspect compact all-session status
   inspect-input --id <id>                   Inspect an open input request by id
   inspect-daemon-submit --id <request_id>   Inspect daemon-submit timeout state by id
-  inspect-message --id <message_id>         Inspect persisted message content by id
+  inspect-message --id <message_id>         Inspect claimed (popped) message by id
   backfill-verdict-events --session-dir <dir>
                                              Emit verdict_event JSONL rows from read archives
   execute-bash --label <label> --command <bash>
                                            Run bash through approval choreography
   inspect-command-approvals                 Inspect command approval threads
+  reconcile-command-approval-reply-slot     Reconcile proven terminal approval slot
   version                                   Print the build version JSON
 
 Topics:
@@ -78,6 +81,7 @@ Topics:
   backfill-verdict-events tmux-a2a-postman help backfill-verdict-events
   execute-bash         tmux-a2a-postman help execute-bash
   inspect-command-approvals tmux-a2a-postman help inspect-command-approvals
+  reconcile-command-approval-reply-slot tmux-a2a-postman help reconcile-command-approval-reply-slot
   version              tmux-a2a-postman help version
   help                 tmux-a2a-postman help help
 

@@ -64,7 +64,8 @@ inspect-daemon-submit
     tmux-a2a-postman inspect-daemon-submit --id <request_id>
 
 inspect-message
-  Inspect persisted message metadata or content by message_id.
+  Inspect claimed (popped) message metadata or content by message_id.
+  Unread inbox mail is refused with status not_claimed.
   Output: JSON by default; --path and --body print focused text.
   Usage:
     tmux-a2a-postman inspect-message --id <message_id>
@@ -88,6 +89,13 @@ inspect-command-approvals
   Inspect pending and decided command approval threads.
   Output: JSON
 
+reconcile-command-approval-reply-slot
+  Reconcile one proven terminal command-approval reply slot.
+  Dry-run is the default; --apply appends an audited projection event.
+  Output: JSON
+  Usage:
+    tmux-a2a-postman reconcile-command-approval-reply-slot --input-request-id <ireq> --thread-id <thread> --command-hash <sha256:...> --requester <node> --requester-address <session:node> --approver <node> --approver-address <session:node> --decision-event-id <event>
+
 version
   Print the build version JSON.
   Usage:
@@ -108,4 +116,4 @@ stop
 
 help [topic]
   Show help overview or detailed topic page.
-  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, capture-profile, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, backfill-verdict-events, execute-bash, inspect-command-approvals, version, help
+  Topics: messaging, directories, config, commands, start, stop, send-heredoc, send, pop, capture-profile, get-status, get-status-oneline, inspect-input, inspect-daemon-submit, inspect-message, backfill-verdict-events, execute-bash, inspect-command-approvals, reconcile-command-approval-reply-slot, version, help

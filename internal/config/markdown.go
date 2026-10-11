@@ -126,12 +126,40 @@ func parseMermaidEdges(mermaidBlock string) []string {
 }
 
 const (
-	mermaidUINodeClass              = "ui_node"
+	mermaidInterfaceNodeClass       = "interface_node"
+	mermaidLegacyUINodeClass        = "ui_node" // #764: ignored with a warning, never designates a node
 	mermaidCommandApproverNodeClass = "command_approver_node"
 )
 
-func parseMermaidUINode(mermaidBlock string) (string, bool, error) {
-	return parseMermaidDesignatedNode(mermaidBlock, mermaidUINodeClass)
+func parseMermaidInterfaceNode(mermaidBlock string) (string, bool, error) {
+	return parseMermaidDesignatedNode(mermaidBlock, mermaidInterfaceNodeClass)
+}
+
+// legacyMermaidUINodeForms lists the legacy ui_node forms found in a Mermaid
+// block, each as a human-readable form description, so the loader can warn
+// that they are ignored. It reports the class-statement form
+// (`class X ui_node`) and the inline form (`X:::ui_node`) separately. It never
+// returns an error and never designates a node: legacy forms cannot set or mask
+// interface_node (#764).
+func legacyMermaidUINodeForms(mermaidBlock string) []string {
+	var forms []string
+	for _, statement := range mermaidStatements(mermaidBlock) {
+		statement = strings.TrimSpace(statement)
+		if statement == "" {
+			continue
+		}
+		if nodes := parseMermaidClassDesignatedNodeStatement(statement, mermaidLegacyUINodeClass); len(nodes) > 0 {
+			forms = append(forms, fmt.Sprintf("Mermaid class statement %q (nodes %s)", statement, strings.Join(nodes, ",")))
+			continue
+		}
+		if shouldSkipMermaidStatement(statement) {
+			continue
+		}
+		if nodes := parseMermaidInlineDesignatedNodeStatement(statement, mermaidLegacyUINodeClass); len(nodes) > 0 {
+			forms = append(forms, fmt.Sprintf("Mermaid inline :::ui_node class in %q (nodes %s)", statement, strings.Join(nodes, ",")))
+		}
+	}
+	return forms
 }
 
 func parseMermaidCommandApproverNode(mermaidBlock string) (string, bool, error) {
@@ -568,12 +596,14 @@ func stripFrontmatter(content string) string {
 
 // loadMarkdownConfig parses a postman.md (single-file format) into a Config.
 // Returns a zero-value Config with only explicitly-set fields populated.
-// Global frontmatter keys: ui_node → Config.UINode override,
+// Global frontmatter keys: interface_node → Config.InterfaceNode override
+// (the legacy ui_node key is warned about and ignored, #764),
 // reply_command → Config.ReplyCommand,
 // skill_path → generated skill catalog appended to Config.CommonTemplate, or
 // to daemon PING role content when an entry uses inject: ping or inject: compaction_ping.
-// Mermaid edges may mark the UI node with the ui_node class when frontmatter
-// does not override it. Mermaid edges may also mark the command approval
+// Mermaid edges may mark the interface node with the interface_node class when
+// frontmatter does not override it (legacy ui_node classes warn and are
+// ignored). Mermaid edges may also mark the command approval
 // reviewer with the command_approver_node class.
 // Reserved h2 sections: "## `edges`" → Mermaid edges;
 // "## `common_template`" → Config.CommonTemplate.
@@ -591,9 +621,12 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if v, ok := fm["ui_node"]; ok {
-		cfg.UINode = v
-		cfg.uiNodeSet = true
+	if _, ok := fm["ui_node"]; ok {
+		warnLegacyUINode(path, "postman.md frontmatter key ui_node")
+	}
+	if v, ok := fm["interface_node"]; ok {
+		cfg.InterfaceNode = v
+		cfg.interfaceNodeSet = true
 	}
 	if v, ok := fm["reply_command"]; ok && v != "" {
 		cfg.ReplyCommand = v
@@ -608,14 +641,17 @@ func loadMarkdownConfig(path string) (*Config, error) {
 	if edgesBody, ok := sections["edges"]; ok {
 		mermaidBlock := extractMermaidBlock(edgesBody)
 		cfg.Edges = parseMermaidEdges(mermaidBlock)
-		if !cfg.uiNodeSet {
-			uiNode, ok, err := parseMermaidUINode(mermaidBlock)
+		for _, form := range legacyMermaidUINodeForms(mermaidBlock) {
+			warnLegacyUINode(path, form)
+		}
+		if !cfg.interfaceNodeSet {
+			interfaceNode, ok, err := parseMermaidInterfaceNode(mermaidBlock)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", path, err)
 			}
 			if ok {
-				cfg.UINode = uiNode
-				cfg.uiNodeSet = true
+				cfg.InterfaceNode = interfaceNode
+				cfg.interfaceNodeSet = true
 			}
 		}
 		commandApproverNode, ok, err := parseMermaidCommandApproverNode(mermaidBlock)

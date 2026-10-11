@@ -40,7 +40,7 @@ func TestRunHelp_DefaultOverview(t *testing.T) {
 	if !strings.Contains(stdout.String(), "version                    Print the build version JSON") {
 		t.Fatalf("stdout missing version overview line: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "inspect-message            Inspect persisted message content by id") {
+	if !strings.Contains(stdout.String(), "inspect-message            Inspect claimed (popped) message content by id") {
 		t.Fatalf("stdout missing inspect-message overview line: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "inspect-daemon-submit      Inspect daemon-submit timeout state by id") {
@@ -138,7 +138,7 @@ func TestRunHelp_ConfigShowsUnifiedModelAndPublicKnobs(t *testing.T) {
 		"pane hints answer that delivery reached a recipient inbox",
 		"Core config:",
 		"edges                            Bidirectional routes between nodes",
-		"ui_node                          Optional target filter for startup auto-PING; prefer Mermaid class <node> ui_node",
+		"interface_node                   The one human-facing node (startup PING target, verdict-debt exemption, escalation target); prefer Mermaid class <node> interface_node; omitted = no interface node",
 		"auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)",
 		"message_footer                   Header guidance before the sender body separator",
 		"draft_template                   Structured envelope for stored send-heredoc Markdown",

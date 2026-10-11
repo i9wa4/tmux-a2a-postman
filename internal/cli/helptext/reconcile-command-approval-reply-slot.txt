@@ -1,0 +1,47 @@
+reconcile-command-approval-reply-slot - reconcile a proven terminal command-approval reply slot
+
+Usage:
+  tmux-a2a-postman reconcile-command-approval-reply-slot \
+    --input-request-id <ireq> \
+    --thread-id <command-approval-thread> \
+    --command-hash <sha256:...> \
+    --requester <node> \
+    --requester-address <session:node> \
+    --approver <node> \
+    --approver-address <session:node> \
+    --decision-event-id <event_id>
+
+Dry-run is the default. Add --apply only after the JSON plan reports
+status=ready.
+
+This command appends one operator-visible reconciliation event. It does not
+write mailbox messages, move archive files, or impersonate the approver.
+
+Required evidence:
+  --input-request-id       Open command approval reply slot to reconcile
+  --thread-id              Command approval thread id
+  --command-hash           Command digest recorded by the request and decision
+  --requester              Original requester node name
+  --requester-address      Fully-qualified requester address
+  --approver               Config-resolved approver node name
+  --approver-address       Fully-qualified approver address
+  --decision-event-id      Recorded terminal decision event id
+
+A correctly bound terminal decision closes the reply slot even when it arrived
+after the approval expired; reconciliation repairs that stale slot. Closing the
+slot never makes an expired approval executable: execution stays governed by
+expiry and claim.
+
+Evidence is bound to the request generation named by --input-request-id: the
+request, approver, command hash and decision are checked against that
+request's own recorded snapshot, not against a later retry on the same
+thread. Decisions from another principal, another input request id or another
+command hash are ignored. Identical bound duplicate decisions count once; a
+bound decision with a different value makes the evidence ambiguous.
+
+Rejection is default. Missing, mismatched, pending, ambiguous (conflicting
+bound decisions), wrong-principal, non-command, and slots that are not
+currently open are rejected (status=rejected, reason names the failed check).
+When a matching reconciliation event already exists the plan reports
+status=already_reconciled with the existing event id; that is distinct from a
+closed-slot rejection and appends nothing.

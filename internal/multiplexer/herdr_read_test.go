@@ -331,7 +331,7 @@ func TestHerdrBackendDiscoveryQuarantinesUnsupportedProcessProbeAndContinues(t *
 	snapshot := validHerdrSessionSnapshot()
 	snapshot.Panes[1].Stale = false
 	snapshot.Panes[1].StaleReason = ""
-	snapshot.Panes[1].Metadata = map[string]string{"postman.node": "critic"}
+	snapshot.Panes[1].Metadata = map[string]string{HerdrPostmanNodeMetadataKey: "critic"}
 	snapshot.Panes[1].ProcessInfo = HerdrPaneProcessInfo{PaneID: snapshot.Panes[1].ID, ForegroundProcesses: []HerdrProcessInfo{{Name: "codex"}}}
 	snapshot.FocusedPaneID = snapshot.Panes[0].ID
 	client := &fakeHerdrReadClient{
@@ -737,7 +737,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 				Label:       "advisory-label",
 				Order:       0,
 				Metadata: map[string]string{
-					"postman.node": "worker",
+					HerdrPostmanNodeMetadataKey: "worker",
 				},
 				ProcessInfo: HerdrPaneProcessInfo{
 					ForegroundProcesses: []HerdrProcessInfo{{Name: "codex"}},
@@ -761,7 +761,7 @@ func validHerdrSessionSnapshot() HerdrSessionSnapshot {
 				WorkspaceID: "workspace-2",
 				TabID:       "workspace-2:tab-1",
 				Metadata: map[string]string{
-					"postman.node": "foreign",
+					HerdrPostmanNodeMetadataKey: "foreign",
 				},
 			},
 		},
