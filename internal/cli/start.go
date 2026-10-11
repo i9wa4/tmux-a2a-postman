@@ -69,12 +69,12 @@ func safeGo(name string, events chan<- tui.DaemonEvent, fn func()) {
 	}()
 }
 
-func restrictPingTargetsToConfiguredUINode(nodes map[string]discovery.NodeInfo, cfg *config.Config) (map[string]discovery.NodeInfo, bool) {
-	if cfg == nil || !cfg.HasExplicitUINodeSetting() || cfg.UINode == "" {
-		return cliutil.FilterToUINode(nodes, ""), true
+func restrictPingTargetsToConfiguredInterfaceNode(nodes map[string]discovery.NodeInfo, cfg *config.Config) (map[string]discovery.NodeInfo, bool) {
+	if !cfg.HasExplicitInterfaceNodeSetting() || cfg.ConfiguredInterfaceNode() == "" {
+		return cliutil.FilterToInterfaceNode(nodes, ""), true
 	}
 
-	filtered := cliutil.FilterToUINode(nodes, cfg.UINode)
+	filtered := cliutil.FilterToInterfaceNode(nodes, cfg.ConfiguredInterfaceNode())
 	return filtered, len(filtered) > 0
 }
 
@@ -336,6 +336,11 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+	// #764 S1: say once, on stderr, that nothing is exempted or escalated to
+	// when no interface node is configured (fail closed).
+	if diagnostic := cfg.InterfaceNodeDiagnostic(); diagnostic != "" {
+		log.Printf("WARNING: %s", diagnostic)
 	}
 
 	// Parse edge definitions for routing

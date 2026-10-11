@@ -36,7 +36,7 @@ internal and hardcoded to `false` in `main.go:61`.
 | Field                           | Category | Notes                                                                                                        |
 | ------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
 | `edges`                         | **Core** | Bidirectional routing rules between nodes; required                                                          |
-| `ui_node`                       | Optional | Startup PING target filter; prefer Mermaid class syntax                                                      |
+| `interface_node`                | Optional | Human-facing node (no default, omitted = none); prefer Mermaid class syntax                                  |
 | `auto_enable_new_sessions`      | Optional | Auto-enable sessions with configured node panes (default: true)                                              |
 | `message_footer`                | Optional | Header guidance before the body separator in sent messages                                                   |
 | `draft_template`                | Optional | Stored send-heredoc Markdown envelope                                                                        |
@@ -55,7 +55,7 @@ internal and hardcoded to `false` in `main.go:61`.
 | ---------------------------------------- | ------------- | --------------------------------------------------------------------------------------- |
 | TUI dashboard (BubbleTea, single-column) | **Core**      | Session toggle, node/inbox status display, `q` to exit                                  |
 | Filesystem watcher (fswatcher)           | **Core**      | Watches post/inbox/read/submit directories per node                                     |
-| Auto-PING startup reconciliation         | **Core**      | Discovers nodes at startup; sends initial PING to `ui_node`                             |
+| Auto-PING startup reconciliation         | **Core**      | Discovers nodes at startup; sends initial PING to `interface_node`                      |
 | Daemon submit queue                      | **Core**      | Filesystem-based async request queue                                                    |
 | Idle tracker / compaction-PING           | **Core**      | Detects idle panes; sends compaction PINGs                                              |
 | Runtime diagnostics / memory snapshots   | **Core**      | Passive log every 10 min; scalar counters only                                          |

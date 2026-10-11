@@ -367,7 +367,7 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 	}
 	delivery := collectSessionDelivery(sessionDir, queues, now)
 
-	return buildSessionStatusSnapshot(sessionStatusInputs{
+	snapshot := buildSessionStatusSnapshot(sessionStatusInputs{
 		contextID:        contextID,
 		sessionName:      sessionName,
 		sessionDir:       sessionDir,
@@ -385,7 +385,19 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		blockedByNode:    blockedByNode,
 		conventionByNode: conventionByNode,
 		now:              now,
-	}), nil
+	})
+	snapshot.InterfaceNode = buildInterfaceNodeStatus(cfg)
+	return snapshot, nil
+}
+
+// buildInterfaceNodeStatus returns the S1 no-interface-node marker, or nil when
+// an interface node is configured (#764).
+func buildInterfaceNodeStatus(cfg *config.Config) *status.InterfaceNodeStatus {
+	diagnostic := cfg.InterfaceNodeDiagnostic()
+	if diagnostic == "" {
+		return nil
+	}
+	return &status.InterfaceNodeStatus{Configured: false, Diagnostic: diagnostic}
 }
 
 func statusInputRequestDetails(inputRequests []projection.InputRequestDetail, nodeName, direction string) []status.InputRequestDetail {
