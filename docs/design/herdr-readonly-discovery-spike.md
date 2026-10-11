@@ -75,8 +75,10 @@ For #658:
 
 - postman session maps to an explicitly configured Herdr named session plus an
   allowlisted workspace ID;
-- postman node maps to postman-owned metadata or launch environment attached to
-  Herdr panes;
+- postman node maps to postman-owned pane metadata (the `postman_node` key,
+  with the legacy `POSTMAN_NODE` and `TMUX_A2A_POSTMAN_NODE` keys read from the
+  same metadata map); the metadata map merges a pane's `metadata` and `tokens`
+  fields, and the launch environment is not an identity source;
 - pane labels, terminal titles, process info, and cwd are advisory evidence
   only;
 - duplicate node claims become explicit `HerdrIdentityCollision` records;
