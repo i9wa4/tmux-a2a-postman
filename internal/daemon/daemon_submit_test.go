@@ -1852,7 +1852,11 @@ func TestHandleDaemonSubmitPop_DeadLetterWriteFailureRetainsCommittedDecision(t 
 			t.Errorf("open roots gate during notification: %v", err)
 			return
 		}
-		defer lock.Close()
+		defer func() {
+			if err := lock.Close(); err != nil {
+				t.Errorf("close roots gate during notification: %v", err)
+			}
+		}()
 		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
 			t.Errorf("notification attempted before roots gate release: %v", err)
 			return
@@ -3245,7 +3249,9 @@ func TestRecordDaemonSubmitPopRead_PrefersFallbackOverTruncatedReadPath(t *testi
 		t.Fatalf("WriteFile(truncated readPath): %v", err)
 	}
 
-	recordDaemonSubmitPopRead(sessionDir, readPath, filename, "full correct body")
+	if err := recordDaemonSubmitPopRead(sessionDir, readPath, filename, "full correct body"); err != nil {
+		t.Fatalf("recordDaemonSubmitPopRead() error = %v", err)
+	}
 
 	events, err := journal.Replay(sessionDir)
 	if err != nil {
