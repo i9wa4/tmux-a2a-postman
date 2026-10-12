@@ -48,15 +48,18 @@ func TestSendToPaneHonorsTmuxTimeout(t *testing.T) {
 // TestSendToPaneChainDeadlineCoversEnterDelay: the chained invocation includes
 // the enter delay, so a tmuxTimeout shorter than that delay must not kill the
 // client between paste and C-m (R1 in the #871 review). The fake tmux takes
-// ~1s to finish, longer than tmuxTimeout (300ms) but well inside
-// tmuxTimeout + enterDelay + margin.
+// ~3s to finish, longer than tmuxTimeout + margin (500ms + 1s = 1.5s, the
+// deadline if the enter delay were not covered, so the test fails on that
+// regression) but inside tmuxTimeout + enterDelay + margin (7.5s), which leaves
+// ~4.5s of headroom for starting the fake script under a busy parallel
+// `go test ./...`.
 func TestSendToPaneChainDeadlineCoversEnterDelay(t *testing.T) {
-	installTimeoutTestTmux(t, "#!/bin/sh\nsleep 1\nexit 0\n")
+	installTimeoutTestTmux(t, "#!/bin/sh\nsleep 3\nexit 0\n")
 
 	n := NewPaneNotifier(0)
 	n.stderr = timeoutTestDiscardWriter{}
 
-	err := n.SendToPane("%1", "You've got mail: x.md", 800*time.Millisecond, 300*time.Millisecond, 1, true, 0, 0)
+	err := n.SendToPane("%1", "You've got mail: x.md", 6*time.Second, 500*time.Millisecond, 1, true, 0, 0)
 	if err != nil {
 		t.Fatalf("SendToPane error = %v, want success (deadline must cover the in-chain enter delay)", err)
 	}
@@ -75,7 +78,11 @@ func TestSendToPaneChainTimeoutIsNonRetryableAndNotRepasted(t *testing.T) {
 
 	// enterCount 2 and verify retries enabled: all would trigger further tmux
 	// invocations if the timeout were treated as a plain retryable failure.
-	err := n.SendToPane("%1", "You've got mail: x.md", 0, 50*time.Millisecond, 2, true, 10*time.Millisecond, 2)
+	// tmuxTimeout is 5s (chained deadline 6s) so the fake script, which only
+	// hangs after recording its first call, has time to start under a busy
+	// parallel `go test ./...`; the script hangs forever, so the deadline path
+	// is always reached.
+	err := n.SendToPane("%1", "You've got mail: x.md", 0, 5*time.Second, 2, true, 10*time.Millisecond, 2)
 	if !errors.Is(err, ErrPaneUnresponsive) {
 		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive", err)
 	}

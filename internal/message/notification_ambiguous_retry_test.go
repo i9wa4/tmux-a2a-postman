@@ -67,9 +67,13 @@ esac
 			if err != nil {
 				t.Fatalf("DefaultHandAdapter: %v", err)
 			}
+			// TmuxTimeout 5s (chained deadline 6s): the fake tmux must get time
+			// to start and record its first call even while a parallel
+			// `go test ./...` keeps the machine busy. It hangs forever at the
+			// chosen stage, so each deadline path is still reached.
 			delivery := controlplane.PaneDelivery{
 				Content:        "You've got mail: x.md",
-				TmuxTimeout:    150 * time.Millisecond,
+				TmuxTimeout:    5 * time.Second,
 				EnterCount:     tc.enterCount,
 				BypassCooldown: true,
 				VerifyDelay:    tc.verifyDelay,
@@ -78,7 +82,7 @@ esac
 
 			start := time.Now()
 			deliverNotificationWithRetry(adapter, target, delivery, "worker", map[string]discovery.NodeInfo{}, "x.md")
-			if elapsed := time.Since(start); elapsed > 10*time.Second {
+			if elapsed := time.Since(start); elapsed > 30*time.Second {
 				t.Fatalf("delivery took %s, want bounded by the tmux timeouts", elapsed)
 			}
 
