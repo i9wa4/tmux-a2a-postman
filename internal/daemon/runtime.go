@@ -1287,6 +1287,24 @@ func (rt *daemonRuntime) postDeliveryTraceFields(eventPath, filename string) msg
 	return fields
 }
 
+// reloadSharedNodes returns the latest topology published through
+// rt.sharedNodes, the cross-goroutine-safe view of rt.nodes (same read pattern
+// as the #572 M1 retry in dispatchPostDelivery). It falls back to the captured
+// map only when sharedNodes is unset (a daemonRuntime built directly in a
+// test) or holds no snapshot yet.
+func (rt *daemonRuntime) reloadSharedNodes(captured map[string]discovery.NodeInfo) map[string]discovery.NodeInfo {
+	if rt.sharedNodes == nil {
+		return captured
+	}
+	multiplexer.LockHerdrPublicationRead()
+	cached := rt.sharedNodes.Load()
+	multiplexer.UnlockHerdrPublicationRead()
+	if cached == nil {
+		return captured
+	}
+	return *cached
+}
+
 func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes map[string]discovery.NodeInfo, adjacency map[string][]string, cfg *config.Config, reservation postDeliveryReservation) {
 	budget := rt.nonDaemonDeliveryBudget()
 	if !budget.tryStart(nonDaemonDeliveryPathPost) {
@@ -1354,6 +1372,12 @@ func (rt *daemonRuntime) dispatchPostDelivery(eventPath, filename string, nodes 
 			// pre-delivery sync may still be running (#871).
 			return
 		}
+		// The pre-delivery sync can wait up to its timeout behind other syncs,
+		// so the topology captured on the select loop may be stale by now (a
+		// pane replaced or moved in between). Re-read the shared snapshot, as
+		// the #572 M1 budget retry does, so DeliverMessage and the recipient
+		// post-delivery sync target the current pane (#871).
+		nodes = rt.reloadSharedNodes(nodes)
 		messageEvents := make(chan message.DaemonEvent, 1)
 		if msgInfo, parseErr := message.ParseMessageFilename(filename); parseErr == nil {
 			attemptFields := postTraceFields
