@@ -70,6 +70,68 @@ func TestRunSendHeredoc_FooterIncludesDerivedNeighborsForBareRecipient(t *testin
 	}
 }
 
+// The daemon's own session costs a context scan, so the CLI resolves it only
+// when the local verdict gate can use it: a reply-required send that the live
+// daemon does not validate, with a configured interface node. Every other send
+// must not pay for it (a regression here slowed every send and made the live
+// workload test time out).
+func TestRunSendHeredoc_DaemonSessionResolvedOnlyWhenExemptionCanApply(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		interfaceLine string
+		extraArgs     []string
+		wantLookups   bool
+	}{
+		{name: "no interface node, reply none", interfaceLine: "", extraArgs: nil, wantLookups: false},
+		{name: "interface node, reply none", interfaceLine: `interface_node = "mouthpiece"`, extraArgs: nil, wantLookups: false},
+		{name: "no interface node, reply required", interfaceLine: "", extraArgs: []string{"--reply-required"}, wantLookups: false},
+		{name: "interface node, reply required, local gate", interfaceLine: `interface_node = "mouthpiece"`, extraArgs: []string{"--reply-required"}, wantLookups: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Chdir(home)
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_CONFIG_HOME", home)
+			const contextID = "ctx-lazy-own-session"
+			configPath := filepath.Join(home, "postman.toml")
+			toml := "[postman]\n" + tc.interfaceLine + "\nedges = [\"mouthpiece --- worker\"]\n\n[mouthpiece]\nrole = \"interface\"\n\n[worker]\nrole = \"worker\"\n"
+			if err := os.WriteFile(configPath, []byte(toml), 0o600); err != nil {
+				t.Fatalf("WriteFile config: %v", err)
+			}
+			sessionDir := filepath.Join(home, contextID, "peer")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatalf("CreateSessionDirs: %v", err)
+			}
+			nodes := map[string]discovery.NodeInfo{
+				"peer:mouthpiece": {PaneID: "%1", SessionName: "peer", SessionDir: sessionDir},
+				"peer:worker":     {PaneID: "%2", SessionName: "peer", SessionDir: sessionDir},
+			}
+			installFakeTmuxForCLI(t, home, "peer", "mouthpiece")
+			lookups := 0
+			ctx := commandContext{
+				stdin:              strings.NewReader("hello"),
+				stdinIsTerminal:    func(io.Reader) bool { return false },
+				contextOwnsSession: func(string, string, string) bool { return false },
+				discoverNodes: func(string, string, string) (map[string]discovery.NodeInfo, error) {
+					return nodes, nil
+				},
+				daemonSessionName: func(string, string) string { lookups++; return "peer" },
+			}.withDefaults()
+
+			args := append([]string{"--config", configPath, "--context-id", contextID, "--to", "worker"}, tc.extraArgs...)
+			if err := runSendHeredocWithContext(ctx, args); err != nil {
+				t.Fatalf("runSendHeredocWithContext: %v", err)
+			}
+			if tc.wantLookups && lookups == 0 {
+				t.Fatalf("daemon session lookups = 0, want the own session resolved for the local verdict gate")
+			}
+			if !tc.wantLookups && lookups != 0 {
+				t.Fatalf("daemon session lookups = %d, want none (no exemption can apply)", lookups)
+			}
+		})
+	}
+}
+
 // F-700-R2-2 (CLI path): the verdict-debt exemption of the configured interface
 // node is bound to the daemon's own session. The sender "mouthpiece" in session
 // "peer" has overdue verdict debt; it is exempt only when "peer" is the daemon's
