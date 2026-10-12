@@ -541,7 +541,10 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		// The exemption is bound to the daemon's own session (the sender's
 		// session when no daemon session is found), so a same-named peer
 		// interface node in another session gets none (#624/#700 R2-2).
-		ExemptOwnSession: ctx.ownSessionForInterfaceEdges(baseDir, resolvedContextID, sessionName),
+		// R3-2: the parenthetical above no longer applies. daemonOwnSession is
+		// the daemon's session ONLY; with no daemon session found it is empty
+		// and nobody is exempt (fail closed), never the sender's session.
+		ExemptOwnSession: ctx.daemonOwnSession(baseDir, resolvedContextID),
 		RecordTimeout:    verdictgate.RecordTimeoutWithCurrentLease,
 	}); err != nil {
 		return err

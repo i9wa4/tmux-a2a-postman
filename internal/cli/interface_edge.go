@@ -7,10 +7,21 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspacetree"
 )
 
+// daemonOwnSession is the daemon's own session for this context, or "" when no
+// daemon session can be found. It is the ONLY value that may bind a privilege
+// (the verdict-debt exemption): an unknown own session must exempt nobody, so
+// this never falls back to the sender's session (#624/#700 R3-2).
+func (ctx commandContext) daemonOwnSession(baseDir, contextID string) string {
+	return ctx.daemonSessionName(baseDir, contextID)
+}
+
 // ownSessionForInterfaceEdges is the session whose global [postman]
-// interface_node designates its own declaration: the daemon's session for this
-// context (what delivery uses), falling back to the sender's session only when
-// no daemon session can be found (single-session use).
+// interface_node designates its own declaration for the derived-edge VIEW: the
+// daemon's session for this context (what delivery uses), falling back to the
+// sender's session only when no daemon session can be found (single-session
+// use). The fallback is for the advisory edge view only; it must never be used
+// for a privilege decision (use daemonOwnSession for the verdict-debt
+// exemption).
 func (ctx commandContext) ownSessionForInterfaceEdges(baseDir, contextID, fallbackSession string) string {
 	if own := ctx.daemonSessionName(baseDir, contextID); own != "" {
 		return own

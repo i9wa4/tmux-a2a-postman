@@ -344,6 +344,12 @@ unique node, enabled and owned session), and is never cached or merged into
 `edges`. `representative` stays an alias default only. See
 `tmux-a2a-postman help config`.
 
+Known limitation: derived edges are not supported in a mixed tmux plus Herdr
+topology. When tmux and Herdr report the same node name, the collision is not
+marked ambiguous for derived-edge authorization, so a derived edge can still be
+authorized for that name. Do not rely on derived edges there; Herdr-facing
+support is deferred.
+
 Read the next inbox message:
 
 ```sh

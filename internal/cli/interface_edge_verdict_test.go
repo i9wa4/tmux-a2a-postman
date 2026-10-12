@@ -74,7 +74,7 @@ func TestRunSendHeredoc_FooterIncludesDerivedNeighborsForBareRecipient(t *testin
 // node is bound to the daemon's own session. The sender "mouthpiece" in session
 // "peer" has overdue verdict debt; it is exempt only when "peer" is the daemon's
 // own session. A same-bare-named interface node in a peer session is gated like
-// any other requester.
+// any other requester, and an unknown daemon session exempts nobody (R3-2).
 func TestRunSendHeredoc_VerdictDebtExemptionBoundToOwnSession(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -83,7 +83,9 @@ func TestRunSendHeredoc_VerdictDebtExemptionBoundToOwnSession(t *testing.T) {
 	}{
 		{name: "own session interface node stays exempt", daemonSess: "peer", wantErr: false},
 		{name: "peer session same bare name is not exempt", daemonSess: "owner", wantErr: true},
-		{name: "unknown daemon session falls back to the sender session", daemonSess: "", wantErr: false},
+		// R3-2: with no discoverable daemon session nobody is exempt (fail
+		// closed); the sender's session is never substituted for the own session.
+		{name: "unknown daemon session exempts nobody (fail closed)", daemonSess: "", wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
