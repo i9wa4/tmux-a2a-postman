@@ -168,7 +168,7 @@ func (rt *daemonRuntime) runtimeEscalationSnapshot(now time.Time) status.Session
 
 	attachRuntimeInputRequests(&snapshot, rt.nodes, now, int(rt.cfg.InputRequestStaleSeconds))
 	if rt.idleTracker != nil {
-		attachRuntimePaneActivity(&snapshot, rt.idleTracker.GetPaneActivityEvidence(rt.cfg), now)
+		attachRuntimePaneActivity(&snapshot, rt.idleTracker.GetPaneActivityEvidence(rt.cfg), now, time.Duration(rt.cfg.NodeStaleSeconds*float64(time.Second)))
 	}
 	return snapshot
 }
@@ -216,14 +216,16 @@ func runtimeStatusInputRequests(inputRequests []projection.InputRequestDetail, n
 	return result
 }
 
-func attachRuntimePaneActivity(snapshot *status.SessionStatus, paneStates map[string]idle.PaneActivityExport, now time.Time) {
+func attachRuntimePaneActivity(snapshot *status.SessionStatus, paneStates map[string]idle.PaneActivityExport, now time.Time, staleAfter time.Duration) {
 	for idx := range snapshot.Nodes {
 		paneID := snapshot.Nodes[idx].PaneID
 		if paneID == "" {
+			snapshot.Nodes[idx].ScreenProgress = status.ObserveScreenProgress(nil, now, staleAfter)
 			continue
 		}
 		paneState, ok := paneStates[paneID]
 		if !ok {
+			snapshot.Nodes[idx].ScreenProgress = status.ObserveScreenProgress(nil, now, staleAfter)
 			continue
 		}
 		snapshot.Nodes[idx].PaneState = paneState.Status
@@ -238,7 +240,7 @@ func attachRuntimePaneActivity(snapshot *status.SessionStatus, paneStates map[st
 		if !paneState.LastChangeAt.IsZero() {
 			progress.LastScreenChangeAt = paneState.LastChangeAt.Format(time.RFC3339Nano)
 		}
-		snapshot.Nodes[idx].ScreenProgress = progress
+		snapshot.Nodes[idx].ScreenProgress = status.ObserveScreenProgress(progress, now, staleAfter)
 	}
 }
 

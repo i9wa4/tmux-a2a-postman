@@ -303,6 +303,19 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	if worker.ScreenFingerprint != "00000011" {
 		t.Fatalf("worker screen_fingerprint = %q, want 00000011", worker.ScreenFingerprint)
 	}
+	if worker.Source != "pane_capture" || worker.ObservedAt != worker.LastCaptureAt || worker.IdleAgeSeconds == nil {
+		t.Fatalf("worker observation fields = %#v, want pane capture source, observation time, and idle age", worker)
+	}
+	fixture.cfg.NodeStaleSeconds = 0
+	withoutHorizon, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() without stale horizon error = %v", err)
+	}
+	for _, node := range withoutHorizon.Nodes {
+		if node.Name == "worker" && node.ScreenProgress.Freshness != "unknown" {
+			t.Fatalf("worker freshness without stale horizon = %q, want unknown", node.ScreenProgress.Freshness)
+		}
+	}
 
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
@@ -356,6 +369,9 @@ func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	if worker.LastCaptureAt != "" || worker.LastScreenChangeAt != "" || worker.ScreenFingerprint != "" {
 		t.Fatalf("worker missing evidence should not include progress details: %#v", worker)
 	}
+	if worker.Source != "unknown" || worker.Freshness != "unknown" || worker.IdleAgeSeconds != nil || worker.Conflict {
+		t.Fatalf("worker missing observation fields = %#v, want unknown without idle age or conflict", worker)
+	}
 
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
@@ -373,6 +389,28 @@ func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	}
 	if critic.ScreenFingerprint != "00000012" {
 		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+	if critic.Freshness != "stale" || critic.Source != "pane_capture" {
+		t.Fatalf("critic observation = %#v, want stale pane capture", critic)
+	}
+
+	fixture.cfg.NodeStaleSeconds = 0
+	writeSessionStatusPaneActivity(t, fixture, `{
+  "%11": "active",
+  "%12": {"status":"stale","lastChangeAt":"2026-04-14T00:02:00Z","lastCaptureAt":"2026-04-14T00:02:05Z"}
+}`)
+	withoutFingerprint, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() without fingerprint error = %v", err)
+	}
+	for _, node := range withoutFingerprint.Nodes {
+		if node.Name != "critic" {
+			continue
+		}
+		progress := node.ScreenProgress
+		if progress.EvidenceState != "stale" || progress.Freshness != "stale" || progress.Source != "pane_capture" || progress.ObservedAt != "2026-04-14T00:02:05Z" || progress.IdleAgeSeconds != nil || progress.Conflict {
+			t.Fatalf("critic observation without fingerprint = %#v, want stale CLI/daemon parity fields", progress)
+		}
 	}
 }
 

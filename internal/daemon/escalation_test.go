@@ -244,7 +244,11 @@ func TestRuntimeEscalationSnapshotStaleDurationThresholdBoundaries(t *testing.T)
 					Status:        "stale",
 					LastCaptureAt: now.Add(-tc.age),
 				},
-			}, now)
+			}, now, 0)
+			progress := snapshot.Nodes[0].ScreenProgress
+			if progress.EvidenceState != "stale" || progress.Freshness != "stale" || progress.Source != "pane_capture" || progress.ObservedAt != now.Add(-tc.age).Format(time.RFC3339Nano) || progress.IdleAgeSeconds != nil || progress.Conflict {
+				t.Fatalf("daemon observation without fingerprint = %#v, want stale CLI/daemon parity fields", progress)
+			}
 			trips := evaluateEscalationTrips(snapshot, cfg, now)
 			if gotHit := len(trips) == 1; gotHit != tc.wantHit {
 				t.Fatalf("stale trip hit = %v, want %v; trips=%#v", gotHit, tc.wantHit, trips)
