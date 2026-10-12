@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
 	"github.com/i9wa4/tmux-a2a-postman/internal/runtimeprofile"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 )
 
 func verdictGateSendContent(from, to, messageID, replyPolicy, inputRequestID string) string {
@@ -1219,7 +1221,6 @@ func TestHandleDaemonSubmitPop_RollbackCallSiteConsultsWriteFileAtomicOpsSeam(t 
 		rename: os.Rename,
 	}
 	t.Cleanup(func() { writeFileAtomicOpsVar = originalOps })
-
 	_, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-pop-rollback-seam",
 		Command:   projection.DaemonSubmitPop,
@@ -1809,12 +1810,9 @@ func TestHandleDaemonSubmitPop_RollbackFailureFallsBackToDeadLetter(t *testing.T
 	}
 }
 
-// TestHandleDaemonSubmitPop_BothRecoveryArmsFailingReportsMessageMayBeLost
-// is MAJ-2's negative case: when BOTH the primary and fallback recovery
-// writes fail, handleDaemonSubmitPop must not silently swallow that --
-// it must return an error that says the message may be lost, so this is
-// visible in logs/response rather than a generic-looking failure.
-func TestHandleDaemonSubmitPop_BothRecoveryArmsFailingReportsMessageMayBeLost(t *testing.T) {
+// A committed dead-letter event is authoritative even if its immediate file
+// write fails; projection sync later materializes the file.
+func TestHandleDaemonSubmitPop_DeadLetterWriteFailureRetainsCommittedDecision(t *testing.T) {
 	sessionDir := filepath.Join(t.TempDir(), "review-session")
 	if err := config.CreateSessionDirs(sessionDir); err != nil {
 		t.Fatalf("CreateSessionDirs: %v", err)
@@ -1845,6 +1843,23 @@ func TestHandleDaemonSubmitPop_BothRecoveryArmsFailingReportsMessageMayBeLost(t 
 		rename:    os.Rename,
 	}
 	t.Cleanup(func() { writeFileAtomicOpsVar = originalOps })
+	originalNotify := notifyPopVerificationDeadLetterFn
+	notifyCalls := 0
+	notifyPopVerificationDeadLetterFn = func(_, _, _, _, _, _ string) {
+		notifyCalls++
+		lock, err := os.OpenFile(filepath.Join(sessionDir, "mailbox-locks", ".roots.lock"), os.O_RDWR, 0)
+		if err != nil {
+			t.Errorf("open roots gate during notification: %v", err)
+			return
+		}
+		defer lock.Close()
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+			t.Errorf("notification attempted before roots gate release: %v", err)
+			return
+		}
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	}
+	t.Cleanup(func() { notifyPopVerificationDeadLetterFn = originalNotify })
 
 	_, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
 		RequestID: "req-pop-both-fail",
@@ -1854,8 +1869,129 @@ func TestHandleDaemonSubmitPop_BothRecoveryArmsFailingReportsMessageMayBeLost(t 
 	if err == nil {
 		t.Fatal("handleDaemonSubmitPop() error = nil, want a readiness failure")
 	}
-	if !strings.Contains(err.Error(), "message may be lost") {
-		t.Fatalf("handleDaemonSubmitPop() error = %v, want it to explicitly say the message may be lost when both recovery arms fail", err)
+	if !errors.Is(err, errPopDeadLetterCommitted) || strings.Contains(err.Error(), "message may be lost") {
+		t.Fatalf("handleDaemonSubmitPop() error = %v, want committed dead-letter decision", err)
+	}
+	if notifyCalls != 1 {
+		t.Fatalf("sender notifications = %d, want one post-unlock attempt", notifyCalls)
+	}
+	writeFileAtomicOpsVar = originalOps
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection: %v", err)
+	}
+	deadLetterPath := filepath.Join(sessionDir, "dead-letter", strings.TrimSuffix(filename, ".md")+message.DlSuffixPopVerificationExhausted+".md")
+	if data, err := os.ReadFile(deadLetterPath); err != nil || string(data) != content {
+		t.Fatalf("dead-letter after sync = %q, %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(inboxDir, filename)); !os.IsNotExist(err) {
+		t.Fatalf("inbox after committed decision = %v, want absent", err)
+	}
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadLetterEvents := 0
+	for _, event := range events {
+		if event.Type == projection.MailboxProjectionDeadLetteredEventType {
+			deadLetterEvents++
+		}
+	}
+	if deadLetterEvents != 1 {
+		t.Fatalf("terminal dead-letter events = %d, want one", deadLetterEvents)
+	}
+	second, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{RequestID: "req-pop-both-fail-second", Command: projection.DaemonSubmitPop, Node: "worker"})
+	if err != nil || !second.Empty {
+		t.Fatalf("second pop = %+v, %v; want empty", second, err)
+	}
+}
+
+func TestHandleDaemonSubmitPop_DeadLetterAppendFailureRecoveryIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		preFailures int
+	}{
+		{"fallback dead-letter append", 0},
+		{"primary dead-letter append", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionDir := filepath.Join(t.TempDir(), "review-session")
+			if err := config.CreateSessionDirs(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			installShadowJournalManager(sessionDir, "ctx-main", "review-session", time.Now())
+			t.Cleanup(journal.ClearProcessManager)
+			filename := "20261012-185000-sfb93-r8024-from-orchestrator-to-worker.md"
+			content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n---\n\nappend failure\n"
+			recordMailboxProjectionPayload(sessionDir, "review-session", projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+				MessageID: filename, From: "orchestrator", To: "worker", Path: filepath.Join("inbox", "worker", filename), Content: content,
+			})
+			for i := 0; i < tc.preFailures; i++ {
+				recordMailboxProjectionPayload(sessionDir, "review-session", projection.MailboxProjectionPopVerificationFailedEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{MessageID: filename, Path: filepath.Join("read", filename), FailureReason: "prior"})
+			}
+			if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			verifyOriginal := daemonPopArchiveVerify
+			daemonPopArchiveVerify = func(string, string) error { return errors.New("injected unreadable archive") }
+			t.Cleanup(func() { daemonPopArchiveVerify = verifyOriginal })
+			appendOriginal := recordDaemonSubmitPopDeadLetterFn
+			appendErr := errors.New("injected dead-letter append failure")
+			recordDaemonSubmitPopDeadLetterFn = func(string, string, string, journal.Visibility, journal.MailboxEventPayload) error { return appendErr }
+			t.Cleanup(func() { recordDaemonSubmitPopDeadLetterFn = appendOriginal })
+			opsOriginal := writeFileAtomicOpsVar
+			rollbackErr := errors.New("injected inbox rollback failure")
+			writeFileAtomicOpsVar.writeFile = func(path string, data []byte, mode os.FileMode) error {
+				if strings.Contains(path, string(filepath.Separator)+"inbox"+string(filepath.Separator)) {
+					return rollbackErr
+				}
+				return opsOriginal.writeFile(path, data, mode)
+			}
+			t.Cleanup(func() { writeFileAtomicOpsVar = opsOriginal })
+			response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{RequestID: "req-append-failure", Command: projection.DaemonSubmitPop, Node: "worker"})
+			if !errors.Is(err, appendErr) || !errors.Is(err, rollbackErr) || response.Filename != "" || !strings.Contains(err.Error(), "durable inbox recovery intent") {
+				t.Fatalf("failed pop = %+v, %v", response, err)
+			}
+			writeFileAtomicOpsVar = opsOriginal
+			recordDaemonSubmitPopDeadLetterFn = appendOriginal
+			daemonPopArchiveVerify = verifyOriginal
+			if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+				t.Fatalf("sync recovery intent: %v", err)
+			}
+			inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+			if data, err := os.ReadFile(inboxPath); err != nil || string(data) != content {
+				t.Fatalf("restored inbox = %q, %v", data, err)
+			}
+			deadLetterPath := filepath.Join(sessionDir, "dead-letter", strings.TrimSuffix(filename, ".md")+message.DlSuffixPopVerificationExhausted+".md")
+			if _, err := os.Stat(deadLetterPath); !os.IsNotExist(err) {
+				t.Fatalf("dead-letter after append failure = %v, want absent", err)
+			}
+			retry, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{RequestID: "req-append-retry", Command: projection.DaemonSubmitPop, Node: "worker"})
+			if err != nil || retry.Filename != filename {
+				t.Fatalf("second pop = %+v, %v", retry, err)
+			}
+			if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+				t.Fatalf("inbox after successful read = %v, want absent", err)
+			}
+			events, err := journal.Replay(sessionDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			readEvents, deadEvents := 0, 0
+			for _, event := range events {
+				if event.Type == projection.MailboxProjectionReadEventType {
+					readEvents++
+				}
+				if event.Type == projection.MailboxProjectionDeadLetteredEventType {
+					deadEvents++
+				}
+			}
+			if readEvents != 1 || deadEvents != 0 {
+				t.Fatalf("event cardinality: read=%d dead-letter=%d", readEvents, deadEvents)
+			}
+		})
 	}
 }
 
@@ -2293,6 +2429,333 @@ func TestProcessDaemonSubmitRequest_PopRecordsReadBeforeProjectionSync(t *testin
 	}
 	if response.Filename != filename {
 		t.Fatalf("response.Filename = %q, want %q", response.Filename, filename)
+	}
+}
+
+func TestHandleDaemonSubmitPop_ArchiveAndReadEventExcludeProjectionSync(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	installShadowJournalManager(sessionDir, "ctx-main", "review-session", time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+
+	filename := "20261012-180000-sfb93-r8021-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n---\n\narchive race\n"
+	recordMailboxProjectionPayload(sessionDir, "review-session", projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: filename,
+		From:      "orchestrator",
+		To:        "worker",
+		Path:      filepath.Join("inbox", "worker", filename),
+		Content:   content,
+	})
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("initial SyncMailboxProjection: %v", err)
+	}
+
+	verifyEntered := make(chan struct{})
+	releaseVerify := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseVerify:
+		default:
+			close(releaseVerify)
+		}
+	}()
+	originalVerify := daemonPopArchiveVerify
+	daemonPopArchiveVerify = func(readPath, expectedContent string) error {
+		close(verifyEntered)
+		<-releaseVerify
+		return originalVerify(readPath, expectedContent)
+	}
+	t.Cleanup(func() { daemonPopArchiveVerify = originalVerify })
+
+	type popResult struct {
+		response projection.DaemonSubmitResponse
+		err      error
+	}
+	popDone := make(chan popResult, 1)
+	go func() {
+		response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{
+			RequestID: "req-pop-archive-race",
+			Command:   projection.DaemonSubmitPop,
+			Node:      "worker",
+		})
+		popDone <- popResult{response, err}
+	}()
+	select {
+	case <-verifyEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pop did not reach archive verification")
+	}
+
+	syncBlocked := make(chan struct{})
+	syncDone := make(chan error, 1)
+	go func() {
+		syncDone <- projection.SyncMailboxProjectionObserved(sessionDir, func() { close(syncBlocked) })
+	}()
+	select {
+	case <-syncBlocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("projection sync did not prove roots-gate contention")
+	}
+	select {
+	case err := <-syncDone:
+		t.Fatalf("actual projection sync finished between archive and read event: %v", err)
+	default:
+	}
+	close(releaseVerify)
+	select {
+	case result := <-popDone:
+		if result.err != nil {
+			t.Fatalf("handleDaemonSubmitPop: %v", result.err)
+		}
+		if result.response.Filename != filename {
+			t.Fatalf("response.Filename = %q, want %q", result.response.Filename, filename)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("pop did not finish after verification was released")
+	}
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			t.Fatalf("concurrent SyncMailboxProjection: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent SyncMailboxProjection did not finish")
+	}
+	readPath := filepath.Join(sessionDir, "read", filename)
+	if data, err := os.ReadFile(readPath); err != nil || string(data) != content {
+		t.Fatalf("archived body after projection sync = %q, %v; want original content", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "inbox", "worker", filename)); !os.IsNotExist(err) {
+		t.Fatalf("inbox after concurrent sync = %v, want absent", err)
+	}
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay: %v", err)
+	}
+	readEvents := 0
+	for _, event := range events {
+		if event.Type == projection.MailboxProjectionReadEventType {
+			readEvents++
+		}
+	}
+	if readEvents != 1 {
+		t.Fatalf("durable read events = %d, want exactly 1", readEvents)
+	}
+	second, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{RequestID: "req-pop-second", Command: projection.DaemonSubmitPop, Node: "worker"})
+	if err != nil || !second.Empty {
+		t.Fatalf("second pop = %+v, %v; want empty", second, err)
+	}
+}
+
+func TestHandleDaemonSubmitPop_ReadEventAppendFailureRestoresInbox(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	installShadowJournalManager(sessionDir, "ctx-main", "review-session", time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+	filename := "20261012-180001-sfb93-r8022-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n---\n\nappend failure\n"
+	recordMailboxProjectionPayload(sessionDir, "review-session", projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: filename, From: "orchestrator", To: "worker",
+		Path: filepath.Join("inbox", "worker", filename), Content: content,
+	})
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("initial SyncMailboxProjection: %v", err)
+	}
+
+	appendErr := errors.New("injected read-event append failure")
+	originalRecord := recordDaemonSubmitPopReadFn
+	recordDaemonSubmitPopReadFn = func(string, string, string, string) error { return appendErr }
+	t.Cleanup(func() { recordDaemonSubmitPopReadFn = originalRecord })
+	request := projection.DaemonSubmitRequest{RequestID: "req-pop-append-fails", Command: projection.DaemonSubmitPop, Node: "worker"}
+	response, err := handleDaemonSubmitPop(sessionDir, request)
+	if !errors.Is(err, appendErr) || response.Filename != "" || response.MarkdownPath != "" {
+		t.Fatalf("failed pop = %+v, %v; want non-success with append error", response, err)
+	}
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+	if data, err := os.ReadFile(inboxPath); err != nil || string(data) != content {
+		t.Fatalf("restored inbox body = %q, %v; want original content", data, err)
+	}
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("SyncMailboxProjection after failed append: %v", err)
+	}
+	if data, err := os.ReadFile(inboxPath); err != nil || string(data) != content {
+		t.Fatalf("inbox body after sync = %q, %v; want original content", data, err)
+	}
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay after failed append: %v", err)
+	}
+	for _, event := range events {
+		if event.Type == projection.MailboxProjectionReadEventType {
+			t.Fatal("failed append produced a durable read event")
+		}
+	}
+	recordDaemonSubmitPopReadFn = originalRecord
+	request.RequestID = "req-pop-append-retry"
+	retry, err := handleDaemonSubmitPop(sessionDir, request)
+	if err != nil || retry.Filename != filename {
+		t.Fatalf("retry pop = %+v, %v; want message", retry, err)
+	}
+	events, err = journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay after retry: %v", err)
+	}
+	readEvents := 0
+	for _, event := range events {
+		if event.Type == projection.MailboxProjectionReadEventType {
+			readEvents++
+		}
+	}
+	if readEvents != 1 {
+		t.Fatalf("durable read events after retry = %d, want 1", readEvents)
+	}
+}
+
+func TestHandleDaemonSubmitPop_VerificationRecoveryExcludesSyncAndSecondPop(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	installShadowJournalManager(sessionDir, "ctx-main", "review-session", time.Now())
+	t.Cleanup(journal.ClearProcessManager)
+	filename := "20261012-180002-sfb93-r8023-from-orchestrator-to-worker.md"
+	content := "---\nparams:\n  from: orchestrator\n  to: worker\n  messageId: " + filename + "\n---\n\nrecovery race\n"
+	recordMailboxProjectionPayload(sessionDir, "review-session", projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+		MessageID: filename, From: "orchestrator", To: "worker",
+		Path: filepath.Join("inbox", "worker", filename), Content: content,
+	})
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("initial SyncMailboxProjection: %v", err)
+	}
+
+	originalVerify := daemonPopArchiveVerify
+	verifyCalls := 0
+	daemonPopArchiveVerify = func(path, expected string) error {
+		verifyCalls++
+		if verifyCalls == 1 {
+			return errors.New("injected first verification failure")
+		}
+		return originalVerify(path, expected)
+	}
+	t.Cleanup(func() { daemonPopArchiveVerify = originalVerify })
+	originalOps := writeFileAtomicOpsVar
+	rollbackEntered := make(chan struct{})
+	releaseRollback := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseRollback:
+		default:
+			close(releaseRollback)
+		}
+	}()
+	inboxPath := filepath.Join(sessionDir, "inbox", "worker", filename)
+	writeFileAtomicOpsVar.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		if path == inboxPath+".tmp" {
+			close(rollbackEntered)
+			<-releaseRollback
+		}
+		return originalOps.writeFile(path, data, mode)
+	}
+	t.Cleanup(func() { writeFileAtomicOpsVar = originalOps })
+
+	type popResult struct {
+		response projection.DaemonSubmitResponse
+		err      error
+	}
+	firstDone := make(chan popResult, 1)
+	go func() {
+		response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{RequestID: "req-pop-recovery-first", Command: projection.DaemonSubmitPop, Node: "worker"})
+		firstDone <- popResult{response, err}
+	}()
+	select {
+	case <-rollbackEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("verification failure did not reach rollback")
+	}
+	syncBlocked := make(chan struct{})
+	syncDone := make(chan error, 1)
+	go func() {
+		syncDone <- projection.SyncMailboxProjectionObserved(sessionDir, func() { close(syncBlocked) })
+	}()
+	select {
+	case <-syncBlocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("projection sync did not prove roots-gate contention")
+	}
+	secondBlocked := make(chan struct{})
+	originalGate := daemonPopRootsGateFn
+	daemonPopRootsGateFn = func(dir string, fn func() error) error {
+		return store.WithMailboxRootsExclusiveObserved(dir, func() { close(secondBlocked) }, fn)
+	}
+	t.Cleanup(func() { daemonPopRootsGateFn = originalGate })
+	secondDone := make(chan popResult, 1)
+	go func() {
+		response, err := handleDaemonSubmitPop(sessionDir, projection.DaemonSubmitRequest{RequestID: "req-pop-recovery-second", Command: projection.DaemonSubmitPop, Node: "worker"})
+		secondDone <- popResult{response, err}
+	}()
+	select {
+	case <-secondBlocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second pop did not prove roots-gate contention")
+	}
+	select {
+	case err := <-syncDone:
+		t.Fatalf("sync completed during paused rollback: %v", err)
+	case result := <-secondDone:
+		t.Fatalf("second pop completed during paused rollback: %+v", result)
+	default:
+	}
+	close(releaseRollback)
+	select {
+	case result := <-firstDone:
+		if result.err == nil || result.response.Filename != "" {
+			t.Fatalf("first pop = %+v, %v; want verification failure", result.response, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first pop did not finish after rollback release")
+	}
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			t.Fatalf("concurrent SyncMailboxProjection: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent projection sync did not finish")
+	}
+	select {
+	case result := <-secondDone:
+		if result.err != nil || result.response.Filename != filename {
+			t.Fatalf("second pop = %+v, %v; want recovered message", result.response, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second pop did not finish")
+	}
+	if err := projection.SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("final SyncMailboxProjection: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(sessionDir, "read", filename)); err != nil || string(data) != content {
+		t.Fatalf("read archive = %q, %v; want original content", data, err)
+	}
+	if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+		t.Fatalf("inbox after second pop = %v, want absent", err)
+	}
+	events, err := journal.Replay(sessionDir)
+	if err != nil {
+		t.Fatalf("journal.Replay: %v", err)
+	}
+	readEvents := 0
+	for _, event := range events {
+		if event.Type == projection.MailboxProjectionReadEventType {
+			readEvents++
+		}
+	}
+	if readEvents != 1 {
+		t.Fatalf("durable read events = %d, want 1", readEvents)
 	}
 }
 
