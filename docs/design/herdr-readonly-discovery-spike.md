@@ -43,6 +43,36 @@ Unavailable socket/server failures are normalized to
 `ErrHerdrBackendUnavailable` so higher layers can treat missing Herdr like an
 unavailable backend instead of a tmux failure.
 
+### 3.1. Response Identity Binding
+
+A response that decodes cleanly can still describe a different target than the
+one requested. The backend therefore binds every consumed `pane.read` and
+`pane.process_info` response to its request before returning any content:
+
+- `pane.read` must echo the requested `pane_id`, the configured workspace and
+  tab, and the `source` actually sent (`visible` by default, `recent` for
+  history or tail captures);
+- `pane.process_info` must echo the requested `pane_id`;
+- comparison is byte-exact, with no trimming or case folding;
+- an identity field that is missing, null, or not a string is a malformed
+  response and fails as `ErrHerdrBackendUnavailable`; a field that is present
+  but empty or different fails as `ErrHerdrResponseTargetMismatch`;
+- `ErrHerdrResponseTargetMismatch` is distinct from
+  `ErrHerdrPaneTargetMismatch`, which rejects the caller's own pane argument
+  before any request is sent;
+- the mismatch error carries only escaped, length-bounded identities, and the
+  mismatched text or command is never returned, logged, or cached;
+- the discovery process probe uses the same binding: a wrong or empty
+  `process_info.pane_id` aborts `Discover` with the mismatch error instead of
+  quietly marking the pane stale.
+
+Residual: `pane.process_info` carries no workspace or tab, so the workspace and
+tab binding of `PaneCurrentCommand` rests on the containment snapshot read just
+before the request. A pane that moves between that snapshot and the process
+read is not detected. This time-of-check to time-of-use window is a recorded
+residual; the JSON-RPC response ID check still rejects a response that does not
+belong to the request.
+
 ## 4. Compatibility Authority
 
 The compatibility source of truth is the protocol/schema pair observed from the

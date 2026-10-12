@@ -422,14 +422,6 @@ func TestSocketClientDiscoveryQuarantinesDecodedPaneEvidence(t *testing.T) {
 				multiplexer.HerdrPaneID("pane-1"),
 			},
 		},
-		{
-			name:          "mismatched process pane id",
-			snapshot:      herdr082SnapshotFixture,
-			processResult: `{"id":"postman:4","result":{"type":"pane_process_info","process_info":{"pane_id":"pane-other","foreground_processes":[{"pid":123,"name":"codex"}]}}}` + "\n",
-			wantStale: []multiplexer.ResourceID{
-				multiplexer.HerdrPaneID("pane-1"),
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
