@@ -17,7 +17,7 @@ markers through Herdr in this phase.
 The zero-value Herdr read configuration is disabled. A caller must explicitly
 construct `multiplexer.HerdrReadConfig{Enabled: true, ...}` with:
 
-- `HERDR_SOCKET_PATH`;
+- the configured socket path (`[postman.herdr]` `socket_path`);
 - Herdr named session;
 - Herdr workspace ID;
 - socket/session/workspace allowlists;
@@ -76,7 +76,7 @@ belong to the request.
 ## 4. Compatibility Authority
 
 The compatibility source of truth is the protocol/schema pair observed from the
-Herdr server reached through `HERDR_SOCKET_PATH` and corroborated by the
+Herdr server reached through the configured socket path and corroborated by the
 `herdr api schema --json` command visible on `PATH`. Postman does not treat
 either source as authoritative by itself:
 
@@ -105,8 +105,11 @@ For #658:
 
 - postman session maps to an explicitly configured Herdr named session plus an
   allowlisted workspace ID;
-- postman node maps to postman-owned metadata or launch environment attached to
-  Herdr panes;
+- postman node maps to postman-owned pane metadata: the first nonblank value
+  of the `postman_node`, `POSTMAN_NODE` and `TMUX_A2A_POSTMAN_NODE` keys, in
+  that order, from one metadata map that merges a pane's `metadata` and
+  `tokens` fields (a token overrides metadata on the same key); the launch
+  environment is not an identity source;
 - pane labels, terminal titles, process info, and cwd are advisory evidence
   only;
 - duplicate node claims become explicit `HerdrIdentityCollision` records;

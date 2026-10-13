@@ -387,6 +387,13 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		}
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
+	// #624/#700: the daemon's own workspace_tree entry may omit interface_node,
+	// but if it sets one it must equal [postman] interface_node. The own session
+	// is only known here, so this is the load-time check for that rule; a
+	// mismatch is a start error rather than a silently denied edge.
+	if err := config.ValidateOwnInterfaceDeclaration(cfg, sessionName); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
 
 	startPreflight := planStartPreflight(startPreflightInput{
 		BaseDir:         baseDir,
