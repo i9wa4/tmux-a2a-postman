@@ -2,9 +2,11 @@ package projection
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,6 +89,152 @@ func TestProjectMailboxProjection_FourDirectoryLifecycle(t *testing.T) {
 	}
 	if got := projected.DeadLetter[pathKey(filepath.Join("dead-letter", "20260414-030002-r2222-from-orchestrator-to-critic-dl-routing-denied.md"))]; got.Content != "dead-letter body" {
 		t.Fatalf("dead-letter projection content = %q, want dead-letter body", got.Content)
+	}
+}
+
+func TestPopRecoveryIntent_RetiresAfterMaterializationOrJournalWinner(t *testing.T) {
+	for _, winner := range []string{"inbox", "read", "dead-letter"} {
+		t.Run(winner, func(t *testing.T) {
+			sessionDir := t.TempDir()
+			now := time.Date(2026, time.October, 12, 19, 40, 0, 0, time.UTC)
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-intent", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			filename := "20261012-194000-sfb93-r8025-from-orchestrator-to-worker.md"
+			inboxRel := filepath.Join("inbox", "worker", filename)
+			inboxPath := filepath.Join(sessionDir, inboxRel)
+			appendMailboxEventForTest(t, writer, MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{
+				MessageID: filename, From: "orchestrator", To: "worker", Path: inboxRel, Content: "known body",
+			}, now.Add(time.Second))
+			if err := SyncMailboxProjection(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := RecordPopRecoveryIntent(sessionDir, inboxPath, []byte("known body")); err != nil {
+				t.Fatal(err)
+			}
+			switch winner {
+			case "inbox":
+				if err := os.Remove(inboxPath); err != nil {
+					t.Fatal(err)
+				}
+			case "read":
+				appendMailboxEventForTest(t, writer, MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+					MessageID: filename, From: "orchestrator", To: "worker", Path: filepath.Join("read", filename), Content: "known body",
+				}, now.Add(2*time.Second))
+			case "dead-letter":
+				appendMailboxEventForTest(t, writer, MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+					MessageID: filename, From: "orchestrator", To: "worker", Path: filepath.Join("dead-letter", "terminal.md"), SourcePath: filepath.Join("read", filename), Content: "known body",
+				}, now.Add(2*time.Second))
+			}
+			for pass := 0; pass < 2; pass++ { // second pass simulates a fresh sync after restart
+				if err := SyncMailboxProjection(sessionDir); err != nil {
+					t.Fatalf("sync pass %d: %v", pass, err)
+				}
+			}
+			entries, err := os.ReadDir(popRecoveryIntentDir(sessionDir))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("intent dir after winner = %v, %v; want empty", entries, err)
+			}
+			if winner == "inbox" {
+				if data, err := os.ReadFile(inboxPath); err != nil || string(data) != "known body" {
+					t.Fatalf("materialized inbox = %q, %v", data, err)
+				}
+			} else if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+				t.Fatalf("inbox resurrected after %s winner: %v", winner, err)
+			}
+		})
+	}
+}
+
+func TestPopRecoveryIntent_CleanupFailureRetriesWithoutLoss(t *testing.T) {
+	sessionDir := t.TempDir()
+	now := time.Date(2026, time.October, 12, 19, 41, 0, 0, time.UTC)
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-intent", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filename := "20261012-194100-sfb93-r8026-from-orchestrator-to-worker.md"
+	inboxRel := filepath.Join("inbox", "worker", filename)
+	inboxPath := filepath.Join(sessionDir, inboxRel)
+	appendMailboxEventForTest(t, writer, MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{MessageID: filename, From: "orchestrator", To: "worker", Path: inboxRel, Content: "known body"}, now.Add(time.Second))
+	if err := RecordPopRecoveryIntent(sessionDir, inboxPath, []byte("known body")); err != nil {
+		t.Fatal(err)
+	}
+	removeOriginal := removePopRecoveryIntentFile
+	cleanupErr := errors.New("injected intent cleanup failure")
+	removePopRecoveryIntentFile = func(string) error { return cleanupErr }
+	t.Cleanup(func() { removePopRecoveryIntentFile = removeOriginal })
+	if err := SyncMailboxProjection(sessionDir); !errors.Is(err, cleanupErr) {
+		t.Fatalf("sync cleanup error = %v", err)
+	}
+	if data, err := os.ReadFile(inboxPath); err != nil || string(data) != "known body" {
+		t.Fatalf("materialized inbox = %q, %v", data, err)
+	}
+	entries, err := os.ReadDir(popRecoveryIntentDir(sessionDir))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("intents retained after failed cleanup = %v, %v", entries, err)
+	}
+	removePopRecoveryIntentFile = removeOriginal
+	if err := SyncMailboxProjection(sessionDir); err != nil {
+		t.Fatalf("retry sync: %v", err)
+	}
+	entries, err = os.ReadDir(popRecoveryIntentDir(sessionDir))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("intents after retry = %v, %v", entries, err)
+	}
+}
+
+func TestPopRecoveryIntent_StaleOrConflictingSoleCopyIsQuarantined(t *testing.T) {
+	for _, scenario := range []string{"stale generation", "conflicting body"} {
+		t.Run(scenario, func(t *testing.T) {
+			sessionDir := t.TempDir()
+			now := time.Date(2026, time.October, 12, 19, 42, 0, 0, time.UTC)
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-intent", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			filename := "20261012-194200-sfb93-r8027-from-orchestrator-to-worker.md"
+			inboxRel := filepath.Join("inbox", "worker", filename)
+			inboxPath := filepath.Join(sessionDir, inboxRel)
+			appendMailboxEventForTest(t, writer, MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, journal.MailboxEventPayload{MessageID: filename, From: "orchestrator", To: "worker", Path: inboxRel, Content: "journal body"}, now.Add(time.Second))
+			if err := SyncMailboxProjection(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := RecordPopRecoveryIntent(sessionDir, inboxPath, []byte("sole copy")); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "stale generation" {
+				if _, _, err := journal.ResolveSession(sessionDir, "review", journal.ResolutionExplicitRebind, now.Add(2*time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := journal.OpenShadowWriter(sessionDir, "ctx-intent", "review", 102, now.Add(3*time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := SyncMailboxProjection(sessionDir); err != nil {
+				t.Fatal(err)
+			}
+			entries, err := os.ReadDir(popRecoveryIntentDir(sessionDir))
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("active intents = %v, %v; want empty", entries, err)
+			}
+			matches, err := filepath.Glob(filepath.Join(sessionDir, "mailbox-locks", "pop-recovery-quarantine", "intent-*", "*.json"))
+			if err != nil || len(matches) != 1 {
+				t.Fatalf("quarantine files = %v, %v; want one", matches, err)
+			}
+			data, err := os.ReadFile(matches[0])
+			if err != nil || !strings.Contains(string(data), "sole copy") {
+				t.Fatalf("quarantined sole copy = %q, %v", data, err)
+			}
+			if scenario == "conflicting body" {
+				if data, err := os.ReadFile(inboxPath); err != nil || string(data) != "journal body" {
+					t.Fatalf("journal winner = %q, %v", data, err)
+				}
+			} else if _, err := os.Stat(inboxPath); !os.IsNotExist(err) {
+				t.Fatalf("stale inbox resurrected in new generation: %v", err)
+			}
+		})
 	}
 }
 

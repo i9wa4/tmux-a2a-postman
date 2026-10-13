@@ -21,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/nodeaddr"
 	"github.com/i9wa4/tmux-a2a-postman/internal/notification"
 	"github.com/i9wa4/tmux-a2a-postman/internal/projection"
+	"github.com/i9wa4/tmux-a2a-postman/internal/store"
 )
 
 type HandKind string
@@ -565,12 +566,6 @@ var (
 	afterSystemMessageCommitFn       = func(string) error { return nil }
 )
 
-func SetOpenCurrentWriterForTest(fn func(string) (*journal.Writer, error)) func() {
-	original := openCurrentWriterFn
-	openCurrentWriterFn = fn
-	return func() { openCurrentWriterFn = original }
-}
-
 func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delivery SystemMessageDelivery) (SystemMessageResult, error) {
 	recipientInbox := target.InboxDir()
 	if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
@@ -583,7 +578,9 @@ func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delive
 	}
 
 	dst := filepath.Join(recipientInbox, delivery.Filename)
-	tmp, err := os.CreateTemp(recipientInbox, "."+delivery.Filename+".tmp-")
+	// Keep the draft outside mailbox projection roots. A concurrent sync removes
+	// unknown inbox files and could otherwise delete it before the rename.
+	tmp, err := os.CreateTemp(target.SessionDir, "."+delivery.Filename+".tmp-")
 	if err != nil {
 		return SystemMessageResult{}, fmt.Errorf("creating inbox draft: %w", err)
 	}
@@ -632,42 +629,102 @@ func (FilesystemSystemMessageAdapter) DeliverSystemMessage(target Target, delive
 	if err := beforeSystemMessageCommitFn("rename"); err != nil {
 		return SystemMessageResult{}, err
 	}
-	if err := os.Rename(tmpPath, dst); err != nil {
-		return SystemMessageResult{}, fmt.Errorf("committing inbox delivery: %w", err)
-	}
-	committed := SystemMessageResult{Delivered: true, Committed: true}
-	if err := afterSystemMessageCommitFn("directory-open"); err != nil {
-		return committed, err
-	}
-	if err := syncInboxDirectoryFn(recipientInbox); err != nil {
-		return committed, fmt.Errorf("inbox delivery committed but durability sync failed: %w", err)
-	}
-	if err := afterSystemMessageCommitFn("directory-close"); err != nil {
-		return committed, err
-	}
-	if err := afterSystemMessageCommitFn("final-stat"); err != nil {
-		return committed, err
-	}
-	if _, err := os.Stat(dst); err != nil {
-		return committed, fmt.Errorf("inbox delivery committed but final verification failed: %w", err)
-	}
-	payload := journal.MailboxEventPayload{
-		MessageID: delivery.Filename,
-		From:      delivery.Sender,
-		To:        target.ActorID,
-		ThreadID:  delivery.ThreadID,
-		Path:      shadowRelativePath(target.SessionDir, dst),
-		Content:   delivery.Content,
-	}
-	if err := appendMailboxProjectionPayloadFn(target.SessionDir, target.SessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, payload); err != nil {
-		return committed, fmt.Errorf("inbox delivery committed but projection append failed (recoverable by projection sync): %w", err)
+	committed := SystemMessageResult{}
+	// Projection removes unknown inbox files and empty recipient directories.
+	// Hold the roots gate until the delivered event is durable and the rename
+	// completes, so projection cannot observe an intermediate state.
+	commitErr := store.WithMailboxRootsExclusive(target.SessionDir, func() error {
+		if err := os.MkdirAll(recipientInbox, 0o700); err != nil {
+			return fmt.Errorf("creating recipient inbox for commit: %w", err)
+		}
+		if info, err := os.Lstat(dst); err == nil && info.IsDir() {
+			return fmt.Errorf("committing inbox delivery: destination is a directory")
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("checking inbox delivery destination: %w", err)
+		}
+		payload := enrichMailboxProjectionPayload(journal.MailboxEventPayload{
+			MessageID: delivery.Filename,
+			From:      delivery.Sender,
+			To:        target.ActorID,
+			ThreadID:  delivery.ThreadID,
+			Path:      shadowRelativePath(target.SessionDir, dst),
+			Content:   delivery.Content,
+		})
+		appendErr := appendMailboxProjectionPayloadFn(target.SessionDir, target.SessionName, projection.MailboxProjectionDeliveredEventType, journal.VisibilityMailboxProjection, payload)
+		authorized, verifyErr := hasDurableDeliveredPayload(target.SessionDir, target.SessionName, payload)
+		if verifyErr != nil {
+			return fmt.Errorf("verifying delivered event after append: %w", verifyErr)
+		}
+		if !authorized {
+			if appendErr != nil {
+				return fmt.Errorf("appending delivered event: %w", appendErr)
+			}
+			return fmt.Errorf("delivered event missing after append")
+		}
+		committed = SystemMessageResult{Delivered: true, Committed: true}
+		if err := os.Rename(tmpPath, dst); err != nil {
+			return fmt.Errorf("committing inbox delivery after delivered event: %w", err)
+		}
+		if err := afterSystemMessageCommitFn("directory-open"); err != nil {
+			return err
+		}
+		if err := syncInboxDirectoryFn(recipientInbox); err != nil {
+			return fmt.Errorf("inbox delivery committed but durability sync failed: %w", err)
+		}
+		if err := afterSystemMessageCommitFn("directory-close"); err != nil {
+			return err
+		}
+		if err := afterSystemMessageCommitFn("final-stat"); err != nil {
+			return err
+		}
+		if _, err := os.Stat(dst); err != nil {
+			return fmt.Errorf("inbox delivery committed but final verification failed: %w", err)
+		}
+		return nil
+	})
+	if !committed.Committed {
+		return committed, commitErr
 	}
 	if err := syncMailboxProjectionFn(target.SessionDir); err != nil {
+		if commitErr != nil {
+			return committed, errors.Join(commitErr, err)
+		}
 		return committed, fmt.Errorf("inbox delivery committed but projection sync failed (recoverable by projection sync): %w", err)
 	}
 
 	committed.Projected = true
+	if commitErr != nil {
+		return committed, commitErr
+	}
 	return committed, nil
+}
+
+func hasDurableDeliveredPayload(sessionDir, sessionName string, want journal.MailboxEventPayload) (bool, error) {
+	sessionKey, generation, ok := projection.CurrentSessionIdentity(sessionDir)
+	if !ok {
+		return false, nil
+	}
+	equivalent := sameMailboxProjectionPayload(projection.MailboxProjectionDeliveredEventType, want)
+	found := false
+	err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
+		if event.SessionKey != sessionKey || event.Generation != generation || event.TmuxSessionName != sessionName {
+			return nil
+		}
+		match, err := equivalent(event)
+		if err != nil || !match {
+			return err
+		}
+		var got journal.MailboxEventPayload
+		if err := json.Unmarshal(event.Payload, &got); err != nil {
+			return err
+		}
+		if got.Content != want.Content {
+			return fmt.Errorf("delivered event identity conflicts with body for %s", want.MessageID)
+		}
+		found = true
+		return nil
+	})
+	return found, err
 }
 
 func DefaultHandAdapter(target Target) (HandAdapter, error) {

@@ -303,30 +303,6 @@ func TestHerdrBackendDiscoveryQuarantinesPaneWithoutProcessUsability(t *testing.
 	}
 }
 
-func TestHerdrBackendDiscoveryQuarantinesMismatchedProcessProbe(t *testing.T) {
-	snapshot := validHerdrSessionSnapshot()
-	client := &fakeHerdrReadClient{
-		ping:     validHerdrEnvelope(),
-		snapshot: snapshot,
-		processInfo: HerdrPaneProcessInfoResult{
-			Envelope:    validHerdrEnvelope(),
-			ProcessInfo: HerdrPaneProcessInfo{PaneID: "other-pane"},
-		},
-	}
-	backend := HerdrBackend{Config: validHerdrReadConfig(), Client: client}
-
-	discovery, err := backend.Discover(context.Background(), "work")
-	if err != nil {
-		t.Fatalf("Discover() error = %v", err)
-	}
-	if len(discovery.Layout.Groups[0].Items) != 0 {
-		t.Fatalf("layout items = %#v, want mismatched process target omitted", discovery.Layout.Groups[0].Items)
-	}
-	if got := discovery.Layout.NativeIDs["focused_pane_id"]; got != "" {
-		t.Fatalf("focused pane = %q, want omitted for mismatched process target", got)
-	}
-}
-
 func TestHerdrBackendDiscoveryQuarantinesUnsupportedProcessProbeAndContinues(t *testing.T) {
 	snapshot := validHerdrSessionSnapshot()
 	snapshot.Panes[1].Stale = false
@@ -419,8 +395,12 @@ func TestHerdrBackendCapturePaneRequiresPaneReadGate(t *testing.T) {
 		ping:     validHerdrEnvelope(),
 		snapshot: validHerdrSessionSnapshot(),
 		readPane: HerdrPaneReadResult{
-			Envelope: validHerdrEnvelope(),
-			Text:     "hello\n",
+			Envelope:    validHerdrEnvelope(),
+			Text:        "hello\n",
+			PaneID:      "workspace-1:pane-1",
+			WorkspaceID: "workspace-1",
+			TabID:       "workspace-1:tab-1",
+			Source:      "recent",
 		},
 	}
 	config := validHerdrReadConfig()

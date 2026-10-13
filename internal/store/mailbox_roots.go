@@ -40,6 +40,12 @@ func WithMailboxRootsShared(sessionDir string, fn func() error) error {
 	return withMailboxRootsLockSeam(sessionDir, syscall.LOCK_SH, syscall.Flock, nil, fn)
 }
 
+// WithMailboxRootsSharedObserved is a test seam that proves contention with a
+// nonblocking lock attempt before waiting normally for the shared gate.
+func WithMailboxRootsSharedObserved(sessionDir string, onBlocked func(), fn func() error) error {
+	return withMailboxRootsLockSeam(sessionDir, syscall.LOCK_SH, observedMailboxRootsLock(onBlocked), nil, fn)
+}
+
 // WithMailboxRootsExclusive acquires the session-level mailbox roots gate
 // with an exclusive (LOCK_EX) lock and runs fn while holding it. A
 // generation transition (quarantine) holds this gate exclusively,
@@ -50,6 +56,28 @@ func WithMailboxRootsShared(sessionDir string, fn func() error) error {
 // same-process-reentrancy constraints, which apply here identically.
 func WithMailboxRootsExclusive(sessionDir string, fn func() error) error {
 	return withMailboxRootsLockSeam(sessionDir, syscall.LOCK_EX, syscall.Flock, nil, fn)
+}
+
+// WithMailboxRootsExclusiveObserved is the exclusive counterpart of the
+// contention test seam above.
+func WithMailboxRootsExclusiveObserved(sessionDir string, onBlocked func(), fn func() error) error {
+	return withMailboxRootsLockSeam(sessionDir, syscall.LOCK_EX, observedMailboxRootsLock(onBlocked), nil, fn)
+}
+
+func observedMailboxRootsLock(onBlocked func()) AdmissionLockFunc {
+	return func(fd, how int) error {
+		if how == syscall.LOCK_UN {
+			return syscall.Flock(fd, how)
+		}
+		err := syscall.Flock(fd, how|syscall.LOCK_NB)
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			if onBlocked != nil {
+				onBlocked()
+			}
+			return syscall.Flock(fd, how)
+		}
+		return err
+	}
 }
 
 // withMailboxRootsLockSeam is the shared implementation behind both
