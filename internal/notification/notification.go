@@ -1,11 +1,11 @@
 package notification
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +17,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/paneutil"
+	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxrunner"
 )
 
 // ErrPaneUnresponsive indicates the post-Enter verify-retry loop exhausted
@@ -177,15 +178,28 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	// the daemon's perspective. C-m (carriage return) submits reliably in
 	// both Codex CLI and claude-chill; the "Enter" key name adds a newline
 	// in Codex CLI multi-line readline instead of submitting (#126).
-	if err := n.run(atomicFirstEnterArgs(sanitized, paneID, enterDelay)...); err != nil {
+	chainTimeout := atomicChainTimeout(tmuxTimeout, enterDelay)
+	if err := n.run(chainTimeout, atomicFirstEnterArgs(sanitized, paneID, enterDelay)...); err != nil {
 		n.warnf("⚠️  postman: WARNING: failed to paste and submit to pane %s: %v\n", paneID, err)
+		// The chain may have pasted (and even submitted) before the deadline
+		// hit, so the delivery state is ambiguous: report it as
+		// ErrPaneUnresponsive so callers do not treat it as a plain failure
+		// and re-paste a second copy of the notification (#871).
+		if ambiguous := ambiguousDeadlineError(paneID, "chained paste/submit", chainTimeout, err); ambiguous != nil {
+			return ambiguous
+		}
 		return err
 	}
 
-	// 5. Send additional C-m keystrokes up to enterCount total
+	// 5. Send additional C-m keystrokes up to enterCount total. The paste has
+	// already happened, so a deadline here is ambiguous too and must not lead
+	// the caller to re-paste (#871).
 	for i := 1; i < enterCount; i++ {
 		n.sleepFor(enterDelay)
-		if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
+		if err := n.run(tmuxTimeout, "send-keys", "-t", paneID, "C-m"); err != nil {
+			if ambiguous := ambiguousDeadlineError(paneID, fmt.Sprintf("C-m %d", i+1), tmuxTimeout, err); ambiguous != nil {
+				return ambiguous
+			}
 			return fmt.Errorf("failed to send C-m %d to pane %s: %w", i+1, paneID, err)
 		}
 	}
@@ -217,13 +231,27 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 			if retry == maxRetries {
 				return fmt.Errorf("%w: pane %s unchanged or notification still in composer after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
 			}
-			if err := n.run("send-keys", "-t", paneID, "C-m"); err != nil {
+			if err := n.run(tmuxTimeout, "send-keys", "-t", paneID, "C-m"); err != nil {
+				if ambiguous := ambiguousDeadlineError(paneID, "verify-retry C-m", tmuxTimeout, err); ambiguous != nil {
+					return ambiguous
+				}
 				return fmt.Errorf("failed to retry C-m for pane %s: %w", paneID, err)
 			}
 		}
 	}
 
 	return nil
+}
+
+// ambiguousDeadlineError returns a non-retryable ErrPaneUnresponsive error
+// (keeping the deadline cause) when err is a tmux deadline at a stage that
+// follows, or is, the paste, and nil for any other error. Once the notification
+// text may be in the pane, retrying the whole delivery would paste it again.
+func ambiguousDeadlineError(paneID, stage string, timeout time.Duration, err error) error {
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s to pane %s timed out after %s, delivery state ambiguous, not retried: %w", ErrPaneUnresponsive, stage, paneID, timeout, err)
 }
 
 func notificationFilename(message string) string {
@@ -313,11 +341,34 @@ func (n *PaneNotifier) sleepFor(d time.Duration) {
 	time.Sleep(d)
 }
 
-func (n *PaneNotifier) run(args ...string) error {
+// atomicChainMargin is the headroom added on top of the tmux timeout and the
+// in-chain enter delay for process start-up and scheduling.
+const atomicChainMargin = time.Second
+
+// atomicChainTimeout returns the deadline for the chained
+// set-buffer/paste-buffer/run-shell sleep/send-keys C-m invocation (#800). The
+// enter delay runs inside that single tmux client, so a deadline that does not
+// cover it could kill the client after the paste but before C-m, leaving an
+// unsubmitted notification in the composer. A timeout still returns an error
+// (never delivery success), and the post-Enter verify loop is unchanged (#871).
+func atomicChainTimeout(tmuxTimeout, enterDelay time.Duration) time.Duration {
+	if tmuxTimeout <= 0 {
+		tmuxTimeout = tmuxrunner.DefaultTimeout
+	}
+	if enterDelay < 0 {
+		enterDelay = 0
+	}
+	return tmuxTimeout + enterDelay + atomicChainMargin
+}
+
+// run executes one tmux invocation under a real deadline (#871). A
+// non-positive timeout falls back to tmuxrunner.DefaultTimeout, so a hung tmux
+// server can never block the caller indefinitely.
+func (n *PaneNotifier) run(timeout time.Duration, args ...string) error {
 	if n.runTmux != nil {
 		return n.runTmux(args...)
 	}
-	return exec.Command("tmux", args...).Run()
+	return tmuxrunner.Command{Timeout: timeout}.Run(args...)
 }
 
 func (n *PaneNotifier) capturePane(paneID string) (string, error) {

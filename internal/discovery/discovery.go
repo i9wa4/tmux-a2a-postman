@@ -22,6 +22,12 @@ type NodeInfo struct {
 	HerdrSocketPath  string
 	HerdrWorkspaceID string
 	HerdrTabID       string
+	// Collision is true when more than one live pane claimed this node key and
+	// this entry is only the reduced winner. A collided node is not a unique
+	// identity, so authorization that depends on the node being exactly one
+	// pane (derived interface edges, #624/#700) must treat it as ambiguous and
+	// deny. Existing delivery to the winner pane is unchanged.
+	Collision bool
 }
 
 // CollisionReport describes a pane collision where two panes share the same nodeKey.
@@ -86,6 +92,7 @@ func reduceCollisions(nodeKeyOrder []string, candidates map[string][]paneCandida
 			PaneID:      winner.paneID,
 			SessionName: winner.sessionName,
 			SessionDir:  winner.sessionDir,
+			Collision:   true,
 		}
 
 		// Emit one CollisionReport per displaced pane (N-1 total).
