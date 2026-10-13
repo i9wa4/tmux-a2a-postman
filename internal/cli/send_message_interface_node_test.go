@@ -68,6 +68,10 @@ role = "worker"
 			ctx := testSendCommandContext(tmpDir, strings.NewReader("new direct work"), &stdout)
 			ctx.getTmuxPaneName = func() string { return "messenger" }
 			ctx.getTmuxSessionName = func() string { return "test-session" }
+			// The exemption binds to the daemon's own session, which must be known
+			// (R3-2): with no daemon session nobody is exempt. Here the daemon's
+			// session is the sender's, so the configured interface_node stays exempt.
+			ctx.daemonSessionName = func(string, string) string { return "test-session" }
 			ctx.loadConfig = config.LoadConfig
 
 			err := runSendHeredocWithContext(ctx, []string{

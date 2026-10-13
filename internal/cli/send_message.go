@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -317,35 +318,53 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		recipientCandidates = append(recipientCandidates, recipientSimpleName)
 	}
 	canTalkTo := strings.Join(talksToList, ", ")
-	if !senderPresent {
-		return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
-	}
-	recipientPresent := false
-	for _, candidate := range recipientCandidates {
-		if _, ok := adjacency[candidate]; ok {
-			recipientPresent = true
-			break
+	staticEdgeErr := func() error {
+		if !senderPresent {
+			return fmt.Errorf("missing sender: %q is not present in configured edges", sender)
 		}
-	}
-	if !recipientPresent {
-		return fmt.Errorf("missing receiver: %q is not present in configured edges", recipient)
-	}
-	recipientAllowed := false
-	for _, n := range talksToList {
+		recipientPresent := false
 		for _, candidate := range recipientCandidates {
-			if n == candidate {
-				recipientAllowed = true
+			if _, ok := adjacency[candidate]; ok {
+				recipientPresent = true
 				break
 			}
 		}
-		if recipientAllowed {
-			break
+		if !recipientPresent {
+			return fmt.Errorf("missing receiver: %q is not present in configured edges", recipient)
+		}
+		recipientAllowed := false
+		for _, n := range talksToList {
+			for _, candidate := range recipientCandidates {
+				if n == candidate {
+					recipientAllowed = true
+					break
+				}
+			}
+			if recipientAllowed {
+				break
+			}
+		}
+		if !recipientAllowed {
+			return fmt.Errorf("edge violation: %q cannot send to %q — not allowed; allowed recipients: %s",
+				sender, recipient, canTalkTo)
+		}
+		return nil
+	}()
+	// Derived interface edges (#624/#700): consulted only when the static
+	// cfg.Edges check denied. The CLI may fail early but never allows what
+	// delivery would deny: it asks the same shared evaluator with the daemon's
+	// own session, the live node view, and current ownership.
+	interfaceNeighbors := ctx.interfaceNeighborsForSend(cfg, baseDir, resolvedContextID, sessionName, sessionName, sender)
+	if staticEdgeErr != nil && !ctx.derivedInterfaceEdgeAllowedForSend(cfg, baseDir, resolvedContextID, sessionName, sender, recipient) {
+		return staticEdgeErr
+	}
+	for _, neighbor := range interfaceNeighbors {
+		if !seenNeighbors[neighbor] {
+			seenNeighbors[neighbor] = true
+			talksToList = append(talksToList, neighbor)
 		}
 	}
-	if !recipientAllowed {
-		return fmt.Errorf("edge violation: %q cannot send to %q — not allowed; allowed recipients: %s",
-			sender, recipient, canTalkTo)
-	}
+	canTalkTo = strings.Join(talksToList, ", ")
 	sessionDir := filepath.Join(baseDir, resolvedContextID, sessionName)
 	beforeInputRequests, beforeInputRequestsOK := projectSendInputRequestState(sessionDir, sessionName)
 	draftDir := filepath.Join(sessionDir, "draft")
@@ -474,6 +493,18 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 			footerVars[k] = v
 		}
 		footerTalksToList := talksToListForFooter(adjacency, recipient)
+		// Derived interface neighbors from the same evaluator (#624/#700). A bare
+		// recipient is a node of the sender's own session, so its viewpoint is
+		// (sessionName, recipient).
+		recipientViewSession, recipientViewNode, recipientQualified := nodeaddr.Split(recipient)
+		if !recipientQualified {
+			recipientViewSession, recipientViewNode = sessionName, recipient
+		}
+		for _, neighbor := range ctx.interfaceNeighborsForSend(cfg, baseDir, resolvedContextID, sessionName, recipientViewSession, recipientViewNode) {
+			if !slices.Contains(footerTalksToList, neighbor) {
+				footerTalksToList = append(footerTalksToList, neighbor)
+			}
+		}
 		footerVars["can_talk_to"] = strings.Join(footerTalksToList, ", ")
 		footerVars["contacts_section"] = contactSectionForViewpoint(cfg, workspaceTopology, footerTalksToList, recipient)
 		footerVars["reply_command"] = strings.ReplaceAll(
@@ -494,6 +525,15 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 	content = renderSendBody(content, stripped, footer, vars["sender_body_boundary"])
 
 	ownedLiveSession := ctx.contextOwnsSession(baseDir, resolvedContextID, sessionName) && ctx.contextHasLiveDaemon(baseDir, resolvedContextID)
+	// The verdict-debt exemption needs the daemon's own session, which costs a
+	// context scan. Resolve it only when the local gate can use it: a
+	// reply-required send that is not validated by the live daemon, with a
+	// configured interface node (verdictgate.Enforce returns before using it
+	// otherwise). Every other send skips the scan.
+	exemptOwnSession := ""
+	if replyPolicy == "required" && !ownedLiveSession && cfg.ConfiguredInterfaceNode() != "" {
+		exemptOwnSession = ctx.daemonOwnSession(baseDir, resolvedContextID)
+	}
 	if ownedLiveSession && replyPolicy == "required" {
 		if _, err := ctx.roundTripDaemonSubmit(sessionDir, projection.DaemonSubmitRequest{
 			Command:  projection.DaemonSubmitValidateSend,
@@ -507,7 +547,14 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 		GraceSeconds:        cfg.EffectiveVerdictGraceSeconds(verdictgate.DefaultGraceSeconds),
 		DebtCap:             cfg.EffectiveVerdictDebtCap(verdictgate.DefaultDebtCap),
 		ExemptInterfaceNode: cfg.ConfiguredInterfaceNode(),
-		RecordTimeout:       verdictgate.RecordTimeoutWithCurrentLease,
+		// The exemption is bound to the daemon's own session (the sender's
+		// session when no daemon session is found), so a same-named peer
+		// interface node in another session gets none (#624/#700 R2-2).
+		// R3-2: the parenthetical above no longer applies. daemonOwnSession is
+		// the daemon's session ONLY; with no daemon session found it is empty
+		// and nobody is exempt (fail closed), never the sender's session.
+		ExemptOwnSession: exemptOwnSession,
+		RecordTimeout:    verdictgate.RecordTimeoutWithCurrentLease,
 	}); err != nil {
 		return err
 	}
