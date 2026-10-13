@@ -48,6 +48,9 @@ func TestSocketClientLiveSmoke(t *testing.T) {
 	if read.Envelope != envelope {
 		t.Fatalf("ReadPane() envelope = %#v, want %#v", read.Envelope, envelope)
 	}
+	if read.PaneID != paneID || read.Source != "recent" {
+		t.Fatalf("ReadPane() identity = pane %q source %q, want the requested pane %q and source recent", read.PaneID, read.Source, paneID)
+	}
 	process, err := client.PaneProcessInfo(context.Background(), paneID)
 	if err != nil {
 		t.Fatalf("PaneProcessInfo() error = %v", err)
