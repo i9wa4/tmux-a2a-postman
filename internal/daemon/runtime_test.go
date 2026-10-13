@@ -3526,8 +3526,12 @@ func (s *sequencedDaemonHerdrClient) ReadPane(context.Context, string, multiplex
 	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (s *sequencedDaemonHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
-	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+func (s *sequencedDaemonHerdrClient) PaneProcessInfo(_ context.Context, paneID string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	// Echo the requested pane like a real server; the backend rejects an empty or different pane_id.
+	return multiplexer.HerdrPaneProcessInfoResult{
+		Envelope:    multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{PaneID: paneID},
+	}, nil
 }
 
 func (s *sequencedDaemonHerdrClient) WritePaneText(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {
@@ -3570,8 +3574,11 @@ func (f *fakeDaemonHerdrClient) ReadPane(context.Context, string, multiplexer.He
 	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (f *fakeDaemonHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
-	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+func (f *fakeDaemonHerdrClient) PaneProcessInfo(_ context.Context, paneID string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	return multiplexer.HerdrPaneProcessInfoResult{
+		Envelope:    multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{PaneID: paneID},
+	}, nil
 }
 
 func (f *fakeDaemonHerdrClient) WritePaneText(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {

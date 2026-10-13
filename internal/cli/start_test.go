@@ -1293,8 +1293,12 @@ func (f *fakeCLIHerdrClient) ReadPane(context.Context, string, multiplexer.Herdr
 	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (f *fakeCLIHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
-	return multiplexer.HerdrPaneProcessInfoResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
+func (f *fakeCLIHerdrClient) PaneProcessInfo(_ context.Context, paneID string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	// Echo the requested pane like a real server; the backend rejects an empty or different pane_id.
+	return multiplexer.HerdrPaneProcessInfoResult{
+		Envelope:    multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{PaneID: paneID},
+	}, nil
 }
 
 func (f *fakeCLIHerdrClient) WritePaneText(context.Context, string, string) (multiplexer.HerdrWriteResult, error) {

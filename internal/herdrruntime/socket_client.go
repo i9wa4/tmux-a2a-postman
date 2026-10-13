@@ -95,11 +95,12 @@ func (c *socketClient) ReadPane(ctx context.Context, paneID string, opts multipl
 	if err != nil {
 		return multiplexer.HerdrPaneReadResult{}, err
 	}
-	text, err := decodePaneReadResult(result)
+	read, err := decodePaneReadResult(result)
 	if err != nil {
 		return multiplexer.HerdrPaneReadResult{}, err
 	}
-	return multiplexer.HerdrPaneReadResult{Envelope: envelope, Text: text}, nil
+	read.Envelope = envelope
+	return read, nil
 }
 
 func (c *socketClient) PaneProcessInfo(ctx context.Context, paneID string) (multiplexer.HerdrPaneProcessInfoResult, error) {
@@ -395,14 +396,19 @@ func decodeHerdrSessionSnapshotObject(raw json.RawMessage) (multiplexer.HerdrSes
 	return snapshot, nil
 }
 
-func decodePaneReadResult(raw json.RawMessage) (string, error) {
+// decodePaneReadResult returns the pane.read text and the identity the server
+// echoed, byte for byte. An identity field that is missing, null or not a string
+// is a malformed response. One that is present but empty or different is passed
+// through untouched so the backend can report it as a response target mismatch
+// rather than as an unavailable backend.
+func decodePaneReadResult(raw json.RawMessage) (multiplexer.HerdrPaneReadResult, error) {
 	var result struct {
 		Type string `json:"type"`
 		Read *struct {
-			PaneID      string  `json:"pane_id"`
-			WorkspaceID string  `json:"workspace_id"`
-			TabID       string  `json:"tab_id"`
-			Source      string  `json:"source"`
+			PaneID      *string `json:"pane_id"`
+			WorkspaceID *string `json:"workspace_id"`
+			TabID       *string `json:"tab_id"`
+			Source      *string `json:"source"`
 			Format      string  `json:"format"`
 			Text        *string `json:"text"`
 			Revision    *int    `json:"revision"`
@@ -410,18 +416,25 @@ func decodePaneReadResult(raw json.RawMessage) (string, error) {
 		} `json:"read"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return "", fmt.Errorf("%w: invalid pane.read result: %v", multiplexer.ErrHerdrBackendUnavailable, err)
+		return multiplexer.HerdrPaneReadResult{}, fmt.Errorf("%w: invalid pane.read result: %v", multiplexer.ErrHerdrBackendUnavailable, err)
 	}
 	if result.Type != "pane_read" {
-		return "", fmt.Errorf("%w: pane.read result type = %q, want pane_read", multiplexer.ErrHerdrBackendUnavailable, result.Type)
+		return multiplexer.HerdrPaneReadResult{}, fmt.Errorf("%w: pane.read result type = %q, want pane_read", multiplexer.ErrHerdrBackendUnavailable, result.Type)
 	}
 	if result.Read == nil || result.Read.Text == nil {
-		return "", fmt.Errorf("%w: pane.read result missing read.text", multiplexer.ErrHerdrBackendUnavailable)
+		return multiplexer.HerdrPaneReadResult{}, fmt.Errorf("%w: pane.read result missing read.text", multiplexer.ErrHerdrBackendUnavailable)
 	}
-	if strings.TrimSpace(result.Read.PaneID) == "" || strings.TrimSpace(result.Read.WorkspaceID) == "" || strings.TrimSpace(result.Read.TabID) == "" || strings.TrimSpace(result.Read.Source) == "" || strings.TrimSpace(result.Read.Format) == "" || result.Read.Revision == nil || result.Read.Truncated == nil {
-		return "", fmt.Errorf("%w: pane.read result missing mandatory read fields", multiplexer.ErrHerdrBackendUnavailable)
+	read := result.Read
+	if read.PaneID == nil || read.WorkspaceID == nil || read.TabID == nil || read.Source == nil || strings.TrimSpace(read.Format) == "" || read.Revision == nil || read.Truncated == nil {
+		return multiplexer.HerdrPaneReadResult{}, fmt.Errorf("%w: pane.read result missing mandatory read fields", multiplexer.ErrHerdrBackendUnavailable)
 	}
-	return *result.Read.Text, nil
+	return multiplexer.HerdrPaneReadResult{
+		Text:        *read.Text,
+		PaneID:      *read.PaneID,
+		WorkspaceID: *read.WorkspaceID,
+		TabID:       *read.TabID,
+		Source:      *read.Source,
+	}, nil
 }
 
 func decodePaneProcessInfoResult(raw json.RawMessage) (multiplexer.HerdrPaneProcessInfo, error) {
@@ -441,11 +454,10 @@ func decodePaneProcessInfoResult(raw json.RawMessage) (multiplexer.HerdrPaneProc
 	if err := result.ProcessInfo.validate(); err != nil {
 		return multiplexer.HerdrPaneProcessInfo{}, err
 	}
-	info := result.ProcessInfo.toSnapshot()
-	if strings.TrimSpace(info.PaneID) == "" {
+	if result.ProcessInfo.PaneID == nil {
 		return multiplexer.HerdrPaneProcessInfo{}, fmt.Errorf("%w: pane.process_info result missing pane_id", multiplexer.ErrHerdrBackendUnavailable)
 	}
-	return info, nil
+	return result.ProcessInfo.toSnapshot(), nil
 }
 
 func decodeOKResult(method string, raw json.RawMessage) error {
@@ -612,7 +624,7 @@ func mergeMetadataTokens(metadata, tokens map[string]string) map[string]string {
 }
 
 type rawHerdrProcessInfo struct {
-	PaneID                 string                       `json:"pane_id"`
+	PaneID                 *string                      `json:"pane_id"`
 	ShellPID               int                          `json:"shell_pid"`
 	ShellPIDAlt            json.RawMessage              `json:"shellPID"`
 	ForegroundProcessID    int                          `json:"foreground_process_group_id"`
@@ -674,8 +686,12 @@ func (p rawHerdrProcessInfo) toSnapshot() multiplexer.HerdrPaneProcessInfo {
 	for _, process := range p.ForegroundProcesses {
 		processes = append(processes, process.toSnapshot())
 	}
+	paneID := ""
+	if p.PaneID != nil {
+		paneID = *p.PaneID
+	}
 	info := multiplexer.HerdrPaneProcessInfo{
-		PaneID:              p.PaneID,
+		PaneID:              paneID,
 		ShellPID:            p.ShellPID,
 		ForegroundProcessID: p.ForegroundProcessID,
 		ForegroundProcesses: processes,
