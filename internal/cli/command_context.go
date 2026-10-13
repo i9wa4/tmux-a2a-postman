@@ -29,6 +29,12 @@ type commandContext struct {
 	resolveContextSession func(baseDir, sessionName string) (string, error)
 	contextOwnsSession    func(baseDir, contextID, sessionName string) bool
 	contextHasLiveDaemon  func(baseDir, contextID string) bool
+	// daemonSessionName returns the session that owns the context's daemon
+	// (the derived-interface-edge evaluator's "own" session, #624/#700).
+	daemonSessionName func(baseDir, contextID string) string
+	// sessionEnabledMarker is the CLI's conservative "session enabled" probe
+	// (the persisted enabled-session marker, #624/#700).
+	sessionEnabledMarker  func(baseDir, contextID, sessionName string) bool
 	roundTripDaemonSubmit func(sessionDir string, request projection.DaemonSubmitRequest, timeout time.Duration) (projection.DaemonSubmitResponse, error)
 	currentIdentity       func() (multiplexer.CurrentIdentity, error)
 	getTmuxPaneName       func() string
@@ -84,6 +90,12 @@ func (ctx commandContext) withDefaults() commandContext {
 	}
 	if ctx.contextHasLiveDaemon == nil {
 		ctx.contextHasLiveDaemon = config.ContextHasLiveDaemon
+	}
+	if ctx.daemonSessionName == nil {
+		ctx.daemonSessionName = config.FindContextSessionName
+	}
+	if ctx.sessionEnabledMarker == nil {
+		ctx.sessionEnabledMarker = config.SessionEnabledByMarker
 	}
 	if ctx.roundTripDaemonSubmit == nil {
 		ctx.roundTripDaemonSubmit = defaultRoundTripDaemonSubmit

@@ -440,8 +440,8 @@ func TestSessionStatusAddsSchemaV4SeverityForInputRequests(t *testing.T) {
 		t.Fatalf("collectLiveSessionStatus() error = %v", err)
 	}
 
-	if health.SchemaVersion != 5 {
-		t.Fatalf("SchemaVersion = %d, want 5", health.SchemaVersion)
+	if health.SchemaVersion != 6 {
+		t.Fatalf("SchemaVersion = %d, want 6", health.SchemaVersion)
 	}
 	if health.VisibleState != "pending" || health.Compact != "🔷🟡" {
 		t.Fatalf("legacy visible fields changed: visible_state=%q compact=%q", health.VisibleState, health.Compact)
@@ -932,6 +932,14 @@ func TestTUIProjectionRebuildsWithoutLiveArtifacts(t *testing.T) {
 func assertSessionStatusParity(t *testing.T, legacy, projected status.SessionStatus) {
 	t.Helper()
 
+	// v6 serializes an empty interface_edges as [] (#700 F-700-R2-4): a live nil
+	// and a projected empty slice are the same wire value, so compare them as one.
+	if len(legacy.InterfaceEdges) == 0 {
+		legacy.InterfaceEdges = nil
+	}
+	if len(projected.InterfaceEdges) == 0 {
+		projected.InterfaceEdges = nil
+	}
 	if reflect.DeepEqual(legacy, projected) {
 		return
 	}
