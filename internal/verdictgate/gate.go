@@ -17,7 +17,13 @@ type Options struct {
 	GraceSeconds        int
 	DebtCap             int
 	ExemptInterfaceNode string
-	RecordTimeout       TimeoutRecorder
+	// ExemptOwnSession is the daemon's own session. The verdict-debt exemption
+	// belongs to the own-session interface node ONLY: a sender in another
+	// session that merely shares the bare name (a peer that declares the same
+	// interface_node, #624/#700 R2-2) is not exempt. Empty means the own
+	// session is unknown and nobody is exempt (fail closed).
+	ExemptOwnSession string
+	RecordTimeout    TimeoutRecorder
 }
 
 type TimeoutRecorder func(sessionDir, sessionName string, payload journal.MailboxEventPayload, equivalent journal.EventEquivalenceFunc) (bool, error)
@@ -42,7 +48,7 @@ func Enforce(sessionDir, sender, filename, content string, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if IsExemptSender(sender, opts.ExemptInterfaceNode) {
+	if IsExemptInSession(sender, opts.ExemptInterfaceNode, sessionName, opts.ExemptOwnSession) {
 		return nil
 	}
 	state, ok, err := projection.ProjectVerdictDebtState(sessionDir, sessionName, time.Now(), opts.GraceSeconds)
@@ -85,6 +91,16 @@ func NormalizeSender(sessionName, sender, envelopeSender string) (string, error)
 // built-in node name (#764, fail closed).
 func IsExemptSender(sender, exemptInterfaceNode string) bool {
 	return exemptInterfaceNode != "" && sender == exemptInterfaceNode
+}
+
+// IsExemptInSession reports whether sender, sending from senderSession, holds
+// the verdict-debt exemption: it must be the configured interface node AND be
+// in the daemon's own session. The bare-name comparison alone is not enough:
+// with peer declarations a same-named interface node in another session must
+// never inherit the own session's exemption. An unknown own session exempts
+// nobody.
+func IsExemptInSession(sender, exemptInterfaceNode, senderSession, ownSession string) bool {
+	return ownSession != "" && senderSession == ownSession && IsExemptSender(sender, exemptInterfaceNode)
 }
 
 func applyOutgoingVerdict(sessionName string, debt projection.VerdictRequesterDebt, sender string, meta envelope.Metadata) projection.VerdictRequesterDebt {
