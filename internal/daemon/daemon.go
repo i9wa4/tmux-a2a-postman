@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -390,7 +391,41 @@ var writeFileAtomicOpsVar = writeFileAtomicOps{
 	rename:    os.Rename,
 }
 
+// handleDaemonSubmitPop keeps the scan, archive, verification, and read event
+// under one roots gate hold. Projection sync takes the same gate, so it cannot
+// apply a snapshot that predates the read event to the newly archived file.
+// Verification-failure recovery also stays inside the gate. Only its optional
+// dead-letter notification runs afterward, because delivery can reacquire it.
 func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
+	var response projection.DaemonSubmitResponse
+	var notify func()
+	err := daemonPopRootsGateFn(sessionDir, func() error {
+		var popErr error
+		response, popErr = handleDaemonSubmitPopUnderRootsGate(sessionDir, request)
+		if failure, ok := popErr.(*daemonPopVerificationFailure); ok {
+			response, popErr = handleDaemonSubmitPopVerificationFailure(sessionDir, failure.inboxPath, failure.readPath, failure.filename, failure.content, failure.cause, &notify)
+		}
+		return popErr
+	})
+	if notify != nil {
+		notify()
+	}
+	return response, err
+}
+
+var daemonPopRootsGateFn = store.WithMailboxRootsExclusive
+
+type daemonPopVerificationFailure struct {
+	inboxPath string
+	readPath  string
+	filename  string
+	content   []byte
+	cause     error
+}
+
+func (f *daemonPopVerificationFailure) Error() string { return f.cause.Error() }
+
+func handleDaemonSubmitPopUnderRootsGate(sessionDir string, request projection.DaemonSubmitRequest) (projection.DaemonSubmitResponse, error) {
 	if request.RequestID == "" {
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop missing request_id")
 	}
@@ -489,14 +524,31 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 	// (after enough repeated failures) a bounded dead-letter -- #761's
 	// bound on what was, before this branch, an unbounded retry.
 	if verifyErr := daemonPopArchiveVerify(readPath, string(data)); verifyErr != nil {
-		return handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, msgs[0].Filename, data, verifyErr)
+		return projection.DaemonSubmitResponse{}, &daemonPopVerificationFailure{
+			inboxPath: abs,
+			readPath:  readPath,
+			filename:  msgs[0].Filename,
+			content:   data,
+			cause:     verifyErr,
+		}
 	}
 	fields := msgtrace.FromContent(msgs[0].Filename, filepath.Join("read", msgs[0].Filename), filepath.Base(sessionDir), string(data))
 	fields.DaemonSubmitRequestID = request.RequestID
 	fields.DaemonSubmitCommand = string(request.Command)
 	fields.SubmitPath = string(projection.SubmitPathDaemon)
 	msgtrace.Log("pop_read_archive", fields)
-	recordDaemonSubmitPopRead(sessionDir, readPath, msgs[0].Filename, string(data))
+	if err := recordDaemonSubmitPopReadFn(sessionDir, readPath, msgs[0].Filename, string(data)); err != nil {
+		// The archive is not committed as a pop without a durable read event.
+		// Restore the known-good inbox bytes before releasing the roots gate;
+		// retaining readPath is safe even when it predated this pop.
+		if rollbackErr := writeFileAtomic(abs, data); rollbackErr != nil {
+			if intentErr := projection.RecordPopRecoveryIntent(sessionDir, abs, data); intentErr != nil {
+				return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop read event append failed, inbox rollback failed, and recovery intent failed: %w; %w; %w", err, rollbackErr, intentErr)
+			}
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop read event append failed and inbox rollback failed; durable inbox recovery intent recorded: %w; %w", err, rollbackErr)
+		}
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop read event append failed; rolled back to inbox: %w", err)
+	}
 	return projection.DaemonSubmitResponse{
 		RequestID:    request.RequestID,
 		Command:      request.Command,
@@ -557,13 +609,21 @@ func handleDaemonSubmitPop(sessionDir string, request projection.DaemonSubmitReq
 // known-good in-memory `data` is correct for both branches and never
 // touches readPath, so a pre-existing archive record is preserved
 // untouched either way.
-func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filename string, data []byte, verifyErr error) (projection.DaemonSubmitResponse, error) {
+func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filename string, data []byte, verifyErr error, notify *func()) (projection.DaemonSubmitResponse, error) {
 	sessionName := filepath.Base(sessionDir)
-	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionPopVerificationFailedEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+	if err := recordMailboxProjectionPayloadError(sessionDir, sessionName, projection.MailboxProjectionPopVerificationFailedEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:     filename,
 		Path:          filepath.Join("read", filename),
 		FailureReason: verifyErr.Error(),
-	})
+	}); err != nil {
+		if rollbackErr := writeFileAtomic(abs, data); rollbackErr != nil {
+			if intentErr := projection.RecordPopRecoveryIntent(sessionDir, abs, data); intentErr != nil {
+				return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop verification failure event append failed, inbox rollback failed, and recovery intent failed: %w; %w; %w; %w", err, rollbackErr, intentErr, verifyErr)
+			}
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop verification failure event append failed and inbox rollback failed; durable inbox recovery intent recorded: %w; %w; %w", err, rollbackErr, verifyErr)
+		}
+		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop verification failure event append failed; rolled back to inbox: %w; %w", err, verifyErr)
+	}
 
 	failureCount, countErr := projection.CountPopVerificationFailures(sessionDir, filename)
 	countKnown := countErr == nil
@@ -596,7 +656,9 @@ func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filenam
 		default:
 			attemptsDescription = "after the rollback recovery attempt itself failed (the prior verification-failure count is unknown)"
 		}
-		return handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename, data, attemptsDescription)
+		var err error
+		*notify, err = prepareDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename, data, attemptsDescription)
+		return err
 	}
 
 	primary, fallback, primaryLabel, fallbackLabel := rollback, deadLetter, "rollback to inbox", "dead-letter"
@@ -606,12 +668,18 @@ func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filenam
 
 	if primaryErr := primary(); primaryErr != nil {
 		log.Printf("postman: WARNING: component=daemon-submit event=pop_recovery_primary_failed primary=%q session=%s file=%s err=%v\n", primaryLabel, sessionName, filename, primaryErr)
+		if errors.Is(primaryErr, errPopDeadLetterCommitted) {
+			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop dead-letter decision committed; file materialization awaits projection sync: %w; %w", primaryErr, verifyErr)
+		}
 		if fallbackErr := fallback(); fallbackErr != nil {
-			// Wraps all three errors (primary, fallback, verifyErr) via %w so
-			// errors.Is finds any of them -- a single %v would hide the
-			// injected/underlying errors from callers and tests that need to
-			// confirm which specific failure surfaced.
-			return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: both %s and %s failed, message may be lost: %w; %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, fallbackErr, verifyErr)
+			if errors.Is(fallbackErr, errPopDeadLetterCommitted) {
+				return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop dead-letter decision committed; file materialization awaits projection sync: %w; %w; %w", primaryErr, fallbackErr, verifyErr)
+			}
+			if intentErr := projection.RecordPopRecoveryIntent(sessionDir, abs, data); intentErr == nil {
+				return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: both %s and %s failed; durable inbox recovery intent recorded: %w; %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, fallbackErr, verifyErr)
+			} else {
+				return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: both %s and %s failed and recovery intent failed, message may be lost: %w; %w; %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, fallbackErr, intentErr, verifyErr)
+			}
 		}
 		return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s: %s failed, fell back to %s: %w; %w", readPath, primaryLabel, fallbackLabel, primaryErr, verifyErr)
 	}
@@ -626,6 +694,11 @@ func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filenam
 	return projection.DaemonSubmitResponse{}, fmt.Errorf("daemon submit pop archive not ready at %s, rolled back to inbox (failure %s): %w", readPath, countDesc, verifyErr)
 }
 
+var (
+	errPopDeadLetterCommitted         = errors.New("pop dead-letter decision committed")
+	recordDaemonSubmitPopDeadLetterFn = recordMailboxProjectionPayloadError
+)
+
 // handleDaemonSubmitPopDeadLetter writes the message's known-good in-memory
 // bytes to dead-letter/ (never MoveToDeadLetter: there is no single live
 // file to move -- abs may already be gone, and readPath is the very file
@@ -635,12 +708,19 @@ func handleDaemonSubmitPopVerificationFailure(sessionDir, abs, readPath, filenam
 // this shows up identically to an operator, and sends an accurate
 // operator-visible notification (#755 F-013).
 func handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename string, data []byte, attemptsDescription string) error {
-	dst := store.PlanDeadLetterMessage(sessionDir, filename, message.DlSuffixPopVerificationExhausted).DestinationPath
-	if err := writeDeadLetterFileAtomic(dst, data); err != nil {
-		return err
+	notify, err := prepareDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename, data, attemptsDescription)
+	if notify != nil {
+		notify()
 	}
+	return err
+}
+
+// prepareDaemonSubmitPopDeadLetter records the recovery decision under the
+// caller's roots gate and returns notification work for after gate release.
+func prepareDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename string, data []byte, attemptsDescription string) (func(), error) {
+	dst := store.PlanDeadLetterMessage(sessionDir, filename, message.DlSuffixPopVerificationExhausted).DestinationPath
 	payload := mailboxProjectionPayloadForFile(filename, filepath.Join("read", filename), string(data))
-	recordMailboxProjectionPayload(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
+	if err := recordDaemonSubmitPopDeadLetterFn(sessionDir, sessionName, projection.MailboxProjectionDeadLetteredEventType, journal.VisibilityOperatorVisible, journal.MailboxEventPayload{
 		MessageID:     filename,
 		From:          payload.From,
 		To:            payload.To,
@@ -649,7 +729,9 @@ func handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename string, d
 		SourcePath:    filepath.Join("read", filename),
 		FailureReason: message.DeadLetterReasonPopVerificationExhausted,
 		Content:       string(data),
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("recording pop dead-letter decision: %w", err)
+	}
 	// payload.From falls back to an unvalidated envelope value when
 	// filename parsing fails; validating before use here is required
 	// because notifyPopVerificationDeadLetter joins it into a filesystem
@@ -657,18 +739,24 @@ func handleDaemonSubmitPopDeadLetter(sessionDir, sessionName, filename string, d
 	// site in internal/message only ever passes a value that already came
 	// from a successful parse, so this is the first path that could
 	// otherwise carry body-controlled data into that sink unchecked.
+	var notify func()
 	if err := nodeaddr.Validate(payload.From); err != nil {
 		if payload.From != "" {
 			log.Printf("postman: WARNING: component=daemon-submit event=dead_letter_notify_skipped reason=invalid_sender sender=%q err=%v\n", payload.From, err)
 		}
-		return nil
+	} else {
+		var contextID string
+		if metadata, err := message.ParseEnvelopeMetadata(string(data)); err == nil {
+			contextID = metadata.ContextID
+		}
+		notify = func() {
+			notifyPopVerificationDeadLetterFn(sessionDir, contextID, payload.From, filename, filepath.Base(dst), attemptsDescription)
+		}
 	}
-	var contextID string
-	if metadata, err := message.ParseEnvelopeMetadata(string(data)); err == nil {
-		contextID = metadata.ContextID
+	if err := writeDeadLetterFileAtomic(dst, data); err != nil {
+		return notify, fmt.Errorf("%w: writing pop dead-letter file: %w", errPopDeadLetterCommitted, err)
 	}
-	notifyPopVerificationDeadLetterFn(sessionDir, contextID, payload.From, filename, filepath.Base(dst), attemptsDescription)
-	return nil
+	return notify, nil
 }
 
 // writeDeadLetterFileAtomic first MkdirAlls dst's parent directory, THEN
@@ -839,7 +927,9 @@ func writeRuntimeProfileFile(outputPath, requestID string, data []byte, force bo
 	return nil
 }
 
-func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent string) {
+var recordDaemonSubmitPopReadFn = recordDaemonSubmitPopRead
+
+func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent string) error {
 	// fallbackContent was read directly from the inbox message before it was
 	// archived to readPath, so it is already known-good. Re-reading readPath
 	// here served no purpose and could observe a torn/truncated file if a
@@ -852,7 +942,7 @@ func recordDaemonSubmitPopRead(sessionDir, readPath, filename, fallbackContent s
 			content = string(readContent)
 		}
 	}
-	recordMailboxProjectionPayload(sessionDir, filepath.Base(sessionDir), projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, mailboxProjectionPayloadForFile(
+	return recordMailboxProjectionPayloadError(sessionDir, filepath.Base(sessionDir), projection.MailboxProjectionReadEventType, journal.VisibilityOperatorVisible, mailboxProjectionPayloadForFile(
 		filename,
 		filepath.Join("read", filename),
 		content,

@@ -270,6 +270,12 @@ func SyncMailboxProjection(sessionDir string) error {
 	return syncMailboxProjectionSeam(sessionDir, nil, nil)
 }
 
+// SyncMailboxProjectionObserved reports a proven shared roots-gate contention
+// in concurrency tests, then waits for the gate and runs the normal sync.
+func SyncMailboxProjectionObserved(sessionDir string, onBlocked func()) error {
+	return syncMailboxProjectionWithLockAttempt(sessionDir, nil, nil, onBlocked)
+}
+
 // syncMailboxProjectionSeam is SyncMailboxProjection plus two test-only
 // hooks: aboutToRequestExclusive fires immediately before requesting the
 // exclusive roots gate (P2-1R item 6(a)/6(f)), and duringFastPathHold
@@ -277,12 +283,22 @@ func SyncMailboxProjection(sessionDir string) error {
 // before running the sync body (item 6(g)). Either lets a disposable
 // fixture synchronize deterministically instead of relying on a sleep.
 func syncMailboxProjectionSeam(sessionDir string, aboutToRequestExclusive, duringFastPathHold func()) error {
+	return syncMailboxProjectionWithLockAttempt(sessionDir, aboutToRequestExclusive, duringFastPathHold, nil)
+}
+
+func syncMailboxProjectionWithLockAttempt(sessionDir string, aboutToRequestExclusive, duringFastPathHold, onBlocked func()) error {
 	if _, ok := loadCurrentSessionState(sessionDir); !ok {
 		return nil
 	}
 
 	transitionNeeded := false
-	fastPathErr := store.WithMailboxRootsShared(sessionDir, func() error {
+	shared := store.WithMailboxRootsShared
+	if onBlocked != nil {
+		shared = func(dir string, fn func() error) error {
+			return store.WithMailboxRootsSharedObserved(dir, onBlocked, fn)
+		}
+	}
+	fastPathErr := shared(sessionDir, func() error {
 		curState, ok := loadCurrentSessionState(sessionDir)
 		if !ok {
 			return nil
@@ -342,6 +358,10 @@ func syncMailboxProjectionBody(sessionDir string, state journal.SessionState) er
 	if !ok {
 		return nil
 	}
+	retireIntents, err := overlayPopRecoveryIntents(sessionDir, state, &projected)
+	if err != nil {
+		return fmt.Errorf("applying pop recovery intents: %w", err)
+	}
 
 	desired := make(map[string]string)
 	for key, file := range projected.Post {
@@ -365,10 +385,13 @@ func syncMailboxProjectionBody(sessionDir string, state journal.SessionState) er
 	if err := syncDesiredMailboxFiles(sessionDir, desired, projected.managedPost, projected.tombstonedRead); err != nil {
 		return err
 	}
-	return writeMailboxProjectionMarker(sessionDir, mailboxProjectionMarker{
+	if err := writeMailboxProjectionMarker(sessionDir, mailboxProjectionMarker{
 		SessionKey: state.SessionKey,
 		Generation: state.Generation,
-	})
+	}); err != nil {
+		return err
+	}
+	return retirePopRecoveryIntents(retireIntents)
 }
 
 func pathKey(path string) string {
