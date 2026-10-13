@@ -622,6 +622,13 @@ func TestSendToPane_VerifyRetryReturnsNilOnCaptureError(t *testing.T) {
 	}
 }
 
+// successPathTmuxTimeout is the tmuxTimeout for the success-path fake-tmux
+// tests below (TestSendToPane_EnterCount*, ...EnterVerifyRetry...). SendToPane
+// now enforces it as a real deadline (#871), so it must leave room for starting
+// the fake tmux shell script while a parallel `go test ./...` keeps the machine
+// busy; these tests prove invocation counts and stderr hygiene, not timeouts.
+const successPathTmuxTimeout = 30 * time.Second
+
 func TestSendToPane_EnterCount2(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsFile := filepath.Join(tmpDir, "args.txt")
@@ -634,7 +641,7 @@ func TestSendToPane_EnterCount2(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 2, true, 0, 0)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, 2, true, 0, 0)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -676,7 +683,7 @@ func TestSendToPane_EnterCount3(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 3, true, 0, 0)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, 3, true, 0, 0)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -714,7 +721,7 @@ func TestSendToPane_EnterCount1(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1, true, 0, 0)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, 1, true, 0, 0)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -752,7 +759,7 @@ func TestSendToPane_EnterCount0(t *testing.T) {
 	origPath := os.Getenv("PATH")
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 0, true, 0, 0)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, 0, true, 0, 0)
 	if err != nil {
 		t.Fatalf("SendToPane failed: %v", err)
 	}
@@ -791,7 +798,7 @@ func TestSendToPane_EnterCountNegative(t *testing.T) {
 	t.Setenv("PATH", tmpDir+":"+origPath)
 
 	// Negative enterCount: loop does not execute, no panic; sends exactly 1 Enter
-	err := SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, -1, true, 0, 0)
+	err := SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, -1, true, 0, 0)
 	if err != nil {
 		t.Fatalf("SendToPane with negative enterCount should not error: %v", err)
 	}
@@ -841,7 +848,7 @@ esac
 		os.Stderr = origStderr
 	}()
 
-	err = SendToPane("%99", "hello", 1*time.Millisecond, 1*time.Second, 1, true, 1*time.Millisecond, 2)
+	err = SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, 1, true, 1*time.Millisecond, 2)
 	if !errors.Is(err, ErrPaneUnresponsive) {
 		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (fake tmux capture-pane always reports unchanged)", err)
 	}
