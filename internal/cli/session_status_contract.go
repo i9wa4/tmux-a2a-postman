@@ -387,7 +387,45 @@ func collectSessionStatusWithInboxCounts(baseDir, contextID, sessionName string,
 		now:              now,
 	})
 	snapshot.InterfaceNode = buildInterfaceNodeStatus(cfg)
+	// Same inputs as the CLI pre-check (#624/#700): collision-aware nodes, the
+	// persisted enabled marker for "enabled", and a separate ownership check.
+	snapshot.DeclaredInterfaceEdges, snapshot.InterfaceEdges = buildInterfaceEdgeStatus(cfg, workspacetree.LiveView{
+		OwnSession: func() string {
+			if own := config.FindContextSessionName(baseDir, contextID); own != "" {
+				return own
+			}
+			return sessionName
+		}(),
+		NodeExists: func(address string) bool {
+			_, found := nodes[address]
+			return found
+		},
+		Ambiguous:      nodesAmbiguous(nodes),
+		SessionEnabled: func(session string) bool { return config.SessionEnabledByMarker(baseDir, contextID, session) },
+		SessionOwned:   func(session string) bool { return config.ContextOwnsSession(baseDir, contextID, session) },
+	})
 	return snapshot, nil
+}
+
+// buildInterfaceEdgeStatus reports the derived interface edges from the same
+// evaluator the send path and delivery use (#624/#700): declared candidates and
+// the active subset that passes the given live view now. Both are nil when no
+// interface_node is configured or no entry declares one.
+func buildInterfaceEdgeStatus(cfg *config.Config, view workspacetree.LiveView) (declared, active []status.InterfaceEdgeStatus) {
+	if !hasInterfaceEdgeConfig(cfg) {
+		return nil, nil
+	}
+	convert := func(edges []workspacetree.InterfaceEdge) []status.InterfaceEdgeStatus {
+		if len(edges) == 0 {
+			return nil
+		}
+		result := make([]status.InterfaceEdgeStatus, 0, len(edges))
+		for _, edge := range edges {
+			result = append(result, status.InterfaceEdgeStatus{A: edge.A, B: edge.B})
+		}
+		return result
+	}
+	return convert(workspacetree.DeclaredInterfaceEdges(cfg, view.OwnSession)), convert(workspacetree.ActiveInterfaceEdges(cfg, view))
 }
 
 // buildInterfaceNodeStatus returns the S1 no-interface-node marker, or nil when
