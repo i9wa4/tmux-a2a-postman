@@ -195,6 +195,13 @@ type WorkspaceTreeNodeConfig struct {
 	ParentSessionName string `toml:"parent"`
 	Representative    string `toml:"representative"`
 	Order             int    `toml:"order"`
+	// InterfaceNode is this session's optional BARE interface node
+	// declaration (#624/#700). A derived cross-session edge between a direct
+	// parent and child exists only when both entries declare one; the
+	// daemon's own entry may omit it (its declaration is [postman]
+	// interface_node) but, if present, must equal it. Representative stays an
+	// addressing default and is never read as a designation.
+	InterfaceNode string `toml:"interface_node"`
 }
 
 // ResolveCommandApproverNode resolves the globally designated command_approver_node
@@ -291,6 +298,32 @@ func tomlHasField(md toml.MetaData, section, field string) bool {
 		}
 	}
 	return false
+}
+
+// legacyWorkspaceTreeEntryKeys are per-entry designation keys that #624's
+// first design (diplomat_node) and older conventions used. They never grant
+// anything: the decoder drops them and this warns once per key so an operator
+// can migrate to a per-entry bare interface_node (#700, #764).
+var legacyWorkspaceTreeEntryKeys = []string{"diplomat_node", "ui_node", "relay_node"}
+
+// warnLegacyWorkspaceTreeEntryKeys logs one stderr diagnostic per legacy key
+// found inside any [[postman.workspace_tree]] entry. TOML array-of-tables keys
+// appear in MetaData.Keys() as ["postman","workspace_tree","<field>"] without an
+// index, and the decoder silently drops unknown fields, so detection must read
+// the key list. Diagnostics use log.Printf (stderr), never stdout.
+func warnLegacyWorkspaceTreeEntryKeys(md toml.MetaData, source string) {
+	seen := make(map[string]bool)
+	for _, key := range md.Keys() {
+		if len(key) != 3 || key[0] != "postman" || key[1] != "workspace_tree" {
+			continue
+		}
+		for _, legacy := range legacyWorkspaceTreeEntryKeys {
+			if key[2] == legacy && !seen[legacy] {
+				seen[legacy] = true
+				log.Printf("WARNING: %s: legacy [[postman.workspace_tree]] key %s is ignored and grants no edge; declare a per-entry bare interface_node instead (#624, #764)", source, legacy)
+			}
+		}
+	}
 }
 
 func deprecatedCommandApproverNodes(postmanPrim toml.Primitive, md toml.MetaData) []DeprecatedCommandApproverNode {
@@ -936,6 +969,7 @@ func LoadConfig(path string) (*Config, error) {
 			if tomlHasField(md, "postman", "ui_node") {
 				warnLegacyUINode(configPath, "TOML key [postman] ui_node")
 			}
+			warnLegacyWorkspaceTreeEntryKeys(md, configPath)
 			cfg.interfaceNodeSet = tomlHasField(md, "postman", "interface_node")
 			cfg.verdictGraceSecondsSet = tomlHasField(md, "postman", "verdict_grace_seconds")
 			cfg.verdictDebtCapSet = tomlHasField(md, "postman", "verdict_debt_cap")

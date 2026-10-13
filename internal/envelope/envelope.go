@@ -120,6 +120,17 @@ func buildEnvelope(
 			activeTalksTo = append(activeTalksTo, node)
 		}
 	}
+	// Derived interface neighbors (#624/#700) come from the same shared
+	// evaluator as the send decision and are liveness-filtered like the static
+	// ones. With no workspace_tree or no interface_node this adds nothing.
+	for _, neighbor := range derivedTalksTo(cfg, contextID, recipient, sourceSessionName, nodes) {
+		if livenessMap != nil && !livenessMap[neighbor] {
+			continue
+		}
+		if !hasDerivedAddress(activeTalksTo, neighbor) {
+			activeTalksTo = append(activeTalksTo, neighbor)
+		}
+	}
 	talksToLine := ""
 	if len(activeTalksTo) > 0 {
 		talksToLine = fmt.Sprintf("Can talk to: %s", strings.Join(activeTalksTo, ", "))
