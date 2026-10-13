@@ -433,13 +433,16 @@ func TestProcessDaemonSubmitRequest_SendExemptsConfiguredMessengerInterfaceNodeF
 	originalGrace := verdictGraceSeconds
 	originalCap := verdictDebtCap
 	originalExempt := verdictExemptInterfaceNode
+	originalExemptSession := verdictExemptOwnSession
 	verdictGraceSeconds = 60
 	verdictDebtCap = 0
 	verdictExemptInterfaceNode = "messenger"
+	verdictExemptOwnSession = "review-session"
 	t.Cleanup(func() {
 		verdictGraceSeconds = originalGrace
 		verdictDebtCap = originalCap
 		verdictExemptInterfaceNode = originalExempt
+		verdictExemptOwnSession = originalExemptSession
 	})
 
 	filename := "20260713-120002-from-messenger-to-worker.md"
@@ -481,13 +484,16 @@ func TestProcessDaemonSubmitRequest_SendExemptsConfiguredInterfaceNodeFromVerdic
 	originalGrace := verdictGraceSeconds
 	originalCap := verdictDebtCap
 	originalInterfaceNode := verdictExemptInterfaceNode
+	originalExemptSession := verdictExemptOwnSession
 	verdictGraceSeconds = 60
 	verdictDebtCap = 0
 	verdictExemptInterfaceNode = "human"
+	verdictExemptOwnSession = "review-session"
 	t.Cleanup(func() {
 		verdictGraceSeconds = originalGrace
 		verdictDebtCap = originalCap
 		verdictExemptInterfaceNode = originalInterfaceNode
+		verdictExemptOwnSession = originalExemptSession
 	})
 
 	filename := "20260713-120011-from-human-to-worker.md"
@@ -515,6 +521,108 @@ func TestProcessDaemonSubmitRequest_SendExemptsConfiguredInterfaceNodeFromVerdic
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); err != nil {
 		t.Fatalf("post file missing for exempt interface node send: %v", err)
+	}
+}
+
+// A same-bare-named interface node that lives in a PEER session (it declares
+// the same interface_node) must not inherit the own session's verdict-debt
+// exemption (#624/#700 F-700-R2-2). The daemon's own session is "own-session";
+// the submit comes from the peer session directory "review-session".
+func TestProcessDaemonSubmitRequest_SendDoesNotExemptSameNamedInterfaceNodeInPeerSession(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "human", "worker", "ireq_peer_ui", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	originalInterfaceNode := verdictExemptInterfaceNode
+	originalExemptSession := verdictExemptOwnSession
+	verdictGraceSeconds = 60
+	verdictDebtCap = 0
+	verdictExemptInterfaceNode = "human"
+	verdictExemptOwnSession = "own-session"
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+		verdictExemptInterfaceNode = originalInterfaceNode
+		verdictExemptOwnSession = originalExemptSession
+	})
+
+	filename := "20260713-120012-from-human-to-worker.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-peer-ui-node",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Sender:    "human",
+		Content:   verdictGateSendContent("human", "worker", filename, "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-peer-ui-node"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "reply gate: verdict required") {
+		t.Fatalf("response.Error = %q, want verdict-gate rejection: a peer-session same-named interface node is not exempt", response.Error)
+	}
+	if _, err := os.Stat(filepath.Join(sessionDir, "post", filename)); !os.IsNotExist(err) {
+		t.Fatalf("post file written for a non-exempt peer-session interface node send: %v", err)
+	}
+}
+
+// An unknown own session fails closed: nobody is exempt.
+func TestProcessDaemonSubmitRequest_SendDoesNotExemptInterfaceNodeWhenOwnSessionUnknown(t *testing.T) {
+	sessionDir := filepath.Join(t.TempDir(), "review-session")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatalf("CreateSessionDirs: %v", err)
+	}
+	now := time.Now().Add(-2 * time.Hour).UTC()
+	appendVerdictGateFill(t, sessionDir, "review-session", "human", "worker", "ireq_unknown_own", now)
+
+	originalGrace := verdictGraceSeconds
+	originalCap := verdictDebtCap
+	originalInterfaceNode := verdictExemptInterfaceNode
+	originalExemptSession := verdictExemptOwnSession
+	verdictGraceSeconds = 60
+	verdictDebtCap = 0
+	verdictExemptInterfaceNode = "human"
+	verdictExemptOwnSession = ""
+	t.Cleanup(func() {
+		verdictGraceSeconds = originalGrace
+		verdictDebtCap = originalCap
+		verdictExemptInterfaceNode = originalInterfaceNode
+		verdictExemptOwnSession = originalExemptSession
+	})
+
+	filename := "20260713-120013-from-human-to-worker.md"
+	requestPath, err := projection.WriteDaemonSubmitRequest(sessionDir, projection.DaemonSubmitRequest{
+		RequestID: "req-verdict-unknown-own",
+		Command:   projection.DaemonSubmitSend,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Filename:  filename,
+		Sender:    "human",
+		Content:   verdictGateSendContent("human", "worker", filename, "required", "ireq_new"),
+	})
+	if err != nil {
+		t.Fatalf("WriteDaemonSubmitRequest: %v", err)
+	}
+	if _, err := processDaemonSubmitRequest(requestPath); err != nil {
+		t.Fatalf("processDaemonSubmitRequest: %v", err)
+	}
+	response, err := projection.ReadDaemonSubmitResponse(projection.DaemonSubmitResponsePath(sessionDir, "req-verdict-unknown-own"))
+	if err != nil {
+		t.Fatalf("ReadDaemonSubmitResponse: %v", err)
+	}
+	if !strings.Contains(response.Error, "reply gate: verdict required") {
+		t.Fatalf("response.Error = %q, want verdict-gate rejection when the own session is unknown", response.Error)
 	}
 }
 

@@ -83,6 +83,85 @@ func TestDiscoverNodes_WithPaneTitle(t *testing.T) {
 	}
 }
 
+// F-700-R2-1: a real duplicate live pane is surfaced on the NodeInfo itself, so
+// every consumer of the discovered map (CLI, delivery, status, envelope) can
+// see the ambiguity. Two live panes titled "mouthpiece" in session "top" collide,
+// as do two in the daemon's own session; a lone pane does not, and duplicates in
+// a session without this context's inbox are not discovered at all.
+func TestDiscoverNodesWithCollisions_MarksCollidedWinner(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-collision"
+	for _, session := range []string{"top", "owner"} {
+		mustMkdirAll(t, filepath.Join(baseDir, contextID, session, "inbox"))
+	}
+	listing := strings.Join([]string{
+		"%11\t\ttop\tmouthpiece",
+		"%31\t\ttop\tmouthpiece",
+		"%12\t\ttop\tworker",
+		"%13\t\towner\tmouthpiece",
+		"%14\tother-ctx\towner\tworker",
+		"%15\t\towner\tworker",
+		"%16\t\tgone\tmouthpiece",
+		"%17\t\tgone\tmouthpiece",
+	}, "\n")
+	runner := func(args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "list-panes" {
+			return []byte(listing), nil
+		}
+		return nil, fmt.Errorf("unexpected tmux call %v", args)
+	}
+
+	nodes, collisions, err := discoverNodesWithCollisionsUsing(runner, baseDir, contextID, "owner")
+	if err != nil {
+		t.Fatalf("discoverNodesWithCollisionsUsing: %v", err)
+	}
+
+	collided, ok := nodes["top:mouthpiece"]
+	if !ok || collided.PaneID != "%31" || !collided.Collision {
+		t.Fatalf("top:mouthpiece = %+v (found %v), want winner %%31 with Collision=true", collided, ok)
+	}
+	if len(collisions) != 2 ||
+		collisions[0].NodeKey != "top:mouthpiece" || collisions[0].LoserPaneID != "%11" ||
+		collisions[1].NodeKey != "owner:worker" || collisions[1].LoserPaneID != "%14" {
+		t.Fatalf("collisions = %+v, want the top:mouthpiece displacement of %%11 then the owner:worker displacement of %%14", collisions)
+	}
+	for _, key := range []string{"top:worker", "owner:mouthpiece"} {
+		info, ok := nodes[key]
+		if !ok || info.Collision {
+			t.Fatalf("%s = %+v (found %v), want a unique node with Collision=false", key, info, ok)
+		}
+	}
+	// own-session fast path keeps the foreign-claimed pane, so owner:worker is
+	// a real two-pane collision too (the daemon's own session never excludes).
+	if info := nodes["owner:worker"]; !info.Collision {
+		t.Fatalf("owner:worker = %+v, want Collision=true (two live panes in the own session)", info)
+	}
+	if _, ok := nodes["gone:mouthpiece"]; ok {
+		t.Fatalf("gone:mouthpiece discovered although the session has no inbox for this context")
+	}
+}
+
+// A foreign-session pane claimed by another context is excluded BEFORE collision
+// reduction, so it neither wins nor makes the surviving pane look ambiguous.
+func TestDiscoverNodesWithCollisions_ForeignClaimedTwinDoesNotCollide(t *testing.T) {
+	baseDir := t.TempDir()
+	contextID := "ctx-collision"
+	for _, session := range []string{"top", "owner"} {
+		mustMkdirAll(t, filepath.Join(baseDir, contextID, session, "inbox"))
+	}
+	listing := "%11\t\ttop\tmouthpiece\n%31\tother-ctx\ttop\tmouthpiece\n"
+	runner := func(args ...string) ([]byte, error) { return []byte(listing), nil }
+
+	nodes, collisions, err := discoverNodesWithCollisionsUsing(runner, baseDir, contextID, "owner")
+	if err != nil {
+		t.Fatalf("discoverNodesWithCollisionsUsing: %v", err)
+	}
+	info, ok := nodes["top:mouthpiece"]
+	if !ok || info.PaneID != "%11" || info.Collision || len(collisions) != 0 {
+		t.Fatalf("top:mouthpiece = %+v (found %v) collisions=%+v, want unique %%11 without collision", info, ok, collisions)
+	}
+}
+
 func requireTmuxIntegration(t *testing.T) {
 	t.Helper()
 	if os.Getenv("TMUX_A2A_POSTMAN_TMUX_INTEGRATION") != "1" {
