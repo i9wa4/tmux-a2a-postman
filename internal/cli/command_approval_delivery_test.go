@@ -137,7 +137,7 @@ func TestDeliverCommandApprovalRequest_DeliversTrustedRequestToReviewerInbox(t *
 	}
 }
 
-func TestDeliverCommandApprovalRequest_RetriesCommittedUnprojectedDeliveryOnce(t *testing.T) {
+func TestDeliverCommandApprovalRequest_RetriesReportedCommittedUnprojectedDeliveryOnce(t *testing.T) {
 	baseDir := t.TempDir()
 	reviewerSessionDir := filepath.Join(baseDir, "ctx-626-retry", "worker-session")
 	if err := config.CreateSessionDirs(reviewerSessionDir); err != nil {
@@ -165,21 +165,13 @@ func TestDeliverCommandApprovalRequest_RetriesCommittedUnprojectedDeliveryOnce(t
 	originalDeliver := deliverCommandApprovalSystemMessageFn
 	var calls int
 	var firstFilename, secondFilename, firstContent, secondContent string
-	failOpenCurrentWriter := true
-	restoreOpenCurrentWriter := controlplane.SetOpenCurrentWriterForTest(func(sessionDir string) (*journal.Writer, error) {
-		if failOpenCurrentWriter {
-			failOpenCurrentWriter = false
-			return nil, fmt.Errorf("injected OpenCurrentWriter failure after mailbox commit")
-		}
-		return journal.OpenCurrentWriter(sessionDir)
-	})
-	t.Cleanup(restoreOpenCurrentWriter)
 	deliverCommandApprovalSystemMessageFn = func(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
 		calls++
 		switch calls {
 		case 1:
 			firstFilename = filename
 			firstContent = content
+			return controlplane.SystemMessageResult{Delivered: true, Committed: true}, fmt.Errorf("injected committed unprojected delivery result")
 		case 2:
 			secondFilename = filename
 			secondContent = content
