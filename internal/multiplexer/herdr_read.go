@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -21,7 +22,16 @@ var (
 	ErrHerdrPaneTargetMismatch  = errors.New("herdr pane target mismatch")
 	ErrHerdrSessionNameMismatch = errors.New("herdr session name mismatch")
 	ErrHerdrSnapshotInvalid     = errors.New("herdr snapshot invalid")
+
+	// ErrHerdrResponseTargetMismatch reports a well-formed pane.read or
+	// pane.process_info response whose identity differs from the request. It is
+	// distinct from ErrHerdrPaneTargetMismatch, which rejects the caller's own
+	// pane argument before any request is sent.
+	ErrHerdrResponseTargetMismatch = errors.New("herdr response target mismatch")
 )
+
+// maxHerdrMismatchIDBytes bounds each identity echoed in a mismatch error.
+const maxHerdrMismatchIDBytes = 64
 
 type HerdrReadConfig struct {
 	Enabled bool
@@ -41,9 +51,16 @@ type HerdrPaneReadOptions struct {
 	TailLines int
 }
 
+// HerdrPaneReadResult carries the pane.read text together with the identity the
+// server echoed. PaneID, WorkspaceID, TabID and Source are returned exactly as
+// received so the backend can bind them to the request.
 type HerdrPaneReadResult struct {
-	Envelope HerdrResponseEnvelope
-	Text     string
+	Envelope    HerdrResponseEnvelope
+	Text        string
+	PaneID      string
+	WorkspaceID string
+	TabID       string
+	Source      string
 }
 
 type HerdrPaneProcessInfoResult struct {
@@ -177,11 +194,15 @@ func (b HerdrBackend) CapturePane(ctx context.Context, pane ResourceID, opts Cap
 	if err := b.validateConfiguredPaneInSnapshot(ctx); err != nil {
 		return "", err
 	}
-	result, err := b.Client.ReadPane(ctx, pane.Native, herdrPaneReadOptions(opts))
+	readOpts := herdrPaneReadOptions(opts)
+	result, err := b.Client.ReadPane(ctx, pane.Native, readOpts)
 	if err != nil {
 		return "", NormalizeHerdrBackendError(err)
 	}
 	if err := b.validateEnvelope(HerdrReadScopePane, result.Envelope); err != nil {
+		return "", err
+	}
+	if err := b.bindReadIdentity(pane.Native, readOpts.Source, result); err != nil {
 		return "", err
 	}
 	return result.Text, nil
@@ -207,7 +228,53 @@ func (b HerdrBackend) PaneCurrentCommand(ctx context.Context, pane ResourceID) (
 	if err := b.validateEnvelope(HerdrReadScopePane, result.Envelope); err != nil {
 		return "", err
 	}
+	if err := bindProcessInfoIdentity(pane.Native, result.ProcessInfo.PaneID); err != nil {
+		return "", err
+	}
 	return result.ProcessInfo.CurrentCommand(), nil
+}
+
+// bindReadIdentity requires the pane.read response to describe exactly the pane,
+// workspace, tab and source that were requested. Comparison is byte-exact: no
+// trimming and no case folding. Nothing from the response text is used here, so
+// a mismatched response never leaks its content into the returned error.
+func (b HerdrBackend) bindReadIdentity(requestedPane, requestedSource string, result HerdrPaneReadResult) error {
+	runtime := b.Config.Runtime
+	for _, field := range []struct{ name, want, got string }{
+		{"pane_id", requestedPane, result.PaneID},
+		{"workspace_id", runtime.WorkspaceID, result.WorkspaceID},
+		{"tab_id", runtime.TabID, result.TabID},
+		{"source", requestedSource, result.Source},
+	} {
+		if field.got != field.want {
+			return herdrResponseTargetMismatch("pane.read", field.name, field.want, field.got)
+		}
+	}
+	return nil
+}
+
+// bindProcessInfoIdentity requires the pane.process_info response to name the
+// requested pane. process_info carries no workspace or tab, so only the pane id
+// can be bound here; the containment snapshot read before the request covers
+// the rest (see docs/design/herdr-readonly-discovery-spike.md).
+func bindProcessInfoIdentity(requestedPane, returnedPane string) error {
+	if returnedPane != requestedPane {
+		return herdrResponseTargetMismatch("pane.process_info", "pane_id", requestedPane, returnedPane)
+	}
+	return nil
+}
+
+func herdrResponseTargetMismatch(method, field, want, got string) error {
+	return fmt.Errorf("%w: %s %s requested %s, returned %s", ErrHerdrResponseTargetMismatch, method, field, boundedHerdrID(want), boundedHerdrID(got))
+}
+
+// boundedHerdrID quotes an identity for an error message, escaping control and
+// non-UTF-8 bytes and truncating it so a hostile response cannot flood logs.
+func boundedHerdrID(id string) string {
+	if len(id) > maxHerdrMismatchIDBytes {
+		return strconv.Quote(id[:maxHerdrMismatchIDBytes]) + "..."
+	}
+	return strconv.Quote(id)
 }
 
 func (b HerdrBackend) authorizeReadPath(scope HerdrReadScope) error {
@@ -398,8 +465,8 @@ func (b HerdrBackend) paneUsable(ctx context.Context, pane HerdrPaneSnapshot) (b
 	if err := probe.validateEnvelope(HerdrReadScopePane, result.Envelope); err != nil {
 		return false, nil
 	}
-	if result.ProcessInfo.PaneID != "" && result.ProcessInfo.PaneID != pane.ID {
-		return false, nil
+	if err := bindProcessInfoIdentity(pane.ID, result.ProcessInfo.PaneID); err != nil {
+		return false, err
 	}
 	return true, nil
 }

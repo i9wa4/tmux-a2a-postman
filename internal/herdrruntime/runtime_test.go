@@ -2060,10 +2060,12 @@ func (f *fakeRuntimeHerdrClient) ReadPane(context.Context, string, multiplexer.H
 	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (f *fakeRuntimeHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+func (f *fakeRuntimeHerdrClient) PaneProcessInfo(_ context.Context, paneID string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+	// Echo the requested pane like a real server: the backend binds the
+	// response pane_id to the request and rejects an empty or different one.
 	return multiplexer.HerdrPaneProcessInfoResult{
 		Envelope:    multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
-		ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{PaneID: paneID, ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 	}, nil
 }
 
@@ -2198,10 +2200,10 @@ func (s *sequencedRuntimeHerdrClient) ReadPane(context.Context, string, multiple
 	return multiplexer.HerdrPaneReadResult{Envelope: multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1}}, nil
 }
 
-func (s *sequencedRuntimeHerdrClient) PaneProcessInfo(context.Context, string) (multiplexer.HerdrPaneProcessInfoResult, error) {
+func (s *sequencedRuntimeHerdrClient) PaneProcessInfo(_ context.Context, paneID string) (multiplexer.HerdrPaneProcessInfoResult, error) {
 	return multiplexer.HerdrPaneProcessInfoResult{
 		Envelope:    multiplexer.HerdrResponseEnvelope{ProtocolVersion: "1", SchemaVersion: 1},
-		ProcessInfo: multiplexer.HerdrPaneProcessInfo{ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
+		ProcessInfo: multiplexer.HerdrPaneProcessInfo{PaneID: paneID, ForegroundProcesses: []multiplexer.HerdrProcessInfo{{Name: "codex"}}},
 	}, nil
 }
 
