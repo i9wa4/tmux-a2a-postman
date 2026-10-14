@@ -42,6 +42,7 @@ type InputRequestDetail struct {
 	CommandHash                    string
 	CommandApprovalOpeningThreadID string
 	CommandApprovalOpeningHash     string
+	messageIDs                     map[string]struct{}
 }
 
 type RequestSatisfaction struct {
@@ -165,7 +166,7 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 		plan.Reason = "reconciliation tuple does not match recorded request and decision"
 		return plan, true, nil
 	}
-	if opening, ok := uniqueCommandApprovalOpening(commandApprovalOpenings, repair.InputRequestID); !ok {
+	if opening, ok := commandApprovalOpeningForRepair(commandApprovalOpenings, repair); !ok {
 		plan.Reason = "expected exactly one distinct command approval opening tuple"
 		return plan, true, nil
 	} else if !commandApprovalOpeningMatchesRepair(opening, repair) {
@@ -187,7 +188,7 @@ func ValidateCommandApprovalReplySlotReconciliation(sessionDir, sessionName stri
 		plan.Reason = "input request projection is unavailable"
 		return plan, false, nil
 	}
-	opening, ok := commandApprovalOpenSlot(inputState, repair.InputRequestID)
+	opening, ok := commandApprovalOpenSlot(inputState, repair)
 	if !ok {
 		plan.Reason = "matching command approval reply slot is not currently open"
 		return plan, true, nil
@@ -237,6 +238,9 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	openOutboundFallback := make(map[string]InputRequestDetail)
 	satisfactionExact := make(map[string]InputRequestDetail)
 	satisfactionFallback := make(map[string]InputRequestDetail)
+	seenInbound := make(map[string]struct{})
+	seenOutbound := make(map[string]struct{})
+	seenSatisfaction := make(map[string]struct{})
 	infoUnread := make(map[string]InputRequestDetail)
 	commandApprovalThreads := make(map[string]CommandApprovalThread)
 	acceptedCommandApprovalDecisions := make(map[commandApprovalReplySlotKey]string)
@@ -315,6 +319,9 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 
 		switch event.Type {
 		case MailboxProjectionPostConsumedEventType:
+			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
+				recordCommandApprovalOpening(commandApprovalOpenings, newInputRequestDetail(meta, "", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads))
+			}
 			rememberCommandApprovalReply(pendingCommandApprovalReplies, meta, event.OccurredAt, sessionName)
 			if resolved, commandOpening := resolveCommandApprovalReplySlot(projected, openInboundExact, openOutboundExact, satisfactionExact, meta, event.OccurredAt, acceptedCommandApprovalDecisions, sessionName); !commandOpening {
 				// Preserve the pre-command-approval behavior: post-consumed only
@@ -325,11 +332,15 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				continue
 			}
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				recordCommandApprovalOpening(commandApprovalOpenings, openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads))
-				projected.WaitingOnInputCounts[meta.From]++
+				if _, opened := openInputRequest(openOutboundExact, openOutboundFallback, seenOutbound, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads); opened {
+					projected.WaitingOnInputCounts[meta.From]++
+				}
 				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			}
 		case MailboxProjectionDeliveredEventType:
+			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
+				recordCommandApprovalOpening(commandApprovalOpenings, newInputRequestDetail(meta, "", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads))
+			}
 			rememberCommandApprovalReply(pendingCommandApprovalReplies, meta, event.OccurredAt, sessionName)
 			if resolved, commandOpening := resolveCommandApprovalReplySlot(projected, openInboundExact, openOutboundExact, satisfactionExact, meta, event.OccurredAt, acceptedCommandApprovalDecisions, sessionName); !commandOpening {
 				// Preserve the pre-command-approval behavior: delivered only
@@ -341,12 +352,15 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 			}
 			projected.UnreadCounts[meta.To]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
-				recordCommandApprovalOpening(commandApprovalOpenings, openInputRequest(openInboundExact, openInboundFallback, meta, "inbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads))
-				recordCommandApprovalOpening(commandApprovalOpenings, openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID, commandApprovalThreads))
-				projected.InputRequiredCounts[meta.To]++
+				if _, opened := openInputRequest(openInboundExact, openInboundFallback, seenInbound, meta, "inbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads); opened {
+					projected.InputRequiredCounts[meta.To]++
+				}
+				openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, seenSatisfaction, meta, event.OccurredAt, event.Type, event.EventID, commandApprovalThreads)
+				rememberInputRequestMessageAlias(openOutboundExact, openOutboundFallback, meta)
 				if commandApprovalRequestOpensRequesterWaiting(meta) {
-					recordCommandApprovalOpening(commandApprovalOpenings, openInputRequest(openOutboundExact, openOutboundFallback, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads))
-					projected.WaitingOnInputCounts[meta.From]++
+					if _, opened := openInputRequest(openOutboundExact, openOutboundFallback, seenOutbound, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads); opened {
+						projected.WaitingOnInputCounts[meta.From]++
+					}
 				}
 				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			} else {
@@ -375,7 +389,7 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				resolveOutboundInputRequest(projected, openOutboundExact, openOutboundFallback, meta)
 				fillRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt)
 			}
-			deadLetterRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, meta, event.OccurredAt, event.Type, event.EventID)
+			deadLetterRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, seenSatisfaction, meta, event.OccurredAt, event.Type, event.EventID)
 		}
 	}
 
@@ -390,6 +404,8 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 		meta := envelope.Metadata{
 			From:                repair.Approver,
 			To:                  repair.Requester,
+			ThreadID:            repair.ThreadID,
+			CommandHash:         repair.CommandHash,
 			FillsInputRequestID: repair.InputRequestID,
 		}
 		resolveInboundInputRequest(projected, openInboundExact, nil, meta)
@@ -526,14 +542,14 @@ func commandApprovalReplySlotReconciliationPayloadEqual(a, b journal.CommandAppr
 		a.DecisionEventID == b.DecisionEventID
 }
 
-func commandApprovalOpenSlot(state MessageInputRequestState, inputRequestID string) (InputRequestDetail, bool) {
+func commandApprovalOpenSlot(state MessageInputRequestState, repair journal.CommandApprovalReplySlotReconciledPayload) (InputRequestDetail, bool) {
 	for _, request := range state.InputRequired {
-		if request.InputRequestID == inputRequestID && request.CommandApprovalThreadID != "" {
+		if request.InputRequestID == repair.InputRequestID && commandApprovalOpeningMatchesRepair(request, repair) {
 			return request, true
 		}
 	}
 	for _, request := range state.WaitingOnInput {
-		if request.InputRequestID == inputRequestID && request.CommandApprovalThreadID != "" {
+		if request.InputRequestID == repair.InputRequestID && commandApprovalOpeningMatchesRepair(request, repair) {
 			return request, true
 		}
 	}
@@ -557,25 +573,31 @@ func validateCommandApprovalReconciliationForProjection(repair journal.CommandAp
 	if decision.EventID != repair.DecisionEventID || thread.CommandHash != repair.CommandHash || thread.Requester != repair.Requester || thread.RequesterAddress != repair.RequesterAddress || thread.CommandApproverNode != repair.Approver || thread.CommandApproverAddress != repair.ApproverAddress {
 		return journal.Event{}, false
 	}
-	if opening, ok := uniqueCommandApprovalOpening(openings, repair.InputRequestID); !ok || !commandApprovalOpeningMatchesRepair(opening, repair) {
+	if opening, ok := commandApprovalOpeningForRepair(openings, repair); !ok || !commandApprovalOpeningMatchesRepair(opening, repair) {
 		return journal.Event{}, false
 	}
-	opening, commandOpening := commandApprovalOpeningForFill(repair.InputRequestID, openInbound, openOutbound, satisfaction)
+	opening, commandOpening := commandApprovalOpeningForFill(repair.InputRequestID, repair.Requester, repair.Approver, repair.ThreadID, repair.CommandHash, openInbound, openOutbound, satisfaction)
 	if !commandOpening || !commandApprovalOpeningMatchesRepair(opening, repair) {
 		return journal.Event{}, false
 	}
 	return decision, true
 }
 
-func uniqueCommandApprovalOpening(openings map[string]map[string]InputRequestDetail, inputRequestID string) (InputRequestDetail, bool) {
-	distinct := openings[inputRequestID]
-	if len(distinct) != 1 {
-		return InputRequestDetail{}, false
+func commandApprovalOpeningForRepair(openings map[string]map[string]InputRequestDetail, repair journal.CommandApprovalReplySlotReconciledPayload) (InputRequestDetail, bool) {
+	var matching InputRequestDetail
+	for _, opening := range openings[repair.InputRequestID] {
+		if opening.Sender != repair.Requester || opening.Recipient != repair.Approver || opening.CommandApprovalThreadID != repair.ThreadID {
+			continue
+		}
+		// A second opening on the same thread may carry a conflicting raw
+		// hash or thread. Even if one matches the repair, the evidence for
+		// that thread is ambiguous and must not authorize reconciliation.
+		if matching.InputRequestID != "" {
+			return InputRequestDetail{}, false
+		}
+		matching = opening
 	}
-	for _, opening := range distinct {
-		return opening, true
-	}
-	return InputRequestDetail{}, false
+	return matching, matching.InputRequestID != ""
 }
 
 func commandApprovalOpeningMatchesRepair(opening InputRequestDetail, repair journal.CommandApprovalReplySlotReconciledPayload) bool {
@@ -625,7 +647,7 @@ func resolveCommandApprovalReplySlot(state MessageInputRequestState, openInbound
 	if meta.FillsInputRequestID == "" {
 		return false, false
 	}
-	opening, commandOpening := commandApprovalOpeningForFill(meta.FillsInputRequestID, openInbound, openOutbound, satisfaction)
+	opening, commandOpening := commandApprovalOpeningForFill(meta.FillsInputRequestID, meta.To, meta.From, meta.ThreadID, meta.CommandHash, openInbound, openOutbound, satisfaction)
 	if !commandOpening {
 		return false, false
 	}
@@ -640,13 +662,30 @@ func resolveCommandApprovalReplySlot(state MessageInputRequestState, openInbound
 	return true, true
 }
 
-func commandApprovalOpeningForFill(inputRequestID string, openings ...map[string]InputRequestDetail) (InputRequestDetail, bool) {
+func commandApprovalOpeningForFill(inputRequestID, requester, approver, threadID, commandHash string, openings ...map[string]InputRequestDetail) (InputRequestDetail, bool) {
+	var matching InputRequestDetail
+	sawPair := false
 	for _, open := range openings {
-		if opening, ok := open[inputRequestID]; ok && opening.CommandApprovalThreadID != "" {
-			return opening, true
+		for _, opening := range open {
+			if opening.InputRequestID != inputRequestID || opening.CommandApprovalThreadID == "" {
+				continue
+			}
+			if opening.Sender == requester && opening.Recipient == approver {
+				sawPair = true
+				if threadID != "" && opening.CommandApprovalThreadID != threadID {
+					continue
+				}
+				if commandHash != "" && opening.CommandHash != commandHash {
+					continue
+				}
+				if matching.InputRequestID != "" && commandApprovalOpeningTupleKey(matching) != commandApprovalOpeningTupleKey(opening) {
+					return InputRequestDetail{}, true
+				}
+				matching = opening
+			}
 		}
 	}
-	return InputRequestDetail{}, false
+	return matching, sawPair
 }
 
 func commandApprovalRequestOpensRequesterWaiting(meta envelope.Metadata) bool {
@@ -749,27 +788,54 @@ func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelo
 	return meta
 }
 
-func openInputRequest(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) InputRequestDetail {
+func openInputRequest(openExact, openFallback map[string]InputRequestDetail, seen map[string]struct{}, meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) (InputRequestDetail, bool) {
 	inputRequest := newInputRequestDetail(meta, direction, openedAt, openedAtSource, openedEventID, commandApprovalThreads)
+	key := logicalInputRequestKey(meta)
+	open := openFallback
 	if meta.InputRequestID != "" {
-		openExact[meta.InputRequestID] = inputRequest
-		return inputRequest
+		open = openExact
 	}
-	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
-	return inputRequest
+	if _, exists := seen[key]; exists {
+		rememberInputRequestMessageAlias(openExact, openFallback, meta)
+		return inputRequest, false
+	}
+	seen[key] = struct{}{}
+	inputRequest.messageIDs = map[string]struct{}{meta.MessageID: {}}
+	open[key] = inputRequest
+	return inputRequest, true
 }
 
-func openRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) InputRequestDetail {
-	inputRequest := newInputRequestDetail(meta, "", openedAt, openedAtSource, openedEventID, commandApprovalThreads)
+func rememberInputRequestMessageAlias(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {
+	key := logicalInputRequestKey(meta)
+	open := openFallback
+	if meta.InputRequestID != "" {
+		open = openExact
+	}
+	if existing, ok := open[key]; ok {
+		if existing.messageIDs == nil {
+			existing.messageIDs = map[string]struct{}{existing.MessageID: {}}
+		}
+		existing.messageIDs[meta.MessageID] = struct{}{}
+		open[key] = existing
+	}
+}
+
+func openRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, seen map[string]struct{}, meta envelope.Metadata, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) (InputRequestDetail, bool) {
+	inputRequest, opened := openInputRequest(openExact, openFallback, seen, meta, "", openedAt, openedAtSource, openedEventID, commandApprovalThreads)
+	if !opened {
+		return inputRequest, false
+	}
 	stats := satisfaction[meta.To]
 	stats.OpenedCount++
 	satisfaction[meta.To] = stats
-	if meta.InputRequestID != "" {
-		openExact[meta.InputRequestID] = inputRequest
-		return inputRequest
+	return inputRequest, true
+}
+
+func logicalInputRequestKey(meta envelope.Metadata) string {
+	if meta.InputRequestID == "" {
+		return inputRequestKey(meta.MessageID, meta.To)
 	}
-	openFallback[inputRequestKey(meta.MessageID, meta.To)] = inputRequest
-	return inputRequest
+	return strings.Join([]string{meta.ThreadID, meta.InputRequestID, meta.From, meta.To}, "\x00")
 }
 
 func newInputRequestDetail(meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) InputRequestDetail {
@@ -803,7 +869,6 @@ func recordCommandApprovalOpening(openings map[string]map[string]InputRequestDet
 func commandApprovalOpeningTupleKey(opening InputRequestDetail) string {
 	return strings.Join([]string{
 		opening.InputRequestID,
-		opening.MessageID,
 		opening.Sender,
 		opening.Recipient,
 		opening.CommandApprovalThreadID,
@@ -817,13 +882,18 @@ func commandApprovalOpeningThreadID(meta envelope.Metadata, threads map[string]C
 	if meta.InputRequestID == "" {
 		return ""
 	}
-	for threadID, thread := range threads {
-		if thread.InputRequestID == meta.InputRequestID {
-			return threadID
-		}
+	if thread, ok := threads[meta.ThreadID]; ok && thread.InputRequestID == meta.InputRequestID {
+		return meta.ThreadID
 	}
 	if strings.HasPrefix(meta.ThreadID, "command-approval-") {
 		return meta.ThreadID
+	}
+	if meta.ThreadID == "" {
+		for threadID, thread := range threads {
+			if thread.InputRequestID == meta.InputRequestID && thread.Requester == meta.From && thread.CommandApproverNode == meta.To {
+				return threadID
+			}
+		}
 	}
 	return ""
 }
@@ -850,13 +920,13 @@ func fillRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openEx
 	satisfaction[inputRequest.Recipient] = stats
 }
 
-func deadLetterRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, deadLetteredAt, openedAtSource, openedEventID string) {
+func deadLetterRequestSatisfaction(satisfaction map[string]RequestSatisfaction, openExact, openFallback map[string]InputRequestDetail, seen map[string]struct{}, meta envelope.Metadata, deadLetteredAt, openedAtSource, openedEventID string) {
 	if envelope.ResolveReplyPolicyFromMetadata(meta) != "required" {
 		return
 	}
 	inputRequest, ok := findOpenRequestSatisfaction(openExact, openFallback, meta)
 	if !ok {
-		openRequestSatisfaction(satisfaction, openExact, openFallback, meta, deadLetteredAt, openedAtSource, openedEventID, nil)
+		openRequestSatisfaction(satisfaction, openExact, openFallback, seen, meta, deadLetteredAt, openedAtSource, openedEventID, nil)
 		inputRequest, ok = findOpenRequestSatisfaction(openExact, openFallback, meta)
 		if !ok {
 			return
@@ -869,7 +939,7 @@ func deadLetterRequestSatisfaction(satisfaction map[string]RequestSatisfaction, 
 
 func findOpenRequestSatisfaction(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) (InputRequestDetail, bool) {
 	if meta.InputRequestID != "" {
-		if inputRequest, ok := openExact[meta.InputRequestID]; ok {
+		if inputRequest, ok := openExact[logicalInputRequestKey(meta)]; ok {
 			return inputRequest, true
 		}
 	}
@@ -880,7 +950,7 @@ func findOpenRequestSatisfaction(openExact, openFallback map[string]InputRequest
 
 func resolveRequestSatisfactionOpen(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) (InputRequestDetail, bool) {
 	if meta.FillsInputRequestID != "" {
-		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From)
+		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From, meta.To, meta.ThreadID)
 		if !ok {
 			return InputRequestDetail{}, false
 		}
@@ -957,7 +1027,7 @@ func requestSatisfactionAgeSeconds(openedAt string, now time.Time) (int, bool) {
 
 func resolveInboundInputRequest(state MessageInputRequestState, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {
 	if meta.FillsInputRequestID != "" {
-		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From)
+		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From, meta.To, meta.ThreadID)
 		if !ok {
 			return
 		}
@@ -978,7 +1048,7 @@ func resolveInboundInputRequest(state MessageInputRequestState, openExact, openF
 
 func resolveOutboundInputRequest(state MessageInputRequestState, openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {
 	if meta.FillsInputRequestID != "" {
-		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From)
+		key, inputRequest, ok := findExactInputRequest(openExact, meta.FillsInputRequestID, meta.ReplyTo, meta.From, meta.To, meta.ThreadID)
 		if !ok {
 			return
 		}
@@ -1002,15 +1072,19 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 		return
 	}
 	if meta.InputRequestID != "" {
-		if inputRequest, ok := openExact[meta.InputRequestID]; ok {
+		key := logicalInputRequestKey(meta)
+		if inputRequest, ok := openExact[key]; ok && inputRequest.MessageID == meta.MessageID {
 			inputRequest.ReadAt = readAt
 			inputRequest.ReadEventID = readEventID
-			openExact[meta.InputRequestID] = inputRequest
+			openExact[key] = inputRequest
 			return
 		}
 	}
 	for key, inputRequest := range openExact {
-		if inputRequest.MessageID == meta.MessageID && inputRequest.Recipient == meta.To {
+		if inputRequest.Recipient == meta.To {
+			if _, ok := inputRequest.messageIDs[meta.MessageID]; !ok {
+				continue
+			}
 			inputRequest.ReadAt = readAt
 			inputRequest.ReadEventID = readEventID
 			openExact[key] = inputRequest
@@ -1025,18 +1099,27 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 	}
 }
 
-func findExactInputRequest(open map[string]InputRequestDetail, inputRequestID, replyTo, participant string) (string, InputRequestDetail, bool) {
-	inputRequest, ok := open[inputRequestID]
-	if !ok {
-		return "", InputRequestDetail{}, false
+func findExactInputRequest(open map[string]InputRequestDetail, inputRequestID, replyTo, participant, sender, threadID string) (string, InputRequestDetail, bool) {
+	var matchingKey string
+	var matching InputRequestDetail
+	for key, inputRequest := range open {
+		if inputRequest.InputRequestID != inputRequestID || inputRequest.Recipient != participant || inputRequest.Sender != sender {
+			continue
+		}
+		if threadID != "" && inputRequest.CommandApprovalOpeningThreadID != threadID {
+			continue
+		}
+		if replyTo != "" {
+			if _, ok := inputRequest.messageIDs[replyTo]; !ok && replyTo != inputRequest.MessageID {
+				continue
+			}
+		}
+		if matchingKey != "" {
+			return "", InputRequestDetail{}, false
+		}
+		matchingKey, matching = key, inputRequest
 	}
-	if inputRequest.Recipient != participant {
-		return "", InputRequestDetail{}, false
-	}
-	if replyTo != "" && replyTo != inputRequest.MessageID {
-		return "", InputRequestDetail{}, false
-	}
-	return inputRequestID, inputRequest, true
+	return matchingKey, matching, matchingKey != ""
 }
 
 func findFallbackInputRequest(open map[string]InputRequestDetail, messageID, participant string) (string, InputRequestDetail, bool) {
