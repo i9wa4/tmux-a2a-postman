@@ -533,6 +533,61 @@ func TestRebindHistoryAnchorsOwnedConversations(t *testing.T) {
 	}
 }
 
+func TestClaimRejectsFencedProposalAndDesignationMismatch(t *testing.T) {
+	store, key, owner := fixture()
+	store.Root = t.TempDir()
+	first, err := store.Claim(key, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedDesignation := owner
+	changedDesignation.Designation = "agent"
+	if _, err := store.Claim(key, changedDesignation); !errors.Is(err, ErrOwned) {
+		t.Fatalf("designation mismatch should be owned: %v", err)
+	}
+	for _, proposed := range []Owner{
+		func() Owner { p := owner; p.Epoch = 1; return p }(),
+		func() Owner { p := owner; p.LeaseID = "supplied"; return p }(),
+		first,
+	} {
+		if _, err := store.Claim(key, proposed); err == nil {
+			t.Fatalf("accepted fenced claim proposal: %+v", proposed)
+		}
+	}
+	state, err := store.Read(key)
+	if err != nil || state.Owner != first {
+		t.Fatalf("claim mutated owner: %+v, err=%v", state.Owner, err)
+	}
+}
+
+func TestClaimSyncsKeyParentBeforePublishingFirstState(t *testing.T) {
+	store, key, owner := fixture()
+	store.Root = t.TempDir()
+	var synced []string
+	failRoot := true
+	store.directorySync = func(dir string) error {
+		synced = append(synced, dir)
+		if dir == store.Root && failRoot {
+			return errors.New("injected root sync failure")
+		}
+		return syncDirectory(dir)
+	}
+	if _, err := store.Claim(key, owner); err == nil {
+		t.Fatal("claim succeeded despite root sync failure")
+	}
+	if _, err := os.Stat(statePath(store, key)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state was published before root sync: %v", err)
+	}
+	failRoot = false
+	claimed, err := store.Claim(key, owner)
+	if err != nil || claimed.Epoch != 1 {
+		t.Fatalf("claim retry: %+v, err=%v", claimed, err)
+	}
+	if len(synced) != 3 || synced[0] != store.Root || synced[1] != store.Root || synced[2] != filepath.Dir(statePath(store, key)) {
+		t.Fatalf("unexpected directory sync order: %v", synced)
+	}
+}
+
 func statePath(store Store, key ServerKey) string {
 	encoded, _ := json.Marshal(key)
 	hash := sha256.Sum256(encoded)

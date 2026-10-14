@@ -86,6 +86,9 @@ func (s Store) Claim(key ServerKey, proposed Owner) (Owner, error) {
 	if err := validate(key, proposed); err != nil {
 		return Owner{}, err
 	}
+	if proposed.Epoch != 0 || proposed.LeaseID != "" {
+		return Owner{}, errors.New("claim proposal must not carry a fence")
+	}
 	var result Owner
 	err := s.change(key, func(state *State) (bool, error) {
 		if state.Owner.Epoch != 0 {
@@ -204,7 +207,7 @@ func validate(key ServerKey, owner Owner) error {
 }
 
 func samePane(a, b Owner) bool {
-	return a.ServerIncarnation == b.ServerIncarnation && a.PaneID == b.PaneID && a.PaneIncarnation == b.PaneIncarnation && a.ConversationID == b.ConversationID
+	return a.ServerIncarnation == b.ServerIncarnation && a.PaneID == b.PaneID && a.PaneIncarnation == b.PaneIncarnation && a.ConversationID == b.ConversationID && a.Designation == b.Designation
 }
 
 func sameFence(a, b Owner) bool {
@@ -328,6 +331,11 @@ func (s Store) change(key ServerKey, fn func(*State) (bool, error)) error {
 			return fmt.Errorf("invalid arbiter state: %w", err)
 		}
 	case errors.Is(err, os.ErrNotExist):
+		// The first state file depends on the hashed key directory entry.
+		// Sync its parent before writing state so a successful Claim survives a crash.
+		if err := s.syncDirectory(s.Root); err != nil {
+			return fmt.Errorf("sync arbiter root: %w", err)
+		}
 		state.Key = key
 	default:
 		return err
