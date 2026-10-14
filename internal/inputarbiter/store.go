@@ -308,15 +308,16 @@ func (s Store) change(key ServerKey, fn func(*State) (bool, error)) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
 	path := filepath.Join(dir, "state.json")
 	var state State
 	data, err := os.ReadFile(path)
-	if err == nil {
+	switch {
+	case err == nil:
 		if err := json.Unmarshal(data, &state); err != nil {
 			return fmt.Errorf("decode arbiter state: %w", err)
 		}
@@ -326,9 +327,9 @@ func (s Store) change(key ServerKey, fn func(*State) (bool, error)) error {
 		if err := validateState(state); err != nil {
 			return fmt.Errorf("invalid arbiter state: %w", err)
 		}
-	} else if errors.Is(err, os.ErrNotExist) {
+	case errors.Is(err, os.ErrNotExist):
 		state.Key = key
-	} else {
+	default:
 		return err
 	}
 	changed, err := fn(&state)
@@ -353,17 +354,17 @@ func writeState(dir, path string, state State, afterRename func() error, syncDir
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -392,7 +393,7 @@ func syncDirectory(dir string) error {
 	if err != nil {
 		return err
 	}
-	defer parent.Close()
+	defer func() { _ = parent.Close() }()
 	return parent.Sync()
 }
 
