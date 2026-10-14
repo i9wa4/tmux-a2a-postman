@@ -1,6 +1,7 @@
 package inputarbiter
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -301,16 +302,43 @@ func TestRebindRetryAfterPostRenameErrorReturnsSameLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(committed.Rebindings) != 1 {
+		t.Fatalf("first rebind receipt count: %d", len(committed.Rebindings))
+	}
+	firstReceipt := committed.Rebindings[0]
+	if firstReceipt.RequestID != "request-1" || firstReceipt.From != old || firstReceipt.Proposed != replacement || firstReceipt.Result != committed.Owner {
+		t.Fatalf("first rebind receipt: %+v, owner: %+v", firstReceipt, committed.Owner)
+	}
+	if firstReceipt.Result.Epoch != old.Epoch+1 || firstReceipt.Result.LeaseID == "" || firstReceipt.Result.LeaseID == old.LeaseID {
+		t.Fatalf("first rebind fence: %+v", firstReceipt.Result)
+	}
+	path := statePath(store, key)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	retried, err := reopened.Rebind(key, "request-1", old, replacement)
-	if err != nil || retried != committed.Owner || retried.Epoch != old.Epoch+1 || retried.LeaseID == old.LeaseID {
+	if err != nil || retried != firstReceipt.Result {
 		t.Fatalf("rebind replay: owner=%+v state=%+v err=%v", retried, committed.Owner, err)
+	}
+	replayed, err := reopened.Read(key)
+	if err != nil || len(replayed.Rebindings) != 1 || replayed.Rebindings[0] != firstReceipt || replayed.Owner != committed.Owner {
+		t.Fatalf("rebind replay changed receipt: %+v %v", replayed, err)
+	}
+	afterReplay, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(afterReplay, before) {
+		t.Fatalf("rebind replay changed persisted bytes: %v", err)
 	}
 	if _, err := reopened.Rebind(key, "request-1", old, owner); !errors.Is(err, ErrDuplicateConflict) {
 		t.Fatalf("request ID conflict: %v", err)
 	}
 	final, err := reopened.Read(key)
-	if err != nil || final.Owner != retried || len(final.Rebindings) != 1 {
-		t.Fatalf("unexpected epoch advance: %+v %v", final, err)
+	if err != nil || final.Owner != committed.Owner || len(final.Rebindings) != 1 || final.Rebindings[0] != firstReceipt {
+		t.Fatalf("conflicting rebind changed receipt: %+v %v", final, err)
+	}
+	afterConflict, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(afterConflict, before) {
+		t.Fatalf("conflicting rebind changed persisted bytes: %v", err)
 	}
 }
 
