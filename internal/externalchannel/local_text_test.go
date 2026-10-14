@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/controlplane"
@@ -141,5 +142,196 @@ func TestLocalTextRequiresLiveBoundTarget(t *testing.T) {
 		if _, err := a.Receive(requestFor(b, "request-1", "hello")); !errors.Is(err, ErrTargetUnavailable) {
 			t.Fatalf("target %+v: Receive() = %v; want unavailable", target, err)
 		}
+	}
+}
+
+func TestLocalTextDecisionAnswerRequiresCurrentBoundContext(t *testing.T) {
+	a, b, _ := localTextFixture(t)
+	now := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	if _, err := a.IssueDecision("unknown", "digest-1", "context-1", now.Add(time.Hour)); !errors.Is(err, ErrDecisionUnavailable) {
+		t.Fatalf("unknown exchange = %v", err)
+	}
+	receipt, err := a.Receive(requestFor(b, "request-1", "hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge, err := a.IssueDecision(receipt.ExchangeID, "digest-1", "context-1", now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := DecisionAccess{ChannelID: b.ChannelID, ConversationID: b.ConversationID, PrincipalID: b.PrincipalID, Credential: b.Credential, ExchangeID: challenge.ExchangeID, Token: challenge.Token, ActionDigest: challenge.ActionDigest, ApprovalContext: challenge.ApprovalContext, BindingEpoch: challenge.BindingEpoch}
+	for name, change := range map[string]func(*DecisionAccess){
+		"channel":      func(v *DecisionAccess) { v.ChannelID = "other" },
+		"conversation": func(v *DecisionAccess) { v.ConversationID = "other" },
+		"principal":    func(v *DecisionAccess) { v.PrincipalID = "mallory" },
+		"credential":   func(v *DecisionAccess) { v.Credential = "wrong" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := access
+			change(&bad)
+			if _, err := a.ReadPendingDecision(bad); !errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("poll = %v", err)
+			}
+			if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: bad, IdempotencyKey: "answer-1", Answer: "deny"}); !errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("answer = %v", err)
+			}
+		})
+	}
+	for name, change := range map[string]func(*DecisionAccess){
+		"exchange":         func(v *DecisionAccess) { v.ExchangeID = "other" },
+		"action":           func(v *DecisionAccess) { v.ActionDigest = "changed" },
+		"approval context": func(v *DecisionAccess) { v.ApprovalContext = "changed" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := access
+			change(&bad)
+			if _, err := a.ReadPendingDecision(bad); !errors.Is(err, ErrDecisionMismatch) {
+				t.Fatalf("poll = %v", err)
+			}
+			if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: bad, IdempotencyKey: "answer-1", Answer: "deny"}); !errors.Is(err, ErrDecisionMismatch) {
+				t.Fatalf("answer = %v", err)
+			}
+		})
+	}
+	bad := access
+	bad.Token = "wrong"
+	if _, err := a.ReadPendingDecision(bad); !errors.Is(err, ErrDecisionUnavailable) {
+		t.Fatalf("wrong token poll = %v", err)
+	}
+	if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: bad, IdempotencyKey: "answer-1", Answer: "deny"}); !errors.Is(err, ErrDecisionUnavailable) {
+		t.Fatalf("wrong token = %v", err)
+	}
+	if len(a.answers) != 0 {
+		t.Fatal("rejected attempts changed answer state")
+	}
+	if got, err := a.ReadPendingDecision(access); err != nil || got != challenge {
+		t.Fatalf("poll = %+v, %v", got, err)
+	}
+	answer := AnswerRequest{DecisionAccess: access, IdempotencyKey: "answer-1", Answer: "deny"}
+	first, err := a.SubmitAnswer(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := a.SubmitAnswer(answer); err != nil || again != first {
+		t.Fatalf("same retry = %+v, %v", again, err)
+	}
+	bad = access
+	bad.Credential = "wrong"
+	if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: bad, IdempotencyKey: "answer-1", Answer: "deny"}); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("accepted retry with wrong credential = %v", err)
+	}
+	answer.Answer = "approve"
+	if _, err := a.SubmitAnswer(answer); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("changed retry = %v", err)
+	}
+	answer.IdempotencyKey = "answer-2"
+	if _, err := a.SubmitAnswer(answer); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("second answer = %v", err)
+	}
+	if len(a.answers) != 1 {
+		t.Fatalf("answer state = %d; want 1", len(a.answers))
+	}
+	if got := a.answers["answer-1"].answer; got != "deny" {
+		t.Fatalf("recorded answer = %q; want deny", got)
+	}
+	reissued, err := a.IssueDecision(receipt.ExchangeID, "digest-2", "context-2", now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reissued.Token == challenge.Token {
+		t.Fatal("reissued token was reused")
+	}
+	answer.IdempotencyKey, answer.Answer = "answer-1", "deny"
+	if again, err := a.SubmitAnswer(answer); err != nil || again != first {
+		t.Fatalf("accepted retry after same-epoch reissue = %+v, %v", again, err)
+	}
+	answer.IdempotencyKey = "answer-new"
+	if _, err := a.SubmitAnswer(answer); !errors.Is(err, ErrDecisionSuperseded) {
+		t.Fatalf("new key on superseded token = %v", err)
+	}
+	otherReceipt, err := a.Receive(requestFor(b, "request-2", "second exchange"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := a.IssueDecision(otherReceipt.ExchangeID, "other-digest", "other-context", now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherAccess := access
+	otherAccess.ExchangeID, otherAccess.Token, otherAccess.ActionDigest, otherAccess.ApprovalContext = other.ExchangeID, other.Token, other.ActionDigest, other.ApprovalContext
+	if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: otherAccess, IdempotencyKey: "answer-1", Answer: "deny"}); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("same key on another valid exchange = %v", err)
+	}
+	if len(a.answers) != 1 {
+		t.Fatalf("cross-exchange retry changed answer state: %d", len(a.answers))
+	}
+	now = now.Add(time.Hour)
+	answer.IdempotencyKey = "answer-1"
+	if again, err := a.SubmitAnswer(answer); err != nil || again != first {
+		t.Fatalf("accepted retry after expiry = %+v, %v", again, err)
+	}
+	newBinding := b
+	newBinding.Credential = "new-secret"
+	if err := a.Rebind(newBinding); err != nil {
+		t.Fatal(err)
+	}
+	answer.Credential = newBinding.Credential
+	if _, err := a.SubmitAnswer(answer); !errors.Is(err, ErrDecisionSuperseded) {
+		t.Fatalf("accepted retry after rebind = %v", err)
+	}
+}
+
+func TestLocalTextDecisionExpiresAndSupersedes(t *testing.T) {
+	a, b, _ := localTextFixture(t)
+	now := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	receipt, err := a.Receive(requestFor(b, "request-1", "hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := a.IssueDecision(receipt.ExchangeID, "digest-1", "context-1", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	access := DecisionAccess{ChannelID: b.ChannelID, ConversationID: b.ConversationID, PrincipalID: b.PrincipalID, Credential: b.Credential, ExchangeID: first.ExchangeID, Token: first.Token, ActionDigest: first.ActionDigest, ApprovalContext: first.ApprovalContext, BindingEpoch: first.BindingEpoch}
+	now = now.Add(time.Minute)
+	if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: access, IdempotencyKey: "answer-1", Answer: "approve"}); !errors.Is(err, ErrDecisionExpired) {
+		t.Fatalf("expired answer = %v", err)
+	}
+	if len(a.answers) != 0 {
+		t.Fatal("expired rejection changed answer state")
+	}
+	second, err := a.IssueDecision(receipt.ExchangeID, "digest-2", "context-2", now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Token == first.Token {
+		t.Fatal("reissued token was reused")
+	}
+	if _, err := a.ReadPendingDecision(access); !errors.Is(err, ErrDecisionSuperseded) {
+		t.Fatalf("superseded poll = %v", err)
+	}
+	if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: access, IdempotencyKey: "answer-1", Answer: "approve"}); !errors.Is(err, ErrDecisionSuperseded) {
+		t.Fatalf("never-accepted superseded answer = %v", err)
+	}
+	if len(a.answers) != 0 {
+		t.Fatal("superseded rejection changed answer state")
+	}
+	access.Token, access.ActionDigest, access.ApprovalContext = second.Token, second.ActionDigest, second.ApprovalContext
+	if _, err := a.ReadPendingDecision(access); err != nil {
+		t.Fatal(err)
+	}
+	newBinding := b
+	newBinding.Credential = "new-secret"
+	if err := a.Rebind(newBinding); err != nil {
+		t.Fatal(err)
+	}
+	access.Credential = newBinding.Credential
+	if _, err := a.SubmitAnswer(AnswerRequest{DecisionAccess: access, IdempotencyKey: "answer-2", Answer: "approve"}); !errors.Is(err, ErrDecisionSuperseded) {
+		t.Fatalf("stale epoch = %v", err)
+	}
+	if len(a.answers) != 0 {
+		t.Fatal("stale attempts changed answer state")
 	}
 }
