@@ -80,7 +80,7 @@ A new, explicitly bounded aggregation surface -- not a change to
 A correct bounded cross-session fetch must reuse #624/#700's existing
 authorization checkpoint (so a parent cannot read a child's status without
 going through the same authorization path as any other cross-session
-exchange) and #765's not-yet-landed origin-reference fields (so an
+exchange) and #765's not-yet-landed `caused_by` causal locator (so an
 aggregated report can cite exactly which originating request a child's
 work traces back to). Building the aggregator before either of those
 exists would either skip authorization or fabricate a correlation
@@ -89,8 +89,13 @@ dependency explicitly rather than building around it.
 
 ## 5. Next slice (not this one)
 
-1. Land #765's `OriginContextID`/`OriginMessageID` fields (prerequisite for
-   citing cross-session provenance in an aggregated report).
+1. Land the relevant #765 provenance slice, using the optional `caused_by`
+   causal locator chosen in
+   [the #765 decision record](765-provenance-decision-record.md) instead of
+   this inventory's earlier `OriginContextID`/`OriginMessageID` proposal.
+   The read-only P0 projection can precede a new envelope field, but an
+   aggregated report must cite a durable, authorized causal link before it
+   claims cross-session provenance.
 2. Implement the depth-bounded aggregator described in section 3, with
    explicit per-child `fetched`/`unavailable`/`stale` states and a focused
    fixture across three sessions (reusing whatever fixture #765 builds for
