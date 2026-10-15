@@ -42,6 +42,7 @@ type InputRequestDetail struct {
 	CommandHash                    string
 	CommandApprovalOpeningThreadID string
 	CommandApprovalOpeningHash     string
+	commandApprovalUnresolved      bool
 	messageIDs                     map[string]struct{}
 }
 
@@ -358,7 +359,7 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 					projected.InputRequiredCounts[meta.To]++
 				}
 				openRequestSatisfaction(projected.RequestSatisfaction, satisfactionExact, satisfactionFallback, seenSatisfaction, meta, event.OccurredAt, event.Type, event.EventID, commandApprovalThreads)
-				rememberInputRequestMessageAlias(openOutboundExact, openOutboundFallback, meta)
+				rememberInputRequestMessageAlias(openOutboundExact, openOutboundFallback, meta, commandApprovalThreads)
 				if commandApprovalRequestOpensRequesterWaiting(meta) {
 					if _, opened := openInputRequest(openOutboundExact, openOutboundFallback, seenOutbound, meta, "outbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads); opened {
 						projected.WaitingOnInputCounts[meta.From]++
@@ -678,6 +679,10 @@ func commandApprovalOpeningForFill(inputRequestID, requester, approver, threadID
 				continue
 			}
 			if opening.CommandApprovalThreadID == "" {
+				if opening.commandApprovalUnresolved {
+					sawPair = true
+					continue
+				}
 				if commandHash == "" && !strings.HasPrefix(threadID, "command-approval-") && opening.CommandApprovalOpeningThreadID == threadID {
 					ordinaryMatch = true
 				}
@@ -690,10 +695,15 @@ func commandApprovalOpeningForFill(inputRequestID, requester, approver, threadID
 			if commandHash != "" && opening.CommandHash != commandHash {
 				continue
 			}
-			if matching.InputRequestID != "" && commandApprovalOpeningTupleKey(matching) != commandApprovalOpeningTupleKey(opening) {
+			if opening.CommandApprovalOpeningThreadID != "" && opening.CommandApprovalOpeningThreadID != opening.CommandApprovalThreadID {
 				return InputRequestDetail{}, true
 			}
-			matching = opening
+			if matching.InputRequestID != "" && commandApprovalLogicalTupleKey(matching) != commandApprovalLogicalTupleKey(opening) {
+				return InputRequestDetail{}, true
+			}
+			if matching.InputRequestID == "" || opening.CommandApprovalOpeningThreadID != "" {
+				matching = opening
+			}
 		}
 	}
 	if ordinaryMatch {
@@ -804,13 +814,13 @@ func inputRequestMetadataFromPayload(payload journal.MailboxEventPayload) envelo
 
 func openInputRequest(openExact, openFallback map[string]InputRequestDetail, seen map[string]struct{}, meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) (InputRequestDetail, bool) {
 	inputRequest := newInputRequestDetail(meta, direction, openedAt, openedAtSource, openedEventID, commandApprovalThreads)
-	key := logicalInputRequestKey(meta)
+	key := logicalInputRequestDetailKey(inputRequest)
 	open := openFallback
 	if meta.InputRequestID != "" {
 		open = openExact
 	}
 	if _, exists := seen[key]; exists {
-		rememberInputRequestMessageAlias(openExact, openFallback, meta)
+		rememberInputRequestMessageAlias(openExact, openFallback, meta, commandApprovalThreads)
 		return inputRequest, false
 	}
 	seen[key] = struct{}{}
@@ -819,8 +829,8 @@ func openInputRequest(openExact, openFallback map[string]InputRequestDetail, see
 	return inputRequest, true
 }
 
-func rememberInputRequestMessageAlias(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata) {
-	key := logicalInputRequestKey(meta)
+func rememberInputRequestMessageAlias(openExact, openFallback map[string]InputRequestDetail, meta envelope.Metadata, commandApprovalThreads map[string]CommandApprovalThread) {
+	key := logicalInputRequestDetailKey(newInputRequestDetail(meta, "", "", "", "", commandApprovalThreads))
 	open := openFallback
 	if meta.InputRequestID != "" {
 		open = openExact
@@ -849,10 +859,24 @@ func logicalInputRequestKey(meta envelope.Metadata) string {
 	if meta.InputRequestID == "" {
 		return inputRequestKey(meta.MessageID, meta.To)
 	}
-	return strings.Join([]string{meta.ThreadID, meta.InputRequestID, meta.From, meta.To}, "\x00")
+	return strings.Join([]string{"ordinary", meta.ThreadID, meta.InputRequestID, meta.From, meta.To}, "\x00")
+}
+
+func logicalInputRequestDetailKey(detail InputRequestDetail) string {
+	if detail.InputRequestID == "" {
+		return inputRequestKey(detail.MessageID, detail.Recipient)
+	}
+	if detail.CommandApprovalThreadID != "" {
+		return strings.Join([]string{"command", detail.CommandApprovalThreadID, detail.InputRequestID, detail.Sender, detail.Recipient}, "\x00")
+	}
+	if detail.commandApprovalUnresolved {
+		return strings.Join([]string{"command-unresolved", detail.MessageID, detail.InputRequestID, detail.Sender, detail.Recipient}, "\x00")
+	}
+	return strings.Join([]string{"ordinary", detail.CommandApprovalOpeningThreadID, detail.InputRequestID, detail.Sender, detail.Recipient}, "\x00")
 }
 
 func newInputRequestDetail(meta envelope.Metadata, direction, openedAt, openedAtSource, openedEventID string, commandApprovalThreads map[string]CommandApprovalThread) InputRequestDetail {
+	commandThreadID := commandApprovalOpeningThreadID(meta, commandApprovalThreads)
 	return InputRequestDetail{
 		Direction:                      direction,
 		MessageID:                      meta.MessageID,
@@ -863,10 +887,11 @@ func newInputRequestDetail(meta envelope.Metadata, direction, openedAt, openedAt
 		OpenedAt:                       openedAt,
 		OpenedAtSource:                 openedAtSource,
 		OpenedEventID:                  openedEventID,
-		CommandApprovalThreadID:        commandApprovalOpeningThreadID(meta, commandApprovalThreads),
+		CommandApprovalThreadID:        commandThreadID,
 		CommandHash:                    commandApprovalOpeningHash(meta, commandApprovalThreads),
 		CommandApprovalOpeningThreadID: meta.ThreadID,
 		CommandApprovalOpeningHash:     meta.CommandHash,
+		commandApprovalUnresolved:      meta.InputRequestID != "" && meta.ThreadID == "" && meta.CommandHash != "" && commandThreadID == "",
 	}
 }
 
@@ -889,6 +914,16 @@ func commandApprovalOpeningTupleKey(opening InputRequestDetail) string {
 		opening.CommandHash,
 		opening.CommandApprovalOpeningThreadID,
 		opening.CommandApprovalOpeningHash,
+	}, "\x00")
+}
+
+func commandApprovalLogicalTupleKey(opening InputRequestDetail) string {
+	return strings.Join([]string{
+		opening.InputRequestID,
+		opening.Sender,
+		opening.Recipient,
+		opening.CommandApprovalThreadID,
+		opening.CommandHash,
 	}, "\x00")
 }
 
@@ -1141,7 +1176,11 @@ func findExactInputRequest(open map[string]InputRequestDetail, inputRequestID, r
 		if threadID == "" && inputRequest.CommandApprovalThreadID != "" {
 			continue
 		}
-		if threadID != "" && inputRequest.CommandApprovalOpeningThreadID != threadID {
+		openingThreadID := inputRequest.CommandApprovalOpeningThreadID
+		if inputRequest.CommandApprovalThreadID != "" {
+			openingThreadID = inputRequest.CommandApprovalThreadID
+		}
+		if threadID != "" && openingThreadID != threadID {
 			continue
 		}
 		if replyTo != "" {
