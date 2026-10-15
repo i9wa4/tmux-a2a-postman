@@ -346,7 +346,7 @@ func TestProjectMessageInputRequestState_RepeatedSameMessageDeliveriesAndReads(t
 
 func TestCommandApprovalOpeningThreadID_ThreadlessInferenceRequiresUniqueMatch(t *testing.T) {
 	meta := envelope.Metadata{InputRequestID: "ireq_shared", From: "worker", To: "approver", CommandHash: "sha256:command"}
-	thread := CommandApprovalThread{InputRequestID: "ireq_shared", Requester: "worker", CommandApproverNode: "approver"}
+	thread := CommandApprovalThread{InputRequestID: "ireq_shared", Requester: "worker", CommandApproverNode: "approver", CommandHash: "sha256:command"}
 	for _, order := range [][]string{{"command-approval-A", "command-approval-B"}, {"command-approval-B", "command-approval-A"}} {
 		threads := map[string]CommandApprovalThread{order[0]: thread, order[1]: thread}
 		for i := 0; i < 100; i++ {
@@ -357,6 +357,11 @@ func TestCommandApprovalOpeningThreadID_ThreadlessInferenceRequiresUniqueMatch(t
 	}
 	if got := commandApprovalOpeningThreadID(meta, map[string]CommandApprovalThread{"command-approval-A": thread}); got != "command-approval-A" {
 		t.Fatalf("unique threadless opening inferred %q", got)
+	}
+	otherHash := thread
+	otherHash.CommandHash = "sha256:other"
+	if got := commandApprovalOpeningThreadID(meta, map[string]CommandApprovalThread{"command-approval-A": thread, "command-approval-B": otherHash}); got != "command-approval-A" {
+		t.Fatalf("distinct-hash threadless opening inferred %q", got)
 	}
 }
 
@@ -378,6 +383,13 @@ func TestProjectMessageInputRequestState_CommandOpeningCanonicalizesInferredThre
 			if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
 				Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputID,
 			}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			// A concurrent approval with the same ID and actors but another hash
+			// must not make the first request's threadless recurrence ambiguous.
+			if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+				Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: "sha256:other", InputRequestID: inputID,
+			}, journal.AppendOptions{ThreadID: "command-approval-other"}, now.Add(time.Second)); err != nil {
 				t.Fatal(err)
 			}
 			first := commandApprovalInputContent("worker", "approver", "first.md", "required", order.firstThread, inputID, "", commandHash, "approve")

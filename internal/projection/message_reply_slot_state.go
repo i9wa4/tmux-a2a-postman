@@ -940,7 +940,7 @@ func commandApprovalOpeningThreadID(meta envelope.Metadata, threads map[string]C
 	if meta.ThreadID == "" && meta.CommandHash != "" {
 		var matchingThreadID string
 		for threadID, thread := range threads {
-			if thread.InputRequestID == meta.InputRequestID && thread.Requester == meta.From && thread.CommandApproverNode == meta.To {
+			if thread.InputRequestID == meta.InputRequestID && thread.Requester == meta.From && thread.CommandApproverNode == meta.To && thread.CommandHash == meta.CommandHash {
 				if matchingThreadID != "" {
 					return ""
 				}
