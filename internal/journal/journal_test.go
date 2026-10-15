@@ -12,6 +12,37 @@ import (
 	"time"
 )
 
+func TestReadCurrentSessionStateFailsClosed(t *testing.T) {
+	sessionDir := t.TempDir()
+	if _, err := ReadCurrentSessionState(sessionDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing state error = %v, want os.ErrNotExist", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sessionDir, "journal"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := SessionStatePath(sessionDir)
+	for _, raw := range []string{
+		`{broken`,
+		`{"schema_version":1,"session_key":"key","tmux_session_name":"","generation":1}`,
+		`{"schema_version":1,"session_key":"key","tmux_session_name":"main","generation":0}`,
+		`{"schema_version":2,"session_key":"key","tmux_session_name":"main","generation":1}`,
+	} {
+		if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if state, err := ReadCurrentSessionState(sessionDir); err == nil {
+			t.Fatalf("raw %q returned state %+v, want error", raw, state)
+		}
+	}
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"session_key":"key","tmux_session_name":"main","generation":3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadCurrentSessionState(sessionDir)
+	if err != nil || state.SessionKey != "key" || state.Generation != 3 {
+		t.Fatalf("valid state = %+v, %v", state, err)
+	}
+}
+
 func TestOpenShadowWriter_BootstrapsOwnerOnlyState(t *testing.T) {
 	sessionDir := t.TempDir()
 	now := time.Date(2026, time.April, 14, 17, 0, 0, 0, time.UTC)
