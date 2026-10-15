@@ -193,7 +193,7 @@ func validateBindingSpec(spec BindingSpec) (string, string, error) {
 	if err != nil {
 		return "", "", ErrBindingInvalid
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(info, opened) {
 		return "", "", ErrBindingInvalid
