@@ -100,6 +100,7 @@ type IdleTracker struct {
 	nodeCompactionMemory map[string]PaneCaptureState // nodeKey -> last handled compaction state
 	mu                   sync.Mutex
 	clock                func() time.Time
+	captureContent       func(string) (string, error)
 }
 
 // NewIdleTracker creates a new IdleTracker instance (Issue #71).
@@ -116,6 +117,7 @@ func newIdleTrackerWithClock(clock func() time.Time) *IdleTracker {
 		paneCaptureState:     make(map[string]PaneCaptureState),
 		nodeCompactionMemory: make(map[string]PaneCaptureState),
 		clock:                clock,
+		captureContent:       paneutil.CaptureContent,
 	}
 }
 
@@ -186,6 +188,10 @@ func (t *IdleTracker) GetLivenessMap() map[string]bool {
 // Lock-free — caller must hold t.mu.
 func statusForState(state PaneCaptureState, now time.Time, cfg *config.Config) string {
 	if state.LastChangeAt.IsZero() {
+		return "stale"
+	}
+	if !state.LastCaptureAt.IsZero() && cfg.NodeStaleSeconds > 0 &&
+		now.Sub(state.LastCaptureAt) > time.Duration(cfg.NodeStaleSeconds*float64(time.Second)) {
 		return "stale"
 	}
 	if now.Sub(state.LastChangeAt) <= time.Duration(cfg.NodeActiveSeconds)*time.Second {
@@ -809,10 +815,12 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 	// Reject expired node memory before any pane-state lookup/application.
 	t.pruneNodeCompactionMemory(now)
 	compactionTargets := make(map[string]CompactionPingTarget)
+	selectedPanes := make(map[string]bool, len(nodePaneIDs))
 
 	for _, paneID := range nodePaneIDs {
+		selectedPanes[paneID] = true
 		// Capture pane content
-		content, err := paneutil.CaptureContent(paneID)
+		content, err := t.captureContent(paneID)
 		if err != nil {
 			// MUST 2: Capture failed - treat as "unmeasurable", skip but keep state
 			// Do NOT delete state - carry forward to next poll
@@ -891,6 +899,10 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 			if lifecycleChanged {
 				t.clearNodeCompactionMemoryForLifecycle(state.LastCompactionLifecycleIdentity)
 				clearCompactionState(&state)
+				// A known new process starts a new screen observation baseline.
+				state.LastHash = currentHash
+				state.LastChangeAt = now
+				state.ChangeCount = 0
 			}
 			state.LastCompactionLifecycleIdentity = lifecycle
 			if scan := compactionTriggerScan(runtime, compactionContent); scan.Trigger != "" {
@@ -953,10 +965,14 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		t.paneCaptureState[paneID] = state
 	}
 
-	// MUST 5: Clean up stale entries (memory leak prevention)
-	// Remove entries where LastCaptureAt is older than stale threshold
+	// MUST 5: Clean up entries for panes no longer selected for capture.
+	// A listed pane with repeated capture failures keeps its last successful
+	// observation so consumers can classify it as stale rather than missing.
 	staleThreshold := time.Duration(cfg.NodeStaleSeconds * float64(time.Second))
 	for paneID, state := range t.paneCaptureState {
+		if selectedPanes[paneID] {
+			continue
+		}
 		if !state.LastCaptureAt.IsZero() && now.Sub(state.LastCaptureAt) > staleThreshold {
 			delete(t.paneCaptureState, paneID)
 		}

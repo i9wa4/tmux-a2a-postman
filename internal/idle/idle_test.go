@@ -2,6 +2,7 @@ package idle
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,6 +205,39 @@ func TestGetPaneActivityStatus_LongUnchangedLivePaneStaysIdle(t *testing.T) {
 	result := tracker.GetPaneActivityStatus(cfg)
 	if result["%13"] != "idle" {
 		t.Errorf("expected 'idle' for old LastChangeAt on live pane, got %q", result["%13"])
+	}
+}
+
+func TestGetPaneActivityStatusCaptureFreshnessBoundary(t *testing.T) {
+	now := time.Date(2026, time.May, 21, 2, 30, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	tracker.paneCaptureState["%13"] = PaneCaptureState{
+		LastHash:      111,
+		LastChangeAt:  now.Add(-time.Hour),
+		LastCaptureAt: now.Add(-10 * time.Second),
+	}
+	cfg := &config.Config{NodeActiveSeconds: 60, NodeStaleSeconds: 10}
+	if got := tracker.GetPaneActivityStatus(cfg)["%13"]; got != "idle" {
+		t.Fatalf("status at stale boundary = %q, want idle", got)
+	}
+	now = now.Add(time.Nanosecond)
+	if got := tracker.GetPaneActivityStatus(cfg)["%13"]; got != "stale" {
+		t.Fatalf("status beyond stale boundary = %q, want stale", got)
+	}
+	for _, horizon := range []float64{0, -1} {
+		cfg.NodeStaleSeconds = horizon
+		if got := tracker.GetPaneActivityStatus(cfg)["%13"]; got != "idle" {
+			t.Fatalf("status with stale horizon %v = %q, want idle", horizon, got)
+		}
+	}
+	tracker.paneCaptureState["%13"] = PaneCaptureState{
+		LastHash:      111,
+		LastChangeAt:  now.Add(-time.Hour),
+		LastCaptureAt: now,
+	}
+	cfg.NodeStaleSeconds = 10
+	if got := tracker.GetPaneActivityStatus(cfg)["%13"]; got != "idle" {
+		t.Fatalf("recently captured unchanged pane = %q, want idle", got)
 	}
 }
 
@@ -485,6 +519,95 @@ func TestCheckPaneCaptureUsesInjectedClockForPaneTimestamps(t *testing.T) {
 	}
 	if !activity.LastScreenChange.Equal(now) {
 		t.Fatalf("LastScreenChange = %v, want %v", activity.LastScreenChange, now)
+	}
+}
+
+func TestCheckPaneCaptureKeepsLastObservationThroughCaptureGap(t *testing.T) {
+	scriptDir := t.TempDir()
+	listPath := filepath.Join(scriptDir, "panes.txt")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ]; then cat \"$TMUX_A2A_TEST_LIST\"; exit 0; fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(listPath, []byte("%11\tcodex\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_LIST", listPath)
+
+	now := time.Date(2026, time.May, 21, 5, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	marker := "• Context compacted"
+	failCapture := false
+	tracker.captureContent = func(paneID string) (string, error) {
+		if paneID != "%11" {
+			t.Fatalf("capture pane = %q, want %%11", paneID)
+		}
+		if failCapture {
+			return "", errors.New("capture failed")
+		}
+		return marker, nil
+	}
+	cfg := &config.Config{ActivityWindowSeconds: 120, NodeActiveSeconds: 300, NodeStaleSeconds: 1}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	}
+	initialTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(initialTargets) != 1 {
+		t.Fatalf("initial targets = %#v, want one compaction target", initialTargets)
+	}
+	tracker.MarkCompactionPingDelivered(initialTargets[0].NodeKey, initialTargets[0].LifecycleIdentity, initialTargets[0].MarkerIdentity)
+	initial := tracker.paneCaptureState["%11"]
+	initialMemory := tracker.nodeCompactionMemory["review:worker"]
+
+	failCapture = true
+	now = now.Add(2 * time.Second)
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("failed capture targets = %#v, want none", targets)
+	}
+	if got, ok := tracker.paneCaptureState["%11"]; !ok || got != initial {
+		t.Fatalf("state after failed capture = %+v, present=%t, want unchanged %+v", got, ok, initial)
+	}
+	if got := tracker.nodeCompactionMemory["review:worker"]; got != initialMemory {
+		t.Fatalf("compaction memory after failed capture = %+v, want %+v", got, initialMemory)
+	}
+	if got := tracker.GetPaneActivityEvidence(cfg)["%11"].LastCaptureAt; !got.Equal(initial.LastCaptureAt) {
+		t.Fatalf("exported LastCaptureAt after gap = %v, want %v", got, initial.LastCaptureAt)
+	}
+	if got := tracker.GetPaneActivityEvidence(cfg)["%11"].Status; got != "stale" {
+		t.Fatalf("pane status after capture gap = %q, want stale", got)
+	}
+
+	failCapture = false
+	now = now.Add(time.Second)
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("recovery targets = %#v, want no repeated compaction", targets)
+	}
+	recovered := tracker.paneCaptureState["%11"]
+	if !recovered.LastCaptureAt.Equal(now) || !recovered.LastChangeAt.Equal(initial.LastChangeAt) {
+		t.Fatalf("recovered timestamps = capture %v, change %v; want capture %v, change %v", recovered.LastCaptureAt, recovered.LastChangeAt, now, initial.LastChangeAt)
+	}
+	if recovered.LastHash != initial.LastHash || recovered.LastCompactionDeliveredIdentity != initial.LastCompactionDeliveredIdentity {
+		t.Fatalf("recovery changed content or delivered marker: initial=%+v recovered=%+v", initial, recovered)
+	}
+	if got := tracker.GetPaneActivityEvidence(cfg)["%11"].Status; got != "active" {
+		t.Fatalf("pane status after recovery = %q, want active", got)
+	}
+
+	if err := os.WriteFile(listPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Second)
+	tracker.checkPaneCapture(cfg, nodes)
+	if _, ok := tracker.paneCaptureState["%11"]; ok {
+		t.Fatal("pane absent from listing retained after stale threshold")
 	}
 }
 
@@ -2608,6 +2731,117 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsAfterSamePaneProcessGeneration
 	}
 	if newGenerationTargets[0].LifecycleIdentity != "review:worker|%11|pid:200" {
 		t.Fatalf("new lifecycle identity = %q, want updated pid-qualified identity", newGenerationTargets[0].LifecycleIdentity)
+	}
+}
+
+func TestCheckPaneCaptureProcessGenerationAfterCaptureGap(t *testing.T) {
+	scriptDir := t.TempDir()
+	pidPath := filepath.Join(scriptDir, "pane-pid")
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ]; then printf '%s\\n' '%11\tcodex'; exit 0; fi\n" +
+		"if [ \"$1\" = 'display-message' ]; then pid=$(cat \"$TMUX_A2A_TEST_PANE_PID\"); if [ \"$pid\" = 'fail' ]; then exit 1; fi; printf '%s\\n' \"$pid\"; exit 0; fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TMUX_A2A_TEST_PANE_PID", pidPath)
+	setPID := func(pid string) {
+		if err := os.WriteFile(pidPath, []byte(pid+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now := time.Date(2026, time.August, 8, 22, 40, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	failCapture := false
+	tracker.captureContent = func(paneID string) (string, error) {
+		if paneID != "%11" {
+			t.Fatalf("capture pane = %q, want %%11", paneID)
+		}
+		if failCapture {
+			return "", errors.New("capture failed")
+		}
+		return "• Context compacted", nil
+	}
+	cfg := &config.Config{ActivityWindowSeconds: 120, NodeActiveSeconds: 300, NodeStaleSeconds: 1}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	}
+	setPID("100")
+	firstTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(firstTargets) != 1 || firstTargets[0].LifecycleIdentity != "review:worker|%11|pid:100" {
+		t.Fatalf("initial targets = %#v, want one pid:100 target", firstTargets)
+	}
+	tracker.MarkCompactionPingDelivered(firstTargets[0].NodeKey, firstTargets[0].LifecycleIdentity, firstTargets[0].MarkerIdentity)
+	initialChange := tracker.paneCaptureState["%11"].LastChangeAt
+
+	failCapture = true
+	now = now.Add(compactionPingCooldown + 2*time.Second)
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("failed capture targets = %#v, want none", targets)
+	}
+	if got := tracker.GetPaneActivityEvidence(cfg)["%11"].Status; got != "stale" {
+		t.Fatalf("status during capture gap = %q, want stale", got)
+	}
+	setPID("200")
+	now = now.Add(time.Second)
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("failed capture after PID change targets = %#v, want none", targets)
+	}
+	if got := tracker.paneCaptureState["%11"].LastCompactionLifecycleIdentity; got != "review:worker|%11|pid:100" {
+		t.Fatalf("lifecycle during capture failure = %q, want retained pid:100", got)
+	}
+
+	failCapture = false
+	now = now.Add(time.Second)
+	restartTargets := tracker.checkPaneCapture(cfg, nodes)
+	if len(restartTargets) != 1 || restartTargets[0].LifecycleIdentity != "review:worker|%11|pid:200" {
+		t.Fatalf("recovery targets = %#v, want one new pid:200 target", restartTargets)
+	}
+	state := tracker.paneCaptureState["%11"]
+	if !state.LastChangeAt.Equal(now) || state.LastChangeAt.Equal(initialChange) || state.ChangeCount != 0 {
+		t.Fatalf("new process activity baseline = change %v, count %d; want change %v, count 0", state.LastChangeAt, state.ChangeCount, now)
+	}
+	if state.LastCompactionDeliveredIdentity != "" {
+		t.Fatalf("new process retained prior delivered marker %q", state.LastCompactionDeliveredIdentity)
+	}
+	if memory := tracker.nodeCompactionMemory["review:worker"]; memory.LastCompactionLifecycleIdentity != "review:worker|%11|pid:200" {
+		t.Fatalf("compaction memory lifecycle = %q, want pid:200", memory.LastCompactionLifecycleIdentity)
+	}
+	restartChange := state.LastChangeAt
+	restartHash := state.LastHash
+	tracker.MarkCompactionPingDelivered(restartTargets[0].NodeKey, restartTargets[0].LifecycleIdentity, restartTargets[0].MarkerIdentity)
+
+	failCapture = true
+	now = now.Add(compactionPingCooldown + 2*time.Second)
+	tracker.checkPaneCapture(cfg, nodes)
+	setPID("fail")
+	failCapture = false
+	now = now.Add(time.Second)
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("unknown-PID recovery targets = %#v, want none", targets)
+	}
+	if got := tracker.paneCaptureState["%11"].LastCompactionLifecycleIdentity; got != "review:worker|%11|pid:200" {
+		t.Fatalf("unknown-PID lifecycle = %q, want retained pid:200", got)
+	}
+	state = tracker.paneCaptureState["%11"]
+	if !state.LastChangeAt.Equal(restartChange) || state.LastHash != restartHash || state.ChangeCount != 0 {
+		t.Fatalf("unknown-PID recovery changed activity baseline: %+v", state)
+	}
+	setPID("200")
+	now = now.Add(compactionPingCooldown + time.Second)
+	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
+		t.Fatalf("restored same-PID targets = %#v, want none", targets)
+	}
+	state = tracker.paneCaptureState["%11"]
+	if !state.LastChangeAt.Equal(restartChange) || state.LastHash != restartHash || state.ChangeCount != 0 {
+		t.Fatalf("same-PID continuity changed activity baseline: %+v", state)
 	}
 }
 
