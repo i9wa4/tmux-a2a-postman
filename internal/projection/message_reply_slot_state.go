@@ -241,7 +241,8 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 	seenInbound := make(map[string]struct{})
 	seenOutbound := make(map[string]struct{})
 	seenSatisfaction := make(map[string]struct{})
-	infoUnread := make(map[string]InputRequestDetail)
+	infoUnread := make(map[string]int)
+	outstandingDeliveries := make(map[string]int)
 	commandApprovalThreads := make(map[string]CommandApprovalThread)
 	acceptedCommandApprovalDecisions := make(map[commandApprovalReplySlotKey]string)
 	repairEvidence := newCommandApprovalRepairEvidence()
@@ -351,6 +352,7 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				continue
 			}
 			projected.UnreadCounts[meta.To]++
+			outstandingDeliveries[inputRequestKey(meta.MessageID, meta.To)]++
 			if envelope.ResolveReplyPolicyFromMetadata(meta) == "required" {
 				if _, opened := openInputRequest(openInboundExact, openInboundFallback, seenInbound, meta, "inbound", event.OccurredAt, event.Type, event.EventID, commandApprovalThreads); opened {
 					projected.InputRequiredCounts[meta.To]++
@@ -364,16 +366,20 @@ func projectMessageInputRequestStateAt(sessionDir, sessionName string, now time.
 				}
 				reconcilePendingCommandApprovalReplies(projected, openInboundExact, openOutboundExact, satisfactionExact, pendingCommandApprovalReplies, acceptedCommandApprovalDecisions, sessionName)
 			} else {
-				infoUnread[inputRequestKey(meta.MessageID, meta.To)] = InputRequestDetail{MessageID: meta.MessageID, Sender: meta.From, Recipient: meta.To}
+				infoUnread[inputRequestKey(meta.MessageID, meta.To)]++
 				projected.InfoUnreadCounts[meta.To]++
 			}
 		case MailboxProjectionReadEventType:
-			decrementCount(projected.UnreadCounts, meta.To)
+			deliveryKey := inputRequestKey(meta.MessageID, meta.To)
+			if outstandingDeliveries[deliveryKey] > 0 {
+				decrementCount(projected.UnreadCounts, meta.To)
+				outstandingDeliveries[deliveryKey]--
+			}
 			markInputRequestRead(openInboundExact, openInboundFallback, meta, event.OccurredAt, event.EventID)
 			markInputRequestRead(openOutboundExact, openOutboundFallback, meta, event.OccurredAt, event.EventID)
-			if inputRequest, ok := infoUnread[inputRequestKey(meta.MessageID, meta.To)]; ok {
-				decrementCount(projected.InfoUnreadCounts, inputRequest.Recipient)
-				delete(infoUnread, inputRequestKey(meta.MessageID, meta.To))
+			if infoUnread[deliveryKey] > 0 {
+				decrementCount(projected.InfoUnreadCounts, meta.To)
+				infoUnread[deliveryKey]--
 			}
 		case MailboxProjectionDeadLetteredEventType:
 			rememberCommandApprovalReply(pendingCommandApprovalReplies, meta, event.OccurredAt, sessionName)
@@ -665,25 +671,33 @@ func resolveCommandApprovalReplySlot(state MessageInputRequestState, openInbound
 func commandApprovalOpeningForFill(inputRequestID, requester, approver, threadID, commandHash string, openings ...map[string]InputRequestDetail) (InputRequestDetail, bool) {
 	var matching InputRequestDetail
 	sawPair := false
+	ordinaryMatch := false
 	for _, open := range openings {
 		for _, opening := range open {
-			if opening.InputRequestID != inputRequestID || opening.CommandApprovalThreadID == "" {
+			if opening.InputRequestID != inputRequestID || opening.Sender != requester || opening.Recipient != approver {
 				continue
 			}
-			if opening.Sender == requester && opening.Recipient == approver {
-				sawPair = true
-				if threadID != "" && opening.CommandApprovalThreadID != threadID {
-					continue
+			if opening.CommandApprovalThreadID == "" {
+				if commandHash == "" && !strings.HasPrefix(threadID, "command-approval-") && opening.CommandApprovalOpeningThreadID == threadID {
+					ordinaryMatch = true
 				}
-				if commandHash != "" && opening.CommandHash != commandHash {
-					continue
-				}
-				if matching.InputRequestID != "" && commandApprovalOpeningTupleKey(matching) != commandApprovalOpeningTupleKey(opening) {
-					return InputRequestDetail{}, true
-				}
-				matching = opening
+				continue
 			}
+			sawPair = true
+			if threadID != "" && opening.CommandApprovalThreadID != threadID {
+				continue
+			}
+			if commandHash != "" && opening.CommandHash != commandHash {
+				continue
+			}
+			if matching.InputRequestID != "" && commandApprovalOpeningTupleKey(matching) != commandApprovalOpeningTupleKey(opening) {
+				return InputRequestDetail{}, true
+			}
+			matching = opening
 		}
+	}
+	if ordinaryMatch {
+		return InputRequestDetail{}, false
 	}
 	return matching, sawPair
 }
@@ -888,12 +902,17 @@ func commandApprovalOpeningThreadID(meta envelope.Metadata, threads map[string]C
 	if strings.HasPrefix(meta.ThreadID, "command-approval-") {
 		return meta.ThreadID
 	}
-	if meta.ThreadID == "" {
+	if meta.ThreadID == "" && meta.CommandHash != "" {
+		var matchingThreadID string
 		for threadID, thread := range threads {
 			if thread.InputRequestID == meta.InputRequestID && thread.Requester == meta.From && thread.CommandApproverNode == meta.To {
-				return threadID
+				if matchingThreadID != "" {
+					return ""
+				}
+				matchingThreadID = threadID
 			}
 		}
+		return matchingThreadID
 	}
 	return ""
 }
@@ -1074,6 +1093,9 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 	if meta.InputRequestID != "" {
 		key := logicalInputRequestKey(meta)
 		if inputRequest, ok := openExact[key]; ok && inputRequest.MessageID == meta.MessageID {
+			if inputRequest.ReadAt != "" {
+				return
+			}
 			inputRequest.ReadAt = readAt
 			inputRequest.ReadEventID = readEventID
 			openExact[key] = inputRequest
@@ -1085,6 +1107,9 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 			if _, ok := inputRequest.messageIDs[meta.MessageID]; !ok {
 				continue
 			}
+			if inputRequest.ReadAt != "" {
+				return
+			}
 			inputRequest.ReadAt = readAt
 			inputRequest.ReadEventID = readEventID
 			openExact[key] = inputRequest
@@ -1093,6 +1118,9 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 	}
 	key := inputRequestKey(meta.MessageID, meta.To)
 	if inputRequest, ok := openFallback[key]; ok {
+		if inputRequest.ReadAt != "" {
+			return
+		}
 		inputRequest.ReadAt = readAt
 		inputRequest.ReadEventID = readEventID
 		openFallback[key] = inputRequest
@@ -1102,8 +1130,15 @@ func markInputRequestRead(openExact, openFallback map[string]InputRequestDetail,
 func findExactInputRequest(open map[string]InputRequestDetail, inputRequestID, replyTo, participant, sender, threadID string) (string, InputRequestDetail, bool) {
 	var matchingKey string
 	var matching InputRequestDetail
+	var threadlessKey string
+	var threadless InputRequestDetail
+	ambiguous := false
+	threadlessAmbiguous := false
 	for key, inputRequest := range open {
 		if inputRequest.InputRequestID != inputRequestID || inputRequest.Recipient != participant || inputRequest.Sender != sender {
+			continue
+		}
+		if threadID == "" && inputRequest.CommandApprovalThreadID != "" {
 			continue
 		}
 		if threadID != "" && inputRequest.CommandApprovalOpeningThreadID != threadID {
@@ -1114,10 +1149,27 @@ func findExactInputRequest(open map[string]InputRequestDetail, inputRequestID, r
 				continue
 			}
 		}
+		if threadID == "" && inputRequest.CommandApprovalOpeningThreadID == "" {
+			if threadlessKey != "" {
+				threadlessAmbiguous = true
+			} else {
+				threadlessKey, threadless = key, inputRequest
+			}
+		}
 		if matchingKey != "" {
-			return "", InputRequestDetail{}, false
+			ambiguous = true
+			continue
 		}
 		matchingKey, matching = key, inputRequest
+	}
+	if threadID == "" && threadlessKey != "" {
+		if threadlessAmbiguous {
+			return "", InputRequestDetail{}, false
+		}
+		return threadlessKey, threadless, true
+	}
+	if ambiguous {
+		return "", InputRequestDetail{}, false
 	}
 	return matchingKey, matching, matchingKey != ""
 }

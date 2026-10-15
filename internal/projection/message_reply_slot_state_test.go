@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
@@ -231,6 +232,131 @@ func TestProjectMessageInputRequestState_CommandApprovalIDCollisionDoesNotBlockO
 	}
 	if state.InputRequiredCounts["worker"] != 0 || state.WaitingOnInputCounts["critic"] != 0 || state.RequestSatisfaction["worker"].FilledCount != 1 || state.InputRequiredCounts["approver"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 {
 		t.Fatalf("ordinary reply failed or altered command approval opening: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalIDCollisionSameActorsDifferentThread(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 30, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := commandApprovalInputContent("orchestrator", "worker", "approval.md", "required", "command-approval-collision", "ireq_shared", "", "sha256:approval", "approve")
+	ordinary := commandApprovalInputContent("orchestrator", "worker", "ordinary.md", "required", "task-A", "ireq_shared", "", "", "work")
+	for i, request := range []struct{ id, content string }{{"approval.md", approval}, {"ordinary.md", ordinary}} {
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, request.id, "orchestrator", "worker", request.content, now.Add(time.Duration(i+1)*time.Second))
+	}
+	reply := commandApprovalInputContent("worker", "orchestrator", "ordinary-reply.md", "none", "task-A", "", "ireq_shared", "", "done")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["worker"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 || state.RequestSatisfaction["worker"].FilledCount != 1 || len(state.InputRequired) != 1 || state.InputRequired[0].CommandApprovalThreadID != "command-approval-collision" {
+		t.Fatalf("ordinary reply failed or altered command approval opening: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalIDCollisionSameActorsThreadlessOrdinary(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 35, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const inputRequestID = "ireq_shared"
+	const commandThread = "command-approval-collision"
+	const commandHash = "sha256:approval"
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+		Requester: "orchestrator", RequesterAddress: "review:orchestrator", Reviewer: "worker", CommandApproverNode: "worker", CommandApproverAddress: "review:worker", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+	}, journal.AppendOptions{ThreadID: commandThread}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	approval := commandApprovalInputContent("orchestrator", "worker", "approval.md", "required", commandThread, inputRequestID, "", commandHash, "approve")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "approval.md", "orchestrator", "worker", approval, now.Add(2*time.Second))
+	ordinary := inputRequestContentWithExact("orchestrator", "worker", "ordinary.md", "required", "", inputRequestID, "", "work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary.md", "orchestrator", "worker", ordinary, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary.md", "orchestrator", "worker", ordinary, now.Add(4*time.Second))
+	reply := inputRequestContentWithExact("worker", "orchestrator", "ordinary-reply.md", "none", "", "", inputRequestID, "done")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(5*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(6*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["worker"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 || state.RequestSatisfaction["worker"].FilledCount != 1 || len(state.InputRequired) != 1 || state.InputRequired[0].CommandApprovalThreadID != commandThread {
+		t.Fatalf("threadless ordinary reply failed or altered command approval opening: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_DuplicateReadPreservesOtherUnreadDelivery(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 45, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := inputRequestContent("orchestrator", "worker", "first.md", "none", "", "first")
+	second := inputRequestContent("orchestrator", "worker", "second.md", "none", "", "second")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "first.md", "orchestrator", "worker", first, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "second.md", "orchestrator", "worker", second, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "first.md", "orchestrator", "worker", first, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "first.md", "orchestrator", "worker", first, now.Add(4*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.UnreadCounts["worker"] != 1 || state.InfoUnreadCounts["worker"] != 1 {
+		t.Fatalf("duplicate first read consumed second delivery: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_RepeatedSameMessageDeliveriesAndReads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []string
+		want   []int
+	}{
+		{"two deliveries then two reads", []string{MailboxProjectionDeliveredEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionReadEventType}, []int{1, 2, 1, 0}},
+		{"delivery read redelivery read", []string{MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType}, []int{1, 0, 1, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, time.October, 14, 14, 50, 0, 0, time.UTC)
+			sessionDir := t.TempDir()
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := inputRequestContent("orchestrator", "worker", "repeat.md", "none", "", "repeat")
+			for i, eventType := range tc.events {
+				appendInputRequestMailboxEvent(t, writer, eventType, "repeat.md", "orchestrator", "worker", content, now.Add(time.Duration(i+1)*time.Second))
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+				if err != nil || !ok {
+					t.Fatalf("project after event %d = (%#v, %v, %v)", i, state, ok, err)
+				}
+				if state.UnreadCounts["worker"] != tc.want[i] || state.InfoUnreadCounts["worker"] != tc.want[i] {
+					t.Fatalf("counts after event %d = unread %d, info %d; want %d", i, state.UnreadCounts["worker"], state.InfoUnreadCounts["worker"], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestCommandApprovalOpeningThreadID_ThreadlessInferenceRequiresUniqueMatch(t *testing.T) {
+	meta := envelope.Metadata{InputRequestID: "ireq_shared", From: "worker", To: "approver", CommandHash: "sha256:command"}
+	thread := CommandApprovalThread{InputRequestID: "ireq_shared", Requester: "worker", CommandApproverNode: "approver"}
+	for _, order := range [][]string{{"command-approval-A", "command-approval-B"}, {"command-approval-B", "command-approval-A"}} {
+		threads := map[string]CommandApprovalThread{order[0]: thread, order[1]: thread}
+		for i := 0; i < 100; i++ {
+			if got := commandApprovalOpeningThreadID(meta, threads); got != "" {
+				t.Fatalf("ambiguous threadless opening inferred %q in order %v", got, order)
+			}
+		}
+	}
+	if got := commandApprovalOpeningThreadID(meta, map[string]CommandApprovalThread{"command-approval-A": thread}); got != "command-approval-A" {
+		t.Fatalf("unique threadless opening inferred %q", got)
 	}
 }
 
