@@ -260,6 +260,29 @@ func TestRuntimeEscalationSnapshotStaleDurationThresholdBoundaries(t *testing.T)
 	}
 }
 
+func TestRuntimePaneActivityContinuityProjection(t *testing.T) {
+	now := time.Date(2026, time.October, 13, 0, 0, 30, 0, time.UTC)
+	snapshot := status.SessionStatus{Nodes: []status.NodeStatus{{Name: "worker", PaneID: "%11"}}}
+	pane := idle.PaneActivityExport{Status: "idle", LastChangeAt: now.Add(-20 * time.Second), LastCaptureAt: now.Add(-5 * time.Second), ScreenFingerprint: "00000011", IdleContinuityKnown: true}
+	attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, now, 10*time.Second)
+	known := snapshot.Nodes[0].ScreenProgress
+	if known.Freshness != "fresh" || !known.IdleContinuityKnown || known.IdleAgeSeconds == nil || *known.IdleAgeSeconds != 20 {
+		t.Fatalf("known continuity = %#v", known)
+	}
+	pane.IdleContinuityKnown = false
+	attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, now, 10*time.Second)
+	unknown := snapshot.Nodes[0].ScreenProgress
+	if unknown.Freshness != "fresh" || unknown.IdleContinuityKnown || unknown.IdleAgeSeconds != nil {
+		t.Fatalf("unknown continuity = %#v", unknown)
+	}
+	pane.IdleContinuityKnown = true
+	attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, now.Add(6*time.Second), 10*time.Second)
+	stale := snapshot.Nodes[0].ScreenProgress
+	if stale.Freshness != "stale" || stale.IdleContinuityKnown || stale.IdleAgeSeconds != nil {
+		t.Fatalf("stale capture = %#v", stale)
+	}
+}
+
 func TestMaybePushEscalationSendsPaneNotificationOncePerTripSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	sessionDir := filepath.Join(tmpDir, "ctx", "review")

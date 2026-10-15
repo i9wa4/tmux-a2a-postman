@@ -2786,8 +2786,8 @@ func TestCheckPaneCaptureProcessGenerationAfterCaptureGap(t *testing.T) {
 	if targets := tracker.checkPaneCapture(cfg, nodes); len(targets) != 0 {
 		t.Fatalf("failed capture targets = %#v, want none", targets)
 	}
-	if got := tracker.GetPaneActivityEvidence(cfg)["%11"].Status; got != "stale" {
-		t.Fatalf("status during capture gap = %q, want stale", got)
+	if got := tracker.GetPaneActivityEvidence(cfg)["%11"]; got.Status != "stale" || got.IdleContinuityKnown {
+		t.Fatalf("evidence during capture gap = %#v, want stale with unknown continuity", got)
 	}
 	setPID("200")
 	now = now.Add(time.Second)
@@ -2805,8 +2805,8 @@ func TestCheckPaneCaptureProcessGenerationAfterCaptureGap(t *testing.T) {
 		t.Fatalf("recovery targets = %#v, want one new pid:200 target", restartTargets)
 	}
 	state := tracker.paneCaptureState["%11"]
-	if !state.LastChangeAt.Equal(now) || state.LastChangeAt.Equal(initialChange) || state.ChangeCount != 0 {
-		t.Fatalf("new process activity baseline = change %v, count %d; want change %v, count 0", state.LastChangeAt, state.ChangeCount, now)
+	if !state.LastChangeAt.Equal(now) || state.LastChangeAt.Equal(initialChange) || state.ChangeCount != 0 || !state.IdleContinuityKnown {
+		t.Fatalf("new process activity baseline = change %v, count %d, continuity %v; want change %v, count 0, known continuity", state.LastChangeAt, state.ChangeCount, state.IdleContinuityKnown, now)
 	}
 	if state.LastCompactionDeliveredIdentity != "" {
 		t.Fatalf("new process retained prior delivered marker %q", state.LastCompactionDeliveredIdentity)
@@ -2831,8 +2831,8 @@ func TestCheckPaneCaptureProcessGenerationAfterCaptureGap(t *testing.T) {
 		t.Fatalf("unknown-PID lifecycle = %q, want retained pid:200", got)
 	}
 	state = tracker.paneCaptureState["%11"]
-	if !state.LastChangeAt.Equal(restartChange) || state.LastHash != restartHash || state.ChangeCount != 0 {
-		t.Fatalf("unknown-PID recovery changed activity baseline: %+v", state)
+	if !state.LastChangeAt.Equal(restartChange) || state.LastHash != restartHash || state.ChangeCount != 0 || state.IdleContinuityKnown {
+		t.Fatalf("unknown-PID recovery changed activity baseline or implied continuity: %+v", state)
 	}
 	setPID("200")
 	now = now.Add(compactionPingCooldown + time.Second)
@@ -2840,8 +2840,8 @@ func TestCheckPaneCaptureProcessGenerationAfterCaptureGap(t *testing.T) {
 		t.Fatalf("restored same-PID targets = %#v, want none", targets)
 	}
 	state = tracker.paneCaptureState["%11"]
-	if !state.LastChangeAt.Equal(restartChange) || state.LastHash != restartHash || state.ChangeCount != 0 {
-		t.Fatalf("same-PID continuity changed activity baseline: %+v", state)
+	if !state.LastChangeAt.Equal(restartChange) || state.LastHash != restartHash || state.ChangeCount != 0 || state.IdleContinuityKnown {
+		t.Fatalf("same-PID recovery changed activity baseline or implied continuity: %+v", state)
 	}
 }
 

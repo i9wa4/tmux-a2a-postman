@@ -303,8 +303,8 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	if worker.ScreenFingerprint != "00000011" {
 		t.Fatalf("worker screen_fingerprint = %q, want 00000011", worker.ScreenFingerprint)
 	}
-	if worker.Source != "pane_capture" || worker.ObservedAt != worker.LastCaptureAt || worker.IdleAgeSeconds == nil {
-		t.Fatalf("worker observation fields = %#v, want pane capture source, observation time, and idle age", worker)
+	if worker.Source != "pane_capture" || worker.ObservedAt != worker.LastCaptureAt || worker.IdleAgeSeconds != nil || worker.IdleContinuityKnown {
+		t.Fatalf("worker observation fields = %#v, want pane capture source and unknown idle continuity", worker)
 	}
 	fixture.cfg.NodeStaleSeconds = 0
 	withoutHorizon, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
@@ -333,6 +333,28 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	}
 	if critic.ScreenFingerprint != "00000012" {
 		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+}
+
+func TestPaneActivityContinuityProjection(t *testing.T) {
+	now := time.Date(2026, time.October, 13, 0, 0, 30, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "pane-activity.json")
+	content := `{"%11":{"status":"idle","lastChangeAt":"2026-10-13T00:00:10Z","lastCaptureAt":"2026-10-13T00:00:25Z","screenFingerprint":"00000011","idleContinuityKnown":true},"%12":{"status":"idle","lastChangeAt":"2026-10-13T00:00:10Z","lastCaptureAt":"2026-10-13T00:00:25Z","screenFingerprint":"00000011"}}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evidence := loadPaneActivityEvidence(path)
+	known := status.ObserveScreenProgress(evidence["%11"].ScreenProgress, now, 10*time.Second)
+	if known.Freshness != "fresh" || !known.IdleContinuityKnown || known.IdleAgeSeconds == nil || *known.IdleAgeSeconds != 20 {
+		t.Fatalf("known continuity = %#v", known)
+	}
+	unknown := status.ObserveScreenProgress(evidence["%12"].ScreenProgress, now, 10*time.Second)
+	if unknown.Freshness != "fresh" || unknown.IdleContinuityKnown || unknown.IdleAgeSeconds != nil {
+		t.Fatalf("unknown continuity = %#v", unknown)
+	}
+	stale := status.ObserveScreenProgress(evidence["%11"].ScreenProgress, now.Add(6*time.Second), 10*time.Second)
+	if stale.Freshness != "stale" || stale.IdleContinuityKnown || stale.IdleAgeSeconds != nil {
+		t.Fatalf("stale capture = %#v", stale)
 	}
 }
 

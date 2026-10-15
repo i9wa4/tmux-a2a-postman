@@ -21,6 +21,7 @@ func ObserveScreenProgress(progress *ScreenProgressEvidence, now time.Time, stal
 	observed.ObservedAt = ""
 	observed.Freshness = "unknown"
 	observed.IdleAgeSeconds = nil
+	observed.IdleContinuityKnown = false
 	observed.Conflict = false
 
 	capturedAt, err := time.Parse(time.RFC3339Nano, progress.LastCaptureAt)
@@ -44,7 +45,6 @@ func ObserveScreenProgress(progress *ScreenProgressEvidence, now time.Time, stal
 	} else if observed.Freshness != "stale" && staleAfter > 0 {
 		observed.Freshness = "fresh"
 	}
-
 	changedAt, err := time.Parse(time.RFC3339Nano, progress.LastScreenChangeAt)
 	if err != nil || changedAt.IsZero() {
 		return observed
@@ -53,6 +53,10 @@ func ObserveScreenProgress(progress *ScreenProgressEvidence, now time.Time, stal
 		observed.Conflict = true
 		return observed
 	}
+	if observed.Freshness != "fresh" || !progress.IdleContinuityKnown {
+		return observed
+	}
+	observed.IdleContinuityKnown = true
 	idleAge := int(now.Sub(changedAt).Seconds())
 	observed.IdleAgeSeconds = &idleAge
 	return observed

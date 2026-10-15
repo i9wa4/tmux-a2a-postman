@@ -8,11 +8,14 @@ import (
 func TestObserveScreenProgress(t *testing.T) {
 	now := time.Date(2026, time.October, 13, 0, 0, 30, 0, time.UTC)
 	base := ScreenProgressEvidence{
-		EvidenceState:      "unchanged",
-		LastCaptureAt:      now.Add(-5 * time.Second).Format(time.RFC3339Nano),
-		LastScreenChangeAt: now.Add(-20 * time.Second).Format(time.RFC3339Nano),
-		ScreenFingerprint:  "00000011",
+		EvidenceState:       "unchanged",
+		LastCaptureAt:       now.Add(-5 * time.Second).Format(time.RFC3339Nano),
+		LastScreenChangeAt:  now.Add(-20 * time.Second).Format(time.RFC3339Nano),
+		ScreenFingerprint:   "00000011",
+		IdleContinuityKnown: true,
 	}
+	unknownContinuity := base
+	unknownContinuity.IdleContinuityKnown = false
 	alreadyStale := base
 	alreadyStale.EvidenceState = "stale"
 	for _, tc := range []struct {
@@ -27,12 +30,14 @@ func TestObserveScreenProgress(t *testing.T) {
 		{name: "missing pane", freshness: "unknown", source: "unknown"},
 		{name: "fresh capture", progress: &base, staleAfter: 10 * time.Second, freshness: "fresh", source: "pane_capture", idleAge: intPointer(20)},
 		{name: "at stale boundary", progress: screenProgressWithCapture(base, now.Add(-10*time.Second)), staleAfter: 10 * time.Second, freshness: "fresh", source: "pane_capture", idleAge: intPointer(20)},
-		{name: "observation gap", progress: screenProgressWithCapture(base, now.Add(-11*time.Second)), staleAfter: 10 * time.Second, freshness: "stale", source: "pane_capture", idleAge: intPointer(20)},
-		{name: "zero horizon", progress: screenProgressWithCapture(base, now.Add(-11*time.Second)), freshness: "unknown", source: "pane_capture", idleAge: intPointer(20)},
-		{name: "negative horizon", progress: screenProgressWithCapture(base, now.Add(-11*time.Second)), staleAfter: -time.Second, freshness: "unknown", source: "pane_capture", idleAge: intPointer(20)},
-		{name: "already stale with fingerprint at zero horizon", progress: &alreadyStale, freshness: "stale", source: "pane_capture", idleAge: intPointer(20)},
+		{name: "observation gap", progress: screenProgressWithCapture(base, now.Add(-11*time.Second)), staleAfter: 10 * time.Second, freshness: "stale", source: "pane_capture"},
+		{name: "long stale gap", progress: screenProgressWithChange(*screenProgressWithCapture(base, now.Add(-time.Hour)), now.Add(-2*time.Hour)), staleAfter: 10 * time.Second, freshness: "stale", source: "pane_capture"},
+		{name: "unknown process continuity", progress: &unknownContinuity, staleAfter: 10 * time.Second, freshness: "fresh", source: "pane_capture"},
+		{name: "zero horizon", progress: screenProgressWithCapture(base, now.Add(-11*time.Second)), freshness: "unknown", source: "pane_capture"},
+		{name: "negative horizon", progress: screenProgressWithCapture(base, now.Add(-11*time.Second)), staleAfter: -time.Second, freshness: "unknown", source: "pane_capture"},
+		{name: "already stale with fingerprint at zero horizon", progress: &alreadyStale, freshness: "stale", source: "pane_capture"},
 		{name: "already stale without fingerprint at zero horizon", progress: screenProgressWithoutFingerprint(alreadyStale), freshness: "stale", source: "pane_capture"},
-		{name: "already stale with fingerprint at negative horizon", progress: &alreadyStale, staleAfter: -time.Second, freshness: "stale", source: "pane_capture", idleAge: intPointer(20)},
+		{name: "already stale with fingerprint at negative horizon", progress: &alreadyStale, staleAfter: -time.Second, freshness: "stale", source: "pane_capture"},
 		{name: "already stale without fingerprint at negative horizon", progress: screenProgressWithoutFingerprint(alreadyStale), staleAfter: -time.Second, freshness: "stale", source: "pane_capture"},
 		{name: "future capture conflicts", progress: screenProgressWithCapture(base, now.Add(time.Second)), staleAfter: 10 * time.Second, freshness: "unknown", source: "pane_capture", conflict: true},
 		{name: "capture failure without timestamp", progress: screenProgressWithCapture(base, time.Time{}), freshness: "unknown", source: "unknown"},

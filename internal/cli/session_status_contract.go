@@ -544,20 +544,18 @@ func loadPaneActivityEvidence(stateFile string) map[string]paneActivityEvidence 
 		}
 
 		var enriched struct {
-			Status            string `json:"status"`
-			LastChangeAt      string `json:"lastChangeAt"`
-			LastCaptureAt     string `json:"lastCaptureAt"`
-			ScreenFingerprint string `json:"screenFingerprint"`
+			Status              string `json:"status"`
+			LastChangeAt        string `json:"lastChangeAt"`
+			LastCaptureAt       string `json:"lastCaptureAt"`
+			ScreenFingerprint   string `json:"screenFingerprint"`
+			IdleContinuityKnown bool   `json:"idleContinuityKnown"`
 		}
 		if err := json.Unmarshal(raw, &enriched); err == nil && enriched.Status != "" {
+			progress := screenProgressEvidence(enriched.Status, enriched.LastChangeAt, enriched.LastCaptureAt, enriched.ScreenFingerprint)
+			progress.IdleContinuityKnown = enriched.IdleContinuityKnown
 			result[paneID] = paneActivityEvidence{
-				Status: enriched.Status,
-				ScreenProgress: screenProgressEvidence(
-					enriched.Status,
-					enriched.LastChangeAt,
-					enriched.LastCaptureAt,
-					enriched.ScreenFingerprint,
-				),
+				Status:         enriched.Status,
+				ScreenProgress: progress,
 			}
 		}
 	}

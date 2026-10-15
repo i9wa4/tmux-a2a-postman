@@ -53,6 +53,7 @@ type ScreenProgressEvidence struct {
 	ObservedAt           string `json:"observed_at,omitempty"`
 	Freshness            string `json:"freshness"`
 	IdleAgeSeconds       *int   `json:"idle_age_seconds,omitempty"`
+	IdleContinuityKnown  bool   `json:"idle_continuity_known,omitempty"`
 	Conflict             bool   `json:"conflict"`
 }
 

@@ -48,10 +48,11 @@ type NodeActivity struct {
 // Issue #123: Enriched format with lastChangeAt for external consumers.
 // Issue #398: Adds non-content capture progress evidence for health consumers.
 type PaneActivityExport struct {
-	Status            string    `json:"status"`
-	LastChangeAt      time.Time `json:"lastChangeAt"`
-	LastCaptureAt     time.Time `json:"lastCaptureAt"`
-	ScreenFingerprint string    `json:"screenFingerprint,omitempty"`
+	Status              string    `json:"status"`
+	LastChangeAt        time.Time `json:"lastChangeAt"`
+	LastCaptureAt       time.Time `json:"lastCaptureAt"`
+	ScreenFingerprint   string    `json:"screenFingerprint,omitempty"`
+	IdleContinuityKnown bool      `json:"idleContinuityKnown,omitempty"`
 }
 
 type CompactionPingTarget struct {
@@ -75,6 +76,7 @@ type PaneCaptureState struct {
 	LastChangeAt                    time.Time // Last time content change was detected
 	ChangeCount                     int       // Consecutive change count (2 = active)
 	LastCaptureAt                   time.Time // Last capture time
+	IdleContinuityKnown             bool      // false after failed capture, stale gap, or unknown process generation
 	LastCompactionPingAt            time.Time // Last compaction-triggered PING for this pane
 	LastCompactionTrigger           string    // Non-empty while a compaction marker remains in scanned content
 	LastCompactionMarkerIdentity    string    // Stable trigger/marker/count identity handled for this node
@@ -226,10 +228,11 @@ func (t *IdleTracker) GetPaneActivityEvidence(cfg *config.Config) map[string]Pan
 	now := t.now()
 	for paneID, state := range t.paneCaptureState {
 		result[paneID] = PaneActivityExport{
-			Status:            statusForState(state, now, cfg),
-			LastChangeAt:      state.LastChangeAt,
-			LastCaptureAt:     state.LastCaptureAt,
-			ScreenFingerprint: fmt.Sprintf("%08x", state.LastHash),
+			Status:              statusForState(state, now, cfg),
+			LastChangeAt:        state.LastChangeAt,
+			LastCaptureAt:       state.LastCaptureAt,
+			ScreenFingerprint:   fmt.Sprintf("%08x", state.LastHash),
+			IdleContinuityKnown: state.IdleContinuityKnown,
 		}
 	}
 	return result
@@ -244,10 +247,11 @@ func (t *IdleTracker) ExportPaneActivityToFile(cfg *config.Config, filePath stri
 	export := make(map[string]PaneActivityExport, len(t.paneCaptureState))
 	for paneID, state := range t.paneCaptureState {
 		export[paneID] = PaneActivityExport{
-			Status:            statusForState(state, now, cfg),
-			LastChangeAt:      state.LastChangeAt,
-			LastCaptureAt:     state.LastCaptureAt,
-			ScreenFingerprint: fmt.Sprintf("%08x", state.LastHash),
+			Status:              statusForState(state, now, cfg),
+			LastChangeAt:        state.LastChangeAt,
+			LastCaptureAt:       state.LastCaptureAt,
+			ScreenFingerprint:   fmt.Sprintf("%08x", state.LastHash),
+			IdleContinuityKnown: state.IdleContinuityKnown,
 		}
 	}
 	t.mu.Unlock()
@@ -824,6 +828,10 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		if err != nil {
 			// MUST 2: Capture failed - treat as "unmeasurable", skip but keep state
 			// Do NOT delete state - carry forward to next poll
+			if state, exists := t.paneCaptureState[paneID]; exists {
+				state.IdleContinuityKnown = false
+				t.paneCaptureState[paneID] = state
+			}
 			continue
 		}
 
@@ -841,11 +849,12 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 		if !exists {
 			// First time seeing this pane - initialize state
 			state = PaneCaptureState{
-				LastHash:         currentHash,
-				LastChangeAt:     now,
-				ChangeCount:      0,
-				LastCaptureAt:    now,
-				FullHistoryRetry: allowFullHistory && supportsCompactionRuntime(runtime) && compactionScope != compactionScopeHistory,
+				LastHash:            currentHash,
+				LastChangeAt:        now,
+				ChangeCount:         0,
+				LastCaptureAt:       now,
+				IdleContinuityKnown: paneProcessGenerations[paneID].Known,
+				FullHistoryRetry:    allowFullHistory && supportsCompactionRuntime(runtime) && compactionScope != compactionScopeHistory,
 			}
 			if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 				state.LastCompactionPaneID = paneID
@@ -890,7 +899,12 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 			continue
 		}
 
-		// Update last capture time
+		// A missed capture horizon or unknown generation breaks evidence continuity,
+		// while retaining the internal screen-change baseline.
+		staleAfter := time.Duration(cfg.NodeStaleSeconds * float64(time.Second))
+		if !paneProcessGenerations[paneID].Known || staleAfter <= 0 || state.LastCaptureAt.IsZero() || now.Before(state.LastCaptureAt) || now.Sub(state.LastCaptureAt) > staleAfter {
+			state.IdleContinuityKnown = false
+		}
 		state.LastCaptureAt = now
 		if nodeKey, hasNode := paneToNode[paneID]; hasNode {
 			state.LastCompactionPaneID = paneID
@@ -902,6 +916,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 				// A known new process starts a new screen observation baseline.
 				state.LastHash = currentHash
 				state.LastChangeAt = now
+				state.IdleContinuityKnown = paneProcessGenerations[paneID].Known
 				state.ChangeCount = 0
 			}
 			state.LastCompactionLifecycleIdentity = lifecycle
@@ -942,6 +957,7 @@ func (t *IdleTracker) checkPaneCapture(cfg *config.Config, nodes map[string]disc
 			// Update hash and timestamp
 			state.LastHash = currentHash
 			state.LastChangeAt = now
+			state.IdleContinuityKnown = paneProcessGenerations[paneID].Known
 
 			// Check if this is the 2nd consecutive change (within 120 seconds)
 			if state.ChangeCount >= 2 {

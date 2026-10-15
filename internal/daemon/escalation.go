@@ -230,8 +230,9 @@ func attachRuntimePaneActivity(snapshot *status.SessionStatus, paneStates map[st
 		}
 		snapshot.Nodes[idx].PaneState = paneState.Status
 		progress := &status.ScreenProgressEvidence{
-			EvidenceState:     paneState.Status,
-			ScreenFingerprint: paneState.ScreenFingerprint,
+			EvidenceState:       paneState.Status,
+			ScreenFingerprint:   paneState.ScreenFingerprint,
+			IdleContinuityKnown: paneState.IdleContinuityKnown,
 		}
 		if !paneState.LastCaptureAt.IsZero() {
 			progress.LastCaptureAt = paneState.LastCaptureAt.Format(time.RFC3339Nano)
