@@ -145,6 +145,136 @@ func TestRealTmuxCloseWaitsForStartedHelperRegistration(t *testing.T) {
 	}
 }
 
+func TestRealTmuxCloseCancelsAdmittedMutatingCommand(t *testing.T) {
+	sentinel, err := NewRealTmux(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentinelResources := sentinel.Resources()
+	f, err := NewRealTmux(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := f.Resources()
+	admitted := make(chan struct{})
+	f.mu.Lock()
+	f.beforeExec = func(ctx context.Context) {
+		close(admitted)
+		<-ctx.Done()
+	}
+	f.mu.Unlock()
+	commandDone := make(chan error, 1)
+	go func() {
+		_, err := f.Tmux(context.Background(), "new-session", "-d", "-s", "replacement")
+		commandDone <- err
+	}()
+	select {
+	case <-admitted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("mutating command was not admitted")
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- f.Close() }()
+	select {
+	case err := <-commandDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("admitted command error = %v, want cancellation before execution", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("admitted command did not drain")
+	}
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("Close did not finish after draining command")
+	}
+	assertFixtureGone(t, r.Root, r.ServerPID)
+	if _, err := os.Lstat(r.Socket); !os.IsNotExist(err) {
+		t.Fatalf("replacement server socket remains: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("repeated Close: %v", err)
+	}
+	if _, err := f.Tmux(context.Background(), "new-session", "-d", "-s", "late"); err == nil || !strings.Contains(err.Error(), "closing") {
+		t.Fatalf("post-close mutating command = %v, want admission rejection", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if out, err := sentinel.Tmux(ctx, "list-sessions", "-F", "#{session_name}"); err != nil || strings.TrimSpace(out) != "fixture" {
+		t.Fatalf("unrelated sentinel changed: %q, %v", out, err)
+	}
+	if err := sentinel.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertFixtureGone(t, sentinelResources.Root, sentinelResources.ServerPID)
+}
+
+func TestRealTmuxCloseRetriesAfterUndrainedCommand(t *testing.T) {
+	f, err := NewRealTmux(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := f.Resources()
+	admitted := make(chan struct{})
+	release := make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	f.mu.Lock()
+	f.beforeExec = func(context.Context) {
+		close(admitted)
+		<-release
+	}
+	f.mu.Unlock()
+	commandDone := make(chan error, 1)
+	go func() {
+		_, err := f.Tmux(context.Background(), "new-session", "-d", "-s", "replacement")
+		commandDone <- err
+	}()
+	select {
+	case <-admitted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("mutating command was not admitted")
+	}
+	start := time.Now()
+	err = f.Close()
+	if err == nil || !strings.Contains(err.Error(), "draining") {
+		t.Fatalf("first Close = %v, want bounded drain failure", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Close drain took %v, want bounded failure", elapsed)
+	}
+	if _, err := os.Stat(r.Root); err != nil {
+		t.Fatalf("failed Close removed owned root: %v", err)
+	}
+	if _, err := f.Tmux(context.Background(), "new-session", "-d", "-s", "late"); err == nil || !strings.Contains(err.Error(), "closing") {
+		t.Fatalf("operation after failed Close = %v, want admission rejection", err)
+	}
+	close(release)
+	select {
+	case err := <-commandDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("drained command error = %v, want cancellation", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("released command did not drain")
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	assertFixtureGone(t, r.Root, r.ServerPID)
+	if err := f.Close(); err != nil {
+		t.Fatalf("repeated Close: %v", err)
+	}
+}
+
 func TestRealTmuxPartialSetupFailureStillCleansServer(t *testing.T) {
 	f, err := newRealTmux(t, realTmuxHooks{afterServer: func() error { return errors.New("injected setup failure") }})
 	if err == nil || !strings.Contains(err.Error(), "injected setup failure") {

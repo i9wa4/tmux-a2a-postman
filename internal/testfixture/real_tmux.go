@@ -19,6 +19,7 @@ import (
 // It is test infrastructure, not a product session launcher.
 type RealTmux struct {
 	mu         sync.Mutex
+	closeMu    sync.Mutex
 	tb         testing.TB
 	root       string
 	rootInfo   os.FileInfo
@@ -28,8 +29,16 @@ type RealTmux struct {
 	serverMade bool
 	closing    bool
 	closed     bool
+	nextOpID   uint64
+	operations map[uint64]*tmuxOperation
+	beforeExec func(context.Context)
 	sessions   []TmuxSession
 	processes  []*fixtureProcess
+}
+
+type tmuxOperation struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 type TmuxSession struct {
@@ -167,8 +176,37 @@ func (f *RealTmux) Tmux(ctx context.Context, args ...string) (string, error) {
 }
 
 func (f *RealTmux) tmux(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "tmux", append([]string{"-S", f.socket}, args...)...)
-	cmd.Env = f.Env()
+	f.mu.Lock()
+	if f.closing || f.closed {
+		f.mu.Unlock()
+		return "", errors.New("real tmux fixture is closing")
+	}
+	opCtx, cancel := context.WithCancel(ctx)
+	f.nextOpID++
+	opID := f.nextOpID
+	op := &tmuxOperation{cancel: cancel, done: make(chan struct{})}
+	if f.operations == nil {
+		f.operations = make(map[uint64]*tmuxOperation)
+	}
+	f.operations[opID] = op
+	env := f.envLocked()
+	beforeExec := f.beforeExec
+	f.mu.Unlock()
+	defer func() {
+		cancel()
+		f.mu.Lock()
+		delete(f.operations, opID)
+		close(op.done)
+		f.mu.Unlock()
+	}()
+	if beforeExec != nil {
+		beforeExec(opCtx)
+	}
+	if err := opCtx.Err(); err != nil {
+		return "", fmt.Errorf("tmux %q: %w", args, err)
+	}
+	cmd := exec.CommandContext(opCtx, "tmux", append([]string{"-S", f.socket}, args...)...)
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("tmux %q: %w: %s", args, err, strings.TrimSpace(string(out)))
@@ -267,12 +305,33 @@ func (f *RealTmux) Resources() TmuxResources {
 // Close is idempotent after success. A failed cleanup retains ownership
 // evidence and can be retried; it never removes a possibly live server socket.
 func (f *RealTmux) Close() error {
+	f.closeMu.Lock()
+	defer f.closeMu.Unlock()
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.closed {
+		f.mu.Unlock()
 		return nil
 	}
 	f.closing = true
+	operations := make([]*tmuxOperation, 0, len(f.operations))
+	for _, op := range f.operations {
+		operations = append(operations, op)
+		op.cancel()
+	}
+	f.mu.Unlock()
+	if len(operations) > 0 {
+		timer := time.NewTimer(3 * time.Second)
+		defer timer.Stop()
+		for _, op := range operations {
+			select {
+			case <-op.done:
+			case <-timer.C:
+				return fmt.Errorf("timed out draining %d admitted tmux operations", len(operations))
+			}
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var problems []error
 	for _, p := range f.processes {
 		if err := stopFixtureProcess(p); err != nil {
