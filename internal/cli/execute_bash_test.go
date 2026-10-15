@@ -1041,16 +1041,22 @@ func TestRunExecuteBashBlockingAcceptsRealCommandApproverNodeDespiteUnassignedLa
 		t.Fatalf("record-decision error = %v", err)
 	}
 
+	_, firstThread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
 	err = runExecuteBashWithContext(fixture.context(), fixture.args(
 		"--label", "protected",
 		"--mode", "blocking",
 		"--command", commandText,
 	))
-	if err != nil {
-		t.Fatalf("second invocation error = %v, want the real command_approver_node's approval honored", err)
+	var outcomeErr commandApprovalOutcomeError
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "wait_timeout" {
+		t.Fatalf("second invocation error = %#v, want fresh approval wait after the late decision", err)
 	}
-	if fixture.runCount != 1 {
-		t.Fatalf("runCount = %d, want 1", fixture.runCount)
+	_, secondThread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	if secondThread.InputRequestID == firstThread.InputRequestID {
+		t.Fatalf("second invocation reused late approval request %q", firstThread.InputRequestID)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount = %d, want 0", fixture.runCount)
 	}
 }
 
@@ -3792,16 +3798,21 @@ func TestRunExecuteBashBlockingFailedDeliveryRecoversOnRetryWithoutNewRequest(t 
 		t.Fatalf("runCount = %d, want 0", fixture.runCount)
 	}
 
-	// #823 rework-3 (F-013): extend end-to-end -- the recovered request
-	// carries the ORIGINAL input_request_id, so an approval reply against
-	// it must still resolve and run the command exactly once.
+	// #823 rework-3 (F-013): the recovered request keeps its original
+	// input_request_id through redelivery. Under #910, an approval recorded
+	// after that synchronous retry has ended is audit evidence only; the
+	// next invocation must request a fresh generation.
 	fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
 	err = runExecuteBashWithContext(fixture.context(), args)
-	if err != nil {
-		t.Fatalf("third call (after approval) error = %v, want nil", err)
+	if !errors.As(err, &outcomeErr) || outcomeErr.status != "wait_timeout" {
+		t.Fatalf("third call (after late approval) error = %#v, want fresh approval wait", err)
 	}
-	if fixture.runCount != 1 {
-		t.Fatalf("runCount after approval = %d, want exactly 1", fixture.runCount)
+	_, freshThread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	if freshThread.InputRequestID == firstInputRequestID {
+		t.Fatalf("third call reused late approval request %q", firstInputRequestID)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after late approval = %d, want 0", fixture.runCount)
 	}
 }
 
@@ -5839,4 +5850,99 @@ func TestRunExecuteBashConcurrentFirstMintRace_AWinsWaitTimeout(t *testing.T) {
 
 func TestRunExecuteBashConcurrentFirstMintRace_BWinsWaitTimeout(t *testing.T) {
 	testRunExecuteBashConcurrentFirstMintRace(t, false, "wait_timeout")
+}
+
+// TestRunExecuteBashLateApprovalAfterWaitTimeoutNeedsFreshRequest pins #910's
+// current-caller boundary. A decision recorded after the original synchronous
+// wait ended is audit evidence for that call; a later invocation of the exact
+// command must request a fresh decision rather than consume the old one.
+func TestRunExecuteBashLateApprovalAfterWaitTimeoutNeedsFreshRequest(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	})
+	args := fixture.args(
+		"--label", "protected", "--category", "release",
+		"--command", "printf late-approval",
+		"--wait-timeout-seconds", "1",
+	)
+	firstErr := runExecuteBashWithContext(fixture.context(), args)
+	var firstOutcome commandApprovalOutcomeError
+	if !errors.As(firstErr, &firstOutcome) || firstOutcome.status != "wait_timeout" {
+		t.Fatalf("first call error = %#v, want wait_timeout", firstErr)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after timeout = %d, want 0", fixture.runCount)
+	}
+	threadID, firstThread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	firstInputRequestID := firstThread.InputRequestID
+	fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+
+	secondErr := runExecuteBashWithContext(fixture.context(), args)
+	var secondOutcome commandApprovalOutcomeError
+	if !errors.As(secondErr, &secondOutcome) || secondOutcome.status != "wait_timeout" {
+		t.Fatalf("second call error = %#v, want wait_timeout while a fresh request awaits approval", secondErr)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after late decision and retry = %d, want 0", fixture.runCount)
+	}
+	_, secondThread := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	if secondThread.InputRequestID == "" || secondThread.InputRequestID == firstInputRequestID {
+		t.Fatalf("retry input_request_id = %q, want fresh ID after %q", secondThread.InputRequestID, firstInputRequestID)
+	}
+}
+
+// TestRunExecuteBashLateApprovalPreservesLivePeer pins the boundary between a
+// stale approval with no caller and one still owned by a synchronous peer.
+// The peer's lease keeps its original request generation intact; after that
+// peer exits, a later invocation may mint a fresh generation.
+func TestRunExecuteBashLateApprovalPreservesLivePeer(t *testing.T) {
+	fixture := newExecuteBashFixture(t, config.CommandApprovalPolicy{
+		Requester: "worker",
+		Reviewer:  "orchestrator",
+		Label:     "protected",
+		Category:  "release",
+		Mode:      "blocking",
+	})
+	args := fixture.args("--label", "protected", "--category", "release",
+		"--command", "printf late-approval-live-peer", "--wait-timeout-seconds", "1")
+	firstErr := runExecuteBashWithContext(fixture.context(), args)
+	var outcome commandApprovalOutcomeError
+	if !errors.As(firstErr, &outcome) || outcome.status != "wait_timeout" {
+		t.Fatalf("first call error = %#v, want wait_timeout", firstErr)
+	}
+	threadID, original := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	peer, err := acquireCommandApprovalWaitLease(fixture.sessionDir, threadID)
+	if err != nil {
+		t.Fatalf("acquire peer lease: %v", err)
+	}
+	fixture.appendCommandApprovalDecisionForRequest(t, threadID, "orchestrator", journal.ApprovalDecisionApproved)
+
+	secondErr := runExecuteBashWithContext(fixture.context(), args)
+	if !errors.As(secondErr, &outcome) || outcome.status != "stale" {
+		t.Fatalf("retry with live peer error = %#v, want stale refusal", secondErr)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount with live peer = %d, want 0", fixture.runCount)
+	}
+	_, preserved := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	if preserved.InputRequestID != original.InputRequestID {
+		t.Fatalf("live peer request changed from %q to %q", original.InputRequestID, preserved.InputRequestID)
+	}
+
+	peer.release()
+	thirdErr := runExecuteBashWithContext(fixture.context(), args)
+	if !errors.As(thirdErr, &outcome) || outcome.status != "wait_timeout" {
+		t.Fatalf("retry after peer exit error = %#v, want fresh wait_timeout", thirdErr)
+	}
+	_, refreshed := onlyApprovalThread(t, fixture.sessionDir, fixture.currentNow())
+	if refreshed.InputRequestID == original.InputRequestID {
+		t.Fatalf("retry after peer exit reused stale input_request_id %q", refreshed.InputRequestID)
+	}
+	if fixture.runCount != 0 {
+		t.Fatalf("runCount after peer exit = %d, want 0", fixture.runCount)
+	}
 }

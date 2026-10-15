@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/cliutil"
@@ -27,10 +28,11 @@ import (
 )
 
 const (
-	commandApprovalModeAdvisory = "advisory"
-	commandApprovalModeWarnOnly = "warn-only"
-	commandApprovalModeBlocking = "blocking"
-	defaultCommandApprovalTTL   = 15 * time.Minute
+	commandApprovalModeAdvisory      = "advisory"
+	commandApprovalModeWarnOnly      = "warn-only"
+	commandApprovalModeBlocking      = "blocking"
+	defaultCommandApprovalTTL        = 15 * time.Minute
+	commandApprovalWaitTimeoutReason = "approval wait timed out before a decision was recorded"
 
 	// defaultCommandApprovalWaitTimeoutSeconds bounds --wait when the caller
 	// does not pass --wait-timeout-seconds explicitly.
@@ -348,9 +350,38 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 		return fmt.Errorf("--override-approval only applies in warn-only mode; effective mode is %q", policy.Mode)
 	}
 
+	// A caller is live from admission through claim/dispatch. Its lease lets
+	// a later retry preserve another synchronous waiter on the same request.
+	var waitLease *commandApprovalWaitLease
+	if policy.Mode == commandApprovalModeBlocking && validReviewer {
+		waitLease, err = acquireCommandApprovalWaitLease(sessionDir, resolvedThreadID)
+		if err != nil {
+			return fmt.Errorf("registering command approval waiter: %w", err)
+		}
+		defer waitLease.release()
+	}
 	evaluation, err := evaluateCommandApproval(sessionDir, policy, resolvedThreadID, commandHash, requesterAddress, commandApproverAddress, approverConfigured, validReviewer, ctx.now())
 	if err != nil {
 		return err
+	}
+	lateApprovalInUse := false
+	if policy.Mode == commandApprovalModeBlocking && evaluation.Decision == "approved" && evaluation.Thread != nil {
+		late, err := commandApprovalApprovedAfterWaitTimeout(sessionDir, resolvedThreadID, evaluation.Thread.InputRequestID)
+		if err != nil {
+			return fmt.Errorf("checking approval decision order: %w", err)
+		}
+		if late {
+			lateApprovalInUse, err = waitLease.hasOtherLiveWaiter()
+			if err != nil {
+				return fmt.Errorf("checking live approval waiters: %w", err)
+			}
+			evaluation.Decision = "stale"
+			evaluation.Allowed = false
+			evaluation.Reason = "approval was recorded after a caller timed out; a new approval request is required"
+			if lateApprovalInUse {
+				evaluation.Reason = "late approval still has another live waiter; retry after that caller finishes"
+			}
+		}
 	}
 	// #823 rework-3 (F-004): the expected session identity is captured
 	// once, here at evaluation time -- before any wait, and before a
@@ -392,7 +423,7 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	// call's own local draft expiresAt above, which can differ from what
 	// actually got stored when this call loses the race.
 	mintedWinningExpiresAt := ""
-	if !evaluation.Allowed && validReviewer {
+	if !evaluation.Allowed && validReviewer && !lateApprovalInUse {
 		mint := false
 		supersedes := ""
 		redeliver := false
@@ -1385,7 +1416,7 @@ func commandApprovalWaitInterruption(waitCtx context.Context, ctx commandContext
 	if !now.Before(p.deadline) {
 		return &commandApprovalEvaluation{
 			Decision: "wait_timeout",
-			Reason:   "approval wait timed out before a decision was recorded",
+			Reason:   commandApprovalWaitTimeoutReason,
 		}
 	}
 	// A context or session-generation change ends the wait with a distinct
@@ -1912,4 +1943,131 @@ func writeExecuteBashMetadata(w io.Writer, result executeBashResult) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(result)
+}
+
+// commandApprovalWaitLease holds an OS lock from admission through command
+// dispatch. The file is renamed into the visible set only after locking it,
+// so a concurrent scanner cannot mistake an unfinished registration for a
+// dead caller. An abandoned process releases its flock automatically.
+type commandApprovalWaitLease struct {
+	path string
+	file *os.File
+}
+
+func acquireCommandApprovalWaitLease(sessionDir, threadID string) (*commandApprovalWaitLease, error) {
+	digest := sha256.Sum256([]byte(threadID))
+	dir := filepath.Join(sessionDir, "command-approval-waiters", hex.EncodeToString(digest[:]))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	file, err := os.CreateTemp(dir, ".registering-")
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return nil, err
+	}
+	visible := filepath.Join(dir, "waiter-"+strings.TrimPrefix(filepath.Base(file.Name()), ".registering-"))
+	if err := os.Rename(file.Name(), visible); err != nil {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return nil, err
+	}
+	return &commandApprovalWaitLease{path: visible, file: file}, nil
+}
+
+func (lease *commandApprovalWaitLease) release() {
+	if lease == nil {
+		return
+	}
+	_ = os.Remove(lease.path)
+	_ = syscall.Flock(int(lease.file.Fd()), syscall.LOCK_UN)
+	_ = lease.file.Close()
+}
+
+func (lease *commandApprovalWaitLease) hasOtherLiveWaiter() (bool, error) {
+	entries, err := os.ReadDir(filepath.Dir(lease.path))
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "waiter-") {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(lease.path), entry.Name())
+		if path == lease.path {
+			continue
+		}
+		file, err := os.OpenFile(path, os.O_RDWR, 0)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			_ = file.Close()
+			return true, nil
+		}
+		if err != nil {
+			_ = file.Close()
+			return false, err
+		}
+		_ = os.Remove(path) // unlocked crash remnant
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}
+	return false, nil
+}
+
+// commandApprovalApprovedAfterWaitTimeout checks event order for exactly the
+// currently projected input request, rather than inferring liveness from an
+// unrelated open input or an older generation of the same deterministic thread.
+func commandApprovalApprovedAfterWaitTimeout(sessionDir, threadID, inputRequestID string) (bool, error) {
+	if inputRequestID == "" {
+		return false, nil
+	}
+	var currentRequest, timedOut, late bool
+	err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
+		if event.ThreadID != threadID {
+			return nil
+		}
+		switch event.Type {
+		case journal.CommandApprovalRequestedEventType:
+			var payload journal.CommandApprovalRequestPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return err
+			}
+			currentRequest = payload.InputRequestID == inputRequestID
+			timedOut, late = false, false
+		case journal.CommandExecutionDecidedEventType:
+			if !currentRequest {
+				return nil
+			}
+			var payload journal.CommandExecutionDecisionPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return err
+			}
+			if payload.Decision == "blocked" && payload.Reason == commandApprovalWaitTimeoutReason {
+				timedOut = true
+			}
+		case journal.CommandApprovalDecidedEventType:
+			if !currentRequest {
+				return nil
+			}
+			var payload journal.CommandApprovalDecisionPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return err
+			}
+			if payload.InputRequestID == inputRequestID && payload.Decision == journal.ApprovalDecisionApproved {
+				late = timedOut
+			}
+		}
+		return nil
+	})
+	return late, err
 }
