@@ -605,3 +605,49 @@ func writeRawState(t *testing.T, path string, state State) []byte {
 	}
 	return data
 }
+
+// TestFirstRebindReceiptRequiresClaimGenesis makes the first-receipt check
+// decisive: every other owner, receipt, and chain invariant remains valid.
+func TestFirstRebindReceiptRequiresClaimGenesis(t *testing.T) {
+	store, key, owner := fixture()
+	store.Root = t.TempDir()
+	first, err := store.Claim(key, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := owner
+	replacement.PaneIncarnation = "pane-2"
+	replacement.ConversationID = "conversation-2"
+	second, err := store.Rebind(key, "request-1", first, replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := store.Read(key)
+	if err != nil || len(valid.Rebindings) != 1 || valid.Owner != second {
+		t.Fatalf("valid first receipt: %+v, err=%v", valid, err)
+	}
+
+	shifted := valid
+	shifted.Rebindings = append([]RebindReceipt(nil), valid.Rebindings...)
+	shifted.Rebindings[0].From.Epoch = 2
+	shifted.Rebindings[0].Result.Epoch = 3
+	// Owner is the final-receipt projection. Mirror Result so the only
+	// violated history rule is that the first receipt must start at epoch 1.
+	shifted.Owner = shifted.Rebindings[0].Result
+	path := statePath(store, key)
+	before := writeRawState(t, path, shifted)
+
+	if _, err := store.Read(key); err == nil {
+		t.Fatal("read accepted first receipt without claim genesis")
+	}
+	if _, err := store.Accept(key, shifted.Owner, OriginDirect, "direct-after-shift", "digest"); err == nil {
+		t.Fatal("accept passed first receipt without claim genesis")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("first-receipt rejection changed stored bytes")
+	}
+}
