@@ -371,7 +371,9 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 			return fmt.Errorf("checking approval decision order: %w", err)
 		}
 		if late {
-			lateApprovalInUse, err = waitLease.hasOtherLiveWaiter()
+			beforeLateApprovalPeerScanHookFn()
+			sessionKey, generation, identityKnown := projection.CurrentSessionIdentity(sessionDir)
+			lateApprovalInUse, err = waitLease.hasOtherLiveWaiter(evaluation.Thread.InputRequestID, sessionKey, generation, identityKnown)
 			if err != nil {
 				return fmt.Errorf("checking live approval waiters: %w", err)
 			}
@@ -534,6 +536,11 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 	if evaluation.Decision != "delivery_failed" && shouldWaitForCommandApproval(policy.Mode, evaluation, validReviewer, approverConfigured) {
 		waited = true
 		waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown = projection.CurrentSessionIdentity(sessionDir)
+		if waitLease != nil && originalInputRequestID != "" {
+			if err := waitLease.bindToRequest(originalInputRequestID, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown); err != nil {
+				return fmt.Errorf("binding command approval waiter: %w", err)
+			}
+		}
 		waitDeadline = ctx.now().Add(waitTimeoutDuration)
 		waitCtx, cancelWait = ctx.newInterruptContext()
 		waitedEvaluation, err := waitForCommandApprovalDecision(waitCtx, ctx, commandApprovalWaitParams{
@@ -558,6 +565,23 @@ func runExecuteBashWithContext(ctx commandContext, args []string) error {
 			return err
 		}
 		evaluation = waitedEvaluation
+		// A caller can enter the wait after another caller's timeout but
+		// before the approver records the late decision. It must not claim
+		// that old decision merely because it was already polling when the
+		// approval arrived. Only a lease bound before the terminal timeout
+		// can consume that generation.
+		if evaluation.Decision == "approved" && evaluation.Thread != nil {
+			late, err := commandApprovalApprovedAfterWaitTimeout(sessionDir, resolvedThreadID, evaluation.Thread.InputRequestID)
+			if err != nil {
+				cancelWait()
+				return fmt.Errorf("checking approval decision order after wait: %w", err)
+			}
+			if late && !waitLease.isBoundToRequest(evaluation.Thread.InputRequestID, waitStartSessionKey, waitStartGeneration, waitSessionIdentityKnown) {
+				evaluation.Decision = "stale"
+				evaluation.Allowed = false
+				evaluation.Reason = "approval was recorded after a caller timed out; a new approval request is required"
+			}
+		}
 	}
 
 	decision := decisionForPolicy(policy.Mode, evaluation, *overrideApproval)
@@ -1945,16 +1969,36 @@ func writeExecuteBashMetadata(w io.Writer, result executeBashResult) error {
 	return enc.Encode(result)
 }
 
-// commandApprovalWaitLease holds an OS lock from admission through command
-// dispatch. The file is renamed into the visible set only after locking it,
-// so a concurrent scanner cannot mistake an unfinished registration for a
-// dead caller. An abandoned process releases its flock automatically.
+// commandApprovalWaitLease holds an OS lock from admission through dispatch.
+// Only a caller that entered the wait for a specific request is a peer of
+// that request. A later retry cannot keep an old generation alive merely by
+// registering another lease for the same deterministic thread.
 type commandApprovalWaitLease struct {
-	path string
-	file *os.File
+	path                      string
+	file                      *os.File
+	admittedInputRequestID    string
+	admittedAfterTimeout      bool
+	admittedSessionKey        string
+	admittedSessionGeneration int
+	admittedIdentityKnown     bool
 }
 
+// Test seam: hold concurrent retries after both have observed a late
+// decision and registered leases, before either scans for an old peer.
+var beforeLateApprovalPeerScanHookFn = func() {}
+
+// Test seam for the peer exiting between directory listing and open.
+var beforeCommandApprovalWaiterOpenHookFn = func(string) {}
+
 func acquireCommandApprovalWaitLease(sessionDir, threadID string) (*commandApprovalWaitLease, error) {
+	// Snapshot the request and its terminal timeout before publishing this
+	// admission. A retry admitted after that timeout may join a NEW request,
+	// but cannot claim to be a waiter on the old one.
+	admittedRequestID, admittedAfterTimeout, err := commandApprovalRequestAtAdmission(sessionDir, threadID)
+	if err != nil {
+		return nil, err
+	}
+	sessionKey, generation, identityKnown := projection.CurrentSessionIdentity(sessionDir)
 	digest := sha256.Sum256([]byte(threadID))
 	dir := filepath.Join(sessionDir, "command-approval-waiters", hex.EncodeToString(digest[:]))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -1976,7 +2020,74 @@ func acquireCommandApprovalWaitLease(sessionDir, threadID string) (*commandAppro
 		_ = os.Remove(file.Name())
 		return nil, err
 	}
-	return &commandApprovalWaitLease{path: visible, file: file}, nil
+	return &commandApprovalWaitLease{
+		path: visible, file: file,
+		admittedInputRequestID: admittedRequestID, admittedAfterTimeout: admittedAfterTimeout,
+		admittedSessionKey: sessionKey, admittedSessionGeneration: generation,
+		admittedIdentityKnown: identityKnown,
+	}, nil
+}
+
+func commandApprovalRequestAtAdmission(sessionDir, threadID string) (string, bool, error) {
+	var requestID string
+	var timedOut bool
+	err := journal.ReplayEach(sessionDir, func(event journal.Event) error {
+		if event.ThreadID != threadID {
+			return nil
+		}
+		switch event.Type {
+		case journal.CommandApprovalRequestedEventType:
+			var payload journal.CommandApprovalRequestPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return err
+			}
+			requestID, timedOut = payload.InputRequestID, false
+		case journal.CommandExecutionDecidedEventType:
+			var payload journal.CommandExecutionDecisionPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return err
+			}
+			if payload.Decision == "blocked" && payload.Reason == commandApprovalWaitTimeoutReason {
+				timedOut = true
+			}
+		}
+		return nil
+	})
+	return requestID, timedOut, err
+}
+
+func commandApprovalWaiterGeneration(requestID, sessionKey string, generation int, identityKnown bool) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%t", requestID, sessionKey, generation, identityKnown)))
+	return hex.EncodeToString(digest[:])
+}
+
+func (lease *commandApprovalWaitLease) bindToRequest(requestID, sessionKey string, generation int, identityKnown bool) error {
+	if lease == nil || requestID == "" {
+		return nil
+	}
+	if lease.admittedSessionKey != sessionKey || lease.admittedSessionGeneration != generation || lease.admittedIdentityKnown != identityKnown {
+		return nil
+	}
+	if lease.admittedInputRequestID == requestID && lease.admittedAfterTimeout {
+		return nil
+	}
+	if strings.HasPrefix(filepath.Base(lease.path), "waiting-") {
+		return nil
+	}
+	name := strings.TrimPrefix(filepath.Base(lease.path), "waiter-")
+	bound := filepath.Join(filepath.Dir(lease.path), "waiting-"+commandApprovalWaiterGeneration(requestID, sessionKey, generation, identityKnown)+"-"+name)
+	if err := os.Rename(lease.path, bound); err != nil {
+		return err
+	}
+	lease.path = bound
+	return nil
+}
+
+func (lease *commandApprovalWaitLease) isBoundToRequest(requestID, sessionKey string, generation int, identityKnown bool) bool {
+	if lease == nil {
+		return false
+	}
+	return strings.HasPrefix(filepath.Base(lease.path), "waiting-"+commandApprovalWaiterGeneration(requestID, sessionKey, generation, identityKnown)+"-")
 }
 
 func (lease *commandApprovalWaitLease) release() {
@@ -1988,19 +2099,22 @@ func (lease *commandApprovalWaitLease) release() {
 	_ = lease.file.Close()
 }
 
-func (lease *commandApprovalWaitLease) hasOtherLiveWaiter() (bool, error) {
+func (lease *commandApprovalWaitLease) hasOtherLiveWaiter(requestID, sessionKey string, generation int, identityKnown bool) (bool, error) {
 	entries, err := os.ReadDir(filepath.Dir(lease.path))
 	if err != nil {
 		return false, err
 	}
+	matchingPrefix := "waiting-" + commandApprovalWaiterGeneration(requestID, sessionKey, generation, identityKnown) + "-"
+	matchingLivePeer := false
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "waiter-") {
+		if !strings.HasPrefix(entry.Name(), "waiter-") && !strings.HasPrefix(entry.Name(), "waiting-") {
 			continue
 		}
 		path := filepath.Join(filepath.Dir(lease.path), entry.Name())
 		if path == lease.path {
 			continue
 		}
+		beforeCommandApprovalWaiterOpenHookFn(path)
 		file, err := os.OpenFile(path, os.O_RDWR, 0)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -2011,7 +2125,8 @@ func (lease *commandApprovalWaitLease) hasOtherLiveWaiter() (bool, error) {
 		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			_ = file.Close()
-			return true, nil
+			matchingLivePeer = matchingLivePeer || strings.HasPrefix(entry.Name(), matchingPrefix)
+			continue
 		}
 		if err != nil {
 			_ = file.Close()
@@ -2021,7 +2136,7 @@ func (lease *commandApprovalWaitLease) hasOtherLiveWaiter() (bool, error) {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 	}
-	return false, nil
+	return matchingLivePeer, nil
 }
 
 // commandApprovalApprovedAfterWaitTimeout checks event order for exactly the
