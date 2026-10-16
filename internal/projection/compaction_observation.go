@@ -13,20 +13,28 @@ import (
 )
 
 // CompactionObservationNode is the replayed state of one node/pane. Epoch
-// advances only when an authoritative absence closes the active predecessor.
+// advances on each new observed occurrence and authoritative closure.
 type CompactionObservationNode struct {
-	NodeKey              string
-	PaneID               string
-	CanonicalLifecycle   string
-	OccurrenceEpoch      uint64
-	ActivePredecessorKey string
-	MarkerFingerprint    string
-	MarkerCount          int
+	NodeKey                string
+	PaneID                 string
+	CanonicalLifecycle     string
+	OccurrenceEpoch        uint64
+	LastObservationOrdinal uint64
+	LastObservationDigest  string
+	ActivePredecessorKey   string
+	MarkerFingerprint      string
+	MarkerCount            int
 }
 
 type CompactionObservationState struct {
 	Nodes map[string]CompactionObservationNode
 }
+
+const (
+	maxCompactionAliasTokenBytes = 256
+	maxCompactionAliasEntries    = 256
+	maxCompactionAliasBytes      = 16 * 1024
+)
 
 type compactionObservationReducer struct {
 	sessionKey string
@@ -55,9 +63,11 @@ func CompactionDeliveryKey(sessionKey string, generation int, nodeKey, paneID, l
 		len(markerFingerprint) != sha256.Size*2 || markerCount < 1 {
 		return "", fmt.Errorf("invalid compaction delivery identity")
 	}
-	if _, err := hex.DecodeString(markerFingerprint); err != nil {
+	fingerprintBytes, err := hex.DecodeString(markerFingerprint)
+	if err != nil {
 		return "", fmt.Errorf("invalid marker fingerprint: %w", err)
 	}
+	markerFingerprint = hex.EncodeToString(fingerprintBytes)
 	h := sha256.New()
 	for _, part := range []string{"compaction-delivery-v1", sessionKey, fmt.Sprint(generation), nodeKey, paneID, lifecycle, markerFingerprint, fmt.Sprint(markerCount), fmt.Sprint(epoch)} {
 		writeCompactionKeyPart(h, part)
@@ -134,9 +144,37 @@ func ReduceCompactionObservationEvents(sessionKey string, generation int, events
 	return CompactionObservationState{Nodes: r.nodes}, nil
 }
 
+func compactionObservationDigest(eventType string, payload journal.CompactionObservationPayload) string {
+	encoded, _ := json.Marshal(struct {
+		Type    string
+		Payload journal.CompactionObservationPayload
+	}{eventType, payload})
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+func (r *compactionObservationReducer) observeOrdinal(state CompactionObservationNode, ordinal uint64, digest string) (bool, error) {
+	if ordinal < state.LastObservationOrdinal {
+		return false, nil
+	}
+	if ordinal == state.LastObservationOrdinal {
+		if digest != state.LastObservationDigest {
+			return false, fmt.Errorf("conflicting compaction observation ordinal")
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
 func (r *compactionObservationReducer) resolve(id, token string) (string, error) {
+	if len(token) > maxCompactionAliasTokenBytes {
+		return "", fmt.Errorf("lifecycle token exceeds byte budget")
+	}
 	seen := make(map[string]bool)
 	for next := r.aliases[id][token]; next != ""; next = r.aliases[id][token] {
+		if len(seen) >= maxCompactionAliasEntries {
+			return "", fmt.Errorf("lifecycle alias resolution budget exceeded")
+		}
 		if seen[token] || next == token {
 			return "", fmt.Errorf("cyclic lifecycle alias")
 		}
@@ -148,6 +186,9 @@ func (r *compactionObservationReducer) resolve(id, token string) (string, error)
 
 func (r *compactionObservationReducer) alias(id string, payload journal.CompactionObservationPayload) error {
 	from, to := payload.LifecycleToken, payload.CanonicalToken
+	if len(from) > maxCompactionAliasTokenBytes || len(to) > maxCompactionAliasTokenBytes {
+		return fmt.Errorf("lifecycle alias token exceeds byte budget")
+	}
 	if from == "" || to == "" || from == to {
 		return fmt.Errorf("invalid lifecycle alias")
 	}
@@ -156,6 +197,18 @@ func (r *compactionObservationReducer) alias(id string, payload journal.Compacti
 	}
 	if prior := r.aliases[id][from]; prior != "" && prior != to {
 		return fmt.Errorf("conflicting lifecycle alias")
+	}
+	if r.aliases[id][from] == "" {
+		if len(r.aliases[id]) >= maxCompactionAliasEntries {
+			return fmt.Errorf("lifecycle alias entry budget exceeded")
+		}
+		bytes := len(from) + len(to)
+		for existingFrom, existingTo := range r.aliases[id] {
+			bytes += len(existingFrom) + len(existingTo)
+		}
+		if bytes > maxCompactionAliasBytes {
+			return fmt.Errorf("lifecycle alias byte budget exceeded")
+		}
 	}
 	resolved, err := r.resolve(id, to)
 	if err != nil {
@@ -172,26 +225,44 @@ func (r *compactionObservationReducer) alias(id string, payload journal.Compacti
 }
 
 func (r *compactionObservationReducer) present(id string, payload journal.CompactionObservationPayload) error {
-	// Version 1 never treats an unsuccessful capture or an absent pane as
-	// positive observation evidence, regardless of marker fields.
-	if !payload.CaptureSucceeded || !payload.PanePresent || payload.LifecycleToken == "" || payload.MarkerCount < 1 {
+	// A producer ordinal orders captures independently of journal append order.
+	if !payload.CaptureSucceeded || !payload.PanePresent || payload.LifecycleToken == "" || payload.MarkerCount < 1 || payload.ObservationOrdinal == 0 {
 		return fmt.Errorf("invalid compaction presence")
 	}
 	canonical, err := r.resolve(id, payload.LifecycleToken)
 	if err != nil {
 		return err
 	}
+	fingerprintBytes, err := hex.DecodeString(payload.MarkerFingerprint)
+	if err != nil || len(fingerprintBytes) != sha256.Size {
+		return fmt.Errorf("invalid marker fingerprint")
+	}
+	payload.MarkerFingerprint = hex.EncodeToString(fingerprintBytes)
 	state := r.nodes[id]
-	if state.CanonicalLifecycle != canonical {
-		state = CompactionObservationNode{NodeKey: payload.NodeKey, PaneID: payload.PaneID, CanonicalLifecycle: canonical}
+	digest := compactionObservationDigest(journal.CompactionObservationPresentEventType, payload)
+	newer, err := r.observeOrdinal(state, payload.ObservationOrdinal, digest)
+	if err != nil || !newer {
+		return err
+	}
+	if state.NodeKey == "" {
+		state.NodeKey, state.PaneID = payload.NodeKey, payload.PaneID
+	}
+	if state.ActivePredecessorKey != "" && (state.CanonicalLifecycle != canonical || state.MarkerFingerprint != payload.MarkerFingerprint || state.MarkerCount != payload.MarkerCount) {
+		if state.OccurrenceEpoch == ^uint64(0) {
+			return fmt.Errorf("compaction occurrence epoch exhausted")
+		}
+		state.OccurrenceEpoch++
 	}
 	key, err := CompactionDeliveryKey(r.sessionKey, r.generation, payload.NodeKey, payload.PaneID, canonical, payload.MarkerFingerprint, payload.MarkerCount, state.OccurrenceEpoch)
 	if err != nil {
 		return err
 	}
+	state.CanonicalLifecycle = canonical
 	state.ActivePredecessorKey = key
 	state.MarkerFingerprint = payload.MarkerFingerprint
 	state.MarkerCount = payload.MarkerCount
+	state.LastObservationOrdinal = payload.ObservationOrdinal
+	state.LastObservationDigest = digest
 	r.nodes[id] = state
 	return nil
 }
@@ -202,7 +273,7 @@ func (r *compactionObservationReducer) absent(id string, payload journal.Compact
 	if !payload.CaptureSucceeded || !payload.FullHistory || !payload.PanePresent {
 		return nil
 	}
-	if payload.LifecycleToken == "" || payload.PredecessorKey == "" {
+	if payload.LifecycleToken == "" || payload.PredecessorKey == "" || payload.ObservationOrdinal == 0 {
 		return fmt.Errorf("invalid authoritative compaction absence")
 	}
 	canonical, err := r.resolve(id, payload.LifecycleToken)
@@ -210,13 +281,25 @@ func (r *compactionObservationReducer) absent(id string, payload journal.Compact
 		return err
 	}
 	state := r.nodes[id]
-	if state.CanonicalLifecycle != canonical || state.ActivePredecessorKey != payload.PredecessorKey || state.OccurrenceEpoch != payload.ExpectedEpoch {
-		return nil
+	digest := compactionObservationDigest(journal.CompactionObservationAbsentEventType, payload)
+	newer, err := r.observeOrdinal(state, payload.ObservationOrdinal, digest)
+	if err != nil || !newer {
+		return err
 	}
-	state.OccurrenceEpoch++
-	state.ActivePredecessorKey = ""
-	state.MarkerFingerprint = ""
-	state.MarkerCount = 0
+	if state.NodeKey == "" {
+		state.NodeKey, state.PaneID = payload.NodeKey, payload.PaneID
+	}
+	state.LastObservationOrdinal = payload.ObservationOrdinal
+	state.LastObservationDigest = digest
+	if state.CanonicalLifecycle == canonical && state.ActivePredecessorKey == payload.PredecessorKey && state.OccurrenceEpoch == payload.ExpectedEpoch {
+		if state.OccurrenceEpoch == ^uint64(0) {
+			return fmt.Errorf("compaction occurrence epoch exhausted")
+		}
+		state.OccurrenceEpoch++
+		state.ActivePredecessorKey = ""
+		state.MarkerFingerprint = ""
+		state.MarkerCount = 0
+	}
 	r.nodes[id] = state
 	return nil
 }

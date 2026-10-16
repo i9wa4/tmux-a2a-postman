@@ -7,17 +7,18 @@ import (
 
 func TestCompactionObservationPayloadRoundTrip(t *testing.T) {
 	payload := CompactionObservationPayload{
-		Version:          CompactionObservationVersion,
-		NodeKey:          "review:worker",
-		PaneID:           "%17",
-		LifecycleToken:   "pid:100",
-		CanonicalToken:   "endpoint:%17",
-		ObservedPID:      "100",
-		PredecessorKey:   "compaction:v1:abc",
-		ExpectedEpoch:    2,
-		CaptureSucceeded: true,
-		FullHistory:      true,
-		PanePresent:      true,
+		Version:            CompactionObservationVersion,
+		NodeKey:            "review:worker",
+		PaneID:             "%17",
+		LifecycleToken:     "pid:100",
+		CanonicalToken:     "endpoint:%17",
+		ObservedPID:        "100",
+		PredecessorKey:     "compaction:v1:abc",
+		ExpectedEpoch:      2,
+		ObservationOrdinal: 17,
+		CaptureSucceeded:   true,
+		FullHistory:        true,
+		PanePresent:        true,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
