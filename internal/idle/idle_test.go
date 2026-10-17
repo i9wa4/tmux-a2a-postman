@@ -2734,6 +2734,96 @@ func TestCheckPaneCapture_CompactionTriggerRepeatsAfterSamePaneProcessGeneration
 	}
 }
 
+func TestCheckPaneCaptureIdleContinuityTransitions(t *testing.T) {
+	scriptDir := t.TempDir()
+	scriptPath := filepath.Join(scriptDir, "tmux")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = 'list-panes' ]; then printf '%s\\n' '%11\tcodex'; exit 0; fi\n" +
+		"if [ \"$1\" = 'display-message' ]; then printf '%s\\n' '100'; exit 0; fi\n" +
+		"exit 1\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", scriptDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	now := time.Date(2026, time.October, 13, 0, 0, 0, 0, time.UTC)
+	tracker := newIdleTrackerWithClock(func() time.Time { return now })
+	content := "first screen"
+	failCapture := false
+	tracker.captureContent = func(string) (string, error) {
+		if failCapture {
+			return "", errors.New("capture failed")
+		}
+		return content, nil
+	}
+	cfg := &config.Config{ActivityWindowSeconds: 120, NodeActiveSeconds: 300, NodeStaleSeconds: 10}
+	sessionDir := filepath.Join(t.TempDir(), "review")
+	if err := config.CreateSessionDirs(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]discovery.NodeInfo{
+		"review:worker": {PaneID: "%11", SessionName: "review", SessionDir: sessionDir},
+	}
+	check := func(step string, wantKnown bool, wantChangeAt time.Time) {
+		t.Helper()
+		tracker.checkPaneCapture(cfg, nodes)
+		state := tracker.paneCaptureState["%11"]
+		if state.IdleContinuityKnown != wantKnown || !state.LastChangeAt.Equal(wantChangeAt) {
+			t.Fatalf("%s: continuity=%v change=%v, want continuity=%v change=%v", step, state.IdleContinuityKnown, state.LastChangeAt, wantKnown, wantChangeAt)
+		}
+	}
+
+	check("known baseline", true, now)
+	initialChange := now
+	failCapture = true
+	now = now.Add(time.Second)
+	check("failed capture", false, initialChange)
+	failCapture = false
+	now = now.Add(time.Second)
+	check("unchanged recovery", false, initialChange)
+	content = "second screen"
+	now = now.Add(time.Second)
+	check("known content change restores continuity", true, now)
+	secondChange := now
+	now = now.Add(-time.Second)
+	check("reversed timestamp", false, secondChange)
+	content = "third screen"
+	now = secondChange.Add(time.Second)
+	check("content change after reversal restores continuity", true, now)
+	capture := tracker.captureContent
+	type captureSample struct {
+		after     time.Duration
+		wantKnown bool
+	}
+	for _, tc := range []struct {
+		name    string
+		samples []captureSample
+	}{
+		{
+			name:    "exact stale horizon",
+			samples: []captureSample{{10 * time.Second, true}},
+		},
+		{
+			name:    "one nanosecond beyond stale horizon",
+			samples: []captureSample{{10*time.Second + time.Nanosecond, false}},
+		},
+		{
+			name:    "old content with recent successful capture",
+			samples: []captureSample{{10 * time.Second, true}, {10*time.Second + time.Nanosecond, true}},
+		},
+	} {
+		now = time.Date(2026, time.October, 14, 0, 0, 0, 0, time.UTC)
+		tracker = newIdleTrackerWithClock(func() time.Time { return now })
+		tracker.captureContent = capture
+		baseline := now
+		check(tc.name+" baseline", true, baseline)
+		for _, sample := range tc.samples {
+			now = baseline.Add(sample.after)
+			check(tc.name, sample.wantKnown, baseline)
+		}
+	}
+}
+
 func TestCheckPaneCaptureProcessGenerationAfterCaptureGap(t *testing.T) {
 	scriptDir := t.TempDir()
 	pidPath := filepath.Join(scriptDir, "pane-pid")

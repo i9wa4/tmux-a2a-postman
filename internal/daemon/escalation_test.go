@@ -281,7 +281,37 @@ func TestRuntimePaneActivityContinuityProjection(t *testing.T) {
 	if stale.Freshness != "stale" || stale.IdleContinuityKnown || stale.IdleAgeSeconds != nil {
 		t.Fatalf("stale capture = %#v", stale)
 	}
+	for _, tc := range []struct {
+		name       string
+		at         time.Time
+		horizon    time.Duration
+		inputKnown bool
+		freshness  string
+		known      bool
+		idleAge    *int
+	}{
+		{name: "fresh known", at: now, horizon: 10 * time.Second, inputKnown: true, freshness: "fresh", known: true, idleAge: intPointerForEscalation(20)},
+		{name: "fresh unknown", at: now, horizon: 10 * time.Second, freshness: "fresh"},
+		{name: "stale", at: now.Add(6 * time.Second), horizon: 10 * time.Second, inputKnown: true, freshness: "stale"},
+		{name: "zero horizon", at: now, inputKnown: true, freshness: "unknown"},
+		{name: "negative horizon", at: now, horizon: -time.Second, inputKnown: true, freshness: "unknown"},
+		{name: "equal horizon", at: now.Add(5 * time.Second), horizon: 10 * time.Second, inputKnown: true, freshness: "fresh", known: true, idleAge: intPointerForEscalation(25)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pane.IdleContinuityKnown = tc.inputKnown
+			attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, tc.at, tc.horizon)
+			got := snapshot.Nodes[0].ScreenProgress
+			if got == nil || got.Source != "pane_capture" || got.Freshness != tc.freshness || got.IdleContinuityKnown != tc.known || (got.IdleAgeSeconds == nil) != (tc.idleAge == nil) {
+				t.Fatalf("daemon projection = %#v, want freshness=%q continuity=%v idle age=%v", got, tc.freshness, tc.known, tc.idleAge)
+			}
+			if got.IdleAgeSeconds != nil && *got.IdleAgeSeconds != *tc.idleAge {
+				t.Fatalf("daemon idle age = %d, want %d", *got.IdleAgeSeconds, *tc.idleAge)
+			}
+		})
+	}
 }
+
+func intPointerForEscalation(value int) *int { return &value }
 
 func TestMaybePushEscalationSendsPaneNotificationOncePerTripSet(t *testing.T) {
 	tmpDir := t.TempDir()

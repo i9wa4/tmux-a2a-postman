@@ -356,7 +356,35 @@ func TestPaneActivityContinuityProjection(t *testing.T) {
 	if stale.Freshness != "stale" || stale.IdleContinuityKnown || stale.IdleAgeSeconds != nil {
 		t.Fatalf("stale capture = %#v", stale)
 	}
+	for _, tc := range []struct {
+		name      string
+		paneID    string
+		at        time.Time
+		horizon   time.Duration
+		freshness string
+		known     bool
+		idleAge   *int
+	}{
+		{name: "fresh known", paneID: "%11", at: now, horizon: 10 * time.Second, freshness: "fresh", known: true, idleAge: intPointerForProjection(20)},
+		{name: "fresh unknown", paneID: "%12", at: now, horizon: 10 * time.Second, freshness: "fresh"},
+		{name: "stale", paneID: "%11", at: now.Add(6 * time.Second), horizon: 10 * time.Second, freshness: "stale"},
+		{name: "zero horizon", paneID: "%11", at: now, freshness: "unknown"},
+		{name: "negative horizon", paneID: "%11", at: now, horizon: -time.Second, freshness: "unknown"},
+		{name: "equal horizon", paneID: "%11", at: now.Add(5 * time.Second), horizon: 10 * time.Second, freshness: "fresh", known: true, idleAge: intPointerForProjection(25)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := status.ObserveScreenProgress(evidence[tc.paneID].ScreenProgress, tc.at, tc.horizon)
+			if got.Source != "pane_capture" || got.Freshness != tc.freshness || got.IdleContinuityKnown != tc.known || (got.IdleAgeSeconds == nil) != (tc.idleAge == nil) {
+				t.Fatalf("CLI projection = %#v, want freshness=%q continuity=%v idle age=%v", got, tc.freshness, tc.known, tc.idleAge)
+			}
+			if got.IdleAgeSeconds != nil && *got.IdleAgeSeconds != *tc.idleAge {
+				t.Fatalf("CLI idle age = %d, want %d", *got.IdleAgeSeconds, *tc.idleAge)
+			}
+		})
+	}
 }
+
+func intPointerForProjection(value int) *int { return &value }
 
 func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
 	fixture := writeSessionStatusProjectionFixture(
