@@ -303,6 +303,19 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 	if worker.ScreenFingerprint != "00000011" {
 		t.Fatalf("worker screen_fingerprint = %q, want 00000011", worker.ScreenFingerprint)
 	}
+	if worker.Source != "pane_capture" || worker.ObservedAt != worker.LastCaptureAt || worker.IdleAgeSeconds != nil || worker.IdleContinuityKnown {
+		t.Fatalf("worker observation fields = %#v, want pane capture source and unknown idle continuity", worker)
+	}
+	fixture.cfg.NodeStaleSeconds = 0
+	withoutHorizon, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() without stale horizon error = %v", err)
+	}
+	for _, node := range withoutHorizon.Nodes {
+		if node.Name == "worker" && node.ScreenProgress.Freshness != "unknown" {
+			t.Fatalf("worker freshness without stale horizon = %q, want unknown", node.ScreenProgress.Freshness)
+		}
+	}
 
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
@@ -322,6 +335,56 @@ func TestSessionStatusExposesChangedAndUnchangedScreenProgressEvidence(t *testin
 		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
 	}
 }
+
+func TestPaneActivityContinuityProjection(t *testing.T) {
+	now := time.Date(2026, time.October, 13, 0, 0, 30, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "pane-activity.json")
+	content := `{"%11":{"status":"idle","lastChangeAt":"2026-10-13T00:00:10Z","lastCaptureAt":"2026-10-13T00:00:25Z","screenFingerprint":"00000011","idleContinuityKnown":true},"%12":{"status":"idle","lastChangeAt":"2026-10-13T00:00:10Z","lastCaptureAt":"2026-10-13T00:00:25Z","screenFingerprint":"00000011"}}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evidence := loadPaneActivityEvidence(path)
+	known := status.ObserveScreenProgress(evidence["%11"].ScreenProgress, now, 10*time.Second)
+	if known.Freshness != "fresh" || !known.IdleContinuityKnown || known.IdleAgeSeconds == nil || *known.IdleAgeSeconds != 20 {
+		t.Fatalf("known continuity = %#v", known)
+	}
+	unknown := status.ObserveScreenProgress(evidence["%12"].ScreenProgress, now, 10*time.Second)
+	if unknown.Freshness != "fresh" || unknown.IdleContinuityKnown || unknown.IdleAgeSeconds != nil {
+		t.Fatalf("unknown continuity = %#v", unknown)
+	}
+	stale := status.ObserveScreenProgress(evidence["%11"].ScreenProgress, now.Add(6*time.Second), 10*time.Second)
+	if stale.Freshness != "stale" || stale.IdleContinuityKnown || stale.IdleAgeSeconds != nil {
+		t.Fatalf("stale capture = %#v", stale)
+	}
+	for _, tc := range []struct {
+		name      string
+		paneID    string
+		at        time.Time
+		horizon   time.Duration
+		freshness string
+		known     bool
+		idleAge   *int
+	}{
+		{name: "fresh known", paneID: "%11", at: now, horizon: 10 * time.Second, freshness: "fresh", known: true, idleAge: intPointerForProjection(20)},
+		{name: "fresh unknown", paneID: "%12", at: now, horizon: 10 * time.Second, freshness: "fresh"},
+		{name: "stale", paneID: "%11", at: now.Add(6 * time.Second), horizon: 10 * time.Second, freshness: "stale"},
+		{name: "zero horizon", paneID: "%11", at: now, freshness: "unknown"},
+		{name: "negative horizon", paneID: "%11", at: now, horizon: -time.Second, freshness: "unknown"},
+		{name: "equal horizon", paneID: "%11", at: now.Add(5 * time.Second), horizon: 10 * time.Second, freshness: "fresh", known: true, idleAge: intPointerForProjection(25)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := status.ObserveScreenProgress(evidence[tc.paneID].ScreenProgress, tc.at, tc.horizon)
+			if got.Source != "pane_capture" || got.Freshness != tc.freshness || got.IdleContinuityKnown != tc.known || (got.IdleAgeSeconds == nil) != (tc.idleAge == nil) {
+				t.Fatalf("CLI projection = %#v, want freshness=%q continuity=%v idle age=%v", got, tc.freshness, tc.known, tc.idleAge)
+			}
+			if got.IdleAgeSeconds != nil && *got.IdleAgeSeconds != *tc.idleAge {
+				t.Fatalf("CLI idle age = %d, want %d", *got.IdleAgeSeconds, *tc.idleAge)
+			}
+		})
+	}
+}
+
+func intPointerForProjection(value int) *int { return &value }
 
 func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T) {
 	fixture := writeSessionStatusProjectionFixture(
@@ -356,6 +419,9 @@ func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	if worker.LastCaptureAt != "" || worker.LastScreenChangeAt != "" || worker.ScreenFingerprint != "" {
 		t.Fatalf("worker missing evidence should not include progress details: %#v", worker)
 	}
+	if worker.Source != "unknown" || worker.Freshness != "unknown" || worker.IdleAgeSeconds != nil || worker.Conflict {
+		t.Fatalf("worker missing observation fields = %#v, want unknown without idle age or conflict", worker)
+	}
 
 	critic := nodeByName["critic"].ScreenProgress
 	if critic == nil {
@@ -373,6 +439,28 @@ func TestSessionStatusExposesMissingAndStaleScreenProgressEvidence(t *testing.T)
 	}
 	if critic.ScreenFingerprint != "00000012" {
 		t.Fatalf("critic screen_fingerprint = %q, want 00000012", critic.ScreenFingerprint)
+	}
+	if critic.Freshness != "stale" || critic.Source != "pane_capture" {
+		t.Fatalf("critic observation = %#v, want stale pane capture", critic)
+	}
+
+	fixture.cfg.NodeStaleSeconds = 0
+	writeSessionStatusPaneActivity(t, fixture, `{
+  "%11": "active",
+  "%12": {"status":"stale","lastChangeAt":"2026-04-14T00:02:00Z","lastCaptureAt":"2026-04-14T00:02:05Z"}
+}`)
+	withoutFingerprint, err := collectLiveSessionStatus(fixture.baseDir, fixture.contextID, fixture.sessionName, fixture.cfg)
+	if err != nil {
+		t.Fatalf("collectLiveSessionStatus() without fingerprint error = %v", err)
+	}
+	for _, node := range withoutFingerprint.Nodes {
+		if node.Name != "critic" {
+			continue
+		}
+		progress := node.ScreenProgress
+		if progress.EvidenceState != "stale" || progress.Freshness != "stale" || progress.Source != "pane_capture" || progress.ObservedAt != "2026-04-14T00:02:05Z" || progress.IdleAgeSeconds != nil || progress.Conflict {
+			t.Fatalf("critic observation without fingerprint = %#v, want stale CLI/daemon parity fields", progress)
+		}
 	}
 }
 
