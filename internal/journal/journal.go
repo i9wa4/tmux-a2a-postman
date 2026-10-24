@@ -291,6 +291,21 @@ func OpenCurrentWriter(sessionDir string) (*Writer, error) {
 	}, nil
 }
 
+// ReadCurrentSessionState reads the current session without creating one.
+// Mailbox claims call this inside the roots gate and recipient fence so a
+// missing or malformed state cannot silently select a new generation.
+func ReadCurrentSessionState(sessionDir string) (SessionState, error) {
+	var session SessionState
+	if err := readJSONFile(sessionStatePath(sessionDir), &session); err != nil {
+		return SessionState{}, fmt.Errorf("reading current session state: %w", err)
+	}
+	if session.SchemaVersion != schemaVersion || session.SessionKey == "" ||
+		session.TmuxSessionName == "" || session.Generation < 1 {
+		return SessionState{}, fmt.Errorf("session state is invalid")
+	}
+	return session, nil
+}
+
 func ResolveSession(sessionDir, tmuxSessionName string, mode ResolutionMode, now time.Time) (SessionState, ResolutionResult, error) {
 	if err := ensureOwnerOnlyDir(journalDir(sessionDir)); err != nil {
 		return SessionState{}, "", fmt.Errorf("ensuring journal dir: %w", err)
