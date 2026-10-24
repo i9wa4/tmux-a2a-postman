@@ -244,7 +244,11 @@ func TestRuntimeEscalationSnapshotStaleDurationThresholdBoundaries(t *testing.T)
 					Status:        "stale",
 					LastCaptureAt: now.Add(-tc.age),
 				},
-			}, now)
+			}, now, 0)
+			progress := snapshot.Nodes[0].ScreenProgress
+			if progress.EvidenceState != "stale" || progress.Freshness != "stale" || progress.Source != "pane_capture" || progress.ObservedAt != now.Add(-tc.age).Format(time.RFC3339Nano) || progress.IdleAgeSeconds != nil || progress.Conflict {
+				t.Fatalf("daemon observation without fingerprint = %#v, want stale CLI/daemon parity fields", progress)
+			}
 			trips := evaluateEscalationTrips(snapshot, cfg, now)
 			if gotHit := len(trips) == 1; gotHit != tc.wantHit {
 				t.Fatalf("stale trip hit = %v, want %v; trips=%#v", gotHit, tc.wantHit, trips)
@@ -255,6 +259,59 @@ func TestRuntimeEscalationSnapshotStaleDurationThresholdBoundaries(t *testing.T)
 		})
 	}
 }
+
+func TestRuntimePaneActivityContinuityProjection(t *testing.T) {
+	now := time.Date(2026, time.October, 13, 0, 0, 30, 0, time.UTC)
+	snapshot := status.SessionStatus{Nodes: []status.NodeStatus{{Name: "worker", PaneID: "%11"}}}
+	pane := idle.PaneActivityExport{Status: "idle", LastChangeAt: now.Add(-20 * time.Second), LastCaptureAt: now.Add(-5 * time.Second), ScreenFingerprint: "00000011", IdleContinuityKnown: true}
+	attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, now, 10*time.Second)
+	known := snapshot.Nodes[0].ScreenProgress
+	if known.Freshness != "fresh" || !known.IdleContinuityKnown || known.IdleAgeSeconds == nil || *known.IdleAgeSeconds != 20 {
+		t.Fatalf("known continuity = %#v", known)
+	}
+	pane.IdleContinuityKnown = false
+	attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, now, 10*time.Second)
+	unknown := snapshot.Nodes[0].ScreenProgress
+	if unknown.Freshness != "fresh" || unknown.IdleContinuityKnown || unknown.IdleAgeSeconds != nil {
+		t.Fatalf("unknown continuity = %#v", unknown)
+	}
+	pane.IdleContinuityKnown = true
+	attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, now.Add(6*time.Second), 10*time.Second)
+	stale := snapshot.Nodes[0].ScreenProgress
+	if stale.Freshness != "stale" || stale.IdleContinuityKnown || stale.IdleAgeSeconds != nil {
+		t.Fatalf("stale capture = %#v", stale)
+	}
+	for _, tc := range []struct {
+		name       string
+		at         time.Time
+		horizon    time.Duration
+		inputKnown bool
+		freshness  string
+		known      bool
+		idleAge    *int
+	}{
+		{name: "fresh known", at: now, horizon: 10 * time.Second, inputKnown: true, freshness: "fresh", known: true, idleAge: intPointerForEscalation(20)},
+		{name: "fresh unknown", at: now, horizon: 10 * time.Second, freshness: "fresh"},
+		{name: "stale", at: now.Add(6 * time.Second), horizon: 10 * time.Second, inputKnown: true, freshness: "stale"},
+		{name: "zero horizon", at: now, inputKnown: true, freshness: "unknown"},
+		{name: "negative horizon", at: now, horizon: -time.Second, inputKnown: true, freshness: "unknown"},
+		{name: "equal horizon", at: now.Add(5 * time.Second), horizon: 10 * time.Second, inputKnown: true, freshness: "fresh", known: true, idleAge: intPointerForEscalation(25)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pane.IdleContinuityKnown = tc.inputKnown
+			attachRuntimePaneActivity(&snapshot, map[string]idle.PaneActivityExport{"%11": pane}, tc.at, tc.horizon)
+			got := snapshot.Nodes[0].ScreenProgress
+			if got == nil || got.Source != "pane_capture" || got.Freshness != tc.freshness || got.IdleContinuityKnown != tc.known || (got.IdleAgeSeconds == nil) != (tc.idleAge == nil) {
+				t.Fatalf("daemon projection = %#v, want freshness=%q continuity=%v idle age=%v", got, tc.freshness, tc.known, tc.idleAge)
+			}
+			if got.IdleAgeSeconds != nil && *got.IdleAgeSeconds != *tc.idleAge {
+				t.Fatalf("daemon idle age = %d, want %d", *got.IdleAgeSeconds, *tc.idleAge)
+			}
+		})
+	}
+}
+
+func intPointerForEscalation(value int) *int { return &value }
 
 func TestMaybePushEscalationSendsPaneNotificationOncePerTripSet(t *testing.T) {
 	tmpDir := t.TempDir()

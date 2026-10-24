@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/inputarbiter"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
@@ -35,6 +37,9 @@ func deliverCommandApprovalRequest(cfg *config.Config, baseDir, contextID, reque
 	if err != nil {
 		log.Printf("postman: WARNING: command approval delivery: discovering nodes: %v\n", err)
 		return fmt.Errorf("command approval delivery failed: discovering nodes: %w", err)
+	}
+	if err := inputarbiter.WithholdConfiguredPane(context.Background(), cfg, nodes); err != nil {
+		log.Printf("postman: human pane binding during command approval delivery: %v", err)
 	}
 	resolvedApproverNode := discovery.ResolveNodeName(commandApproverNode, requesterSessionName, nodes)
 	reviewerInfo, ok := nodes[resolvedApproverNode]

@@ -234,6 +234,7 @@
             inherit version;
             src = ./.;
             vendorHash = "sha256-/G6E+StNyCnZeb1ZgdiyK6D8pDLX+2YTlJrCEv74lbQ=";
+            nativeCheckInputs = [ pkgs.tmux ];
             ldflags = [
               "-s"
               "-w"
@@ -315,7 +316,6 @@
               # === Secrets detection ===
               gitleaks = {
                 enable = true;
-                entry = "${pkgs.gitleaks}/bin/gitleaks protect --verbose --redact --staged";
                 pass_filenames = false;
               };
 
