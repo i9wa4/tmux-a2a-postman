@@ -49,6 +49,12 @@ type ScreenProgressEvidence struct {
 	LastScreenChangeAt   string `json:"last_screen_change_at,omitempty"`
 	StaleDurationSeconds int    `json:"stale_duration_seconds,omitempty"`
 	ScreenFingerprint    string `json:"screen_fingerprint,omitempty"`
+	Source               string `json:"source"`
+	ObservedAt           string `json:"observed_at,omitempty"`
+	Freshness            string `json:"freshness"`
+	IdleAgeSeconds       *int   `json:"idle_age_seconds,omitempty"`
+	IdleContinuityKnown  bool   `json:"idle_continuity_known,omitempty"`
+	Conflict             bool   `json:"conflict"`
 }
 
 type StatusItem struct {
