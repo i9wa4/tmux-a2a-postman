@@ -21,6 +21,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/inputarbiter"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 	"github.com/i9wa4/tmux-a2a-postman/internal/msgtrace"
@@ -1701,6 +1702,10 @@ func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool 
 
 	contextDir := filepath.Dir(rt.sessionDir)
 	candidateNodes := runtimeActivationNodeNames(rt.cfg)
+	if binding := rt.cfg.HumanPaneBinding; binding != nil && binding.Enabled && inputarbiter.ConfiguredNodeKey(rt.cfg) == "" {
+		return false
+	}
+	excludedNodeKey := inputarbiter.ConfiguredNodeKey(rt.cfg)
 	activated := false
 	for _, targetSession := range allSessions {
 		if targetSession == "" || targetSession == rt.selfSession {
@@ -1713,7 +1718,7 @@ func (rt *daemonRuntime) activateNewSessionsFromScan(allSessions []string) bool 
 			continue
 		}
 
-		preClaimed := preclaimRuntimeSessionCandidatePanes(targetSession, rt.contextID, candidateNodes)
+		preClaimed := preclaimRuntimeSessionCandidatePanes(targetSession, rt.contextID, candidateNodes, excludedNodeKey)
 		if preClaimed == 0 {
 			continue
 		}
@@ -1757,7 +1762,7 @@ func filterNodesByRuntimeCandidates(nodes map[string]discovery.NodeInfo, candida
 	}
 }
 
-func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool) int {
+func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool, excludedNodeKey string) int {
 	out, err := exec.Command("tmux", "list-panes", "-s", "-t", sessionName, "-F", "#{pane_id} #{pane_title}").Output()
 	if err != nil {
 		log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", sessionName, err)
@@ -1773,6 +1778,9 @@ func preclaimRuntimeSessionCandidatePanes(sessionName, contextID string, candida
 		}
 		nodeName := parts[1]
 		nodeKey := sessionName + ":" + nodeName
+		if nodeKey == excludedNodeKey {
+			continue
+		}
 		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
 			continue
 		}
@@ -1874,6 +1882,9 @@ func (rt *daemonRuntime) discoverNodes() (map[string]discovery.NodeInfo, []disco
 		}
 	}
 	filterNodesByRuntimeConfig(freshNodes, rt.cfg)
+	if err := inputarbiter.WithholdConfiguredPane(context.Background(), rt.cfg, freshNodes); err != nil {
+		log.Printf("postman: human pane binding during daemon discovery: %v", err)
+	}
 	if rt.herdrRuntime != nil {
 		claimedPanes := make([]string, 0)
 		prepare := func(publication *herdrruntime.FinalPublication) error {
