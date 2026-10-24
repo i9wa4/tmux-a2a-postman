@@ -30,3 +30,31 @@ func TestIsExemptSender_TruthTable(t *testing.T) {
 		})
 	}
 }
+
+// TestIsExemptInSession_TruthTable (#624/#700 F-700-R2-2): the exemption is
+// bound to the daemon's own session. A same-bare-named node in a peer session,
+// or any node when the own session is unknown, is not exempt.
+func TestIsExemptInSession_TruthTable(t *testing.T) {
+	tests := []struct {
+		name          string
+		sender        string
+		interfaceNode string
+		senderSession string
+		ownSession    string
+		want          bool
+	}{
+		{name: "own session interface node", sender: "human", interfaceNode: "human", senderSession: "own", ownSession: "own", want: true},
+		{name: "peer session same bare name", sender: "human", interfaceNode: "human", senderSession: "peer", ownSession: "own", want: false},
+		{name: "own session other node", sender: "worker", interfaceNode: "human", senderSession: "own", ownSession: "own", want: false},
+		{name: "unknown own session fails closed", sender: "human", interfaceNode: "human", senderSession: "own", ownSession: "", want: false},
+		{name: "unknown own session and empty sender session", sender: "human", interfaceNode: "human", senderSession: "", ownSession: "", want: false},
+		{name: "no interface node configured", sender: "human", interfaceNode: "", senderSession: "own", ownSession: "own", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsExemptInSession(tt.sender, tt.interfaceNode, tt.senderSession, tt.ownSession); got != tt.want {
+				t.Fatalf("IsExemptInSession(%q, %q, %q, %q) = %v, want %v", tt.sender, tt.interfaceNode, tt.senderSession, tt.ownSession, got, tt.want)
+			}
+		})
+	}
+}

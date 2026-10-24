@@ -26,6 +26,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
 	"github.com/i9wa4/tmux-a2a-postman/internal/herdrruntime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/idle"
+	"github.com/i9wa4/tmux-a2a-postman/internal/inputarbiter"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
@@ -351,6 +352,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 
 	baseDir := config.ResolveBaseDir(cfg.BaseDir)
 	contextDir := filepath.Join(baseDir, contextID)
+	if err := inputarbiter.WithholdConfiguredPane(context.Background(), cfg, nil); err != nil {
+		return fmt.Errorf("human pane binding preflight: %w", err)
+	}
 
 	// Setup log output (Issue #36: always log to file)
 	logPath := logFilePath
@@ -387,6 +391,13 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		}
 	}
 	sessionDir := filepath.Join(contextDir, sessionName)
+	// #624/#700: the daemon's own workspace_tree entry may omit interface_node,
+	// but if it sets one it must equal [postman] interface_node. The own session
+	// is only known here, so this is the load-time check for that rule; a
+	// mismatch is a start error rather than a silently denied edge.
+	if err := config.ValidateOwnInterfaceDeclaration(cfg, sessionName); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
 
 	startPreflight := planStartPreflight(startPreflightInput{
 		BaseDir:         baseDir,
@@ -520,6 +531,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 	startupCollisions = append(startupCollisions, herdrStartupCollisions...)
 	activationNodes := activationNodeNames(cfg)
 	nodes = filterDiscoveredActivationNodes(nodes, activationNodes)
+	if err := inputarbiter.WithholdConfiguredPane(ctx, cfg, nodes); err != nil {
+		return fmt.Errorf("human pane binding at startup: %w", err)
+	}
 	var sharedNodes atomic.Pointer[map[string]discovery.NodeInfo]
 	prepareStartupNodes := func(publication *herdrruntime.FinalPublication) error {
 		if err := publication.SetSessionEnabledMarker(ctx, contextID, sessionName, true); err != nil {
@@ -571,6 +585,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 		activationNodesLocal := activationNodeNames(cfg)
 		logDiscoveredCollisions(freshCollisions, activationNodesLocal)
 		fresh = filterDiscoveredActivationNodes(fresh, activationNodesLocal)
+		if err := inputarbiter.WithholdConfiguredPane(ctx, cfg, fresh); err != nil {
+			log.Printf("postman: human pane binding during startup re-discovery: %v", err)
+		}
 		outcome, publishErr := publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, fresh, &sharedNodes)
 		switch {
 		case publishErr != nil:
@@ -790,6 +807,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 						if discErr == nil {
 							logDiscoveredCollisions(freshCollisions, activationNodesFilter)
 							freshNodes = filterDiscoveredActivationNodes(freshDiscovered, activationNodesFilter)
+							if err := inputarbiter.WithholdConfiguredPane(ctx, cfg, freshNodes); err != nil {
+								log.Printf("postman: human pane binding during PING refresh: %v", err)
+							}
 							outcome, publishErr := publishFreshHerdrNodes(ctx, contextID, herdrRuntime, herdrToken, freshNodes, &sharedNodes)
 							switch {
 							case publishErr != nil:
@@ -806,6 +826,9 @@ func RunStartWithFlags(contextID, configPath, logFilePath string) error {
 							case activationErr == nil:
 								daemonState.SetSessionEnabled(cmd.Target, true)
 								freshNodes = activatedNodes
+								if err := inputarbiter.WithholdConfiguredPane(ctx, cfg, freshNodes); err != nil {
+									log.Printf("postman: human pane binding during PING activation: %v", err)
+								}
 								multiplexer.LockHerdrPublicationWrite()
 								sharedNodes.Store(&freshNodes)
 								multiplexer.UnlockHerdrPublicationWrite()

@@ -1180,6 +1180,12 @@ func DeliverMessage(postPath string, contextID string, knownNodes map[string]dis
 				}
 			}
 		}
+		if !allowed {
+			// Derived interface edges (#624/#700): evaluated per decision against
+			// the live view by the one shared evaluator; never cached or merged
+			// into adjacency. The foreign-sender guard above already ran.
+			allowed = derivedInterfaceEdgeAllowed(cfg, contextID, daemonSession, knownNodes, isSessionEnabled, sourceSessionName, senderFullName, recipientFullName)
+		}
 		policyInput.RoutingChecked = true
 		policyInput.RoutingAllowed = allowed
 		if decision := planDeliveryPolicy(policyInput); decision.Action == deliveryActionDeadLetter {

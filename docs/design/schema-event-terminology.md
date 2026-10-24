@@ -11,7 +11,7 @@ Current writers and live machine consumers use:
 
 - `status.SessionStatus`, `status.NodeStatus`, `status.AllSessionStatus`, and
   related status-named structs in `internal/status/contract.go`
-- `schema_version: 5`
+- `schema_version: 6`
 - `session_status_snapshot` journal events
 - `session_status_update` TUI events
 - TUI event detail key `status`

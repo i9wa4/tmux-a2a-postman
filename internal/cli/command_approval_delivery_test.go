@@ -16,6 +16,31 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
+func TestDeliverCommandApprovalRequestWithholdsOptedInPane(t *testing.T) {
+	baseDir := t.TempDir()
+	originalDiscover := discoverNodesForCommandApprovalDeliveryFn
+	discoverNodesForCommandApprovalDeliveryFn = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"worker-session:orchestrator": {PaneID: "%2", SessionName: "worker-session"},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = originalDiscover })
+	originalDeliver := deliverCommandApprovalSystemMessageFn
+	calls := 0
+	deliverCommandApprovalSystemMessageFn = func(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
+		calls++
+		return controlplane.SystemMessageResult{Delivered: true}, nil
+	}
+	t.Cleanup(func() { deliverCommandApprovalSystemMessageFn = originalDeliver })
+	cfg := &config.Config{HumanPaneBinding: &config.HumanPaneBindingConfig{
+		Enabled: true, SessionName: "worker-session", PaneTitle: "orchestrator",
+	}}
+	err := deliverCommandApprovalRequest(cfg, baseDir, "ctx", "worker-session", resolvedCommandApprovalPolicy{Requester: "worker"}, "orchestrator", "thread", "input", "sha256:digest", "reason", false, time.Now())
+	if err == nil || calls != 0 {
+		t.Fatalf("opted-in pane received legacy delivery: err=%v calls=%d", err, calls)
+	}
+}
+
 // TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir guards
 // #626 M2: command_approval_delivery.go had zero test coverage because the
 // real discovery.DiscoverNodesWithCollisions shells out to tmux. This test
@@ -137,7 +162,7 @@ func TestDeliverCommandApprovalRequest_DeliversTrustedRequestToReviewerInbox(t *
 	}
 }
 
-func TestDeliverCommandApprovalRequest_RetriesCommittedUnprojectedDeliveryOnce(t *testing.T) {
+func TestDeliverCommandApprovalRequest_RetriesReportedCommittedUnprojectedDeliveryOnce(t *testing.T) {
 	baseDir := t.TempDir()
 	reviewerSessionDir := filepath.Join(baseDir, "ctx-626-retry", "worker-session")
 	if err := config.CreateSessionDirs(reviewerSessionDir); err != nil {
@@ -165,21 +190,13 @@ func TestDeliverCommandApprovalRequest_RetriesCommittedUnprojectedDeliveryOnce(t
 	originalDeliver := deliverCommandApprovalSystemMessageFn
 	var calls int
 	var firstFilename, secondFilename, firstContent, secondContent string
-	failOpenCurrentWriter := true
-	restoreOpenCurrentWriter := controlplane.SetOpenCurrentWriterForTest(func(sessionDir string) (*journal.Writer, error) {
-		if failOpenCurrentWriter {
-			failOpenCurrentWriter = false
-			return nil, fmt.Errorf("injected OpenCurrentWriter failure after mailbox commit")
-		}
-		return journal.OpenCurrentWriter(sessionDir)
-	})
-	t.Cleanup(restoreOpenCurrentWriter)
 	deliverCommandApprovalSystemMessageFn = func(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
 		calls++
 		switch calls {
 		case 1:
 			firstFilename = filename
 			firstContent = content
+			return controlplane.SystemMessageResult{Delivered: true, Committed: true}, fmt.Errorf("injected committed unprojected delivery result")
 		case 2:
 			secondFilename = filename
 			secondContent = content

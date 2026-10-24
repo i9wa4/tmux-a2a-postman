@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/envelope"
 	"github.com/i9wa4/tmux-a2a-postman/internal/journal"
 )
 
@@ -82,6 +83,562 @@ func appendInputRequestMailboxEvent(t *testing.T, writer *journal.Writer, eventT
 		Content:   content,
 	}, now); err != nil {
 		t.Fatalf("AppendEvent(%s, %s): %v", eventType, messageID, err)
+	}
+}
+
+func TestProjectMessageInputRequestState_DeduplicatesLogicalOpeningsAcrossReplay(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 12, 0, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendEvent := func(kind, messageID, from, to, content string, seconds int) {
+		t.Helper()
+		appendInputRequestMailboxEvent(t, writer, kind, messageID, from, to, content, now.Add(time.Duration(seconds)*time.Second))
+	}
+	project := func() MessageInputRequestState {
+		t.Helper()
+		state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(100*time.Second), 3600)
+		if err != nil || !ok {
+			t.Fatalf("ProjectMessageInputRequestStateAt() = (%#v, %v, %v)", state, ok, err)
+		}
+		return state
+	}
+	assertCounts := func(state MessageInputRequestState, inbound, outbound, opened, filled, open, unread int) {
+		t.Helper()
+		stats := state.RequestSatisfaction["worker"]
+		if state.InputRequiredCounts["worker"] != inbound || state.WaitingOnInputCounts["orchestrator"] != outbound || stats.OpenedCount != opened || stats.FilledCount != filled || stats.OpenCount != open || state.UnreadCounts["worker"] != unread || len(state.InputRequired) != inbound || len(state.WaitingOnInput) != outbound {
+			t.Fatalf("projection = inbound:%d outbound:%d satisfaction:%#v unread:%d details:%#v/%#v; want %d/%d/%d/%d/%d/%d", state.InputRequiredCounts["worker"], state.WaitingOnInputCounts["orchestrator"], stats, state.UnreadCounts["worker"], state.InputRequired, state.WaitingOnInput, inbound, outbound, opened, filled, open, unread)
+		}
+	}
+
+	first := commandApprovalInputContent("orchestrator", "worker", "first.md", "required", "task-A", "ireq_shared", "", "", "work")
+	retry := commandApprovalInputContent("orchestrator", "worker", "retry.md", "required", "task-A", "ireq_shared", "", "", "work")
+	appendEvent(MailboxProjectionPostConsumedEventType, "first.md", "orchestrator", "worker", first, 1)
+	appendEvent(MailboxProjectionDeliveredEventType, "first.md", "orchestrator", "worker", first, 2)
+	appendEvent(MailboxProjectionDeliveredEventType, "retry.md", "orchestrator", "worker", retry, 3)
+	assertCounts(project(), 1, 1, 1, 0, 1, 2)
+	appendEvent(MailboxProjectionReadEventType, "first.md", "orchestrator", "worker", first, 4)
+	appendEvent(MailboxProjectionReadEventType, "retry.md", "orchestrator", "worker", retry, 5)
+	state := project()
+	assertCounts(state, 1, 1, 1, 0, 1, 0)
+	if state.InputRequired[0].ReadEventID == "" || state.InputRequired[0].OpenedAt != now.Add(time.Second*2).Format(time.RFC3339Nano) {
+		t.Fatalf("logical opening lost first delivery/read evidence: %#v", state.InputRequired[0])
+	}
+
+	unrelated := inputRequestContentWithExact("worker", "orchestrator", "unrelated-reply.md", "none", "unrelated.md", "", "ireq_shared", "done")
+	appendEvent(MailboxProjectionPostConsumedEventType, "unrelated-reply.md", "worker", "orchestrator", unrelated, 6)
+	appendEvent(MailboxProjectionDeliveredEventType, "unrelated-reply.md", "worker", "orchestrator", unrelated, 7)
+	assertCounts(project(), 1, 1, 1, 0, 1, 0)
+	reply := inputRequestContentWithExact("worker", "orchestrator", "reply.md", "none", "retry.md", "", "ireq_shared", "done")
+	appendEvent(MailboxProjectionPostConsumedEventType, "reply.md", "worker", "orchestrator", reply, 8)
+	appendEvent(MailboxProjectionDeliveredEventType, "reply.md", "worker", "orchestrator", reply, 9)
+	assertCounts(project(), 0, 0, 1, 1, 0, 0)
+	late := commandApprovalInputContent("orchestrator", "worker", "late.md", "required", "task-A", "ireq_shared", "", "", "work")
+	appendEvent(MailboxProjectionDeliveredEventType, "late.md", "orchestrator", "worker", late, 10)
+	assertCounts(project(), 0, 0, 1, 1, 0, 1)
+	assertCounts(project(), 0, 0, 1, 1, 0, 1) // full replay remains stable
+	appendEvent(MailboxProjectionReadEventType, "late.md", "orchestrator", "worker", late, 11)
+	appendEvent(MailboxProjectionReadEventType, "late.md", "orchestrator", "worker", late, 12)
+	assertCounts(project(), 0, 0, 1, 1, 0, 0)
+
+	secondID := commandApprovalInputContent("orchestrator", "worker", "second.md", "required", "task-A", "ireq_second", "", "", "work")
+	appendEvent(MailboxProjectionPostConsumedEventType, "second.md", "orchestrator", "worker", secondID, 13)
+	appendEvent(MailboxProjectionDeliveredEventType, "second.md", "orchestrator", "worker", secondID, 14)
+	assertCounts(project(), 1, 1, 2, 1, 1, 1)
+}
+
+func TestProjectMessageInputRequestState_ExactNamespaceAndFallbackIdentity(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 13, 0, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(kind, id, from, to, content string, offset int) {
+		t.Helper()
+		appendInputRequestMailboxEvent(t, writer, kind, id, from, to, content, now.Add(time.Duration(offset)*time.Second))
+	}
+	project := func() MessageInputRequestState {
+		t.Helper()
+		state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+		if err != nil || !ok {
+			t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+		}
+		return state
+	}
+	for i, thread := range []string{"task-A", "task-B"} {
+		id := fmt.Sprintf("collision-%d.md", i)
+		request := commandApprovalInputContent("orchestrator", "worker", id, "required", thread, "ireq_collision", "", "", "work")
+		add(MailboxProjectionPostConsumedEventType, id, "orchestrator", "worker", request, i*2+1)
+		add(MailboxProjectionDeliveredEventType, id, "orchestrator", "worker", request, i*2+2)
+	}
+	state := project()
+	if state.InputRequiredCounts["worker"] != 2 || state.WaitingOnInputCounts["orchestrator"] != 2 || state.RequestSatisfaction["worker"].OpenedCount != 2 {
+		t.Fatalf("distinct threads sharing an ID collapsed: %#v", state)
+	}
+	reply := commandApprovalInputContent("worker", "orchestrator", "collision-reply.md", "none", "task-A", "", "ireq_collision", "", "done")
+	add(MailboxProjectionPostConsumedEventType, "collision-reply.md", "worker", "orchestrator", reply, 5)
+	add(MailboxProjectionDeliveredEventType, "collision-reply.md", "worker", "orchestrator", reply, 6)
+	state = project()
+	if state.InputRequiredCounts["worker"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 || state.RequestSatisfaction["worker"].FilledCount != 1 || state.RequestSatisfaction["worker"].OpenCount != 1 {
+		t.Fatalf("thread A reply affected thread B: %#v", state)
+	}
+	otherRequester := commandApprovalInputContent("critic", "worker", "other-requester.md", "required", "task-B", "ireq_collision", "", "", "work")
+	add(MailboxProjectionPostConsumedEventType, "other-requester.md", "critic", "worker", otherRequester, 7)
+	add(MailboxProjectionDeliveredEventType, "other-requester.md", "critic", "worker", otherRequester, 8)
+	state = project()
+	if state.InputRequiredCounts["worker"] != 2 || state.WaitingOnInputCounts["critic"] != 1 || state.RequestSatisfaction["worker"].OpenedCount != 3 {
+		t.Fatalf("different requester sharing thread and ID collapsed: %#v", state)
+	}
+
+	fallback := inputRequestContent("orchestrator", "critic", "fallback.md", "required", "", "work")
+	add(MailboxProjectionPostConsumedEventType, "fallback.md", "orchestrator", "critic", fallback, 9)
+	add(MailboxProjectionPostConsumedEventType, "fallback.md", "orchestrator", "critic", fallback, 10)
+	add(MailboxProjectionDeliveredEventType, "fallback.md", "orchestrator", "critic", fallback, 11)
+	add(MailboxProjectionDeliveredEventType, "fallback.md", "orchestrator", "critic", fallback, 12)
+	state = project()
+	if state.InputRequiredCounts["critic"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 2 || state.RequestSatisfaction["critic"].OpenedCount != 1 || state.UnreadCounts["critic"] != 2 {
+		t.Fatalf("fallback replay should retain one obligation and both deliveries: %#v", state)
+	}
+	second := inputRequestContent("orchestrator", "critic", "fallback-second.md", "required", "", "work")
+	add(MailboxProjectionPostConsumedEventType, "fallback-second.md", "orchestrator", "critic", second, 13)
+	add(MailboxProjectionDeliveredEventType, "fallback-second.md", "orchestrator", "critic", second, 14)
+	state = project()
+	if state.InputRequiredCounts["critic"] != 2 || state.WaitingOnInputCounts["orchestrator"] != 3 || state.RequestSatisfaction["critic"].OpenedCount != 2 {
+		t.Fatalf("distinct fallback messages collapsed: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalIDCollisionDoesNotBlockOrdinaryReply(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 0, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := commandApprovalInputContent("orchestrator", "approver", "approval.md", "required", "command-approval-collision", "ireq_shared", "", "sha256:approval", "approve")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "approval.md", "orchestrator", "approver", approval, now.Add(time.Second))
+	ordinary := inputRequestContentWithExact("critic", "worker", "ordinary.md", "required", "", "ireq_shared", "", "work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary.md", "critic", "worker", ordinary, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary.md", "critic", "worker", ordinary, now.Add(3*time.Second))
+	reply := inputRequestContentWithExact("worker", "critic", "ordinary-reply.md", "none", "", "", "ireq_shared", "done")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary-reply.md", "worker", "critic", reply, now.Add(4*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary-reply.md", "worker", "critic", reply, now.Add(5*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["worker"] != 0 || state.WaitingOnInputCounts["critic"] != 0 || state.RequestSatisfaction["worker"].FilledCount != 1 || state.InputRequiredCounts["approver"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 {
+		t.Fatalf("ordinary reply failed or altered command approval opening: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalIDCollisionSameActorsDifferentThread(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 30, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval := commandApprovalInputContent("orchestrator", "worker", "approval.md", "required", "command-approval-collision", "ireq_shared", "", "sha256:approval", "approve")
+	ordinary := commandApprovalInputContent("orchestrator", "worker", "ordinary.md", "required", "task-A", "ireq_shared", "", "", "work")
+	for i, request := range []struct{ id, content string }{{"approval.md", approval}, {"ordinary.md", ordinary}} {
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, request.id, "orchestrator", "worker", request.content, now.Add(time.Duration(i+1)*time.Second))
+	}
+	reply := commandApprovalInputContent("worker", "orchestrator", "ordinary-reply.md", "none", "task-A", "", "ireq_shared", "", "done")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(4*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["worker"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 || state.RequestSatisfaction["worker"].FilledCount != 1 || len(state.InputRequired) != 1 || state.InputRequired[0].CommandApprovalThreadID != "command-approval-collision" {
+		t.Fatalf("ordinary reply failed or altered command approval opening: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalIDCollisionSameActorsThreadlessOrdinary(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 35, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const inputRequestID = "ireq_shared"
+	const commandThread = "command-approval-collision"
+	const commandHash = "sha256:approval"
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+		Requester: "orchestrator", RequesterAddress: "review:orchestrator", Reviewer: "worker", CommandApproverNode: "worker", CommandApproverAddress: "review:worker", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputRequestID,
+	}, journal.AppendOptions{ThreadID: commandThread}, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	approval := commandApprovalInputContent("orchestrator", "worker", "approval.md", "required", commandThread, inputRequestID, "", commandHash, "approve")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "approval.md", "orchestrator", "worker", approval, now.Add(2*time.Second))
+	ordinary := inputRequestContentWithExact("orchestrator", "worker", "ordinary.md", "required", "", inputRequestID, "", "work")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary.md", "orchestrator", "worker", ordinary, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary.md", "orchestrator", "worker", ordinary, now.Add(4*time.Second))
+	reply := inputRequestContentWithExact("worker", "orchestrator", "ordinary-reply.md", "none", "", "", inputRequestID, "done")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(5*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "ordinary-reply.md", "worker", "orchestrator", reply, now.Add(6*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["worker"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 || state.RequestSatisfaction["worker"].FilledCount != 1 || len(state.InputRequired) != 1 || state.InputRequired[0].CommandApprovalThreadID != commandThread {
+		t.Fatalf("threadless ordinary reply failed or altered command approval opening: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_DuplicateReadPreservesOtherUnreadDelivery(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 14, 45, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := inputRequestContent("orchestrator", "worker", "first.md", "none", "", "first")
+	second := inputRequestContent("orchestrator", "worker", "second.md", "none", "", "second")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "first.md", "orchestrator", "worker", first, now.Add(time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "second.md", "orchestrator", "worker", second, now.Add(2*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "first.md", "orchestrator", "worker", first, now.Add(3*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "first.md", "orchestrator", "worker", first, now.Add(4*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.UnreadCounts["worker"] != 1 || state.InfoUnreadCounts["worker"] != 1 {
+		t.Fatalf("duplicate first read consumed second delivery: %#v", state)
+	}
+}
+
+func TestProjectMessageInputRequestState_RepeatedSameMessageDeliveriesAndReads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		events []string
+		want   []int
+	}{
+		{"two deliveries then two reads", []string{MailboxProjectionDeliveredEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionReadEventType}, []int{1, 2, 1, 0}},
+		{"delivery read redelivery read", []string{MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType, MailboxProjectionDeliveredEventType, MailboxProjectionReadEventType}, []int{1, 0, 1, 0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, time.October, 14, 14, 50, 0, 0, time.UTC)
+			sessionDir := t.TempDir()
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := inputRequestContent("orchestrator", "worker", "repeat.md", "none", "", "repeat")
+			for i, eventType := range tc.events {
+				appendInputRequestMailboxEvent(t, writer, eventType, "repeat.md", "orchestrator", "worker", content, now.Add(time.Duration(i+1)*time.Second))
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+				if err != nil || !ok {
+					t.Fatalf("project after event %d = (%#v, %v, %v)", i, state, ok, err)
+				}
+				if state.UnreadCounts["worker"] != tc.want[i] || state.InfoUnreadCounts["worker"] != tc.want[i] {
+					t.Fatalf("counts after event %d = unread %d, info %d; want %d", i, state.UnreadCounts["worker"], state.InfoUnreadCounts["worker"], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestCommandApprovalOpeningThreadID_ThreadlessInferenceRequiresUniqueMatch(t *testing.T) {
+	meta := envelope.Metadata{InputRequestID: "ireq_shared", From: "worker", To: "approver", CommandHash: "sha256:command"}
+	thread := CommandApprovalThread{InputRequestID: "ireq_shared", Requester: "worker", CommandApproverNode: "approver", CommandHash: "sha256:command"}
+	for _, order := range [][]string{{"command-approval-A", "command-approval-B"}, {"command-approval-B", "command-approval-A"}} {
+		threads := map[string]CommandApprovalThread{order[0]: thread, order[1]: thread}
+		for i := 0; i < 100; i++ {
+			if got := commandApprovalOpeningThreadID(meta, threads); got != "" {
+				t.Fatalf("ambiguous threadless opening inferred %q in order %v", got, order)
+			}
+		}
+	}
+	if got := commandApprovalOpeningThreadID(meta, map[string]CommandApprovalThread{"command-approval-A": thread}); got != "command-approval-A" {
+		t.Fatalf("unique threadless opening inferred %q", got)
+	}
+	otherHash := thread
+	otherHash.CommandHash = "sha256:other"
+	if got := commandApprovalOpeningThreadID(meta, map[string]CommandApprovalThread{"command-approval-A": thread, "command-approval-B": otherHash}); got != "command-approval-A" {
+		t.Fatalf("distinct-hash threadless opening inferred %q", got)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandOpeningCanonicalizesInferredThread(t *testing.T) {
+	for _, order := range []struct {
+		name, firstThread, secondThread string
+	}{
+		{"explicit-first", "command-approval-canonical", ""},
+		{"inferred-first", "", "command-approval-canonical"},
+	} {
+		t.Run(order.name, func(t *testing.T) {
+			now := time.Date(2026, time.October, 16, 3, 0, 0, 0, time.UTC)
+			sessionDir := t.TempDir()
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const threadID, inputID, commandHash = "command-approval-canonical", "ireq_canonical", "sha256:canonical"
+			if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+				Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputID,
+			}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			// A concurrent approval with the same ID and actors but another hash
+			// must not make the first request's threadless recurrence ambiguous.
+			if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+				Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: "sha256:other", InputRequestID: inputID,
+			}, journal.AppendOptions{ThreadID: "command-approval-other"}, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			first := commandApprovalInputContent("worker", "approver", "first.md", "required", order.firstThread, inputID, "", commandHash, "approve")
+			second := commandApprovalInputContent("worker", "approver", "second.md", "required", order.secondThread, inputID, "", commandHash, "approve")
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "first.md", "worker", "approver", first, now.Add(2*time.Second))
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "second.md", "worker", "approver", second, now.Add(3*time.Second))
+			project := func() MessageInputRequestState {
+				t.Helper()
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+				if err != nil || !ok {
+					t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+				}
+				return state
+			}
+			for i := 0; i < 2; i++ {
+				state := project()
+				if state.InputRequiredCounts["approver"] != 1 || len(state.InputRequired) != 1 || state.RequestSatisfaction["approver"].OpenedCount != 1 || state.UnreadCounts["approver"] != 2 {
+					t.Fatalf("duplicate opening/replay: %#v", state)
+				}
+			}
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "first.md", "worker", "approver", first, now.Add(4*time.Second))
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, "second.md", "worker", "approver", second, now.Add(5*time.Second))
+			if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+				Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionApproved, Reason: "test", MessageID: "reply.md", InputRequestID: inputID, CommandHash: commandHash,
+			}, journal.AppendOptions{ThreadID: threadID}, now.Add(6*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			reply := commandApprovalInputContent("approver", "worker", "reply.md", "none", threadID, "", inputID, commandHash, "approved")
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "reply.md", "approver", "worker", reply, now.Add(7*time.Second))
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "second.md", "worker", "approver", second, now.Add(8*time.Second))
+			state := project()
+			stats := state.RequestSatisfaction["approver"]
+			if state.InputRequiredCounts["approver"] != 0 || len(state.InputRequired) != 0 || state.WaitingOnInputCounts["worker"] != 0 || stats.OpenedCount != 1 || stats.FilledCount != 1 || stats.OpenCount != 0 || state.UnreadCounts["approver"] != 1 {
+				t.Fatalf("canonical opening did not close once or duplicate reopened: %#v", state)
+			}
+		})
+	}
+}
+
+func TestProjectMessageInputRequestState_AmbiguousThreadlessCommandOpeningStaysProtected(t *testing.T) {
+	for _, eventType := range []string{MailboxProjectionPostConsumedEventType, MailboxProjectionDeliveredEventType, MailboxProjectionDeadLetteredEventType} {
+		t.Run(eventType, func(t *testing.T) {
+			now := time.Date(2026, time.October, 16, 3, 0, 0, 0, time.UTC)
+			sessionDir := t.TempDir()
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const inputID, commandHash = "ireq_ambiguous", "sha256:ambiguous"
+			for i, threadID := range []string{"command-approval-A", "command-approval-B"} {
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+					Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: commandHash, InputRequestID: inputID,
+				}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Duration(i+1)*time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opening := commandApprovalInputContent("worker", "approver", "opening.md", "required", "", inputID, "", commandHash, "approve")
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "opening.md", "worker", "approver", opening, now.Add(3*time.Second))
+			reply := commandApprovalInputContent("approver", "worker", "reply.md", "none", "", "", inputID, commandHash, "decision")
+			appendInputRequestMailboxEvent(t, writer, eventType, "reply.md", "approver", "worker", reply, now.Add(4*time.Second))
+			state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+			if err != nil || !ok {
+				t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+			}
+			stats := state.RequestSatisfaction["approver"]
+			if state.InputRequiredCounts["approver"] != 1 || len(state.InputRequired) != 1 || stats.OpenedCount != 1 || stats.FilledCount != 0 || stats.OpenCount != 1 {
+				t.Fatalf("ambiguous command provenance fell through generic %s resolution: %#v", eventType, state)
+			}
+		})
+	}
+}
+
+func TestProjectMessageInputRequestState_SameIDAndThreadDifferentApproversRemainDistinct(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 15, 0, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, approver := range []string{"worker", "critic"} {
+		messageID := approver + ".md"
+		request := commandApprovalInputContent("orchestrator", approver, messageID, "required", "task-shared", "ireq_shared", "", "", "work")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, messageID, "orchestrator", approver, request, now.Add(time.Duration(i*2+1)*time.Second))
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, messageID, "orchestrator", approver, request, now.Add(time.Duration(i*2+2)*time.Second))
+		if approver == "worker" {
+			appendInputRequestMailboxEvent(t, writer, MailboxProjectionReadEventType, messageID, "orchestrator", approver, request, now.Add(5*time.Second))
+		}
+	}
+	reply := commandApprovalInputContent("worker", "orchestrator", "worker-reply.md", "none", "task-shared", "", "ireq_shared", "", "done")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionPostConsumedEventType, "worker-reply.md", "worker", "orchestrator", reply, now.Add(6*time.Second))
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "worker-reply.md", "worker", "orchestrator", reply, now.Add(7*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["worker"] != 0 || state.InputRequiredCounts["critic"] != 1 || state.WaitingOnInputCounts["orchestrator"] != 1 || state.RequestSatisfaction["worker"].FilledCount != 1 || state.RequestSatisfaction["critic"].OpenCount != 1 || len(state.InputRequired) != 1 || state.InputRequired[0].Recipient != "critic" || state.InputRequired[0].ReadEventID != "" || state.UnreadCounts["critic"] != 1 || state.UnreadCounts["worker"] != 0 {
+		t.Fatalf("worker read/reply altered critic's same-ID slot: %#v", state)
+	}
+}
+
+func TestCommandApprovalOpeningForFill_FiltersSuppliedTupleBeforeAmbiguity(t *testing.T) {
+	opening := func(threadID, hash, rawThread string) InputRequestDetail {
+		return InputRequestDetail{
+			InputRequestID:                 "ireq_shared",
+			Sender:                         "worker",
+			Recipient:                      "approver",
+			CommandApprovalThreadID:        threadID,
+			CommandHash:                    hash,
+			CommandApprovalOpeningThreadID: rawThread,
+			CommandApprovalOpeningHash:     hash,
+		}
+	}
+	threadA := opening("command-approval-A", "sha256:A", "command-approval-A")
+	threadB := opening("command-approval-B", "sha256:A", "command-approval-B")
+	hashB := opening("command-approval-A", "sha256:B", "command-approval-A")
+	for _, tc := range []struct {
+		name     string
+		threadID string
+		hash     string
+		want     InputRequestDetail
+	}{
+		{name: "thread A", threadID: "command-approval-A", hash: "sha256:A", want: threadA},
+		{name: "thread B", threadID: "command-approval-B", hash: "sha256:A", want: threadB},
+		{name: "hash B", threadID: "command-approval-A", hash: "sha256:B", want: hashB},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, commandOpening := commandApprovalOpeningForFill("ireq_shared", "worker", "approver", tc.threadID, tc.hash,
+				map[string]InputRequestDetail{"A": threadA, "B": threadB, "C": hashB})
+			if !commandOpening || commandApprovalOpeningTupleKey(got) != commandApprovalOpeningTupleKey(tc.want) {
+				t.Fatalf("opening = (%#v, %v), want %#v", got, commandOpening, tc.want)
+			}
+		})
+	}
+	if got, commandOpening := commandApprovalOpeningForFill("ireq_shared", "worker", "approver", "command-approval-forged", "sha256:A", map[string]InputRequestDetail{"A": threadA}); !commandOpening || got.InputRequestID != "" {
+		t.Fatalf("forged thread = (%#v, %v), want strict command opening with no match", got, commandOpening)
+	}
+	indistinguishable := opening("command-approval-A", "sha256:A", "command-approval-other")
+	if got, commandOpening := commandApprovalOpeningForFill("ireq_shared", "worker", "approver", "command-approval-A", "sha256:A", map[string]InputRequestDetail{"A": threadA, "D": indistinguishable}); !commandOpening || got.InputRequestID != "" {
+		t.Fatalf("ambiguous supplied tuple = (%#v, %v), want fail closed", got, commandOpening)
+	}
+}
+
+func TestProjectMessageInputRequestState_CommandApprovalSameIDDifferentThreads(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 15, 30, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, threadID := range []string{"command-approval-A", "command-approval-B"} {
+		hash := fmt.Sprintf("sha256:%d", i)
+		if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+			Requester: "worker", RequesterAddress: "review:worker", Reviewer: "orchestrator", CommandApproverNode: "approver", CommandApproverAddress: "review:approver", Mode: "blocking", Label: "protected", CommandHash: hash, InputRequestID: "ireq_shared",
+		}, journal.AppendOptions{ThreadID: threadID}, now.Add(time.Duration(i*2+1)*time.Second)); err != nil {
+			t.Fatalf("request %s: %v", threadID, err)
+		}
+		messageID := fmt.Sprintf("request-%d.md", i)
+		request := commandApprovalInputContent("worker", "approver", messageID, "required", threadID, "ireq_shared", "", hash, "approval requested")
+		appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, messageID, "worker", "approver", request, now.Add(time.Duration(i*2+2)*time.Second))
+	}
+	if _, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+		Reviewer: "approver", ReviewerAddress: "review:approver", RequesterAddress: "review:worker", Decision: journal.ApprovalDecisionApproved, MessageID: "decision-A.md", InputRequestID: "ireq_shared", CommandHash: "sha256:0",
+	}, journal.AppendOptions{ThreadID: "command-approval-A"}, now.Add(5*time.Second)); err != nil {
+		t.Fatalf("decision A: %v", err)
+	}
+	reply := commandApprovalInputContent("approver", "worker", "decision-A.md", "none", "command-approval-A", "", "ireq_shared", "sha256:0", "APPROVED")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "decision-A.md", "approver", "worker", reply, now.Add(6*time.Second))
+	state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(time.Minute), 3600)
+	if err != nil || !ok {
+		t.Fatalf("project = (%#v, %v, %v)", state, ok, err)
+	}
+	if state.InputRequiredCounts["approver"] != 1 || state.WaitingOnInputCounts["worker"] != 1 || len(state.InputRequired) != 1 || state.InputRequired[0].CommandApprovalThreadID != "command-approval-B" || state.RequestSatisfaction["approver"].OpenedCount != 2 || state.RequestSatisfaction["approver"].FilledCount != 1 || state.RequestSatisfaction["approver"].OpenCount != 1 {
+		t.Fatalf("decision for A affected B or failed to close A: %#v", state)
+	}
+}
+
+func TestValidateCommandApprovalReplySlotReconciliationRejectsSameTupleDifferentHash(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 16, 0, 0, 0, time.UTC)
+	sessionDir := t.TempDir()
+	writer, repair := appendReconcileableCommandApprovalSlot(t, sessionDir, now, journal.ApprovalDecisionApproved)
+	conflicting := commandApprovalInputContent(repair.Requester, repair.Approver, "conflicting-retry.md", "required", repair.ThreadID, repair.InputRequestID, "", "sha256:conflicting", "approval requested")
+	appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, "conflicting-retry.md", repair.Requester, repair.Approver, conflicting, now.Add(4*time.Second))
+	plan, ok, err := ValidateCommandApprovalReplySlotReconciliation(sessionDir, "review", repair, now.Add(10*time.Minute))
+	if err != nil || !ok || plan.Status != "rejected" || !strings.Contains(plan.Reason, "exactly one distinct") {
+		t.Fatalf("same tuple with conflicting opening hash = (%#v, %v, %v), want rejected ambiguity", plan, ok, err)
+	}
+}
+
+func TestValidateCommandApprovalReplySlotReconciliationSameIDDifferentThreads(t *testing.T) {
+	now := time.Date(2026, time.October, 14, 17, 0, 0, 0, time.UTC)
+	for _, order := range [][]int{{0, 1}, {1, 0}} {
+		t.Run(fmt.Sprintf("repair-%d-then-%d", order[0], order[1]), func(t *testing.T) {
+			sessionDir := t.TempDir()
+			writer, err := journal.OpenShadowWriter(sessionDir, "ctx-main", "review", 101, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var repairs [2]journal.CommandApprovalReplySlotReconciledPayload
+			for i := range repairs {
+				repair := journal.CommandApprovalReplySlotReconciledPayload{
+					InputRequestID: "ireq_shared", ThreadID: fmt.Sprintf("command-approval-%d", i),
+					CommandHash: fmt.Sprintf("sha256:%d", i), Requester: "worker",
+					RequesterAddress: "review:worker", Approver: "approver", ApproverAddress: "review:approver",
+				}
+				at := now.Add(time.Duration(i*3+1) * time.Second)
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalRequestedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalRequestPayload{
+					Requester: repair.Requester, RequesterAddress: repair.RequesterAddress,
+					Reviewer: "orchestrator", CommandApproverNode: repair.Approver, CommandApproverAddress: repair.ApproverAddress,
+					Mode: "blocking", Label: "protected", CommandHash: repair.CommandHash, InputRequestID: repair.InputRequestID,
+					ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano),
+				}, journal.AppendOptions{ThreadID: repair.ThreadID}, at); err != nil {
+					t.Fatalf("request %d: %v", i, err)
+				}
+				messageID := fmt.Sprintf("request-%d.md", i)
+				request := commandApprovalInputContent(repair.Requester, repair.Approver, messageID, "required", repair.ThreadID, repair.InputRequestID, "", repair.CommandHash, "approval requested")
+				appendInputRequestMailboxEvent(t, writer, MailboxProjectionDeliveredEventType, messageID, repair.Requester, repair.Approver, request, at.Add(time.Second))
+				decisionEvent, err := writer.AppendEventWithOptions(journal.CommandApprovalDecidedEventType, journal.VisibilityOperatorVisible, journal.CommandApprovalDecisionPayload{
+					Reviewer: repair.Approver, ReviewerAddress: repair.ApproverAddress, RequesterAddress: repair.RequesterAddress,
+					Decision: journal.ApprovalDecisionApproved, MessageID: fmt.Sprintf("decision-%d.md", i),
+					InputRequestID: repair.InputRequestID, CommandHash: repair.CommandHash,
+				}, journal.AppendOptions{ThreadID: repair.ThreadID}, at.Add(2*time.Second))
+				if err != nil {
+					t.Fatalf("decision %d: %v", i, err)
+				}
+				repair.DecisionEventID = decisionEvent.EventID
+				repairs[i] = repair
+			}
+			for position, index := range order {
+				repair := repairs[index]
+				plan, ok, err := ValidateCommandApprovalReplySlotReconciliation(sessionDir, "review", repair, now.Add(10*time.Minute))
+				if err != nil || !ok || plan.Status != "ready" {
+					t.Fatalf("repair %d validation = (%#v, %v, %v), want ready", index, plan, ok, err)
+				}
+				if _, err := writer.AppendEventWithOptions(journal.CommandApprovalReplySlotReconciledEventType, journal.VisibilityOperatorVisible, repair, journal.AppendOptions{ThreadID: repair.ThreadID}, now.Add(time.Duration(20+position)*time.Second)); err != nil {
+					t.Fatalf("append repair %d: %v", index, err)
+				}
+				state, ok, err := ProjectMessageInputRequestStateAt(sessionDir, "review", now.Add(11*time.Minute), 3600)
+				if err != nil || !ok {
+					t.Fatalf("project after repair %d = (%#v, %v, %v)", index, state, ok, err)
+				}
+				wantOpen := 1 - position
+				if state.InputRequiredCounts["approver"] != wantOpen || state.WaitingOnInputCounts["worker"] != wantOpen || state.RequestSatisfaction["approver"].FilledCount != position+1 {
+					t.Fatalf("repair %d affected another slot: %#v", index, state)
+				}
+				if wantOpen == 1 && (len(state.InputRequired) != 1 || state.InputRequired[0].CommandApprovalThreadID != repairs[order[1]].ThreadID) {
+					t.Fatalf("repair %d did not preserve other thread: %#v", index, state.InputRequired)
+				}
+			}
+		})
 	}
 }
 

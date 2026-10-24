@@ -1,6 +1,11 @@
 package status
 
-const SchemaVersion = 5
+import "encoding/json"
+
+// SchemaVersion 6 adds the per-session derived interface edges
+// (interface_edges, declared_interface_edges; #624/#700). The version is bumped
+// once for #700; #766 and #699 build on 6.
+const SchemaVersion = 6
 
 const DeliveryStuckAfterSeconds = 180
 
@@ -242,6 +247,14 @@ type InterfaceNodeStatus struct {
 	Diagnostic string `json:"diagnostic"`
 }
 
+// InterfaceEdgeStatus is one derived cross-session edge between two declared
+// interface nodes ("session:node" each). The edge is undirected. It carries
+// names only, never filesystem paths (#624 hard constraint).
+type InterfaceEdgeStatus struct {
+	A string `json:"a"`
+	B string `json:"b"`
+}
+
 type SessionStatus struct {
 	SchemaVersion      int                    `json:"schema_version"`
 	ContextID          string                 `json:"context_id"`
@@ -260,9 +273,27 @@ type SessionStatus struct {
 	WorkspaceTree      *WorkspaceTreeStatus   `json:"workspace_tree,omitempty"`
 	CommandApproval    *CommandApprovalStatus `json:"command_approval,omitempty"`
 	InterfaceNode      *InterfaceNodeStatus   `json:"interface_node,omitempty"`
-	Nodes              []NodeStatus           `json:"nodes"`
-	LayoutGroups       []LayoutGroup          `json:"layout_groups,omitempty"`
-	Windows            []SessionWindow        `json:"windows"`
+	// InterfaceEdges are the derived edges that pass the live per-decision
+	// evaluation right now; DeclaredInterfaceEdges are the candidates the
+	// configuration declares (direct parent-child pairs whose two entries both
+	// declare an interface node), whether or not they are currently live.
+	InterfaceEdges         []InterfaceEdgeStatus `json:"interface_edges"`
+	DeclaredInterfaceEdges []InterfaceEdgeStatus `json:"declared_interface_edges,omitempty"`
+	Nodes                  []NodeStatus          `json:"nodes"`
+	LayoutGroups           []LayoutGroup         `json:"layout_groups,omitempty"`
+	Windows                []SessionWindow       `json:"windows"`
+}
+
+// MarshalJSON keeps the v6 contract that interface_edges (the ACTIVE derived
+// edges) is always present: an empty active set serializes as [] and never as
+// null or an absent key. declared_interface_edges stays optional.
+func (s SessionStatus) MarshalJSON() ([]byte, error) {
+	type plain SessionStatus
+	value := plain(s)
+	if value.InterfaceEdges == nil {
+		value.InterfaceEdges = []InterfaceEdgeStatus{}
+	}
+	return json.Marshal(value)
 }
 
 type TaskRunProjection struct {
