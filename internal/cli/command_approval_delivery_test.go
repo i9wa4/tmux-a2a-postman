@@ -16,6 +16,31 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/message"
 )
 
+func TestDeliverCommandApprovalRequestWithholdsOptedInPane(t *testing.T) {
+	baseDir := t.TempDir()
+	originalDiscover := discoverNodesForCommandApprovalDeliveryFn
+	discoverNodesForCommandApprovalDeliveryFn = func(string, string, string) (map[string]discovery.NodeInfo, []discovery.CollisionReport, error) {
+		return map[string]discovery.NodeInfo{
+			"worker-session:orchestrator": {PaneID: "%2", SessionName: "worker-session"},
+		}, nil, nil
+	}
+	t.Cleanup(func() { discoverNodesForCommandApprovalDeliveryFn = originalDiscover })
+	originalDeliver := deliverCommandApprovalSystemMessageFn
+	calls := 0
+	deliverCommandApprovalSystemMessageFn = func(filename string, nodeInfo discovery.NodeInfo, recipient, sender, contextID, content string, cfg *config.Config, adjacency map[string][]string, knownNodes map[string]discovery.NodeInfo, livenessMap map[string]bool) (controlplane.SystemMessageResult, error) {
+		calls++
+		return controlplane.SystemMessageResult{Delivered: true}, nil
+	}
+	t.Cleanup(func() { deliverCommandApprovalSystemMessageFn = originalDeliver })
+	cfg := &config.Config{HumanPaneBinding: &config.HumanPaneBindingConfig{
+		Enabled: true, SessionName: "worker-session", PaneTitle: "orchestrator",
+	}}
+	err := deliverCommandApprovalRequest(cfg, baseDir, "ctx", "worker-session", resolvedCommandApprovalPolicy{Requester: "worker"}, "orchestrator", "thread", "input", "sha256:digest", "reason", false, time.Now())
+	if err == nil || calls != 0 {
+		t.Fatalf("opted-in pane received legacy delivery: err=%v calls=%d", err, calls)
+	}
+}
+
 // TestDeliverCommandApprovalRequest_WritesMessageIntoReviewerPostDir guards
 // #626 M2: command_approval_delivery.go had zero test coverage because the
 // real discovery.DiscoverNodesWithCollisions shells out to tmux. This test
