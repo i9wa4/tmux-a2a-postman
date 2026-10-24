@@ -12,6 +12,7 @@ import (
 	"github.com/fswatcher/fswatcher"
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/discovery"
+	"github.com/i9wa4/tmux-a2a-postman/internal/inputarbiter"
 	"github.com/i9wa4/tmux-a2a-postman/internal/multiplexer"
 )
 
@@ -41,7 +42,7 @@ func activateStartupSessions(baseDir, contextDir, contextID, selfSession string,
 			continue
 		}
 
-		preClaimed := preclaimSessionCandidatePanes(targetSession, contextID, candidateNodes)
+		preClaimed := preclaimSessionCandidatePanes(targetSession, contextID, candidateNodes, inputarbiter.ConfiguredNodeKey(cfg))
 		if preClaimed == 0 {
 			continue
 		}
@@ -80,7 +81,7 @@ func activateSessionForPing(baseDir, contextDir, contextID, selfSession, targetS
 	registerWatchedSessionDirs(watcher, watchedDirs, filepath.Join(contextDir, targetSession))
 
 	candidateNodes := activationNodeNames(cfg)
-	preClaimed := preclaimSessionCandidatePanes(targetSession, contextID, candidateNodes)
+	preClaimed := preclaimSessionCandidatePanes(targetSession, contextID, candidateNodes, inputarbiter.ConfiguredNodeKey(cfg))
 	refreshed, _, err := discovery.DiscoverNodesWithCollisions(baseDir, contextID, selfSession)
 	if err != nil {
 		_ = config.SetSessionEnabledMarker(contextID, targetSession, false)
@@ -124,7 +125,7 @@ func activationNodeNames(cfg *config.Config) map[string]bool {
 	return candidateNodes
 }
 
-func preclaimSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool) int {
+func preclaimSessionCandidatePanes(sessionName, contextID string, candidateNodes map[string]bool, excludedNodeKey string) int {
 	out, err := exec.Command("tmux", "list-panes", "-s", "-t", sessionName, "-F", "#{pane_id} #{pane_title}").Output()
 	if err != nil {
 		log.Printf("postman: WARNING: failed to list panes for session %s: %v\n", sessionName, err)
@@ -140,6 +141,9 @@ func preclaimSessionCandidatePanes(sessionName, contextID string, candidateNodes
 		}
 		nodeName := parts[1]
 		nodeKey := sessionName + ":" + nodeName
+		if nodeKey == excludedNodeKey {
+			continue
+		}
 		if !config.EdgeNodeAllowed(candidateNodes, nodeKey) {
 			continue
 		}

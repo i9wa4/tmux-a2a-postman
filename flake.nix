@@ -315,7 +315,6 @@
               # === Secrets detection ===
               gitleaks = {
                 enable = true;
-                entry = "${pkgs.gitleaks}/bin/gitleaks protect --verbose --redact --staged";
                 pass_filenames = false;
               };
 

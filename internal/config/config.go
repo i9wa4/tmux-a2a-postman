@@ -81,6 +81,7 @@ type Config struct {
 	Edges                          []string                        `toml:"edges"`
 	ReplyCommand                   string                          `toml:"reply_command"`
 	InterfaceNode                  string                          `toml:"interface_node"`           // #764: the one human-facing node (startup PING target, verdict-debt exemption, escalation target); omitted = no interface node (fail closed); the legacy ui_node key is warned about and ignored
+	HumanPaneBinding               *HumanPaneBindingConfig         `toml:"human_pane_binding"`       // #901: opt-in physical pane binding, separate from interface_node
 	AutoEnableNewSessions          *bool                           `toml:"auto_enable_new_sessions"` // nil = required default true for cross-session startup/discovery auto-PING
 	EvidencePresenceGateEnabled    bool                            `toml:"evidence_presence_gate_enabled"`
 	EvidencePresenceGateAfter      string                          `toml:"evidence_presence_gate_after"`
@@ -114,6 +115,16 @@ type CommandApprovalPolicy struct {
 	Reviewer           string  `toml:"reviewer"`
 	Mode               string  `toml:"mode"`
 	ApprovalTTLSeconds float64 `toml:"approval_ttl_seconds"`
+}
+
+// HumanPaneBindingConfig opts into a physical pane binding preflight. It does
+// not authorize input submission or publish a discovered route.
+type HumanPaneBindingConfig struct {
+	Enabled            bool   `toml:"enabled"`
+	InstallationIDFile string `toml:"installation_id_file"`
+	SocketPath         string `toml:"socket_path"`
+	SessionName        string `toml:"session_name"`
+	PaneTitle          string `toml:"pane_title"`
 }
 
 type DeprecatedCommandApproverNode struct {
@@ -762,6 +773,9 @@ func mergeConfig(base, override *Config) {
 	if override.InterfaceNode != "" || override.interfaceNodeSet {
 		base.InterfaceNode = override.InterfaceNode
 		base.interfaceNodeSet = base.interfaceNodeSet || override.interfaceNodeSet
+	}
+	if override.HumanPaneBinding != nil {
+		base.HumanPaneBinding = override.HumanPaneBinding
 	}
 	if override.CommandApproverNode != "" {
 		base.CommandApproverNode = override.CommandApproverNode
