@@ -123,46 +123,63 @@ func (f *publicApprovalFixture) runWhenAvailable(pane, body string, args ...stri
 }
 
 func (f *publicApprovalFixture) waitRequest() workspace.Message {
+	return f.waitRequestExcept(nil)
+}
+
+func (f *publicApprovalFixture) waitRequestExcept(excluded map[string]bool) workspace.Message {
+	f.t.Helper()
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		if request, ok := f.requestExcept(excluded); ok {
+			return request
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	f.t.Fatal("public execute-bash did not deliver a reviewer request")
+	return workspace.Message{}
+}
+
+func (f *publicApprovalFixture) requestExcept(excluded map[string]bool) (workspace.Message, bool) {
 	f.t.Helper()
 	root, err := workspace.DefaultStateRoot(f.home, f.stateHome)
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	inbox := filepath.Join(root, "work", "agents", "peer", "inbox")
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) {
-		entries, err := os.ReadDir(inbox)
-		if err == nil {
-			for _, entry := range entries {
-				if !strings.HasSuffix(entry.Name(), ".md") {
-					continue
-				}
-				data, err := os.ReadFile(filepath.Join(inbox, entry.Name()))
-				if err != nil {
-					f.t.Fatal(err)
-				}
-				prefix := []byte("<!-- postman ")
-				separator := []byte(" -->\n\n")
-				split := bytes.Index(data, separator)
-				if !bytes.HasPrefix(data, prefix) || split < len(prefix) {
-					f.t.Fatalf("bad request envelope: %s", entry.Name())
-				}
-				var request workspace.Message
-				if err := json.Unmarshal(data[len(prefix):split], &request); err != nil {
-					f.t.Fatal(err)
-				}
-				if request.From != "worker" || request.To != "peer" || !request.NeedsReply || request.InputRequestID == "" {
-					f.t.Fatalf("bad approval request: %+v", request)
-				}
-				return request
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
+	entries, err := os.ReadDir(inbox)
+	if errors.Is(err, os.ErrNotExist) {
+		return workspace.Message{}, false
+	}
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(inbox, entry.Name()))
+		if err != nil {
 			f.t.Fatal(err)
 		}
-		time.Sleep(25 * time.Millisecond)
+		prefix := []byte("<!-- postman ")
+		separator := []byte(" -->\n\n")
+		split := bytes.Index(data, separator)
+		if !bytes.HasPrefix(data, prefix) || split < len(prefix) {
+			f.t.Fatalf("bad request envelope: %s", entry.Name())
+		}
+		var request workspace.Message
+		if err := json.Unmarshal(data[len(prefix):split], &request); err != nil {
+			f.t.Fatal(err)
+		}
+		if request.From != "worker" || request.To != "peer" || !request.NeedsReply || request.InputRequestID == "" {
+			f.t.Fatalf("bad approval request: %+v", request)
+		}
+		if excluded[request.ID] {
+			continue
+		}
+		return request, true
 	}
-	f.t.Fatal("public execute-bash did not deliver a reviewer request")
-	return workspace.Message{}
+	return workspace.Message{}, false
 }
 
 func (f *publicApprovalFixture) reply(request workspace.Message, command, decision string) workspace.Message {
@@ -279,5 +296,163 @@ func TestWorkspaceExecuteBashPublicReviewerDisappears(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("command executed after reviewer disappeared: %v", err)
+	}
+}
+
+func TestWorkspaceExecuteBashPublicLateReplyAfterInterrupt(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	marker := filepath.Join(f.home, "executed")
+	command := "printf x >> " + marker
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	first := f.child(ctx, f.worker, "execute-bash", "--postman-md", f.config, "--command", command)
+	var firstErr bytes.Buffer
+	first.Stderr = &firstErr
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	old := f.waitRequest()
+	claimed, err := f.runWhenAvailable(f.peer, "", "pop", "--postman-md", f.config)
+	if err != nil || claimed.Message == nil || claimed.Message.ID != old.ID {
+		t.Fatalf("first public reviewer POP: %+v %v", claimed, err)
+	}
+	if err := first.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	err = first.Wait()
+	var cancelled publicApprovalOutput
+	if decodeErr := json.NewDecoder(&firstErr).Decode(&cancelled); decodeErr != nil || err == nil ||
+		(cancelled.Status != "cancelled" && cancelled.Status != "unavailable") ||
+		cancelled.Execution == nil || cancelled.Execution.RequestID != old.ID || cancelled.Execution.ReplyID != "" {
+		t.Fatalf("first public interruption: %+v err=%v decode=%v stderr=%q", cancelled, err, decodeErr, firstErr.String())
+	}
+	late := f.reply(old, command, "approved")
+
+	second := f.child(ctx, f.worker, "execute-bash", "--postman-md", f.config, "--command", command)
+	var secondErr bytes.Buffer
+	second.Stderr = &secondErr
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	fresh := f.waitRequestExcept(map[string]bool{old.ID: true})
+	if fresh.InputRequestID == old.InputRequestID {
+		t.Fatal("fresh request reused cancelled input ID")
+	}
+	claimed, err = f.runWhenAvailable(f.peer, "", "pop", "--postman-md", f.config)
+	if err != nil || claimed.Message == nil || claimed.Message.ID != fresh.ID {
+		t.Fatalf("fresh public reviewer POP: %+v %v", claimed, err)
+	}
+	rejected := f.reply(fresh, command, "rejected")
+	err = second.Wait()
+	var result publicApprovalOutput
+	if decodeErr := json.NewDecoder(&secondErr).Decode(&result); decodeErr != nil || err == nil ||
+		result.Status != "rejected" || result.Execution == nil ||
+		result.Execution.RequestID != fresh.ID || result.Execution.ReplyID != rejected.ID {
+		t.Fatalf("fresh public rejection: %+v err=%v decode=%v stderr=%q", result, err, decodeErr, secondErr.String())
+	}
+	root, err := workspace.DefaultStateRoot(f.home, f.stateHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "work", "agents", "worker", "inbox", late.ID+".md")); err != nil {
+		t.Fatalf("fresh call consumed late reply: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("late reply authorized execution: %v", err)
+	}
+}
+
+func TestWorkspaceExecuteBashPublicConcurrentIndependentRequests(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	marker := filepath.Join(f.home, "executed")
+	command := "printf x >> " + marker
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	start := func() (*exec.Cmd, *bytes.Buffer) {
+		t.Helper()
+		child := f.child(ctx, f.worker, "execute-bash", "--postman-md", f.config, "--command", command)
+		stderr := new(bytes.Buffer)
+		child.Stderr = stderr
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return child, stderr
+	}
+	first, firstErr := start()
+	request1 := f.waitRequest()
+	var second *exec.Cmd
+	var secondErr *bytes.Buffer
+	var secondDone chan error
+	var request2 workspace.Message
+	deadline := time.Now().Add(6 * time.Second)
+	for request2.ID == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("second public request stayed busy")
+		}
+		second, secondErr = start()
+		secondDone = make(chan error, 1)
+		go func() { secondDone <- second.Wait() }()
+		for request2.ID == "" {
+			if request, ok := f.requestExcept(map[string]bool{request1.ID: true}); ok {
+				request2 = request
+				break
+			}
+			select {
+			case err := <-secondDone:
+				var result publicApprovalOutput
+				decodeErr := json.NewDecoder(secondErr).Decode(&result)
+				if err == nil || decodeErr != nil || result.Status != "delivery_failed" ||
+					result.Reason != "workspace mutation is busy" || result.Execution == nil ||
+					result.Execution.RequestID != "" || result.Message != nil {
+					t.Fatalf("second public request failed before delivery: %+v err=%v decode=%v", result, err, decodeErr)
+				}
+				goto retrySecond
+			default:
+				if time.Now().After(deadline) {
+					t.Fatal("second public request did not arrive")
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+		}
+	retrySecond:
+	}
+	if request1.InputRequestID == request2.InputRequestID {
+		t.Fatal("concurrent requests reused input ID")
+	}
+	claimed := map[string]bool{}
+	for range 2 {
+		result, err := f.runWhenAvailable(f.peer, "", "pop", "--postman-md", f.config)
+		if err != nil || result.Message == nil {
+			t.Fatalf("concurrent public reviewer POP: %+v %v", result, err)
+		}
+		claimed[result.Message.ID] = true
+	}
+	if !claimed[request1.ID] || !claimed[request2.ID] || len(claimed) != 2 {
+		t.Fatalf("concurrent reviewer claims: %+v", claimed)
+	}
+	approved := f.reply(request2, command, "approved")
+	rejected := f.reply(request1, command, "rejected")
+	for _, check := range []struct {
+		wait    func() error
+		stderr  *bytes.Buffer
+		request workspace.Message
+		reply   workspace.Message
+		status  string
+	}{{
+		first.Wait, firstErr, request1, rejected, "rejected",
+	}, {
+		func() error { return <-secondDone }, secondErr, request2, approved, "executed",
+	}} {
+		err := check.wait()
+		var result publicApprovalOutput
+		decodeErr := json.NewDecoder(check.stderr).Decode(&result)
+		if decodeErr != nil || result.Status != check.status || result.Execution == nil ||
+			result.Execution.RequestID != check.request.ID || result.Execution.ReplyID != check.reply.ID ||
+			(check.status == "executed" && err != nil) || (check.status == "rejected" && err == nil) {
+			t.Fatalf("concurrent %s: %+v err=%v decode=%v stderr=%q", check.status, result, err, decodeErr, check.stderr.String())
+		}
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "x" {
+		t.Fatalf("concurrent approvals executed wrong count: %q %v", data, err)
 	}
 }
