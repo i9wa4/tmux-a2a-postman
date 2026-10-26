@@ -1,5 +1,11 @@
 # Config Audit Guide
 
+The four file-first issue #937 commands read one absolute `postman.md` and
+use only its bounded topology. The layered TOML, split-node, daemon PING,
+tree-alias, and status-projection checks below apply to legacy daemon paths,
+not to those four adapters. For their current syntax, use
+`tmux-a2a-postman help config` and `help <command>`.
+
 Audit these files when present:
 
 | Purpose                        | Path                                                  |

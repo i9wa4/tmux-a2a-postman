@@ -1,129 +1,35 @@
-Config — core runtime model
+config — file-first workspace topology
 
-Primary files:
-  $XDG_CONFIG_HOME/tmux-a2a-postman/postman.toml
+The active send-heredoc, pop, get-status, and execute-bash commands read one
+postman.md. Default path:
+
   $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md
-  (fall back to ~/.config/tmux-a2a-postman/...)
+  ~/.config/tmux-a2a-postman/postman.md when XDG_CONFIG_HOME is unset
 
-postman.toml is optional. Embedded defaults from postman.default.toml are used
-when no user TOML exists. A minimal postman.md can contain only Mermaid edges;
-nodes referenced by those edges are materialized automatically. Mark the
-human-facing interface node with the Mermaid interface_node class. It is the
-startup PING target, the verdict-debt exemption, and the escalation push
-target. There is no default and no ui_node alias: with no interface_node there
-is no interface node (fail closed), and the legacy ui_node forms are warned
-about and ignored. Mark the execute-bash approver with the Mermaid
-command_approver_node class.
-Public defaults are owned by postman.default.toml; DefaultConfig only
-initializes structural containers.
-Global config is read once at daemon startup. Restart the daemon after editing
-postman.toml, postman.md, or nodes/*; runtime watchers still handle mail,
-read/archive moves, and daemon submit queues.
+Each command accepts exactly one absolute --config or --postman-md override.
+Relative paths and a relative XDG_CONFIG_HOME fail closed. Configuration is
+reread by each invocation; no daemon restart is needed for these commands.
 
-Runtime state model:
-  Core visible states: initial, ready, waiting, pending, stale
-  Session fallback: unavailable (this daemon does not own canonical status)
-  get-status, get-status-oneline, and the default TUI read the same canonical status contract.
+The file-first reader uses a bounded regular Markdown file and a strict
+Mermaid subset in the `edges` section. `---` declares a bidirectional local
+edge. Role headings with backtick names and nodes in the graph define roles.
+One `command_approver_node` class may select an execute-bash reviewer;
+`interface_node` marks an interface role. Missing or ambiguous configuration
+does not authorize mail or command execution.
 
-Quick reading guide:
-  visible_state in get-status JSON answers what the node looks like now
-  initial means no positive live evidence yet; ready requires live evidence
-  pane hints answer that delivery reached a recipient inbox
+Example syntax (not a recorded run):
 
-Core config:
-  edges                            Bidirectional routes between nodes
-  interface_node                   The one human-facing node (startup PING target, verdict-debt exemption, escalation target); prefer Mermaid class <node> interface_node; omitted = no interface node
-  command_approver_node            Mermaid-only singleton: class <node> command_approver_node in postman.md
-  auto_enable_new_sessions         Auto-enable sessions with configured node panes (default: true)
-  message_footer                   Header guidance before the sender body separator
-  draft_template                   Structured envelope for stored send-heredoc Markdown
-  daemon_message_template          Structured envelope for daemon-originated PING mail
-  command_approval                 Wrapper policies for execute-bash; match requester, label, and optional category
-  audit_review_probability_floor   Nonzero minimum audit draw probability for accepted fills (default: 0.05)
-  audit_target                     Optional sampled audit target; defaults to a valid command_approver_node when available
-  skill_path                       postman.md skill catalogs; use inject: ping, inject: compaction_ping, or list syntax for PINGs
-  session_scan_interval_seconds    Lightweight tmux session-list refresh interval (default: 0.10)
-  auto_ping_delay_seconds          Delay before first auto-PING for newly appeared/replacement nodes (default: 20; 0 = immediate)
-  daemon_submit_worker_limit       Per-session daemon-submit worker concurrency (default: 8; maximum: 16)
-  notification_template            Pane hint rendered when mail arrives
-  min_delivery_gap_seconds         Same-route delivery gap for duplicate control
-  retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)
-  input_request_stale_seconds      Stale unfilled input-request threshold for request_satisfaction status (default: 3600)
-  daemon_submit_queue_warn_threshold_ms  Queue wait WARNING threshold in ms (default: 30000); emits event=queue_ms_threshold_exceeded when queue_ms >= threshold
-  daemon_submit_late_response_retention_seconds  Late daemon-submit response file retention before eviction, in seconds (default: 3600); emits event=late_response_evicted on eviction
-  escalation_check_interval_seconds Threshold-push cadence for runtime escalation (default: 0; disabled)
-  escalation_oldest_open_seconds   Oldest open input request threshold for escalation push (default: 0; disabled)
-  escalation_dead_letter_count     Dead-letter threshold for escalation push (default: 0; disabled)
-  escalation_unread_backlog_count  Per-node unread backlog threshold for escalation push (default: 0; disabled)
-  escalation_stale_node_seconds    Stale-node threshold for escalation push (default: 0; disabled)
-  pane_capture_tail_lines          Recent-line compaction scan; Claude/Codex first/change captures may fall back to full history (default: 100; 0 = visible pane only)
+  ## `edges`
 
-Skill catalogs:
-  default skill_path relative paths resolve from the declaring postman.md directory
-  inject: ping, inject: compaction_ping, and lists containing them must use ~/... or absolute paths
-  skill_path runtime selectors are unsupported; list explicit path entries instead
-  duplicate rendered skill names are deduped; later entries win
+  ```mermaid
+  graph LR
+      orchestrator --- worker
+      orchestrator --- reviewer
+      class reviewer command_approver_node
+  ```
 
-Edge syntax:
-  edges = [
-    "node-a --- node-b",   # bidirectional: a<->b
-    "node-b --- node-c",   # bidirectional: b<->c
-  ]
-
-Mermaid node designation:
-  class messenger interface_node
-  class orchestrator command_approver_node
-
-interface_node forms (frontmatter wins over the Mermaid class, which wins over TOML):
-  postman.md frontmatter:   interface_node: messenger
-  postman.md Mermaid class: class messenger interface_node
-  postman.toml:             [postman] interface_node = "messenger"
-  An explicit empty value means no interface node. get-status reports an
-  interface_node object with configured=false and a diagnostic when none is
-  configured; the daemon logs the same diagnostic once at start.
-
-Derived interface edges (cross-session, parent-child only):
-  [postman]
-  interface_node = "mouthpiece"       # this daemon's own session; empty = none
-
-  [[postman.workspace_tree]]
-  session = "proj-top"
-  interface_node = "mouthpiece"       # optional for the own session; if set it must equal [postman] interface_node
-
-  [[postman.workspace_tree]]
-  session = "proj-owner"
-  parent = "proj-top"
-  interface_node = "mouthpiece"       # bare peer declaration; "proj-owner:mouthpiece" is a load error
-  A derived edge joins the two declared interface nodes of a DIRECT parent and
-  child when BOTH entries declare one (A-B-C gives A-B and B-C, never A-C).
-  It is evaluated per decision against the live view (the node is discovered,
-  the session is enabled and owned by this context); it is never cached or
-  merged into edges. It grants communication only: peer declarations and tree
-  position grant no verdict exemption, escalation, review, or command approval.
-  representative only chooses the @parent/@child alias default. Per-entry
-  diplomat_node, ui_node, and relay_node are warned about and ignored.
-  get-status (schema_version 6) reports interface_edges (live now) and
-  declared_interface_edges (configured candidates).
-
-Migration note:
-  [postman] command_approver_node and per-policy command_approver_node keys in
-  postman.toml are ignored with a deprecation warning. Move the approver to
-  postman.md. An absent Mermaid command_approver_node makes every execute-bash
-  mode, including blocking, fail open and record auto_approved_no_reviewer. A
-  configured-but-unresolvable Mermaid command_approver_node is different:
-  blocking fails closed and does not run the command, while advisory and
-  warn-only retain their normal behavior: advisory continues and warn-only
-  requires an explicit --override-approval.
-  get-status reports stale ignored TOML approver keys under
-  command_approval.deprecated_command_approvers. Migration is complete only
-  when command_approval.unresolved_command_approvers and
-  command_approval.deprecated_command_approvers are both absent.
-
-Command approval policy:
-  [[postman.command_approval]]
-  requester = "worker"
-  label = "nix-build"
-  category = "verification"
-  reviewer = "orchestrator"
-  mode = "blocking"                 # advisory, warn-only, or blocking
-  approval_ttl_seconds = 900
+The legacy postman.toml daemon configuration, session status projection,
+auto-PING, and command approval policy fields do not configure these four
+file-first adapters. Legacy commands still have their own help topics while
+the issue #937 cutover is incomplete. See help send-heredoc, help pop,
+help get-status, and help execute-bash for their exact current options.

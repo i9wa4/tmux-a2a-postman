@@ -3325,7 +3325,10 @@ func TestRunExecuteBashBlockingConcurrentFirstCallsMintExactlyOneRequest(t *test
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			errs[i] = runExecuteBashWithContext(fixture.context(), args)
+			ctx := fixture.context()
+			var stdout, stderr bytes.Buffer
+			ctx.stdout, ctx.stderr = &stdout, &stderr
+			errs[i] = runExecuteBashWithContext(ctx, args)
 		}(i)
 	}
 	wg.Wait()

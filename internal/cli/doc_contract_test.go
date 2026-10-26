@@ -51,67 +51,25 @@ func assertNotContainsNormalized(t *testing.T, got, forbidden string) {
 	}
 }
 
-func TestReducedSurfaceDocContract_PopFileScopeAndCanonicalNames(t *testing.T) {
-	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
-	sendHelp := readRepoFile(t, "internal/cli/helptext/send-heredoc.txt")
-	popHelp := readRepoFile(t, "internal/cli/helptext/pop.txt")
-	statusHelp := readRepoFile(t, "internal/cli/helptext/get-status.txt")
-	onelineHelp := readRepoFile(t, "internal/cli/helptext/get-status-oneline.txt")
-	assertContainsNormalized(t, commandsHelp, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.")
-	assertContainsNormalized(t, commandsHelp, "get-status Print canonical session status JSON for agents and scripts.")
-	assertContainsNormalized(t, commandsHelp, "get-status-oneline Print compact all-session status for quick agent coordination.")
-	assertContainsNormalized(t, commandsHelp, "version Print the build version JSON.")
-	assertContainsNormalized(t, commandsHelp, "help [topic] Show help overview or detailed topic page.")
-	assertContainsNormalized(t, onelineHelp, "[0]🔷🟡:🟢 [1]⚫")
-	assertContainsNormalized(t, sendHelp, `{"sent":"filename.md","status":"processed","context_id":"...","session":"...","from":"sender","to":"recipient","reply_policy":"none","submit_path":"post"}`)
-	assertContainsNormalized(t, sendHelp, "ordinary sends do not enter daemon-submit")
-	assertContainsNormalized(t, sendHelp, "--reply-required sends first ask the owning daemon to validate verdict-debt policy")
-	assertContainsNormalized(t, sendHelp, "the command exits before creating a post/ entry")
-	assertContainsNormalized(t, popHelp, `{"status":"message","message_id":"filename.md","markdown_path":"~/.local/state/tmux-a2a-postman/.../read/filename.md","markdown_absolute_path":"/absolute/path/to/read/filename.md","frontmatter":{"params":{...}},"from":"...","to":"...","timestamp":"...","unread_before":1,"remaining":0,"archived_body_read_required":true`)
-	assertContainsNormalized(t, popHelp, `"session_diagnostics":{"source":"projection","active_task_count":1`)
-	assertContainsNormalized(t, popHelp, "session_diagnostics Compact status-like counts after the pop operation")
-	assertContainsNormalized(t, popHelp, "Use markdown_absolute_path when present for programmatic file/body reads.")
-	assertContainsNormalized(t, popHelp, "pop claims and archives the message; it never embeds full body text inline.")
-	assertContainsNormalized(t, popHelp, "After every successful pop with status=message, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")
-	assertContainsNormalized(t, popHelp, "messageType: ping, replyPolicy: none, and other metadata do not waive this requirement.")
-	assertContainsNormalized(t, popHelp, "Truncated command output from cat, sed, rg, shell logs, or other bounded stdout paths is not a valid archived-body read.")
-	assertContainsNormalized(t, popHelp, "pop — claim and archive the next inbox message")
-	assertContainsNormalized(t, sendHelp, "tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'")
-	assertContainsNormalized(t, statusHelp, "Use nodes[*].visible_state for per-node state, queues for backlog counts, and compact for the compact display token.")
-	assertContainsNormalized(t, statusHelp, "--debug adds runtime_diagnostics as an optional object without changing schema_version.")
-	assertContainsNormalized(t, statusHelp, "It requests a point-in-time daemon runtime snapshot with Go memory, GC, goroutine, count-only daemon cardinality fields, and daemon_submit queue health.")
-	assertContainsNormalized(t, statusHelp, "daemon_submit includes worker_limit, active_worker_count, active_request_count, pending_request_count")
-	assertContainsNormalized(t, statusHelp, "late_response_count, oldest_late_response_age_seconds, saturation_count, and last_saturated_at")
-	assertContainsNormalized(t, statusHelp, "This is not a persisted time series.")
-	helpSurface := commandsHelp + "\n" + sendHelp + "\n" + popHelp + "\n" + statusHelp + "\n" + onelineHelp
-	for _, hidden := range []string{
-		"`read`",
-		"`todo`",
-		"`timeline`",
-		"`replay`",
-		"`schema`",
-		"`bind`",
-		"`supervisor-drain`",
-		"`get-context-id`",
-		"`--context-id`",
-		"`--from`",
-		"`read_context_mode`",
-		"`status`",
-		"`--params`",
-		"`--session`",
-		"`--peek`",
-		"`--file`",
-		"`--no-tui`",
-		"`--log-file`",
-	} {
-		if strings.Contains(helpSurface, hidden) {
-			t.Fatalf("helptext exposes hidden public surface %s", hidden)
+func TestFileFirstDocContract_ActiveHelpMatchesAdapters(t *testing.T) {
+	commands := readRepoFile(t, "internal/cli/helptext/commands.txt")
+	configuration := readRepoFile(t, "internal/cli/helptext/config.txt")
+	send := readRepoFile(t, "internal/cli/helptext/send-heredoc.txt")
+	pop := readRepoFile(t, "internal/cli/helptext/pop.txt")
+	status := readRepoFile(t, "internal/cli/helptext/get-status.txt")
+	execute := readRepoFile(t, "internal/cli/helptext/execute-bash.txt")
+	assertContainsAllNormalized(t, commands, "send-heredoc", "pop", "get-status", "execute-bash", "--postman-md")
+	assertContainsAllNormalized(t, configuration, "file-first workspace topology", "postman.md", "--postman-md", "strict Mermaid subset")
+	assertContainsAllNormalized(t, send, "quoted delimiter", "--to", "--reply-to", "--fills-input-request-id", "--capture-related-panes", "notice.status=unavailable")
+	assertContainsAllNormalized(t, pop, "markdown_absolute_path", "pop_receipt_absolute_path", "Read the complete archived Markdown body through EOF")
+	assertContainsAllNormalized(t, status, "saved-file state", "does not register", "unknown is never reported as zero obligations")
+	assertContainsAllNormalized(t, execute, "--command", "file-mail approval", "execution.notice", "emitted separately on stderr")
+	for _, content := range []string{commands, send, pop, status, execute} {
+		for _, obsolete := range []string{"daemon-submit", "--context-id", "--debug", "--tasks", "--verdict", "--evidence-", "--label", "--mode", "--reviewer", "--record-decision"} {
+			if strings.Contains(content, obsolete) {
+				t.Fatalf("active help retains unsupported flag or path %q", obsolete)
+			}
 		}
-	}
-
-	popSource := readRepoFile(t, "internal/cli/pop.go")
-	if strings.Contains(popSource, "findInboxFileByName") {
-		t.Fatal("pop source still contains removed file-specific inbox lookup")
 	}
 }
 
@@ -157,110 +115,30 @@ func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *t
 	}
 }
 
-func TestReducedSurfaceDocContract_ReadmeHelpAndSkillsSharePublicSurface(t *testing.T) {
+func TestFileFirstDocContract_ReadmeAndThreeSkills(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
-	commandsHelp := readRepoFile(t, "internal/cli/helptext/commands.txt")
+	commands := readRepoFile(t, "internal/cli/helptext/commands.txt")
 	sendSkill := readRepoFile(t, "skills/postman-send-message/SKILL.md")
-	configAuditorSkill := readRepoFile(t, "skills/postman-config-auditor/SKILL.md")
-	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
-	postmanMDReference := readRepoFile(t, "skills/postman-config-auditor/references/postman-md.md")
-
-	assertContainsAllNormalized(
-		t, readme,
-		"postman daemon",
-		"tmux pane",
-		"Any AI coding agent",
-		"filesystem-backed inboxes",
-		"send",
-		"pop",
-		"get-status",
-		"get-status-oneline",
-		"inspect-daemon-submit --id <request_id>",
-		"inspect-message --id <message_id>",
-		"Mermaid",
-		"edges",
-		"message footer",
-		"pane notification",
-		"gh skill install",
-		"--agent codex",
-		"--agent claude-code",
-		"postman-usage",
-		"postman-config-auditor",
-	)
-	assertContainsAllNormalized(
-		t, commandsHelp,
-		"send",
-		"pop",
-		"get-status",
-		"get-status-oneline",
-		"inspect-daemon-submit",
-		"inspect-message",
-		"version",
-		"help [topic]",
-	)
-	assertContainsAllNormalized(
-		t, operatorSkill,
-		"tmux-a2a-postman inspect-message --id <message_id>",
-		"read-only historical lookup",
-		"Use `--path` for the stored Markdown path and `--body` for sender-authored body text.",
-	)
-	assertContainsAllNormalized(
-		t, sendSkill,
-		"tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'",
-		"Do not pass message text as a CLI argument, file-body shortcut, or generic pipe-oriented body.",
-		"The sender is auto-detected from the current tmux pane title.",
-		"tmux-a2a-postman help send-heredoc",
-	)
-	assertContainsAllNormalized(
-		t, configAuditorSkill,
-		"postman-config-auditor",
-		"postman.md",
-		"postman.toml",
-		"get-status",
-		"references/postman-md.md",
-	)
-	assertContainsAllNormalized(
-		t, postmanMDReference,
-		"Mermaid",
-		"Only `---` is parsed as an edge operator.",
-		"message_footer",
-	)
-
-	publicDocs := map[string]string{
-		"README.md":                                readme,
-		"internal/cli/helptext/commands.txt":       commandsHelp,
-		"skills/postman-send-message/SKILL.md":     sendSkill,
-		"skills/postman-session-operator/SKILL.md": operatorSkill,
-		"skills/postman-config-auditor/SKILL.md":   configAuditorSkill,
-	}
-	for path, content := range publicDocs {
-		if strings.Contains(content, ".#skill-check") {
-			t.Fatalf("%s exposes maintainer-only skill validation workflow", path)
-		}
-		if strings.Contains(content, "--pin") {
-			t.Fatalf("%s exposes user-managed skill pinning workflow", path)
-		}
-		for _, hidden := range []string{
-			"tmux-a2a-postman read",
-			"tmux-a2a-postman todo",
-			"tmux-a2a-postman timeline",
-			"tmux-a2a-postman replay",
-			"tmux-a2a-postman schema",
-			"tmux-a2a-postman bind",
-			"tmux-a2a-postman get-context-id",
-			"tmux-a2a-postman status",
-			"`read_context_mode`",
-			"`journal_health_cutover_enabled`",
-			"`[heartbeat].enabled`",
-			"waiting/",
-			"--params",
-			"--no-tui",
-			"status --json",
-			"dropped_ball",
-			"heartbeat mail",
-		} {
-			if strings.Contains(content, hidden) {
-				t.Fatalf("%s exposes hidden public surface %q", path, hidden)
+	usageSkill := readRepoFile(t, "skills/postman-usage/SKILL.md")
+	auditorSkill := readRepoFile(t, "skills/postman-config-auditor/SKILL.md")
+	assertContainsAllNormalized(t, readme,
+		"file-first command path", "do not require a running Postman daemon",
+		"send-heredoc", "pop", "get-status", "execute-bash",
+		"markdown_absolute_path", "notice.status=unavailable",
+		"gh skill install", "--agent codex", "--agent claude-code")
+	assertContainsAllNormalized(t, commands, "send-heredoc", "pop", "get-status", "execute-bash")
+	assertContainsAllNormalized(t, sendSkill, "quoted heredoc stdin", "post-operation self-state", "blind resend")
+	assertContainsAllNormalized(t, usageSkill, "tmux-a2a-postman pop", "Read the complete archived Markdown through EOF")
+	assertContainsAllNormalized(t, auditorSkill, "postman.md", "Mermaid edges")
+	for path, content := range map[string]string{
+		"README.md":            readme,
+		"commands.txt":         commands,
+		"postman-send-message": sendSkill,
+		"postman-usage":        usageSkill,
+	} {
+		for _, obsolete := range []string{"tmux-a2a-postman start", "daemon-submit", "get-status-oneline", "inspect-daemon-submit", "--verdict", "--evidence-", "--label", "--mode blocking"} {
+			if strings.Contains(content, obsolete) {
+				t.Fatalf("%s retains obsolete workflow %q", path, obsolete)
 			}
 		}
 	}
@@ -272,16 +150,12 @@ func TestReducedSurfaceDocContract_PostmanSendSkillForbidsPostSendPolling(t *tes
 
 	assertContainsAllNormalized(
 		t, sendSkill,
-		"After a successful send:",
-		"Informational or terminal send | Stop.",
-		"Reply-required send | Wait for daemon notification or exact reply.",
-		"Timeout/watchdog boundary | Use `postman-session-operator`; inspect daemon-submit request ids.",
-		"Suspected delivery/routing trouble | Use `postman-session-operator`.",
-		"`pop` must not be used as a wait or poll mechanism after a successful send.",
-		"Forbidden post-send wait patterns: repeated `pop`, `sleep && pop`, and mixed `pop`/`get-status` loops.",
-		"skills/postman-session-operator/references/session-flow.md",
-		"`waiting` and `expected_wait` handling.",
-		"tmux-a2a-postman inspect-daemon-submit --id <request_id>",
+		"Read its delivery outcome, notification outcome, and mandatory post-operation self-state separately.",
+		"Notification failure does not undo a committed delivery.",
+		"Wait passively for a genuine notification or exact reply.",
+		"Do not use repeated POP, sleep/POP, or status loops as a wait mechanism.",
+		"postman-usage",
+		"session flow",
 	)
 	assertContainsAllNormalized(
 		t, evalTask,
@@ -296,8 +170,8 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
 	defaultConfig := readRepoFile(t, "internal/config/postman.default.toml")
-	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
-	operatorFlow := readRepoFile(t, "skills/postman-session-operator/references/session-flow.md")
+	usageSkill := readRepoFile(t, "skills/postman-usage/SKILL.md")
+	usageFlow := readRepoFile(t, "skills/postman-usage/references/session-flow.md")
 
 	assertContainsAllNormalized(
 		t, defaultConfig,
@@ -323,45 +197,28 @@ func TestRequiredReplyCompletionGateDocContract(t *testing.T) {
 		"Receivers verify the checklist status, durable references, evidence, and blockers before relaying, approving, or closing work.",
 	)
 	assertContainsAllNormalized(
-		t, operatorSkill,
+		t, usageSkill,
 		"Filling an input request closes transport, not task acceptance.",
-		"Task artifact: <artifact-reference>",
+		"Task artifact:",
 		"Original checklist: PASS",
 		"Remaining blockers: none",
 		"Use `BLOCKED` with `Original checklist: FAIL`",
-		"check send JSON `fill`, `required_input`, and `notice`",
 		"verify checklist status, durable references, evidence, and blockers before relaying, approving, or closing work",
 	)
 	assertContainsAllNormalized(
-		t, operatorFlow,
-		"`fill`, `required_input`, and `notice` fields before treating the input request as closed.",
+		t, usageFlow,
+		"Filling transport does not accept work or authorize an otherwise forbidden action.",
 	)
 }
 
-func TestCommandApprovalReplyDocsRequireAllCorrelationFields(t *testing.T) {
-	commandApprovalDoc := readRepoFile(t, "docs/command-approvals.md")
-	executeBashHelp := readRepoFile(t, "internal/cli/helptext/execute-bash.txt")
-
-	for path, content := range map[string]string{
-		"docs/command-approvals.md":              commandApprovalDoc,
-		"internal/cli/helptext/execute-bash.txt": executeBashHelp,
-	} {
-		assertContainsAllNormalized(
-			t,
-			content,
-			"APPROVED:",
-			"NOT APPROVED:",
-			"thread_id",
-			"fills_input_request_id",
-			"command_hash",
-		)
-		normalized := normalizeSpace(content)
-		if !strings.Contains(normalized, "exact fills_input_request_id") && !strings.Contains(normalized, "exact `fills_input_request_id`") {
-			t.Fatalf("%s does not require exact fills_input_request_id preservation", path)
-		}
-	}
-	assertContainsNormalized(t, commandApprovalDoc, "keep all three generated correlation fields")
-	assertContainsNormalized(t, executeBashHelp, "preserving the given thread_id, the exact fills_input_request_id, and command_hash")
+func TestFileFirstCommandHelpDescribesExactReply(t *testing.T) {
+	help := readRepoFile(t, "internal/cli/helptext/execute-bash.txt")
+	assertContainsAllNormalized(t, help,
+		"--command", "command_approver_node", "reply_to",
+		"fills_input_request_id", "approved or rejected",
+		"Only verified reviewer absence permits advisory execution.")
+	assertNotContainsNormalized(t, help, "--record-decision")
+	assertNotContainsNormalized(t, help, "command_hash")
 }
 
 func TestReducedSurfaceDocContract_MaintainerDocsCoverSkillReleaseFlow(t *testing.T) {
@@ -444,7 +301,7 @@ func TestMarkdownFormatterHeadingPolicyDocContract(t *testing.T) {
 	contributing := readRepoFile(t, "CONTRIBUTING.md")
 	runtimeDifferences := readRepoFile(t, "docs/agent-runtime-feature-differences.md")
 	readme := readRepoFile(t, "README.md")
-	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+	usageSkill := readRepoFile(t, "skills/postman-usage/SKILL.md")
 
 	assertContainsAllNormalized(
 		t, flake,
@@ -465,15 +322,16 @@ func TestMarkdownFormatterHeadingPolicyDocContract(t *testing.T) {
 
 	assertContainsNormalized(t, runtimeDifferences, "## 1. Status Vocabulary")
 	assertContainsNormalized(t, runtimeDifferences, "## 4. Verification")
-	assertContainsNormalized(t, readme, "## 1. Concept")
+	assertContainsNormalized(t, readme, "## 1. Install and configure")
 	assertNotContainsNormalized(t, readme, "## Concept")
-	assertContainsNormalized(t, operatorSkill, "## 1. USE FOR")
-	assertNotContainsNormalized(t, operatorSkill, "## USE FOR")
+	assertContainsNormalized(t, usageSkill, "## 1. Claim and read mail")
+	assertNotContainsNormalized(t, usageSkill, "## Claim and read mail")
 }
 
 func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
-	assertContainsNormalized(t, configHelp, "retention_period_days            Inactive runtime cleanup window (default: 30; 0 = disabled)")
+	assertContainsNormalized(t, configHelp, "file-first workspace topology")
+	assertContainsNormalized(t, configHelp, "The legacy postman.toml daemon configuration")
 
 	directoriesHelp := readRepoFile(t, "internal/cli/helptext/directories.txt")
 	assertContainsNormalized(t, directoriesHelp, "Directories — session directory layout")
@@ -490,21 +348,21 @@ func TestConfigSSOTDocContract(t *testing.T) {
 	assertContainsNormalized(t, designDoc, "marked in Mermaid with the `interface_node` class")
 
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
-	assertContainsNormalized(t, configHelp, "postman.toml is optional.")
-	assertContainsNormalized(t, configHelp, "A minimal postman.md can contain only Mermaid edges")
-	assertContainsNormalized(t, configHelp, "Mermaid class <node> interface_node")
-	assertContainsNormalized(t, configHelp, "There is no default and no ui_node alias")
+	assertContainsNormalized(t, configHelp, "Each command accepts exactly one absolute --config or --postman-md override.")
+	assertContainsNormalized(t, configHelp, "strict Mermaid subset")
+	assertContainsNormalized(t, configHelp, "`interface_node` marks an interface role")
+	assertContainsNormalized(t, configHelp, "legacy postman.toml daemon configuration")
 }
 
 func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
 	pathDisplayDoc := readRepoFile(t, "docs/design/path-display-policy.md")
-	operatorSkill := readRepoFile(t, "skills/postman-session-operator/SKILL.md")
+	usageSkill := readRepoFile(t, "skills/postman-usage/SKILL.md")
 
 	assertContainsAllNormalized(
 		t, readme,
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
+		"Read the complete archived Markdown through EOF before handling the message.",
 	)
 	assertContainsAllNormalized(
 		t, messagingHelp,
@@ -519,10 +377,9 @@ func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
 		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
 	)
 	assertContainsAllNormalized(
-		t, operatorSkill,
-		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
-		"`messageType: ping`, `replyPolicy: none`, and other metadata do not allow skipping the body.",
-		"truncated command output does not count as a complete read.",
+		t, usageSkill,
+		"Read the complete archived Markdown through EOF before any handling",
+		"frontmatter, reply policy, and notification text never substitute for this.",
 	)
-	assertNotContainsNormalized(t, operatorSkill, "complete archived Markdown body by running `tmux-a2a-postman inspect-message --id <message_id> --body`")
+	assertNotContainsNormalized(t, usageSkill, "complete archived Markdown body by running `tmux-a2a-postman inspect-message --id <message_id> --body`")
 }

@@ -1,5 +1,14 @@
 # postman.md Format Reference
 
+For issue #937's four file-first adapters,
+`internal/config/workspace_topology.go` reads one absolute `postman.md` and only
+its bounded role/edge/interface/ command-reviewer topology. It rejects
+unsupported or ambiguous Mermaid statements rather than silently skipping them,
+and does not merge TOML, split nodes, skill catalogs, or daemon PING settings.
+The broader parser and merge rules below describe the retained legacy daemon
+path; use `tmux-a2a-postman help config` for the current four-command topology
+contract.
+
 This reference describes the Markdown format parsed by tmux-a2a-postman. It is
 based on the implementation in `internal/config/markdown.go` and the load order
 in `internal/config/config.go`.

@@ -13,6 +13,12 @@ description: |
 
 Audit tmux-a2a-postman configuration with implementation-level accuracy.
 
+For the file-first `send-heredoc`, `pop`, `get-status`, and `execute-bash`
+adapters, audit the single absolute `postman.md` used by that invocation.
+They do not load `postman.toml`, split node files, daemon policies, or
+`workspace_tree`. The linked format and audit references still describe the
+legacy daemon configuration where they mention those layers or daemon PING.
+
 **UTILITY SKILL**. INVOKES: local source inspection and direct file edits.
 
 ## 1. USE FOR

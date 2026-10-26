@@ -116,20 +116,13 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	if got != helpOverview.String() {
 		t.Fatalf("usage should be the help overview SSOT\nusage:\n%s\nhelp:\n%s", got, helpOverview.String())
 	}
-	if !strings.Contains(got, "Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.") {
-		t.Fatalf("usage missing explicit-subcommand guidance: %q", got)
-	}
-	if !strings.Contains(got, "get-status                 Print canonical session status JSON") {
-		t.Fatalf("usage missing get-status command: %q", got)
-	}
-	if !strings.Contains(got, "get-status-oneline         Print compact all-session status") {
-		t.Fatalf("usage missing get-status-oneline command: %q", got)
-	}
-	if !strings.Contains(got, "version                    Print the build version JSON") {
-		t.Fatalf("usage missing version command: %q", got)
-	}
-	if !strings.Contains(got, "inspect-message            Inspect claimed (popped) message content by id") {
-		t.Fatalf("usage missing inspect-message command: %q", got)
+	for _, want := range []string{
+		"Bare tmux-a2a-postman prints usage.",
+		"send-heredoc", "pop", "get-status", "execute-bash", "version",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("usage missing active command guidance %q: %q", want, got)
+		}
 	}
 	for _, hidden := range []string{"\n  status", "\n  read", "\n  todo", "timeline", "replay", "schema", "bind", "supervisor-drain"} {
 		if strings.Contains(got, hidden) {
