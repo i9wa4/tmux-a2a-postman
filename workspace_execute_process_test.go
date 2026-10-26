@@ -36,6 +36,7 @@ func TestIssue937PublicCLIChild(t *testing.T) {
 	}
 	os.Args = append([]string{"postman"}, args...)
 	main()
+	os.Exit(0)
 }
 
 func TestWorkspaceExecuteBashProcessPreservesExitAndStreams(t *testing.T) {
