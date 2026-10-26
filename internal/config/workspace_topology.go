@@ -23,6 +23,15 @@ type WorkspaceTopology struct {
 	Edges         map[string][]string
 	Reviewer      string
 	InterfaceNode string
+	Sessions      []WorkspaceSession
+}
+
+// WorkspaceSession declares one member of an opt-in, direct parent-child
+// interface route. The declaration alone never proves a live tmux binding.
+type WorkspaceSession struct {
+	Name          string
+	Parent        string
+	InterfaceNode string
 }
 
 // LoadWorkspaceTopology reads one explicit postman.md, never a warning-and-skip
@@ -145,8 +154,15 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	if iface != "" && (!nodes[iface] || !validWorkspaceNode(iface)) {
 		return result, errors.New("configured interface is not a topology node")
 	}
+	sessions, err := parseWorkspaceSessions(content, nodes)
+	if err != nil {
+		return result, err
+	}
+	if len(sessions) > 0 && iface == "" {
+		return result, errors.New("workspace tree requires the local interface_node declaration")
+	}
 	sort.Strings(result.Nodes)
-	result.Edges, result.Reviewer, result.InterfaceNode = adjacency, reviewer, iface
+	result.Edges, result.Reviewer, result.InterfaceNode, result.Sessions = adjacency, reviewer, iface, sessions
 	return result, nil
 }
 

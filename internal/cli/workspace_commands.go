@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +24,29 @@ type workspaceCommand struct {
 	runtime      workspace.Tmux
 	mail         workspace.Mail
 	caller       workspace.Snapshot
+}
+
+// roleBoundRuntime makes the role used for routing the same role verified by
+// the mail operation under its workspace lock. A pane retitle cannot silently
+// turn an authorized route into a send from a different role.
+type roleBoundRuntime struct {
+	workspace.Runtime
+	role string
+}
+
+func (r roleBoundRuntime) Snapshot(ctx context.Context) (workspace.Snapshot, error) {
+	s, err := r.Runtime.Snapshot(ctx)
+	if err != nil {
+		return s, err
+	}
+	if s.Caller.Role != r.role {
+		return workspace.Snapshot{}, workspace.ErrUnknown
+	}
+	return s, nil
+}
+
+func (c workspaceCommand) boundRuntime() workspace.Runtime {
+	return roleBoundRuntime{Runtime: c.runtime, role: c.caller.Caller.Role}
 }
 
 type workspaceFlagSet struct {
@@ -130,6 +154,78 @@ func (c workspaceCommand) permits(to string) bool {
 	return false
 }
 
+func (c workspaceCommand) state(ctx context.Context) workspace.SelfState {
+	return c.withVerifiedSessionPeers(ctx, c.mail.State(ctx, c.boundRuntime(), c.livePeers()))
+}
+
+// withVerifiedSessionPeers adds live, declared session peers to an existing
+// mail-state snapshot. Send and POP already return that snapshot, so their
+// responses must not perform a second mail-state scan just for peer guidance.
+func (c workspaceCommand) withVerifiedSessionPeers(ctx context.Context, self workspace.SelfState) workspace.SelfState {
+	if !self.Known {
+		return self
+	}
+	verifiedSelf := func(snapshot workspace.Snapshot) bool {
+		return snapshot.Root == c.caller.Root && snapshot.Caller == c.caller.Caller &&
+			snapshot.Caller.Role == self.Node
+	}
+	bound, err := c.boundRuntime().Snapshot(ctx)
+	if err != nil {
+		return unavailableSelf(self, err)
+	}
+	if !verifiedSelf(bound) {
+		return unavailableSelf(self, workspace.ErrUnknown)
+	}
+	if len(c.topology.Sessions) == 0 {
+		return self
+	}
+	caller, err := c.runtime.NamedCaller(ctx)
+	if err != nil {
+		return unavailableSelf(self, err)
+	}
+	named, err := caller.Snapshot(ctx)
+	if err != nil {
+		return unavailableSelf(self, err)
+	}
+	if !verifiedSelf(named) {
+		return unavailableSelf(self, workspace.ErrUnknown)
+	}
+	bound, err = c.boundRuntime().Snapshot(ctx)
+	if err != nil {
+		return unavailableSelf(self, err)
+	}
+	if !verifiedSelf(bound) {
+		return unavailableSelf(self, workspace.ErrUnknown)
+	}
+	for _, session := range c.topology.Sessions {
+		if session.Name == caller.Name() {
+			continue
+		}
+		address := session.Name + ":" + session.InterfaceNode
+		if _, _, err := c.topology.InterfaceRoute(caller.Name(), c.caller.Caller.Role, address); err != nil {
+			continue
+		}
+		if _, err := c.runtime.FindNamedPeer(ctx, session.Name, session.InterfaceNode); err == nil {
+			self.Peers = append(self.Peers, address)
+		}
+	}
+	named, err = caller.Snapshot(ctx)
+	if err != nil {
+		return unavailableSelf(self, err)
+	}
+	if !verifiedSelf(named) {
+		return unavailableSelf(self, workspace.ErrUnknown)
+	}
+	sort.Strings(self.Peers)
+	return self
+}
+
+func unavailableSelf(self workspace.SelfState, err error) workspace.SelfState {
+	self.Known, self.Unread, self.Inbound, self.Outbound, self.Peers = false, nil, nil, nil, nil
+	self.UnavailableReason, self.NextAction = err.Error(), "inspect state error"
+	return self
+}
+
 type workspaceOutput struct {
 	Status       string                     `json:"status"`
 	Message      *workspace.Message         `json:"message,omitempty"`
@@ -167,7 +263,7 @@ func RunWorkspaceGetStatus(args []string) error {
 		_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(err))
 		return err
 	}
-	self := c.mail.State(ctx, c.runtime, c.livePeers())
+	self := c.state(ctx)
 	result := workspaceOutput{Status: "ok", Self: self}
 	if !self.Known {
 		result.Status, result.Reason = "unavailable", self.UnavailableReason
@@ -202,8 +298,8 @@ func RunWorkspacePop(args []string) error {
 		_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(err))
 		return err
 	}
-	claimed, claimErr := c.mail.PopWithState(ctx, c.runtime, selected, c.livePeers())
-	result := workspaceOutput{Status: "empty", Self: claimed.Self}
+	claimed, claimErr := c.mail.PopWithState(ctx, c.boundRuntime(), selected, c.livePeers())
+	result := workspaceOutput{Status: "empty", Self: c.withVerifiedSessionPeers(ctx, claimed.Self)}
 	if claimed.Claim != nil {
 		result.Status = "message"
 		result.Message = &claimed.Claim.Message
@@ -252,13 +348,55 @@ func RunWorkspaceSendHeredoc(args []string) error {
 		_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(err))
 		return err
 	}
+	if strings.Contains(*to, ":") {
+		caller, routeErr := c.runtime.NamedCaller(ctx)
+		var peer workspace.NamedRuntime
+		var recipientSession, recipientRole string
+		if routeErr == nil {
+			var verified workspace.Snapshot
+			verified, routeErr = caller.Snapshot(ctx)
+			if routeErr == nil && verified.Caller.Role != c.caller.Caller.Role {
+				routeErr = workspace.ErrUnknown
+			}
+			if routeErr == nil {
+				recipientSession, recipientRole, routeErr = c.topology.InterfaceRoute(caller.Name(), verified.Caller.Role, *to)
+			}
+		}
+		if routeErr == nil {
+			peer, routeErr = c.runtime.FindNamedPeer(ctx, recipientSession, recipientRole)
+		}
+		if routeErr != nil {
+			_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(routeErr))
+			return routeErr
+		}
+		msg, sendErr := c.mail.SendCrossWithReply(ctx, caller, peer, string(body), *replyTo, *fills, *required)
+		result := workspaceOutput{Status: "sent", Message: &msg, Self: c.state(ctx)}
+		if sendErr == nil {
+			notice := workspace.NotifyCommitted(ctx, c.runtime, msg)
+			result.Notice = &notice
+		}
+		if sendErr == nil && *capture {
+			evidence := c.mail.CaptureRelated(ctx, c.runtime, msg)
+			result.Capture = &evidence
+		}
+		if sendErr != nil {
+			result.Status, result.Reason = "unavailable", sendErr.Error()
+			if msg.ID == "" {
+				result.Message = nil
+			}
+		}
+		if err := writeWorkspaceOutput(os.Stdout, result); err != nil {
+			return err
+		}
+		return sendErr
+	}
 	if !c.permits(*to) {
 		err = errors.New("recipient is not a configured outgoing edge")
 		_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(err))
 		return err
 	}
-	sent, sendErr := c.mail.SendWithState(ctx, c.runtime, *to, string(body), *replyTo, *fills, *required, c.livePeers())
-	result := workspaceOutput{Status: "sent", Message: &sent.Message, Self: sent.Self}
+	sent, sendErr := c.mail.SendWithState(ctx, c.boundRuntime(), *to, string(body), *replyTo, *fills, *required, c.livePeers())
+	result := workspaceOutput{Status: "sent", Message: &sent.Message, Self: c.withVerifiedSessionPeers(ctx, sent.Self)}
 	if sendErr == nil {
 		notice := workspace.NotifyCommitted(ctx, c.runtime, sent.Message)
 		result.Notice = &notice

@@ -29,7 +29,9 @@ type Message struct {
 	FillsInputRequestID string `json:"fills_input_request_id,omitempty"`
 	ID                  string `json:"id"`
 	From                string `json:"from"`
+	FromSession         string `json:"from_session,omitempty"`
 	To                  string `json:"to"`
+	ToSession           string `json:"to_session,omitempty"`
 	ReplyTo             string `json:"reply_to,omitempty"`
 	NeedsReply          bool   `json:"needs_reply"`
 	CreatedAt           string `json:"created_at"`
@@ -37,11 +39,13 @@ type Message struct {
 }
 
 type mailTransaction struct {
-	Version   int     `json:"version"`
-	Kind      string  `json:"kind"`
-	Message   Message `json:"message"`
-	Body      string  `json:"body"`
-	ClaimedAt string  `json:"claimed_at,omitempty"`
+	Version         int     `json:"version"`
+	Kind            string  `json:"kind"`
+	Message         Message `json:"message"`
+	Body            string  `json:"body"`
+	ClaimedAt       string  `json:"claimed_at,omitempty"`
+	SourceRoot      string  `json:"source_root,omitempty"`
+	DestinationRoot string  `json:"destination_root,omitempty"`
 }
 
 type ClaimReceipt struct {
@@ -73,6 +77,11 @@ func validateMessage(msg Message) error {
 	if !messageID(msg.ID) || !binding.ValidateNodeName(msg.From) || !binding.ValidateNodeName(msg.To) ||
 		(msg.ReplyTo != "" && !messageID(msg.ReplyTo)) {
 		return errors.New("invalid message identity")
+	}
+	if (msg.FromSession == "") != (msg.ToSession == "") ||
+		(msg.FromSession != "" && (!validNativeSessionName(msg.FromSession) ||
+			!validNativeSessionName(msg.ToSession) || msg.FromSession == msg.ToSession)) {
+		return errors.New("invalid cross-session message identity")
 	}
 	if msg.NeedsReply != requestID(msg.InputRequestID) || (!msg.NeedsReply && msg.InputRequestID != "") ||
 		(msg.FillsInputRequestID != "" && (!requestID(msg.FillsInputRequestID) || msg.ReplyTo == "")) {
@@ -237,7 +246,8 @@ func (m Mail) SendWithReply(ctx context.Context, rt Runtime, to, body, replyTo, 
 			}
 			defer read.Close()
 			original, err := readMessage(read, replyTo+".md")
-			if err != nil || original.To != s.Caller.Role || original.From != to {
+			if err != nil || original.To != s.Caller.Role || original.From != to ||
+				original.FromSession != "" || original.ToSession != "" {
 				return errors.New("reply does not identify a claimed conversation")
 			}
 			var receipt ClaimReceipt
@@ -322,9 +332,26 @@ func (m Mail) recover(ws *os.Root) error {
 			return err
 		}
 		tx.Message.Body = tx.Body
-		if tx.Version != 1 || (tx.Kind != "send" && tx.Kind != "claim") ||
-			entry.Name() != tx.Kind+"-"+tx.Message.ID+".json" || validateMessage(tx.Message) != nil {
+		if tx.Version != 1 || entry.Name() != tx.Kind+"-"+tx.Message.ID+".json" ||
+			validateMessage(tx.Message) != nil {
 			return errors.New("invalid mail transaction")
+		}
+		if tx.Kind == "cross_send" {
+			if !validCrossIntent(tx) {
+				return errors.New("invalid cross-session transaction")
+			}
+			// A local operation cannot verify the intended peer. Preserve its
+			// durable intent for exact-pair recovery without blocking local mail.
+			continue
+		}
+		if tx.Kind != "send" && tx.Kind != "claim" {
+			return errors.New("invalid mail transaction kind")
+		}
+		if tx.Kind == "send" && (tx.Message.FromSession != "" || tx.SourceRoot != "" || tx.DestinationRoot != "") {
+			return errors.New("cross-session send requires a verified peer recovery path")
+		}
+		if tx.Kind == "claim" && (tx.SourceRoot != "" || tx.DestinationRoot != "") {
+			return errors.New("claim has unexpected workspace roots")
 		}
 		if tx.Kind == "claim" {
 			if _, err := time.Parse(time.RFC3339Nano, tx.ClaimedAt); err != nil {
@@ -369,6 +396,9 @@ func ensureMessage(box *os.Root, msg Message) error {
 }
 
 func (m Mail) publish(ws *os.Root, msg Message) error {
+	if msg.FromSession != "" || msg.ToSession != "" {
+		return errors.New("local publication cannot deliver cross-session mail")
+	}
 	inbox, err := mailBox(ws, msg.To, "inbox")
 	if err != nil {
 		return err

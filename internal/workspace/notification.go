@@ -31,6 +31,12 @@ func NotifyCommitted(ctx context.Context, rt Runtime, msg Message) NoticeResult 
 		result.Reason = "committed message or runtime unavailable"
 		return result
 	}
+	// The caller runtime contains only the sender session's bindings. A
+	// qualified recipient must never be resolved by a same-named local role.
+	if msg.FromSession != "" || msg.ToSession != "" {
+		result.Reason = "cross-session pane notification unsupported"
+		return result
+	}
 	from, err := rt.Snapshot(ctx)
 	if err != nil || validateSnapshotForNotice(from, msg) != nil {
 		result.Reason = "recipient native binding unavailable"

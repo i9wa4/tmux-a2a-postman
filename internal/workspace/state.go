@@ -230,7 +230,21 @@ func readOwnMail(ws *os.Root, role, box string) ([]Message, error) {
 
 func exactAnswer(request, answer Message) bool {
 	return request.NeedsReply && answer.ReplyTo == request.ID && answer.FillsInputRequestID == request.InputRequestID &&
-		answer.From == request.To && answer.To == request.From
+		answer.From == request.To && answer.To == request.From &&
+		answer.FromSession == request.ToSession && answer.ToSession == request.FromSession
+}
+
+func messagePeer(msg Message, inbound bool) string {
+	if inbound {
+		if msg.FromSession != "" {
+			return msg.FromSession + ":" + msg.From
+		}
+		return msg.From
+	}
+	if msg.ToSession != "" {
+		return msg.ToSession + ":" + msg.To
+	}
+	return msg.To
 }
 
 // State derives metadata only from this caller's files. allowed is the route
@@ -306,7 +320,7 @@ func (m Mail) State(ctx context.Context, rt Runtime, allowed []string) SelfState
 				}
 			}
 			if !answered {
-				inbound = append(inbound, Obligation{req.ID, req.InputRequestID, req.From, i >= len(inbox)})
+				inbound = append(inbound, Obligation{req.ID, req.InputRequestID, messagePeer(req, true), i >= len(inbox)})
 			}
 		}
 		for _, req := range sent {
@@ -320,7 +334,7 @@ func (m Mail) State(ctx context.Context, rt Runtime, allowed []string) SelfState
 				}
 			}
 			if !answered {
-				outbound = append(outbound, Obligation{req.ID, req.InputRequestID, req.To, true})
+				outbound = append(outbound, Obligation{req.ID, req.InputRequestID, messagePeer(req, false), true})
 			}
 		}
 		sort.Slice(inbound, func(i, j int) bool { return inbound[i].MessageID < inbound[j].MessageID })

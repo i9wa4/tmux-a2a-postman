@@ -95,3 +95,18 @@ func TestNotifyCommittedUnknownTargetDoesNotCallNotifier(t *testing.T) {
 		t.Fatalf("missing target reported as notified: %+v", result)
 	}
 }
+
+func TestNotifyCommittedCrossSessionDoesNotSelectLocalSameNamedRole(t *testing.T) {
+	rt := noticeRuntime{storedRuntime: mailRuntime("worker")}
+	rt.notify = func(context.Context, Binding, string) error {
+		t.Fatal("cross-session notice targeted a local pane")
+		return nil
+	}
+	result := NotifyCommitted(context.Background(), rt, Message{
+		ID: "m-0123456789abcdef0123456789abcdef", From: "worker", FromSession: "parent",
+		To: "worker", ToSession: "child",
+	})
+	if result.Status != "unavailable" || result.Pane != "" || result.Reason != "cross-session pane notification unsupported" {
+		t.Fatalf("cross-session notice named local pane: %+v", result)
+	}
+}

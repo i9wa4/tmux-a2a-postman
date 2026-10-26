@@ -87,3 +87,44 @@ func TestWorkspaceTopologyBoundsAndCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWorkspaceInterfaceRouteDirectOnly(t *testing.T) {
+	path := topologyFixture(t, "---\ninterface_node: worker\nworkspace_tree:\n  - session_name: parent\n    interface_node: worker\n  - session_name: child\n    parent_session_name: parent\n    interface_node: worker\n  - session_name: grandchild\n    parent_session_name: child\n    interface_node: worker\n  - session_name: sibling\n    parent_session_name: parent\n    interface_node: worker\n---\n## `worker`\nWorker\n## `other`\nOther\n")
+	topology, err := LoadWorkspaceTopology(context.Background(), path)
+	if err != nil || len(topology.Sessions) != 4 {
+		t.Fatal(topology, err)
+	}
+	for _, route := range [][3]string{{"parent", "worker", "child:worker"}, {"child", "worker", "parent:worker"}, {"child", "worker", "grandchild:worker"}} {
+		if _, _, err := topology.InterfaceRoute(route[0], route[1], route[2]); err != nil {
+			t.Fatal(route, err)
+		}
+	}
+	for _, route := range [][3]string{
+		{"parent", "worker", "grandchild:worker"},
+		{"child", "worker", "sibling:worker"},
+		{"parent", "worker", "child:other"},
+		{"parent", "other", "child:worker"},
+		{"parent", "worker", "worker"},
+		{"parent", "worker", "unknown:worker"},
+	} {
+		if _, _, err := topology.InterfaceRoute(route[0], route[1], route[2]); err == nil {
+			t.Fatal("unauthorized route", route)
+		}
+	}
+}
+
+func TestWorkspaceInterfaceTreeRejectsAmbiguity(t *testing.T) {
+	for _, tree := range []string{
+		"  - session_name: parent\n    interface_node: missing\n",
+		"  - session_name: parent\n    interface_node: worker\n  - session_name: parent\n    interface_node: worker\n",
+		"  - session_name: parent\n    parent_session_name: missing\n    interface_node: worker\n",
+		"  - session_name: parent\n    parent_session_name: child\n    interface_node: worker\n  - session_name: child\n    parent_session_name: parent\n    interface_node: worker\n",
+		"  - session_name: parent\n    interface_node: worker\n    unknown: value\n",
+		"  - session_name: parent:worker\n    interface_node: worker\n",
+	} {
+		path := topologyFixture(t, "---\ninterface_node: worker\nworkspace_tree:\n"+tree+"---\n## `worker`\nWorker\n")
+		if _, err := LoadWorkspaceTopology(context.Background(), path); err == nil {
+			t.Fatal("ambiguous tree accepted", tree)
+		}
+	}
+}
