@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func mustState(t *testing.T, m Mail, role string) SelfState {
@@ -231,4 +232,98 @@ func TestSelfStateDoesNotInspectOtherAgentsFiles(t *testing.T) {
 	if state := mustState(t, m, "worker"); len(state.Outbound) != 1 {
 		t.Fatal(state)
 	}
+}
+
+func TestSelfStateActivityIsReadOnlyUnknownForMissingStaleAndConflictingEvidence(t *testing.T) {
+	m := mailFixture(t)
+	rt := mailRuntime("worker")
+	msg := sendStateMessage(t, m, "worker", "peer", "private activity payload", "", "", false)
+	if got := mustState(t, m, "worker").Activity; got.Status != "unknown" || got.Reason != "no saved pane observation" {
+		t.Fatal(got)
+	}
+	path := filepath.Join(m.Store.StateRoot, "repo", "agents", "worker", "captures")
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	owner := rt.snapshot.Caller.Owner
+	now := time.Now().UTC()
+	text := "private pane activity"
+	digest := sha256.Sum256([]byte(text))
+	record := CaptureResult{
+		Version: 1, MessageID: msg.ID, CapturedAt: now.Format(time.RFC3339Nano), Incarnation: owner.Incarnation,
+		Observations: []PaneObservation{{
+			Role: "worker", Pane: owner.Pane, Incarnation: owner.Incarnation,
+			CapturedAt: now.Format(time.RFC3339Nano), Text: text, Fingerprint: "sha256:" + hex.EncodeToString(digest[:]),
+		}},
+	}
+	name := msg.ID + ".json"
+	check := func(want string) {
+		t.Helper()
+		before := treeFacts(t, m.Store.StateRoot)
+		state := mustState(t, m, "worker")
+		if state.Activity.Status != "unknown" || state.Activity.Reason != want ||
+			state.Activity.ObservedAt == "" || state.Activity.AgeSeconds == nil ||
+			strings.Contains(state.Activity.Reason, text) {
+			t.Fatalf("activity: %+v, want reason %q", state.Activity, want)
+		}
+		if after := treeFacts(t, m.Store.StateRoot); !reflect.DeepEqual(before, after) {
+			t.Fatal("activity read mutated saved files")
+		}
+		encoded, err := json.Marshal(state)
+		if err != nil || strings.Contains(string(encoded), text) {
+			t.Fatalf("pane text leaked through status: %v", err)
+		}
+	}
+	put := func() {
+		t.Helper()
+		if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if err := writeJSON(root, name, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put()
+	check("saved pane observation cannot prove current work")
+	record.CapturedAt = now.Add(-10 * time.Minute).Format(time.RFC3339Nano)
+	record.Observations[0].CapturedAt = record.CapturedAt
+	put()
+	check("saved pane observation is stale")
+	record.CapturedAt = now.Format(time.RFC3339Nano)
+	put()
+	check("saved pane observation is stale")
+	record.CapturedAt = now.Add(-10 * time.Minute).Format(time.RFC3339Nano)
+	record.Observations[0].CapturedAt = now.Format(time.RFC3339Nano)
+	put()
+	check("saved pane observation is stale")
+	ws, err := os.OpenRoot(filepath.Join(m.Store.StateRoot, "repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	record.CapturedAt = now.Add(500 * time.Millisecond).Format(time.RFC3339Nano)
+	record.Observations[0].CapturedAt = record.CapturedAt
+	put()
+	if got := readOwnActivity(ws, rt.snapshot.Caller, now); got.Status != "unknown" ||
+		got.Reason != "saved pane observation conflicts with current time" || got.AgeSeconds != nil {
+		t.Fatal("subsecond future observation was accepted", got)
+	}
+	record.CapturedAt = now.Format(time.RFC3339Nano)
+	record.Observations[0].CapturedAt = record.CapturedAt
+	record.Incarnation = "other-incarnation"
+	put()
+	check("saved pane observation conflicts with current incarnation")
+	record.Incarnation = owner.Incarnation
+	record.Observations[0].Pane = "%other"
+	put()
+	check("saved pane observation conflicts with current pane")
+	record.Observations[0].Pane = owner.Pane
+	record.Observations[0].Fingerprint = "sha256:invalid"
+	put()
+	check("saved pane evidence invalid")
 }

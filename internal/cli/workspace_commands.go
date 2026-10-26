@@ -222,6 +222,7 @@ func (c workspaceCommand) withVerifiedSessionPeers(ctx context.Context, self wor
 
 func unavailableSelf(self workspace.SelfState, err error) workspace.SelfState {
 	self.Known, self.Unread, self.Inbound, self.Outbound, self.Peers = false, nil, nil, nil, nil
+	self.Activity = workspace.ActivityState{Status: "unknown", Reason: "caller identity unavailable"}
 	self.UnavailableReason, self.NextAction = err.Error(), "inspect state error"
 	return self
 }
@@ -244,7 +245,11 @@ func writeWorkspaceOutput(w io.Writer, result workspaceOutput) error {
 
 func unavailableWorkspaceOutput(err error) workspaceOutput {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	return workspaceOutput{Status: "unavailable", Self: workspace.SelfState{AsOf: now, NextAction: "inspect state error", UnavailableReason: err.Error()}, Reason: err.Error()}
+	return workspaceOutput{Status: "unavailable", Self: workspace.SelfState{
+		AsOf: now, NextAction: "inspect state error",
+		Activity:          workspace.ActivityState{Status: "unknown", Reason: "mail state unavailable"},
+		UnavailableReason: err.Error(),
+	}, Reason: err.Error()}
 }
 
 func RunWorkspaceGetStatus(args []string) error {

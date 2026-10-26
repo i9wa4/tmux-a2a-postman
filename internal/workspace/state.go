@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -20,18 +22,30 @@ type Obligation struct {
 }
 
 type SelfState struct {
-	Known             bool         `json:"known"`
-	Workspace         string       `json:"workspace,omitempty"`
-	Node              string       `json:"node,omitempty"`
-	Mailbox           string       `json:"mailbox,omitempty"`
-	AsOf              string       `json:"as_of"`
-	Unread            *int         `json:"unread"`
-	Inbound           []Obligation `json:"inbound"`
-	Outbound          []Obligation `json:"outbound"`
-	Peers             []string     `json:"peers"`
-	NextAction        string       `json:"next_action"`
-	UnavailableReason string       `json:"unavailable_reason,omitempty"`
+	Known             bool          `json:"known"`
+	Workspace         string        `json:"workspace,omitempty"`
+	Node              string        `json:"node,omitempty"`
+	Mailbox           string        `json:"mailbox,omitempty"`
+	AsOf              string        `json:"as_of"`
+	Unread            *int          `json:"unread"`
+	Inbound           []Obligation  `json:"inbound"`
+	Outbound          []Obligation  `json:"outbound"`
+	Peers             []string      `json:"peers"`
+	NextAction        string        `json:"next_action"`
+	Activity          ActivityState `json:"activity"`
+	UnavailableReason string        `json:"unavailable_reason,omitempty"`
 }
+
+// ActivityState summarizes saved pane evidence without treating a capture as
+// proof of ongoing work. Mail obligations remain independent of this field.
+type ActivityState struct {
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	ObservedAt string `json:"observed_at,omitempty"`
+	AgeSeconds *int64 `json:"age_seconds,omitempty"`
+}
+
+const activityFreshness = 5 * time.Minute
 
 type SendResult struct {
 	Message Message   `json:"message"`
@@ -228,6 +242,117 @@ func readOwnMail(ws *os.Root, role, box string) ([]Message, error) {
 	return messages, nil
 }
 
+// readOwnActivity reads only this role's bounded saved captures. Invalid or
+// contradictory evidence downgrades activity, never the file-derived mail
+// facts. In particular, equal pane snapshots do not establish work progress.
+func readOwnActivity(ws *os.Root, caller Binding, now time.Time) ActivityState {
+	unknown := ActivityState{Status: "unknown", Reason: "no saved pane observation"}
+	agents, err := privateDir(ws, "agents", false)
+	if err != nil {
+		unknown.Reason = "saved pane evidence unavailable"
+		return unknown
+	}
+	defer agents.Close()
+	agent, err := privateDir(agents, caller.Role, false)
+	if err != nil {
+		unknown.Reason = "saved pane evidence unavailable"
+		return unknown
+	}
+	defer agent.Close()
+	captures, err := privateDir(agent, "captures", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return unknown
+	}
+	if err != nil {
+		unknown.Reason = "saved pane evidence unavailable"
+		return unknown
+	}
+	defer captures.Close()
+	entries, err := boundedEntries(captures)
+	if err != nil {
+		unknown.Reason = "saved pane evidence unavailable"
+		return unknown
+	}
+	var latest CaptureResult
+	var latestAt time.Time
+	for _, entry := range entries {
+		name := entry.Name()
+		id := strings.TrimSuffix(name, ".json")
+		if name != id+".json" || !messageID(id) {
+			unknown.Reason = "saved pane evidence invalid"
+			return unknown
+		}
+		var record CaptureResult
+		if readJSON(captures, name, &record) != nil || record.Version != 1 || record.MessageID != id {
+			unknown.Reason = "saved pane evidence invalid"
+			return unknown
+		}
+		when, err := time.Parse(time.RFC3339Nano, record.CapturedAt)
+		if err != nil {
+			unknown.Reason = "saved pane evidence invalid"
+			return unknown
+		}
+		if latestAt.IsZero() || when.After(latestAt) {
+			latest, latestAt = record, when
+		}
+	}
+	if latestAt.IsZero() {
+		return unknown
+	}
+	unknown.ObservedAt = latest.CapturedAt
+	if latestAt.After(now) {
+		unknown.Reason = "saved pane observation conflicts with current time"
+		return unknown
+	}
+	age := int64(now.Sub(latestAt).Seconds())
+	unknown.AgeSeconds = &age
+	if latest.Incarnation != caller.Owner.Incarnation {
+		unknown.Reason = "saved pane observation conflicts with current incarnation"
+		return unknown
+	}
+	var own *PaneObservation
+	for i := range latest.Observations {
+		if latest.Observations[i].Role == caller.Role {
+			if own != nil {
+				unknown.Reason = "saved pane evidence invalid"
+				return unknown
+			}
+			own = &latest.Observations[i]
+		}
+	}
+	if own == nil || own.Pane != caller.Owner.Pane || own.Incarnation != caller.Owner.Incarnation {
+		unknown.Reason = "saved pane observation conflicts with current pane"
+		return unknown
+	}
+	observedAt := latestAt
+	if own.CapturedAt != "" {
+		observed, err := time.Parse(time.RFC3339Nano, own.CapturedAt)
+		if err != nil || observed.After(now) {
+			unknown.Reason = "saved pane evidence invalid"
+			return unknown
+		}
+		observedAt = observed
+		unknown.ObservedAt = own.CapturedAt
+		age = int64(now.Sub(observedAt).Seconds())
+		unknown.AgeSeconds = &age
+	}
+	if latestAt.Before(now.Add(-activityFreshness)) || observedAt.Before(now.Add(-activityFreshness)) {
+		unknown.Reason = "saved pane observation is stale"
+		return unknown
+	}
+	if latest.Reason != "" || own.Reason != "" || own.Fingerprint == "" {
+		unknown.Reason = "saved pane observation unavailable"
+		return unknown
+	}
+	digest := sha256.Sum256([]byte(own.Text))
+	if own.Fingerprint != "sha256:"+hex.EncodeToString(digest[:]) {
+		unknown.Reason = "saved pane evidence invalid"
+		return unknown
+	}
+	unknown.Reason = "saved pane observation cannot prove current work"
+	return unknown
+}
+
 func exactAnswer(request, answer Message) bool {
 	return request.NeedsReply && answer.ReplyTo == request.ID && answer.FillsInputRequestID == request.InputRequestID &&
 		answer.From == request.To && answer.To == request.From &&
@@ -251,7 +376,10 @@ func messagePeer(msg Message, inbound bool) string {
 // layer's authorized local peer set, not permission inferred from other mail.
 // No unread body is returned; no pane capture, notification or recovery occurs.
 func (m Mail) State(ctx context.Context, rt Runtime, allowed []string) SelfState {
-	state := SelfState{AsOf: time.Now().UTC().Format(time.RFC3339Nano), NextAction: "inspect state error"}
+	state := SelfState{
+		AsOf: time.Now().UTC().Format(time.RFC3339Nano), NextAction: "inspect state error",
+		Activity: ActivityState{Status: "unknown", Reason: "mail state unavailable"},
+	}
 	err := m.Store.withView(ctx, rt, func(ws *os.Root, s Snapshot) error {
 		state.Workspace, state.Node = s.Root, s.Caller.Role
 		name, _ := Name(s.Root)
@@ -341,7 +469,9 @@ func (m Mail) State(ctx context.Context, rt Runtime, allowed []string) SelfState
 		sort.Slice(outbound, func(i, j int) bool { return outbound[i].MessageID < outbound[j].MessageID })
 		n := len(inbox)
 		state.Known, state.Unread, state.Inbound, state.Outbound, state.Peers = true, &n, inbound, outbound, peers
-		state.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
+		now := time.Now().UTC()
+		state.AsOf = now.Format(time.RFC3339Nano)
+		state.Activity = readOwnActivity(ws, s.Caller, now)
 		state.NextAction = "none"
 		switch {
 		case n > 0:
