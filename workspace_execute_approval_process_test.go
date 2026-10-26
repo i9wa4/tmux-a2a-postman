@@ -401,8 +401,11 @@ func TestWorkspaceExecuteBashPublicConcurrentIndependentRequests(t *testing.T) {
 			case err := <-secondDone:
 				var result publicApprovalOutput
 				decodeErr := json.NewDecoder(secondErr).Decode(&result)
+				// Recording the failed delivery can encounter the same busy lock.
+				busyReason := result.Reason == "workspace mutation is busy" ||
+					result.Reason == "workspace mutation is busy audit terminal unavailable: workspace mutation is busy"
 				if err == nil || decodeErr != nil || result.Status != "delivery_failed" ||
-					result.Reason != "workspace mutation is busy" || result.Execution == nil ||
+					!busyReason || result.Execution == nil ||
 					result.Execution.RequestID != "" || result.Message != nil {
 					t.Fatalf("second public request failed before delivery: %+v err=%v decode=%v", result, err, decodeErr)
 				}

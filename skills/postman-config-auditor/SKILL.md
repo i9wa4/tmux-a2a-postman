@@ -15,9 +15,10 @@ Audit tmux-a2a-postman configuration with implementation-level accuracy.
 
 For the file-first `send-heredoc`, `pop`, `get-status`, and `execute-bash`
 adapters, audit the single absolute `postman.md` used by that invocation.
-They do not load `postman.toml`, split node files, daemon policies, or
-`workspace_tree`. The linked format and audit references still describe the
-legacy daemon configuration where they mention those layers or daemon PING.
+They read its bounded frontmatter `workspace_tree` for declared parent-child
+interface routing, but do not load `postman.toml`, split node files, or daemon
+policies. The linked references distinguish that declaration from legacy TOML
+`workspace_tree` and daemon PING configuration.
 
 **UTILITY SKILL**. INVOKES: local source inspection and direct file edits.
 
@@ -27,7 +28,7 @@ legacy daemon configuration where they mention those layers or daemon PING.
 - Check Mermaid edges, `interface_node`, role templates, and skill catalogs.
   `interface_node` has no default and `ui_node` is not an alias: an omitted
   `interface_node` means no interface node (fail closed), and any `ui_node`
-  form is warned about and ignored (#764).
+  form is warned about and ignored.
 - Diagnose `get-status` evidence for dead-letter, missing route, quiet node, or
   unread backlog symptoms.
 

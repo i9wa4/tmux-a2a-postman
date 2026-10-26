@@ -20,9 +20,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/tmuxrunner"
 )
 
-// ErrPaneUnresponsive indicates the post-Enter verify-retry loop exhausted
-// maxRetries without evidence that the target pane processed the delivered
-// input (#816). The notification may still be visible in the input composer.
+// ErrPaneUnresponsive indicates that post-Enter verification could not prove
+// the intended input was submitted on the same pane, including exhausted
+// retries or an ambiguous capture (#816).
 var ErrPaneUnresponsive = errors.New("pane unresponsive: notification not submitted after verify retries")
 
 var defaultPaneNotifier = NewPaneNotifier(10 * time.Minute)
@@ -33,16 +33,18 @@ type PaneNotifier struct {
 	lastNotified map[string]time.Time
 	cooldown     time.Duration
 
-	now     func() time.Time
-	sleep   func(time.Duration)
-	runTmux func(args ...string) error
-	capture func(paneID string) (string, error)
-	stderr  io.Writer
+	now      func() time.Time
+	sleep    func(time.Duration)
+	runTmux  func(args ...string) error
+	capture  func(paneID string) (string, error)
+	identify func(paneID string) (string, error)
+	stderr   io.Writer
 }
 
 type PaneDelivery struct {
 	PaneID         string
 	Message        string
+	Filename       string
 	EnterDelay     time.Duration
 	TmuxTimeout    time.Duration
 	EnterCount     int
@@ -79,6 +81,7 @@ func (s TmuxPaneSender) DeliverPane(delivery PaneDelivery) error {
 		delivery.BypassCooldown,
 		delivery.VerifyDelay,
 		delivery.MaxRetries,
+		delivery.Filename,
 	)
 }
 
@@ -117,13 +120,20 @@ func BuildNotification(cfg *config.Config, adjacency map[string][]string, nodes 
 // Error handling: Logs errors but does not fail (graceful degradation).
 // enterCount controls how many C-m keystrokes to send; 0 or 1 sends one, N>=2 sends N total.
 // bypassCooldown skips the per-pane rate limit; direct message delivery passes true.
-// verifyDelay > 0 enables post-Enter verification: it checks the visible input
-// composer for the notification, falling back to capture comparison when the
-// composer cannot be identified, and retries C-m up to maxRetries.
+// verifyDelay > 0 enables post-Enter verification: it checks the same pane's
+// visible input prompts for the intended notification after a short settled
+// observation, and retries C-m up to maxRetries only while it remains pending.
 func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
+	return SendToPaneWithFilename(paneID, message, "", enterDelay, tmuxTimeout, enterCount, bypassCooldown, verifyDelay, maxRetries)
+}
+
+// SendToPaneWithFilename uses the trusted delivery filename independently of
+// the rendered notification template when checking the pane after Enter.
+func SendToPaneWithFilename(paneID, message, filename string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
 	return TmuxPaneSender{}.DeliverPane(PaneDelivery{
 		PaneID:         paneID,
 		Message:        message,
+		Filename:       filename,
 		EnterDelay:     enterDelay,
 		TmuxTimeout:    tmuxTimeout,
 		EnterCount:     enterCount,
@@ -134,7 +144,7 @@ func SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTim
 }
 
 // SendToPane sends a message to a tmux pane using this notifier's dependencies and cooldown state.
-func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
+func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time.Duration, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int, trustedFilename ...string) error {
 	if n == nil {
 		n = defaultPaneNotifier
 	}
@@ -160,10 +170,35 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 	}
 	n.lastNotified[paneID] = now
 	n.mu.Unlock()
+	verify := verifyDelay > 0 && maxRetries > 0
+	filename := notificationFilename(message)
+	if len(trustedFilename) > 0 && trustedFilename[0] != "" {
+		filename = trustedFilename[0]
+	}
+	// A valid custom template may omit {filename}. Include a useful message
+	// reference in the submitted notice so verification still has a cue tied
+	// to this delivery, without rejecting or changing the configured template.
+	if verify && filename != "" && !containsFilenameToken(message, filename) {
+		message += "\nMessage: " + filename
+	}
 	sanitized, err := PrepareInteractivePaneMessage(message)
 	if err != nil {
 		n.warnf("⚠️  postman: WARNING: sanitizeForTmux: %v\n", err)
 		return err
+	}
+	var incarnation string
+	if verify {
+		if filename == "" {
+			return fmt.Errorf("%w: notification has no message filename", ErrPaneUnresponsive)
+		}
+		incarnation, err = n.paneIdentity(paneID)
+		if err != nil || incarnation == "" {
+			return fmt.Errorf("%w: pane %s identity unavailable: %v", ErrPaneUnresponsive, paneID, err)
+		}
+		baseline, captureErr := n.captureVerified(paneID, incarnation)
+		if captureErr != nil || strings.Contains(baseline, filename) {
+			return fmt.Errorf("%w: pane %s baseline unavailable or contains stale notification: %v", ErrPaneUnresponsive, paneID, captureErr)
+		}
 	}
 
 	// 1-4. Set buffer, paste it into the pane, and submit with C-m as one
@@ -204,32 +239,30 @@ func (n *PaneNotifier) SendToPane(paneID string, message string, enterDelay time
 		}
 	}
 
-	// 6. Post-Enter verify: the input composer is stronger evidence than an
-	// arbitrary screen change. A spinner or footer can change while the
-	// notification remains unsent in the composer. Check after the final retry
-	// too, rather than reporting on the state before its Enter was sent.
-	if verifyDelay > 0 && maxRetries > 0 {
-		filename := notificationFilename(message)
+	// 6. Post-Enter verify: observe the same pane after the UI settles. A spinner
+	// or footer can change while the notification remains unsent in the composer.
+	// Check after the final retry, rather than reporting before its Enter.
+	if verify {
 		for retry := 0; retry <= maxRetries; retry++ {
 			n.sleepFor(verifyDelay)
-			snapA, errA := n.capturePane(paneID)
+			_, errA := n.captureVerified(paneID, incarnation)
 			if errA != nil {
-				return nil // cannot verify
+				return fmt.Errorf("%w: pane %s immediate capture: %v", ErrPaneUnresponsive, paneID, errA)
 			}
 			n.sleepFor(verifyDelay)
-			snapB, errB := n.capturePane(paneID)
+			snapB, errB := n.captureVerified(paneID, incarnation)
 			if errB != nil {
-				return nil // cannot verify
+				return fmt.Errorf("%w: pane %s settled capture: %v", ErrPaneUnresponsive, paneID, errB)
 			}
-			if pending, known := composerHasNotification(snapB, filename); known {
-				if !pending {
-					return nil
-				}
-			} else if snapA != snapB {
-				return nil // no recognizable composer; retain the existing heuristic
+			if submittedNotification(snapB, filename) {
+				return nil
+			}
+			pending, known := composerHasNotification(snapB, filename)
+			if !known || !pending {
+				return fmt.Errorf("%w: pane %s has no correlated input transition", ErrPaneUnresponsive, paneID)
 			}
 			if retry == maxRetries {
-				return fmt.Errorf("%w: pane %s unchanged or notification still in composer after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
+				return fmt.Errorf("%w: pane %s notification still in composer after %d verify retries", ErrPaneUnresponsive, paneID, maxRetries)
 			}
 			if err := n.run(tmuxTimeout, "send-keys", "-t", paneID, "C-m"); err != nil {
 				if ambiguous := ambiguousDeadlineError(paneID, "verify-retry C-m", tmuxTimeout, err); ambiguous != nil {
@@ -285,15 +318,90 @@ func composerHasNotification(snapshot, filename string) (pending, known bool) {
 	if lastPrompt < 0 {
 		return false, false
 	}
-	for _, line := range lines[lastPrompt:] {
-		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "─") {
-			break
+	return promptHasNotification(lines, lastPrompt, len(lines), filename), true
+}
+
+// promptHasNotification attributes a filename only to the prompt's own text.
+// A framed multiline paste may continue below the prompt; ordinary output may
+// also appear there, so only lines inside the explicit message frame count.
+func promptHasNotification(lines []string, start, end int, filename string) bool {
+	if start < 0 || start >= end {
+		return false
+	}
+	prompt := strings.TrimLeft(lines[start], " \t")
+	if strings.HasPrefix(prompt, "❯") {
+		prompt = strings.TrimSpace(strings.TrimPrefix(prompt, "❯"))
+	} else if strings.HasPrefix(prompt, "›") {
+		prompt = strings.TrimSpace(strings.TrimPrefix(prompt, "›"))
+	} else {
+		return false
+	}
+	if prompt != "<!-- message start -->" {
+		return containsFilenameToken(prompt, filename)
+	}
+	found := false
+	for _, line := range lines[start+1 : end] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "<!-- end of message -->" {
+			return found
 		}
-		if strings.Contains(line, filename) {
-			return true, true
+		if strings.HasPrefix(trimmed, "─") {
+			return false
+		}
+		found = found || containsFilenameToken(line, filename)
+	}
+	return false
+}
+
+func containsFilenameToken(text, filename string) bool {
+	if filename == "" {
+		return false
+	}
+	for offset := 0; offset < len(text); {
+		i := strings.Index(text[offset:], filename)
+		if i < 0 {
+			return false
+		}
+		i += offset
+		before := i == 0 || !filenameTokenByte(text[i-1])
+		after := i+len(filename) == len(text) || !filenameTokenByte(text[i+len(filename)])
+		// A sentence period may follow the filename; a .bak suffix may not.
+		if !after && text[i+len(filename)] == '.' {
+			end := i + len(filename) + 1
+			after = end == len(text) || !filenameTokenByte(text[end])
+		}
+		if before && after {
+			return true
+		}
+		offset = i + 1
+	}
+	return false
+}
+
+func filenameTokenByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-' || b == '.'
+}
+
+// submittedNotification requires the intended message in a previous input
+// prompt and a newer prompt without it. Output, footers, and an empty prompt
+// alone cannot establish that Enter submitted this notification.
+func submittedNotification(snapshot, filename string) bool {
+	if filename == "" {
+		return false
+	}
+	lines := strings.Split(snapshot, "\n")
+	last, submitted := -1, false
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "❯") || strings.HasPrefix(trimmed, "›") {
+			if last >= 0 {
+				submitted = submitted || promptHasNotification(lines, last, i, filename)
+			}
+			last = i
 		}
 	}
-	return false, true
+	pending, known := composerHasNotification(snapshot, filename)
+	return submitted && known && !pending
 }
 
 // bufferSeq generates unique tmux buffer names for atomicFirstEnterArgs.
@@ -376,6 +484,43 @@ func (n *PaneNotifier) capturePane(paneID string) (string, error) {
 		return n.capture(paneID)
 	}
 	return paneutil.CaptureContent(paneID)
+}
+
+func (n *PaneNotifier) paneIdentity(paneID string) (string, error) {
+	if n.identify != nil {
+		return n.identify(paneID)
+	}
+	out, err := tmuxrunner.Output("display-message", "-p", "-t", paneID,
+		"#{socket_path}\t#{pid}\t#{start_time}\t#{session_id}\t#{pane_id}\t#{pane_pid}")
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Split(strings.TrimSpace(string(out)), "\t")
+	if len(fields) != 6 || fields[4] != paneID {
+		return "", fmt.Errorf("incomplete pane identity")
+	}
+	for _, field := range fields {
+		if field == "" {
+			return "", fmt.Errorf("incomplete pane identity")
+		}
+	}
+	return strings.Join(fields, "\t"), nil
+}
+
+func (n *PaneNotifier) captureVerified(paneID, incarnation string) (string, error) {
+	before, err := n.paneIdentity(paneID)
+	if err != nil || before != incarnation {
+		return "", fmt.Errorf("pane incarnation changed before capture: %v", err)
+	}
+	text, err := n.capturePane(paneID)
+	if err != nil {
+		return "", err
+	}
+	after, err := n.paneIdentity(paneID)
+	if err != nil || after != incarnation {
+		return "", fmt.Errorf("pane incarnation changed after capture: %v", err)
+	}
+	return text, nil
 }
 
 func (n *PaneNotifier) stderrWriter() io.Writer {

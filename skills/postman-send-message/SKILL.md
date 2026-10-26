@@ -52,7 +52,7 @@ POP, sleep/POP, or status loops as a wait mechanism. Use
 [session flow](../postman-usage/references/session-flow.md) for bounded status,
 known mail, stale evidence, and escalation.
 
-Cross-workspace directory routing is still open in issue #937. Use only a
+For cross-workspace directory routing, use only a
 currently verified configured edge and a recipient syntax the installed
 command actually accepts; do not infer eligibility from directory ancestry,
 declarations, or matching node names.

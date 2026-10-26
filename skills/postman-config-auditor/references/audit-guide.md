@@ -1,7 +1,8 @@
 # Config Audit Guide
 
-The four file-first issue #937 commands read one absolute `postman.md` and
-use only its bounded topology. The layered TOML, split-node, daemon PING,
+The four file-first commands read one absolute `postman.md` and
+use its bounded topology, including frontmatter `workspace_tree` for declared
+parent-child interface routing. The layered TOML, split-node, daemon PING,
 tree-alias, and status-projection checks below apply to legacy daemon paths,
 not to those four adapters. For their current syntax, use
 `tmux-a2a-postman help config` and `help <command>`.
@@ -37,9 +38,10 @@ Important merge rules:
 - Non-empty scalar values override lower layers.
 - `edges` replaces lower-layer edges only when the override has at least one
   edge.
-- `workspace_tree` is configured only in `postman.toml`; hierarchy is explicit
-  session and parent metadata captured at daemon or CLI load time, not inferred
-  from pane cwd. Roots are optional metadata only.
+- For legacy daemon configuration, `workspace_tree` is configured in
+  `postman.toml`. The four file-first commands instead parse the bounded
+  `postman.md` frontmatter `workspace_tree`. Both use explicit session and
+  parent metadata rather than inferring hierarchy from pane cwd.
 - Node configs merge field by field for main config files.
 - Split `nodes/*.toml` files replace that node at their layer.
 - `postman.md` frontmatter `skill_path` generates compact skill catalogs from

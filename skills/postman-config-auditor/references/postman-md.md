@@ -1,8 +1,9 @@
 # postman.md Format Reference
 
-For issue #937's four file-first adapters,
-`internal/config/workspace_topology.go` reads one absolute `postman.md` and only
-its bounded role/edge/interface/ command-reviewer topology. It rejects
+For the four file-first adapters,
+`internal/config/workspace_topology.go` reads one absolute `postman.md` and its
+bounded role, edge, interface, command-reviewer, and frontmatter
+`workspace_tree` topology for direct parent-child interface routing. It rejects
 unsupported or ambiguous Mermaid statements rather than silently skipping them,
 and does not merge TOML, split nodes, skill catalogs, or daemon PING settings.
 The broader parser and merge rules below describe the retained legacy daemon
@@ -315,8 +316,9 @@ Important rules:
 - Split `nodes/*.md` files update only non-empty role and template fields.
 - `postman.md` edges replace lower-layer edges only when the parsed edge list is
   non-empty.
-- `workspace_tree` is TOML-only. `postman.md` does not parse or override
-  explicit workspace hierarchy metadata.
+- In the legacy daemon merge path, `workspace_tree` is TOML-only. The four
+  file-first commands instead parse explicit session and parent hierarchy from
+  `postman.md` frontmatter `workspace_tree`; they do not merge daemon TOML.
 - A Mermaid `interface_node` class in the `edges` graph sets `interface_node`
   when frontmatter does not set it. Frontmatter `interface_node` wins within the
   same Markdown file, and postman.md wins over TOML.

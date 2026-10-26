@@ -517,6 +517,8 @@ func TestPaneNotifierBypassCooldown(t *testing.T) {
 }
 
 func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
+	const filename = "20261026-183000-s1-r1-from-worker-to-peer.md"
+	message := "You've got mail: " + filename
 	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
 	notifier, _ := paneNotifierForTest(now, 0)
 	sendKeys := 0
@@ -529,10 +531,15 @@ func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
 		}
 		return nil
 	}
+	captures := 0
 	notifier.capture = func(paneID string) (string, error) {
-		return "unchanged", nil
+		captures++
+		if captures == 1 {
+			return "❯ \n────────", nil
+		}
+		return "❯ " + message + "\n────────", nil
 	}
-	err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2)
+	err := notifier.SendToPane("%1", message, 0, 0, 1, true, 1*time.Millisecond, 2)
 	if !errors.Is(err, ErrPaneUnresponsive) {
 		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (snapshot never changed)", err)
 	}
@@ -541,7 +548,9 @@ func TestPaneNotifierEnterVerifyRetryUsesInjectedDependencies(t *testing.T) {
 	}
 }
 
-func TestSendToPane_VerifyRetryReturnsNilWhenSnapshotChanges(t *testing.T) {
+func TestSendToPane_VerifyRetryRejectsUnrelatedSnapshotChanges(t *testing.T) {
+	const filename = "20261026-183001-s1-r1-from-worker-to-peer.md"
+	message := "You've got mail: " + filename
 	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
 	notifier, _ := paneNotifierForTest(now, 0)
 	captureCalls := 0
@@ -552,8 +561,8 @@ func TestSendToPane_VerifyRetryReturnsNilWhenSnapshotChanges(t *testing.T) {
 		}
 		return "unchanged", nil
 	}
-	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
-		t.Fatalf("SendToPane() error = %v, want nil once a snapshot change is observed", err)
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, 1*time.Millisecond, 2); !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane() error = %v, want unresponsive for unrelated screen change", err)
 	}
 }
 
@@ -567,6 +576,9 @@ func TestSendToPane_VerifyRetryDetectsNotificationLeftInComposer(t *testing.T) {
 			sendKeys := 0
 			notifier.capture = func(string) (string, error) {
 				captureCalls++
+				if captureCalls == 1 {
+					return prompt + " \n──────────────────", nil
+				}
 				return "previous output\n" + prompt + " " + message + "\nfooter " + fmt.Sprint(captureCalls), nil
 			}
 			notifier.runTmux = func(args ...string) error {
@@ -598,6 +610,9 @@ func TestSendToPane_VerifyRetryChecksAfterFinalEnter(t *testing.T) {
 		return nil
 	}
 	notifier.capture = func(string) (string, error) {
+		if sendKeys == 0 {
+			return "❯ \n──────────────────", nil
+		}
 		if sendKeys < 3 {
 			return "❯ " + message + "\n──────────────────", nil
 		}
@@ -611,14 +626,165 @@ func TestSendToPane_VerifyRetryChecksAfterFinalEnter(t *testing.T) {
 	}
 }
 
-func TestSendToPane_VerifyRetryReturnsNilOnCaptureError(t *testing.T) {
+func TestSendToPane_VerifyCustomTemplateUsesTrustedFilename(t *testing.T) {
+	const filename = "20261026-191500-s1-r1-from-worker-to-peer.md"
+	message := "Mail ready: " + filename + ". Run tmux-a2a-postman pop."
+	notifier, _ := paneNotifierForTest(time.Now(), 0)
+	sendKeys := 0
+	notifier.runTmux = func(args ...string) error {
+		if slices.Contains(args, "send-keys") {
+			sendKeys++
+		}
+		return nil
+	}
+	notifier.capture = func(string) (string, error) {
+		if sendKeys == 0 {
+			return "❯ \n", nil
+		}
+		return "❯ " + message + "\n❯ \n", nil
+	}
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2, filename); err != nil {
+		t.Fatalf("SendToPane(custom template) error = %v", err)
+	}
+	if sendKeys != 1 {
+		t.Fatalf("send-keys calls = %d, want 1", sendKeys)
+	}
+}
+
+func TestSendToPane_VerifyFilenameFreeTemplateAddsCorrelatedReference(t *testing.T) {
+	const filename = "20261026-193500-s1-r1-from-worker-to-peer.md"
+	const message = "Mail ready."
+	notifier, _ := paneNotifierForTest(time.Now(), 0)
+	sendKeys := 0
+	addedReference := false
+	notifier.runTmux = func(args ...string) error {
+		if slices.Contains(args, "send-keys") {
+			sendKeys++
+			addedReference = strings.Contains(strings.Join(args, "\n"), "Message: "+filename)
+		}
+		return nil
+	}
+	notifier.capture = func(string) (string, error) {
+		if sendKeys == 0 {
+			return "❯ \n", nil
+		}
+		return "❯ <!-- message start -->\nMail ready.\nMessage: " + filename + "\n<!-- end of message -->\n❯ \n", nil
+	}
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2, filename); err != nil {
+		t.Fatalf("SendToPane(filename-free template) error = %v", err)
+	}
+	if sendKeys != 1 || !addedReference {
+		t.Fatalf("send-keys calls = %d, correlated reference pasted = %v; want 1 and true", sendKeys, addedReference)
+	}
+}
+
+func TestSendToPane_VerifyDelayedSubmittedTransition(t *testing.T) {
+	const filename = "20261026-193501-s1-r1-from-worker-to-peer.md"
+	message := "You've got mail: " + filename
+	notifier, _ := paneNotifierForTest(time.Now(), 0)
+	sendKeys := 0
+	captures := 0
+	notifier.runTmux = func(args ...string) error {
+		if slices.Contains(args, "send-keys") {
+			sendKeys++
+		}
+		return nil
+	}
+	notifier.capture = func(string) (string, error) {
+		captures++
+		switch captures {
+		case 1:
+			return "❯ \n", nil // baseline before paste
+		case 2:
+			return "❯ " + message + "\n", nil // immediate: still ambiguous/pending
+		case 3:
+			return "❯ " + message + "\n❯ \n", nil // settled: submitted
+		default:
+			t.Fatalf("unexpected capture %d", captures)
+			return "", nil
+		}
+	}
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2); err != nil {
+		t.Fatalf("SendToPane(delayed transition) error = %v", err)
+	}
+	if captures != 3 || sendKeys != 1 {
+		t.Fatalf("captures = %d, send-keys = %d; want 3 captures and one Enter", captures, sendKeys)
+	}
+}
+
+func TestSendToPane_VerifyRetryFailsClosedOnCaptureError(t *testing.T) {
 	now := time.Date(2026, time.June, 1, 1, 0, 0, 0, time.UTC)
 	notifier, _ := paneNotifierForTest(now, 0)
 	notifier.capture = func(paneID string) (string, error) {
 		return "", fmt.Errorf("capture-pane failed")
 	}
-	if err := notifier.SendToPane("%1", "hello", 0, 0, 1, true, 1*time.Millisecond, 2); err != nil {
-		t.Fatalf("SendToPane() error = %v, want nil when verification cannot run (capture error means unknown, not unresponsive)", err)
+	if err := notifier.SendToPane("%1", "You've got mail: 20261026-183002-s1-r1-from-worker-to-peer.md", 0, 0, 1, true, 1*time.Millisecond, 2); !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane() error = %v, want unresponsive when capture cannot verify", err)
+	}
+}
+
+func TestSendToPane_VerifyRetryRejectsStaleBaseline(t *testing.T) {
+	const filename = "20261026-183003-s1-r1-from-worker-to-peer.md"
+	message := "You've got mail: " + filename
+	notifier, calls := paneNotifierForTest(time.Now(), 0)
+	notifier.capture = func(string) (string, error) {
+		return "❯ " + message + "\n❯ \n", nil
+	}
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2); !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive for stale baseline", err)
+	}
+	if *calls != 0 {
+		t.Fatalf("tmux sends = %d, want none before baseline is verified", *calls)
+	}
+}
+
+func TestSendToPane_VerifyRetryRejectsChangedPaneIdentity(t *testing.T) {
+	const filename = "20261026-183004-s1-r1-from-worker-to-peer.md"
+	message := "You've got mail: " + filename
+	notifier, calls := paneNotifierForTest(time.Now(), 0)
+	identifications := 0
+	notifier.identify = func(string) (string, error) {
+		identifications++
+		if identifications >= 4 {
+			return "replacement pane", nil
+		}
+		return "original pane", nil
+	}
+	notifier.capture = func(string) (string, error) { return "❯ \n", nil }
+	if err := notifier.SendToPane("%1", message, 0, 0, 1, true, time.Millisecond, 2); !errors.Is(err, ErrPaneUnresponsive) {
+		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive after pane identity changes", err)
+	}
+	if *calls != 1 {
+		t.Fatalf("tmux sends = %d, want only the original atomic send", *calls)
+	}
+}
+
+func TestSubmittedNotificationRejectsEmptyAndUnrelatedPrompts(t *testing.T) {
+	const filename = "20261026-183005-s1-r1-from-worker-to-peer.md"
+	for _, snapshot := range []string{
+		"❯ \n",
+		"spinner\n❯ \n",
+		"❯ unrelated input\n❯ \n",
+		"❯ unrelated input\nbackground output: " + filename + "\n❯ \n",
+		"❯ " + filename + ".bak\n❯ \n",
+		"❯ unrelated input\n<!-- message start -->\n" + filename + "\n<!-- end of message -->\n❯ \n",
+		"output " + filename + "\n❯ \n",
+		"❯ " + filename + "\n",
+	} {
+		if submittedNotification(snapshot, filename) {
+			t.Fatalf("submittedNotification(%q) = true without a correlated submitted prompt", snapshot)
+		}
+	}
+}
+
+func TestSubmittedNotificationAcceptsFramedMultilineInput(t *testing.T) {
+	const filename = "20261026-191501-s1-r1-from-worker-to-peer.md"
+	snapshot := "❯ <!-- message start -->\nHello, worker! You've got mail: " + filename + ".\n<!-- end of message -->\nbackground output\n❯ \n"
+	if !submittedNotification(snapshot, filename) {
+		t.Fatal("submittedNotification() = false after framed input was submitted")
+	}
+	if pending, known := composerHasNotification("❯ <!-- message start -->\n"+filename+"\n<!-- end of message -->\n", filename); !pending || !known {
+		t.Fatalf("composerHasNotification() = (%v, %v), want (true, true)", pending, known)
 	}
 }
 
@@ -825,8 +991,11 @@ func TestSendToPane_EnterVerifyRetryDoesNotWriteWarningToStderr(t *testing.T) {
 	fakeTmux := filepath.Join(tmpDir, "tmux")
 	script := `#!/bin/sh
 case "$1" in
+  display-message)
+    printf 'server\t123\t456\t$1\t%%99\t789\n'
+    ;;
   capture-pane)
-    printf 'unchanged snapshot\n'
+    printf '❯\n'
     ;;
   *)
     ;;
@@ -848,7 +1017,7 @@ esac
 		os.Stderr = origStderr
 	}()
 
-	err = SendToPane("%99", "hello", 1*time.Millisecond, successPathTmuxTimeout, 1, true, 1*time.Millisecond, 2)
+	err = SendToPane("%99", "You've got mail: x.md", 1*time.Millisecond, successPathTmuxTimeout, 1, true, 1*time.Millisecond, 2)
 	if !errors.Is(err, ErrPaneUnresponsive) {
 		t.Fatalf("SendToPane error = %v, want ErrPaneUnresponsive (fake tmux capture-pane always reports unchanged)", err)
 	}
@@ -950,6 +1119,7 @@ func paneNotifierForTest(now time.Time, cooldown time.Duration) (*PaneNotifier, 
 		return now
 	}
 	notifier.sleep = func(time.Duration) {}
+	notifier.identify = func(string) (string, error) { return "server/session/pane", nil }
 	notifier.stderr = io.Discard
 	notifier.runTmux = func(args ...string) error {
 		calls++

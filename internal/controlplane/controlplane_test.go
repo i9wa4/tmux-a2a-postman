@@ -144,6 +144,7 @@ func TestTmuxHandAdapterDeliverUsesHandAttachment(t *testing.T) {
 		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%99"},
 	}, PaneDelivery{
 		Content:        "notice worker",
+		Filename:       "notice.md",
 		EnterDelay:     5 * time.Millisecond,
 		TmuxTimeout:    1 * time.Second,
 		EnterCount:     0,
@@ -213,6 +214,7 @@ func TestTmuxInteractiveDeliveryAdapterUsesPaneSender(t *testing.T) {
 		Hand:        HandAttachment{Kind: HandKindTmux, Address: "%99"},
 	}, PaneDelivery{
 		Content:        "notice worker",
+		Filename:       "notice.md",
 		EnterDelay:     5 * time.Millisecond,
 		TmuxTimeout:    1 * time.Second,
 		EnterCount:     0,
@@ -229,6 +231,9 @@ func TestTmuxInteractiveDeliveryAdapterUsesPaneSender(t *testing.T) {
 	}
 	if gotDelivery.Message != "notice worker" {
 		t.Fatalf("PaneDelivery.Message = %q, want %q", gotDelivery.Message, "notice worker")
+	}
+	if gotDelivery.Filename != "notice.md" {
+		t.Fatalf("PaneDelivery.Filename = %q, want notice.md", gotDelivery.Filename)
 	}
 	if gotDelivery.EnterCount != 2 {
 		t.Fatalf("PaneDelivery.EnterCount = %d, want %d", gotDelivery.EnterCount, 2)
