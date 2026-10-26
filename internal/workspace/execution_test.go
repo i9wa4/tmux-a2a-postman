@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -322,6 +323,75 @@ func TestExecutorDispatchAuditFailureNeverRunsAndCompletionErrorNeverRetries(t *
 	result, err = e.Execute(context.Background(), mailRuntime("worker"), "once")
 	if err != nil || calls != 1 || result.Status != "executed" || !strings.Contains(result.Reason, "audit completion unavailable") {
 		t.Fatal(result, err, calls)
+	}
+}
+
+func holdExecutionMutationLock(t *testing.T, m Mail) func() {
+	t.Helper()
+	held := make(chan struct{})
+	released := make(chan struct{})
+	done := make(chan struct{})
+	var lockErr error
+	go func() {
+		lockErr = m.Store.WithVerified(context.Background(), mailRuntime("worker"), func(*os.Root, Snapshot) error {
+			close(held)
+			<-released
+			return nil
+		})
+		close(done)
+	}()
+	select {
+	case <-held:
+	case <-done:
+		t.Fatalf("could not hold workspace mutation lock: %v", lockErr)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out acquiring workspace mutation lock")
+	}
+	var once sync.Once
+	release := func() {
+		once.Do(func() { close(released) })
+		<-done
+		if lockErr != nil {
+			t.Fatalf("release workspace mutation lock: %v", lockErr)
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+func TestExecutorPersistentAuditContentionExpiresWithoutExecution(t *testing.T) {
+	m := mailFixture(t)
+	release := holdExecutionMutationLock(t, m)
+	runs := 0
+	e := Executor{Mail: m, Resolve: approvalResolver("")}
+	e.run = func(context.Context, string, io.Writer, io.Writer) (int, error) { runs++; return 0, nil }
+	result, err := e.Execute(context.Background(), mailRuntime("worker"), "never")
+	if !errors.Is(err, context.DeadlineExceeded) || result.Status != "unavailable" || runs != 0 {
+		t.Fatalf("audit contention dispatched Bash: %+v, %v, runs=%d", result, err, runs)
+	}
+	release()
+	if _, err := os.Stat(filepath.Join(m.Store.StateRoot, "repo", "agents", "worker", "executions", result.OperationID+".json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("contention wrote a dispatch audit: %v", err)
+	}
+}
+
+func TestExecutorReleasedAuditContentionDispatchesOnce(t *testing.T) {
+	m := mailFixture(t)
+	release := holdExecutionMutationLock(t, m)
+	runs, waits := 0, 0
+	e := Executor{Mail: m, Resolve: approvalResolver("")}
+	e.wait = func(context.Context) error {
+		waits++
+		release()
+		return nil
+	}
+	e.run = func(context.Context, string, io.Writer, io.Writer) (int, error) { runs++; return 0, nil }
+	result, err := e.Execute(context.Background(), mailRuntime("worker"), "once")
+	if err != nil || result.Status != "executed" || runs != 1 || waits != 1 {
+		t.Fatalf("released audit contention did not dispatch once: %+v, %v, runs=%d, waits=%d", result, err, runs, waits)
+	}
+	if saved := savedExecution(t, m, result); saved.Status != "executed" {
+		t.Fatalf("incorrect final audit after one dispatch: %+v", saved)
 	}
 }
 

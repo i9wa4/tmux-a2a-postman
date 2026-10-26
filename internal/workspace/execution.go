@@ -349,7 +349,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		result.RequestID, result.InputRequestID = req.ID, req.InputRequestID
 		// The request is already durable. A hint failure cannot undo it or
 		// authorize a second approval request for this invocation.
-		notice := NotifyCommitted(waiting, rt, req)
+		notice := NotifyCommittedAfterCommit(waiting, rt, req)
 		result.Notice = &notice
 		for {
 			if err = waiting.Err(); err != nil || !e.clock().Before(deadline) {
@@ -385,7 +385,22 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	result.Status = "dispatched"
 	result.AsOf = e.clock().UTC().Format(time.RFC3339Nano)
 	// Audit is durable BEFORE execution. No recovery path replays this dispatch.
-	if err = e.save(dispatchCtx, pinned, result, true); err != nil {
+	// A missing reviewer leaves dispatchCtx without a deadline, so bound lock
+	// acquisition separately. The reviewer deadline remains the tighter limit.
+	auditCtx, auditCancel := context.WithTimeout(dispatchCtx, 2*time.Second)
+	for {
+		err = e.save(auditCtx, pinned, result, true)
+		if !errors.Is(err, ErrBusy) {
+			break
+		}
+		// ErrBusy is returned before the audit mutation lock is acquired,
+		// so this attempt could not have written a partial dispatch record.
+		if err = e.pause(auditCtx); err != nil {
+			break
+		}
+	}
+	auditCancel()
+	if err != nil {
 		// Do not retry a failed dispatch audit write; a partial record may exist.
 		audit = nil
 		return fail("unavailable", err)

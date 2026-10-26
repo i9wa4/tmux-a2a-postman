@@ -372,7 +372,7 @@ func RunWorkspaceSendHeredoc(args []string) error {
 		msg, sendErr := c.mail.SendCrossWithReply(ctx, caller, peer, string(body), *replyTo, *fills, *required)
 		result := workspaceOutput{Status: "sent", Message: &msg, Self: c.state(ctx)}
 		if sendErr == nil {
-			notice := workspace.NotifyCommitted(ctx, c.runtime, msg)
+			notice := workspace.NotifyCommittedAfterCommit(ctx, c.runtime, msg)
 			result.Notice = &notice
 		}
 		if sendErr == nil && *capture {
@@ -398,7 +398,7 @@ func RunWorkspaceSendHeredoc(args []string) error {
 	sent, sendErr := c.mail.SendWithState(ctx, c.boundRuntime(), *to, string(body), *replyTo, *fills, *required, c.livePeers())
 	result := workspaceOutput{Status: "sent", Message: &sent.Message, Self: c.withVerifiedSessionPeers(ctx, sent.Self)}
 	if sendErr == nil {
-		notice := workspace.NotifyCommitted(ctx, c.runtime, sent.Message)
+		notice := workspace.NotifyCommittedAfterCommit(ctx, c.runtime, sent.Message)
 		result.Notice = &notice
 	}
 	if sendErr == nil && *capture {
