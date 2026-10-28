@@ -304,7 +304,7 @@ func TestSendPingToNodeWithOptions_AppendsRuntimeAgnosticPingAndCompactionCatalo
 			"": "### Available Skills\n\n- `postman-send-message`: Normal ping rules.",
 		},
 		CompactionSkillCatalogs: map[string]string{
-			"": "### Available Skills\n\n- `postman-session-operator`: Compaction rules.",
+			"": "### Available Skills\n\n- `postman-usage`: Compaction rules.",
 		},
 	}
 

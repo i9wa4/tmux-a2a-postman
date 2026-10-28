@@ -1287,8 +1287,8 @@ name: postman-config-auditor
 description: Audit postman configs.
 ---
 `)
-	writeFile(t, filepath.Join(dir, "skills-b", "postman-session-operator", "SKILL.md"), `---
-name: postman-session-operator
+	writeFile(t, filepath.Join(dir, "skills-b", "postman-usage", "SKILL.md"), `---
+name: postman-usage
 description: Operate postman sessions.
 ---
 `)
@@ -1305,7 +1305,7 @@ skill_path:
   - path: skills-b
     skills:
       - postman-config-auditor
-      - postman-session-operator
+      - postman-usage
 ---
 `
 	path := filepath.Join(dir, "postman.md")
@@ -1319,7 +1319,7 @@ skill_path:
 	assertContains(t, cfg.CommonTemplate, "Skill files live under `skills-a`, `skills-b`.")
 	assertContains(t, cfg.CommonTemplate, "- `bash`: Bash rules.")
 	assertContains(t, cfg.CommonTemplate, "- `postman-config-auditor`: Audit postman configs.")
-	assertContains(t, cfg.CommonTemplate, "- `postman-session-operator`: Operate postman sessions.")
+	assertContains(t, cfg.CommonTemplate, "- `postman-usage`: Operate postman sessions.")
 	assertNotContains(t, cfg.CommonTemplate, "Python rules.")
 	assertNotContains(t, cfg.CommonTemplate, "Unselected skill.")
 }
@@ -1544,8 +1544,8 @@ name: repo-local
 description: Normal repo rules.
 ---
 `)
-	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "postman-session-operator", "SKILL.md"), `---
-name: postman-session-operator
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "postman-usage", "SKILL.md"), `---
+name: postman-usage
 description: Shared ping rules.
 ---
 `)
@@ -1602,17 +1602,17 @@ Compact shared instructions.
 	assertNotContains(t, pingCatalog, "Claude harness rules.")
 
 	claudeCatalog := cfg.CompactionSkillCatalogForRuntime("claude")
-	assertContains(t, claudeCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, claudeCatalog, "- `postman-usage`: Shared ping rules.")
 	assertContains(t, claudeCatalog, "- `agent-harness-engineering`: Claude harness rules.")
 	assertContains(t, claudeCatalog, "- `bash`: Codex shell rules.")
 
 	codexCatalog := cfg.CompactionSkillCatalogForRuntime("codex")
-	assertContains(t, codexCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, codexCatalog, "- `postman-usage`: Shared ping rules.")
 	assertContains(t, codexCatalog, "- `agent-harness-engineering`: Claude harness rules.")
 	assertContains(t, codexCatalog, "- `bash`: Codex shell rules.")
 
 	unknownCatalog := cfg.CompactionSkillCatalogForRuntime("node")
-	assertContains(t, unknownCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, unknownCatalog, "- `postman-usage`: Shared ping rules.")
 	assertContains(t, unknownCatalog, "- `agent-harness-engineering`: Claude harness rules.")
 	assertContains(t, unknownCatalog, "- `bash`: Codex shell rules.")
 }
@@ -1620,8 +1620,8 @@ Compact shared instructions.
 func TestLoadMarkdownConfig_SkillPathInjectListBuildsPingAndCompactionPingCatalogs(t *testing.T) {
 	dir := t.TempDir()
 	setSkillCatalogHome(t, dir)
-	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "postman-session-operator", "SKILL.md"), `---
-name: postman-session-operator
+	writeFile(t, filepath.Join(dir, ".config", "tmux-a2a-postman", "skills", "postman-usage", "SKILL.md"), `---
+name: postman-usage
 description: Shared ping rules.
 ---
 `)
@@ -1632,7 +1632,7 @@ skill_path:
       - ping
       - compaction_ping
     skills:
-      - postman-session-operator
+      - postman-usage
 ---
 
 ## ` + "`common_template`" + `
@@ -1652,11 +1652,11 @@ Compact shared instructions.
 
 	pingCatalog := cfg.PingSkillCatalogForRuntime("codex")
 	assertContains(t, pingCatalog, "Skill files live under `~/.config/tmux-a2a-postman/skills`.")
-	assertContains(t, pingCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, pingCatalog, "- `postman-usage`: Shared ping rules.")
 
 	compactionCatalog := cfg.CompactionSkillCatalogForRuntime("codex")
 	assertContains(t, compactionCatalog, "Skill files live under `~/.config/tmux-a2a-postman/skills`.")
-	assertContains(t, compactionCatalog, "- `postman-session-operator`: Shared ping rules.")
+	assertContains(t, compactionCatalog, "- `postman-usage`: Shared ping rules.")
 }
 
 func TestLoadMarkdownConfig_SkillPathRejectsInjectAliases(t *testing.T) {
