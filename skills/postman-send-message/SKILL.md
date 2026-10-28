@@ -46,8 +46,12 @@ unresolved state in the returned output; missing state is unknown.
 
 ## 3. After sending
 
-Wait passively for a genuine notification or exact reply. Do not use repeated
-POP, sleep/POP, or status loops as a wait mechanism. Use
+Read the returned post-operation self-state first. If it reports known own
+unread mail, run one POP and read that archived body. Each subsequent positive
+POP self-state may cue the next known message. When no own unread mail is
+known, do not POP. Wait passively for a genuine notification or exact reply.
+Do not use repeated empty POP, sleep/POP,
+or status loops as a wait mechanism. Use
 [postman-usage](../postman-usage/SKILL.md) and its
 [session flow](../postman-usage/references/session-flow.md) for bounded status,
 known mail, stale evidence, and escalation.

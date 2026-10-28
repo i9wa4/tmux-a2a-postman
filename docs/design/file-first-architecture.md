@@ -105,17 +105,34 @@ identifiers may change on restart; they do not rename the workspace.
 
 ```text
 state-root/
-  locks/<workspace-name>.lock
+  registry/
+    workspaces.json               routing/discovery index
+  locks/
+    <workspace-name>.lock
   <workspace-name>/
     workspace.json                 stable root/name identity
     runtime/binding.json           current owner and role bindings
-    agents/<role>/inbox/           committed unread mail
-    agents/<role>/read/            final POP claims and receipts
-    agents/<role>/sent/            sender copies
-    agents/<role>/captures/        bounded related-pane observations
-    transactions/                 recoverable send/claim intent
-  unknown-captures/               optional reason-only failure receipts
+    agents/<role>/
+      draft/                       recoverable send composition
+      inbox/                       committed unread mail
+      read/                        final POP claims and receipts
+        <message-id>.md
+        <message-id>.pop.json
+      sent/                        independent sender copies
+      failed/                      recoverable failed delivery
+      pane/                        bounded related-pane observations
+        latest.txt
+        latest.json
+        history.jsonl
+    journal/events.jsonl           necessary audit facts, not mailbox truth
+    transactions/<operation-id>.json  interrupted-operation evidence
 ```
+
+The registry is a reconstructible routing index, while each agent's mail files
+are the mailbox source of truth. See
+[Mail Facts and Node State](node-state-machine.md) for claim and reply
+transitions, and [Notification Design](notification.md) for the post-commit
+recipient cue and observation boundary.
 
 The state root and workspace identity derive from HOME, not cwd. Changing
 directory, restarting the CLI, or racing first registration must resolve the
@@ -165,12 +182,13 @@ binding until re-registration. Do not scan unrelated fleet panes.
 
 Every observation records role, pane, capture time, incarnation, source and
 fingerprint. Bound both capture bytes/count and retention; age out historical
-observations without deleting mail or reply obligations. If verification
-fails, record only a reason-only failure receipt outside the workspace and
-report `unknown`. Negative tests must cover retitle, respawn, stale time,
-unrelated panes and capture failure; positive tests must prove a registered
-sender and receiver on their actual session incarnations. Capture must not
-hold a mailbox lock, consume mail, modify user input or interfere with send.
+observations without deleting mail or reply obligations. If verification fails,
+report `unknown`. Any optional reason-only diagnostic receipt must stay separate
+from authoritative workspace mail and observation records. Negative tests must
+cover retitle, respawn, stale time, unrelated panes and capture failure;
+positive tests must prove a registered sender and receiver on their actual
+session incarnations. Capture must not hold a mailbox lock, consume mail, modify
+user input or interfere with send.
 
 The mail commit precedes a notification attempt. Only a supported
 app-owned transaction or enforceable all-writer lease may enter the recipient

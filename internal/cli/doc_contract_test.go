@@ -135,7 +135,8 @@ func TestReducedSurfaceDocContract_PostmanSendSkillForbidsPostSendPolling(t *tes
 		"Read its delivery outcome, notification outcome, and mandatory post-operation self-state separately.",
 		"Notification failure does not undo a committed delivery.",
 		"Wait passively for a genuine notification or exact reply.",
-		"Do not use repeated POP, sleep/POP, or status loops as a wait mechanism.",
+		"If it reports known own unread mail, run one POP and read that archived body.",
+		"Do not use repeated empty POP, sleep/POP, or status loops as a wait mechanism.",
 		"postman-usage",
 		"session flow",
 	)
@@ -232,7 +233,8 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"Last reviewed date",
 		"Temporary task artifacts may record discoveries",
 		"repo-relative paths or stable URLs only",
-		"Runtime behavior changes need a separate issue.",
+		"Scope includes the file-first runtime contract in issue #937.",
+		"daemon PING injection modes described by the legacy runtime are pre-cutover behavior",
 	)
 	assertContainsAllNormalized(
 		t, readme,

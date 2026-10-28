@@ -6,8 +6,11 @@ Use [postman-usage](../SKILL.md) for POP and complete-body reading, and
 ## 1. Choose an action from current evidence
 
 - Genuine Postman pane notification: run the exact bare POP, then read the
-  entire returned archive before handling it. An own self-state unread count
-  alone does not cue POP.
+  entire returned archive before handling it.
+- Positive own unread count in a current send/POP self-state: run one POP for
+  that known mail, read the archive, and follow its next self-state if more
+  unread mail remains. Never turn a zero or unknown count into empty-POP
+  polling.
 - Explicit status request, concrete delivery trouble, or an active workflow
   follow-up boundary: one bounded get-status read and a scoped decision.
 - An unresolved outbound request with no new trigger: wait passively.
