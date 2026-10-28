@@ -155,8 +155,8 @@ included. If multiple configured paths exist, their selected skills are
 combined into one catalog for the target. Skills are deduped by `SKILL.md`
 frontmatter `name`; when names collide, the later `skill_path` entry wins.
 Path order also controls the rendered source-path display order. Repo-local
-relative paths are invalid in this mode. See repo doc `docs/ping-events.md` for
-PING event timing and trigger details.
+relative paths are invalid in this legacy mode. These daemon PING triggers
+do not apply to the four file-first commands.
 Skill frontmatter may use single-line `description`, `description: |`, or
 `description: >-`.
 

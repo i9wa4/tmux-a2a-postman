@@ -1,5 +1,9 @@
 # A2A Respect Design
 
+This is retained historical design research. For the current issue #937
+command path and final POP path contract, use
+[file-first architecture](file-first-architecture.md) and CLI help.
+
 This page defines how tmux-a2a-postman should respect the Agent2Agent (A2A)
 Protocol vocabulary and model while staying honest about what it implements.
 
@@ -315,12 +319,10 @@ frontmatter needed by agents.
 That direction fits A2A respect well. A2A `Message.parts` can become a future
 body projection, while frontmatter remains metadata.
 
-Path and body-reference display follows
-[Path Display Policy](path-display-policy.md): user-facing home paths can be
-`~`-shortened, while absolute file paths need an explicit machine-readable
-field when agents must open the file directly. `pop` remains the receiver-owned
-state transition: daemon notifications hint that mail exists, and the receiver
-calls `pop` to claim the inbox item and obtain the archived body reference.
+In the file-first contract, human paths may be `~`-shortened and a
+separate absolute path lets agents open the final receiver-owned read copy.
+The sender's notice follows mail commit; the receiver calls `pop` to
+claim its own inbox item and read the complete archived Markdown.
 
 Example future `pop` JSON shape:
 

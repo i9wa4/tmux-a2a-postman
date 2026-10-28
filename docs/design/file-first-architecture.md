@@ -197,6 +197,14 @@ repeated invocation and concurrent invocations each have separate refusal or
 fresh-request outcomes. A requester waits on its own approval record; it
 does not manually POP the reviewer's inbox or consume unrelated mail.
 
+Evidence commands and old approval records are data, not runnable
+authorization. Any optional replay must first enforce a trusted artifact
+root, reject path traversal and symlink escapes, and verify the content
+hash only after containment. Automatic replay, if retained, is limited
+to read-only or idempotent actions; a mutating action requires explicit
+human approval at execution time. An incomplete evidence contract never
+satisfies an evidence gate.
+
 No workspace or mailbox lock is held across delivery, the bounded approval
 wait, or Bash. Immediately before execution, record a durable dispatch audit
 for the exact approval. Only contention *before* acquiring the audit lock may
@@ -253,16 +261,20 @@ compaction detection as reusable observation without making an observer
 mandatory. Compare old and new surface area, latency and memory under the
 same fixture before claiming simplification.
 
-## 8. Documentation and validation matrix
+## 8. Documentation and validation
 
-| Disposition                                | Surface                                                                                                                                                       | Required action                                                                                                                                                                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Keep                                       | `AGENTS.md`, pointer-only `CLAUDE.md`                                                                                                                         | Preserve instruction ownership and the pointer.                                                                                                                                                                                                                             |
-| Update                                     | `README.md`, command help, `docs/command-approvals.md`                                                                                                        | Describe the four daemon-free commands, saved-file status, exact approval behavior and failure cases with runnable examples.                                                                                                                                                |
-| Update                                     | `skills/postman-usage/SKILL.md`, `skills/postman-send-message/SKILL.md`, `skills/postman-config-auditor/SKILL.md` and their relevant references               | Keep distinct transport, live-session and topology roles; remove stale daemon-dependent or deleted-command guidance and task-specific references. Check the installed session-operator skill separately; this repository has no `skills/postman-session-operator/SKILL.md`. |
-| Delete                                     | Superseded daemon-required instructions and removed flag/command examples within the updated README, help, skills and approval guide                          | Remove each stale instruction after its replacement is verified; do not delete a live daemon feature merely because the four commands are file-first.                                                                                                                       |
-| Review for deletion or historical labeling | `docs/design/daemon-session-model.md`, `docs/ping-events.md`, `docs/recursive-sessions-trial-runbook.md` and obsolete runtime guidance after verified cutover | Do not present retired runtime/config paths as the file-first command path; retain records only when clearly labeled.                                                                                                                                                       |
-| New                                        | `docs/design/file-first-architecture.md`                                                                                                                      | State identity, ownership, routing, claim/recovery, UI evidence, approval, migration and verification contracts.                                                                                                                                                            |
+[Issue #937 §8](https://github.com/i9wa4/tmux-a2a-postman/issues/937)
+defines the exact keep, update, delete, and new-file dispositions. Obsolete
+daemon session, PING, queue, event-loop, and inventory documents must not
+remain as active operating guidance. The reusable compaction detection
+boundary belongs in this architecture without a required observer.
+
+A returned POP path is the existing receiver-owned final read path.
+Human display may shorten a home path with `~`, but machine consumers
+need an explicit absolute path and must read the complete archived
+Markdown. Metadata never waives that read, and truncated stdout is
+insufficient. Public project references use repository-relative paths
+or stable web URLs.
 
 The live user entry points are [README](../../README.md) and command help
 (`help send-heredoc`, `help pop`, `help get-status`, and

@@ -49,7 +49,16 @@ When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 - If Nix reports a `vendorHash` mismatch, copy the reported `got:` hash into
   `flake.nix` and rerun the build
 
-## 2. Markdown Formatting
+## 2. Isolated runtime verification
+
+Run real-tmux integration checks with disposable HOME, XDG state, and tmux
+server roots. Keep test sessions and mail separate from the operator's live
+workspace. A positive recipient cue requires a supported app-owned atomic
+submission and a matching settled receipt. A raw tmux Enter cannot prove that
+transition. See the
+[file-first acceptance matrix](docs/design/file-first-architecture.md).
+
+## 3. Markdown Formatting
 
 `markdown-formatter` covers all tracked Markdown files with its default
 heading-numbering behavior enabled. Run `nix fmt` for treefmt-managed
@@ -59,7 +68,7 @@ The repository does not maintain separate root-doc or skill exceptions. Ignored
 or generated files such as `.pre-commit-config.yaml` are not repository
 Markdown policy surfaces.
 
-## 3. Agent Skills
+## 4. Agent Skills
 
 Validate publishable skill metadata with:
 
@@ -78,7 +87,7 @@ command creates a tag and GitHub Release itself. The repository release flow
 uses the pushed `v*` tag plus GoReleaser, while `gh skill install` resolves
 skills from the published repository tag or release.
 
-## 4. Releases
+## 5. Releases
 
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset
 expectations.

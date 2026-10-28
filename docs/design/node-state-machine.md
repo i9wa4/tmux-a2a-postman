@@ -1,288 +1,67 @@
-# Node State Machine
+# Mail Facts and Node State
 
-The visible node state model is intentionally small. It combines pane
-availability with input-request projection so agents can tell whether a node
-has no positive live evidence yet, has work, is blocked on another node, or is
-unavailable.
+This is the target file-first state contract for issue #937. The daemon-free
+CLI work is still under review; legacy status surfaces remain until cutover.
+Saved mail and exact reply records are authoritative. A screen observation
+may add diagnostics, but it cannot change those facts.
 
-It is not a full conversation workflow model. Message files remain the source
-of truth; status commands only replay their structured metadata and journal
-events into a compact state.
+## 1. Mail identities
 
-## 1. Identity Hierarchy
+A message ID names one immutable exchange and its receiver-owned inbox or
+read copy. The sender retains a separate sent copy. A thread ID, when
+present, groups related exchanges; it does not identify a mailbox claim.
+A reply-required send opens an exact input-request obligation for its
+recipient. A reply must name and satisfy that request, with the authorized
+sender and recipient relationship preserved. Ordinary mail, an arbitrary
+reply, a POP, and a status read cannot close it.
 
-The runtime protocol treats messages, threads, and input requests as separate
-identities:
+A request's causal link is correlation data, not a return route. Send-time
+validation must preserve the original sender, recipient, request, and
+authorized parent/child interface route. Two separate relays remain
+separate exchanges even if they share an upstream cause. An invalid or
+cyclic cause cannot silently redirect a reply. Cause walks are bounded,
+track visited message IDs, and report unresolved or truncated chains
+rather than presenting a partial chain as complete.
 
-```text
-thread_id
-  message_id
-    input_request_id
-```
+## 2. Receiver-owned transitions
 
-`message_id` is the immutable mailbox filename. Generated frontmatter keeps
-`messageId` as the stored archive key, while public JSON and journal payloads
-use `message_id`. `thread_id` is optional for ordinary mail and required by
-thread-bound approval/review events. `input_request_id` is generated only for
-reply-required mail and identifies the exact per-recipient slot opened for a
-future reply.
+`send-heredoc` commits the receiver's inbox copy and the sender's sent
+copy. An interrupted multi-file send uses its operation record to finish
+or recover the same message ID; retry does not redeliver an already present
+inbox or read copy. A failed delivery retains recoverable draft or failed
+content with a reason.
 
-Task identity is intentionally not transport metadata. A task may exist in an
-external planner, issue, or markdown artifact, but the daemon does not generate
-or interpret `task_id`.
+`pop` exclusively claims one eligible inbox message, moves it to that
+receiver's final read path, then records and returns the claim. A second
+claimant cannot receive the same message. Recovery covers interruption
+after the move, after the receipt, and during output. Empty POP still
+reports the caller's saved-file state.
 
-### 1.1. Naming Rationale
+## 3. Self-state and status
 
-Identity names are chosen to make lifecycle size visible to a new operator:
+Every send and POP returns known remaining unread mail and exact open
+reply obligations for its caller. Inbox attention and required response
+are separate: unread no-reply mail needs reading but opens no reply slot.
+A sent reply-required message may leave the sender waiting; it does not
+make the recipient's other mail disappear.
 
-| Name                   | Scale                         | Why it is not another name                                    |
-| ---------------------- | ----------------------------- | ------------------------------------------------------------- |
-| `message_id`           | One delivered mailbox record  | A message is the smallest transport record, not a workflow.   |
-| `thread_id`            | Conversation or workflow line | A thread can contain many messages and input requests.        |
-| `input_request_id`     | One required recipient reply  | A request is opened by one required message and filled later. |
-| `input_request_set_id` | Multi-recipient aggregate     | A set can contain several input-request branches.             |
-| `branch_id`            | One branch inside a group     | A branch is smaller than a group but still action-scoped.     |
-| `task_id`              | External work item            | A task is broader than transport and has no daemon owner.     |
+`get-status` reconstructs these facts from saved files without claiming
+mail, registering a workspace, or repairing state. It may include bounded,
+incarnation-tagged observations of related panes. Missing, stale, or
+conflicting activity evidence is `unknown`, never a claim that the agent
+is working. A live pane or changing screen does not override open mail
+or exact reply obligations.
 
-The names do not try to encode a strict parent/child hierarchy. They distinguish
-scale: a single delivered message, a conversational thread, an actionable
-required-input request, and an optional aggregate for multi-recipient completion
-rules. This keeps `task_id` and `input_request_id` from sounding like same-scale
-runtime concepts: task identity belongs to an external planning layer, while
-input-request identity belongs to daemon status and reply projection.
+A parent may summarize only explicitly authorized child workspaces to a
+fixed depth. Each child read reports fetched, unavailable, or stale; a
+missing child is never healthy completion. The summary composes each
+child's saved facts without inventing a second acceptance state machine.
+A decision-needed report remains separate and cites the exact durable
+item that needs an operator choice.
 
-## 2. State Surfaces
+## 4. Cutover boundary
 
-| Surface                                   | Values                                                           | Meaning                                                   |
-| ----------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------- |
-| `nodes[*].pane_state`                     | empty, `active`, `idle`, `stale`                                 | Pane availability and activity fact                       |
-| `nodes[*].visible_state`                  | `initial`, `ready`, `waiting`, `pending`, `stale`                | Operator-facing node state                                |
-| `nodes[*].screen_progress.evidence_state` | `missing`, `stale`, `changed`, `unchanged`                       | Non-content pane progress evidence                        |
-| session `visible_state`                   | `initial`, `ready`, `waiting`, `pending`, `stale`, `unavailable` | Worst node state, or unavailable canonical session status |
-| `severity`                                | See contextual severity table                                    | Additive triage severity for operators                    |
-| `compact_severity`                        | ASCII token                                                      | One-line severity summary for opt-in compact scans        |
-
-`active` and `idle` pane facts normalize to `ready` unless input requests
-override them. A live pane that has not changed for a long time remains `idle`
-internally and stays `ready` visibly when there is no open action or wait.
-Missing pane state normalizes to `initial`, the neutral no-positive-evidence
-state. This includes non-AI panes, unreachable or unclassified sessions, and
-configured or expected AI panes before any positive response, activity, or other
-live evidence arrives. A configured edge, role name, or AI command alone is not
-enough to mark a node or session `ready`.
-
-`screen_progress` carries timestamps and an opaque fingerprint from pane
-capture state so operators can tell whether the pane is still changing without
-reading raw pane text. It does not affect visible-state ranking.
-
-`unavailable` is a session-level fallback, not a per-node state. It means this
-daemon cannot provide canonical status for that tmux session. It is displayed
-with the same neutral compact mark as `initial`.
-
-`schema_version: 6` reports contextual severity and per-node convention-meter
-figures alongside `visible_state` and `compact`, plus the derived
-`interface_edges` and `declared_interface_edges` (#624). Consumers that only
-need the compact operator view can read those fields.
-
-The canonical machine contract uses status terminology. See
-[Schema and Event Terminology](schema-event-terminology.md) for the narrow
-legacy archive replay exception.
-
-## 3. Visible Node States
-
-| State     | Meaning                                            | Source fact                          |
-| --------- | -------------------------------------------------- | ------------------------------------ |
-| `initial` | No positive live evidence has arrived yet          | missing pane/session evidence        |
-| `ready`   | Pane is live with no open action or wait           | positive tmux pane activity evidence |
-| `waiting` | Node has sent reply-required mail still unresolved | `waiting_on_input_count > 0`         |
-| `pending` | Node has inbound reply-required action unresolved  | `input_required_count > 0`           |
-| `stale`   | Previously known pane/session evidence is stale    | stale pane/session data              |
-
-Unread no-reply mail is still counted as unread mail, but it does not make a
-node `pending`. This keeps daemon PINGs, `ACK`, `DONE`, and status-only notices
-from making ready nodes look like they owe work.
-
-## 4. Transitions
-
-```mermaid
-stateDiagram-v2
-    [*] --> initial
-    initial --> ready: positive live evidence and no open input requests
-    initial --> pending: inbound required message delivered
-    initial --> waiting: outbound required message sent
-    ready --> pending: inbound required message delivered
-    ready --> waiting: outbound required message sent
-    pending --> waiting: resolving reply sent and other waits remain
-    pending --> ready: resolving reply sent and no waits remain
-    waiting --> pending: inbound required message delivered
-    waiting --> ready: reply received
-    initial --> stale: stale evidence arrives
-    ready --> stale: pane/session unavailable
-    waiting --> stale: pane/session unavailable
-    pending --> stale: pane/session unavailable
-    stale --> initial: pane/session reappears without positive evidence
-    stale --> ready: pane returns with no open input requests
-    stale --> waiting: pane returns with outbound waits
-    stale --> pending: pane returns with inbound actions
-```
-
-Projection priority is `stale`, `pending`, `waiting`, `ready`, then `initial`.
-A stale pane cannot be trusted live. Inbound action beats waiting because the
-node has something it can do now. `initial` is the floor state and remains until
-positive live evidence, an input-request fact, or stale evidence moves it out of
-neutral.
-
-## 5. Reply Policy
-
-Normal `send-heredoc` mail is no-reply unless the sender uses
-`--reply-required` or the message carries a strict request class such as
-`status_request`,
-`approval_request`, or `reply_request`. Use `--no-reply` as an explicit
-override for terminal or informational mail.
-
-A new reply-required message carries an exact `input_request_id`. A resolving
-reply should include `--fills-input-request-id <input-request-id>` so status can
-clear that slot. The default footer includes `--reply-to <message-id>` as
-traceability; for messages without an exact input-request ID, `--reply-to` still
-closes the matching open slot for the original message and participant.
-
-The resolver treats exact first-line terminal messages as no-reply:
-
-| Body first line | Resolved policy |
-| --------------- | --------------- |
-| `ACK`           | `none`          |
-| `DONE`          | `none`          |
-| `PING`          | `none`          |
-| `HEARTBEAT_OK`  | `none`          |
-
-Daemon-originated PING, runtime notice mail, status updates, alerts, and pane
-hints also resolve to `none`. Ambiguous content remains no-reply unless the
-sender explicitly marks it reply-required.
-
-## 6. Input Request Facts
-
-Each delivered recipient gets its own input request. Required messages with an
-opaque `input_request_id` use exact closure; messages without exact fields use
-the message ID plus participant as the fallback key.
-
-| Fact                     | Meaning                                                       |
-| ------------------------ | ------------------------------------------------------------- |
-| `context_id`             | Durable context namespace for correlating files and events    |
-| `message_id`             | Stable message identifier used by inbox, read, and reply data |
-| `timestamp`              | Sender timestamp preserved from message frontmatter           |
-| `message_type`           | Optional semantic class such as ping or task                  |
-| `thread_id`              | Optional workflow strand for related messages and events      |
-| `reply_policy`           | `required` or `none`, resolved when the message is created    |
-| `input_request_id`       | Exact required-input request opened by a required message     |
-| `fills_input_request_id` | Exact input request ID this message fills                     |
-| `input_request_set_id`   | Optional aggregate of input requests                          |
-| `reply_to`               | Optional message ID this message references                   |
-| `unread_count`           | All unread inbox mail, including no-reply notices             |
-| `input_required_count`   | Inbound reply-required messages not yet resolved by a reply   |
-| `waiting_on_input_count` | Outbound reply-required messages not yet resolved by a reply  |
-| `info_unread_count`      | Unread no-reply mail that does not require action             |
-
-`pop` only clears unread state. It does not clear reply-required action, because
-reading a request is not the same as answering it. Sending a resolving reply
-clears the recipient's input-required request and the sender's waiting-on-input
-request when `fills_input_request_id` names the exact input request. Required
-messages without an exact slot still use `reply_to` fallback closure. If both
-`fills_input_request_id` and `reply_to` are present and
-`reply_to` names a different original message, projection fails closed and does
-not clear an arbitrary slot. If an older journal event does not contain
-enough structured message content, projection skips that event and continues
-from later complete events instead of inventing input-request state.
-
-Grouped input-request fields are reserved for the next protocol layer:
-`input_request_set_id`, `branch_id`, and `completion_rule`. They are parsed and
-carried as metadata but do not affect L1 status counts until grouped
-completion rules are implemented.
-
-## 7. Status Projection
-
-The canonical contract is shared by `get-status`, `get-status-oneline`, and the
-default TUI. Per-node state is exposed as `nodes[*].visible_state`.
-Session-level state is the worst visible state across nodes, ranked as:
-
-1. `initial`
-2. `ready`
-3. `waiting`
-4. `pending`
-5. `stale`
-
-Queue facts are reported separately in `queues.post_count`,
-`queues.inbox_count`, and `queues.dead_letter_count`. Input-request facts are
-reported per node.
-
-## 8. Contextual Severity
-
-Contextual severity is additive. It answers what an operator should triage
-first without changing the visible-state model.
-
-Severity ranks from least to most urgent:
-
-1. `ok`
-2. `working`
-3. `expected_wait`
-4. `needs_action`
-5. `blocked`
-6. `attention_stale`
-7. `delivery_stuck`
-8. `delivery_failure`
-
-Tie-breaks prefer the most urgent delivery, node flow, or local pane signal.
-Delivery failures outrank stale panes because mail may not be reaching any
-recipient. A node that is waiting for an approval or other required reply is
-`expected_wait`, not blocked. It becomes `blocked` only when an open blocked
-report exists.
-
-`get-status` exposes the evidence as:
-
-| Field                 | Meaning                                         |
-| --------------------- | ----------------------------------------------- |
-| `severity`            | Worst contextual severity                       |
-| `severity_source`     | Surface that produced the chosen severity       |
-| `severity_reason`     | Short human-readable reason                     |
-| `compact_severity`    | ASCII one-line summary token                    |
-| `delivery`            | Session delivery status                         |
-| `nodes[*].node_local` | Pane-local activity/staleness status            |
-| `nodes[*].flow`       | Input-request and blocked-report workflow state |
-| `nodes[*].queues`     | Node-local queue counts                         |
-
-Open input-request details include `opened_event_id` and `read_event_id` when
-the corresponding journal events are known. These IDs are traceability
-pointers for replay and inspection. They do not change completion semantics.
-
-`get-status-oneline` prints compact operator marks by default. For
-compatibility, pending, waiting, stale, and initial visible states still keep
-their legacy marks. When a node would otherwise render as ready, the compact
-mark consults the node contextual severity so pane-local work or blocked flow
-cannot remain a definitive green idle signal. The opt-in `--severity` flag
-prints `compact_severity` instead. A `?` suffix marks inferred evidence, such as
-`blocked?:node=worker`.
-
-## 9. Severity Examples
-
-| Scenario            | Primary evidence                           | Severity           |
-| ------------------- | ------------------------------------------ | ------------------ |
-| Idle                | Positive live pane, no open action or wait | `ok`               |
-| Active work         | Active pane or changed screen evidence     | `working`          |
-| Approval wait       | Outbound required reply still open         | `expected_wait`    |
-| Reply-required wait | Outbound required reply still open         | `expected_wait`    |
-| Required action     | Inbound required reply open                | `needs_action`     |
-| Blocked             | Structured blocked report or `BLOCKED:`    | `blocked`          |
-| Stale pane          | Stale pane evidence                        | `attention_stale`  |
-| Delivery stuck      | Oldest pending post is at least 180s old   | `delivery_stuck`   |
-| Dead letter         | One or more dead-letter files exist        | `delivery_failure` |
-
-Default compact marks are therefore a projection of the separated layers, not a
-raw alias for `visible_state`:
-
-| Mark | Meaning                                                       |
-| ---- | ------------------------------------------------------------- |
-| `⚫`  | Initial, unavailable, unowned, or missing local state         |
-| `🟢`  | Ready with no worse contextual node severity                  |
-| `🔵`  | Ready but pane-local evidence indicates active work           |
-| `🟡`  | Waiting or expected wait                                      |
-| `🔷`  | Pending or needs action                                       |
-| `🔴`  | Stale, blocked, delivery failure, or other attention severity |
+The target has no central daemon status machine, background post queue, or
+mandatory TUI. Old and new writers must not share active state. An explicit
+migration must map old records to a verified workspace and preserve
+historical mail; old approval records never become new authorization.

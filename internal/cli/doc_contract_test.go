@@ -73,46 +73,28 @@ func TestFileFirstDocContract_ActiveHelpMatchesAdapters(t *testing.T) {
 	}
 }
 
-func TestReducedSurfaceDocContract_DaemonModelAndNotificationGuide(t *testing.T) {
-	daemonModelDoc := readRepoFile(t, "docs/design/daemon-session-model.md")
-	assertContainsNormalized(t, daemonModelDoc, "The default operator workflow assumes one daemon process per Unix user.")
-	assertContainsNormalized(t, daemonModelDoc, "concurrent starts cannot race into two daemons")
-	assertContainsNormalized(t, daemonModelDoc, "A different Unix user's daemon is still treated as alive for cleanup safety, but it is not treated as the current user's owner.")
-	assertContainsNormalized(t, daemonModelDoc, "Cross-context ownership follows the live enabled-session marker, not leftover session directories.")
-
+func TestFileFirstDocContract_NotificationGuide(t *testing.T) {
 	notificationDoc := readRepoFile(t, "docs/design/notification.md")
-	assertContainsNormalized(t, notificationDoc, "The daemon delivers mail to the recipient inbox, sends a pane hint to that recipient when delivery succeeds, and emits auto-PING messages when the daemon starts or when a node appears.")
-	assertContainsNormalized(t, notificationDoc, "If the same role reappears with a new pane ID, that replacement pane is treated as newly appeared.")
-	assertContainsNormalized(t, notificationDoc, "`interface_node` is not a general escalation channel.")
-	assertContainsNormalized(t, notificationDoc, "There is no embedded default and no `ui_node` alias")
-	assertContainsNormalized(t, notificationDoc, "The narrowing is intentional startup-noise control: an explicit non-empty `interface_node` declares the human-facing bootstrap entry point")
-	assertContainsNormalized(t, notificationDoc, "The remaining notification-related public settings are")
-	assertContainsNormalized(t, notificationDoc, "Stored message Markdown is an envelope.")
-	assertContainsNormalized(t, notificationDoc, "Sender Message")
-	assertContainsNormalized(t, notificationDoc, "Sender body Markdown is inserted verbatim after that separator")
-	assertContainsNormalized(t, notificationDoc, "Recipient role instructions are normalized when inserted into the generated envelope")
-	assertContainsNormalized(t, notificationDoc, "their shallowest ATX heading becomes `###`")
-	assertContainsNormalized(t, notificationDoc, "without producing `#####` headings immediately under the generated `##` envelope heading")
-	assertContainsNormalized(t, notificationDoc, "The recipient reads the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.")
-	assertContainsNormalized(t, notificationDoc, "This applies to daemon PING mail, `messageType: ping`, `replyPolicy: none`, and every other message type.")
-	assertContainsNormalized(t, notificationDoc, "truncated output is not a complete body read.")
+	assertContainsAllNormalized(t, notificationDoc,
+		"Commit before cue",
+		"receiver-inbox and sender-sent copies",
+		"A failed or ambiguous notice never rolls back mail",
+		"recipient reads the complete archived Markdown",
+		"Generic tmux pane-input notification is therefore disabled.",
+		"Only a verified same-message transition can be `sent`.",
+		"The four core commands require no daemon",
+	)
 }
 
-func TestReducedSurfaceDocContract_NotificationDesignStartsFromUnifiedModel(t *testing.T) {
-	notificationDoc := readRepoFile(t, "docs/design/notification.md")
-	assertContainsNormalized(t, notificationDoc, "get-status, get-status-oneline, and the default TUI are three views over the same canonical contract.")
-	assertContainsNormalized(t, notificationDoc, "Surface")
-	assertContainsNormalized(t, notificationDoc, "Delivery")
-
-	if strings.Contains(notificationDoc, "There are eight distinct notification mechanisms") {
-		t.Fatal("notification design doc still opens with the old mechanism-first framing")
-	}
-	if strings.Contains(notificationDoc, "This document explains all eight mechanisms") {
-		t.Fatal("notification design doc still teaches the old mechanism-first summary")
-	}
-	if strings.Contains(notificationDoc, "## 2. Notification Mechanisms") {
-		t.Fatal("notification design doc still uses the old mechanism-first section heading")
-	}
+func TestFileFirstDocContract_NodeStateUsesSavedMail(t *testing.T) {
+	stateDoc := readRepoFile(t, "docs/design/node-state-machine.md")
+	assertContainsAllNormalized(t, stateDoc,
+		"Saved mail and exact reply records are authoritative.",
+		"A reply must name and satisfy that request",
+		"exclusively claims one eligible inbox message",
+		"reconstructs these facts from saved files",
+		"`unknown`, never a claim that the agent is working",
+	)
 }
 
 func TestFileFirstDocContract_ReadmeAndThreeSkills(t *testing.T) {
@@ -257,15 +239,13 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"Claude Code and Codex CLI have different runtime surfaces outside postman",
 		"docs/agent-runtime-feature-differences.md",
 	)
-	assertContainsAllNormalized(
-		t, configSSOT,
-		"Agent Runtime Feature Differences",
-		"Do not encode runtime-specific behavior in `postman.toml` defaults",
+	assertContainsAllNormalized(t, configSSOT,
+		"postman.md` plus explicit CLI overrides",
+		"A normal `skill_path` selects agent-facing `SKILL.md` metadata",
 	)
-	assertContainsAllNormalized(
-		t, productDirection,
-		"which behavior belongs to tmux-a2a-postman and which behavior belongs to Claude Code or Codex CLI",
-		"Agent Runtime Feature Differences",
+	assertContainsAllNormalized(t, productDirection,
+		"durable, private workspace mail",
+		"four foreground commands",
 	)
 	assertContainsAllNormalized(
 		t, postmanMDReference,
@@ -277,7 +257,6 @@ func TestAgentRuntimeFeatureDifferencesDocContract(t *testing.T) {
 		"a YAML list containing `ping` and `compaction_ping` routes the same selected catalog to each listed daemon PING target.",
 		"Flow-style YAML lists such as `inject: [ping, compaction_ping]` are accepted",
 		"Path order controls duplicate precedence and the rendered source-path display order.",
-		"PING event timing",
 	)
 
 	publicDocs := map[string]string{
@@ -341,23 +320,24 @@ func TestReducedSurfaceDocContract_RuntimeLifecycleRetentionDocs(t *testing.T) {
 
 func TestConfigSSOTDocContract(t *testing.T) {
 	designDoc := readRepoFile(t, "docs/design/config-ssot.md")
-	assertContainsNormalized(t, designDoc, "`internal/config/postman.default.toml` is the SSOT for user-configurable defaults.")
-	assertContainsNormalized(t, designDoc, "`postman.toml` is optional.")
-	assertContainsNormalized(t, designDoc, "A minimal `postman.md` may contain only a Mermaid `edges` section.")
-	assertContainsNormalized(t, designDoc, "Nodes referenced by those edges are materialized with empty `NodeConfig` values.")
-	assertContainsNormalized(t, designDoc, "marked in Mermaid with the `interface_node` class")
-
+	assertContainsAllNormalized(t, designDoc,
+		"postman.md` plus explicit CLI overrides",
+		"Only adjacent roles may exchange ordinary mail.",
+		"A normal `skill_path` selects agent-facing `SKILL.md` metadata",
+		"The four commands do not merge legacy `postman.toml`",
+	)
 	configHelp := readRepoFile(t, "internal/cli/helptext/config.txt")
-	assertContainsNormalized(t, configHelp, "Each command accepts exactly one absolute --config or --postman-md override.")
-	assertContainsNormalized(t, configHelp, "strict Mermaid subset")
-	assertContainsNormalized(t, configHelp, "`interface_node` marks an interface role")
-	assertContainsNormalized(t, configHelp, "legacy postman.toml daemon configuration")
+	assertContainsAllNormalized(t, configHelp,
+		"Each command accepts exactly one absolute --config or --postman-md override.",
+		"strict Mermaid subset",
+		"`interface_node` marks an interface role",
+		"legacy postman.toml daemon configuration",
+	)
 }
 
 func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 	messagingHelp := readRepoFile(t, "internal/cli/helptext/messaging.txt")
-	pathDisplayDoc := readRepoFile(t, "docs/design/path-display-policy.md")
 	usageSkill := readRepoFile(t, "skills/postman-usage/SKILL.md")
 
 	assertContainsAllNormalized(
@@ -369,12 +349,6 @@ func TestArchivedBodyReadPublicDocsContract(t *testing.T) {
 		"After every successful `pop` with `status=message`, read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
 		"`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow skipping the archived body.",
 		"Truncated command output from `cat`, `sed`, `rg`, shell logs, or other bounded stdout paths is not a complete read; use a complete file-read path or verified chunks through EOF.",
-	)
-	assertContainsAllNormalized(
-		t, pathDisplayDoc,
-		"After every successful `pop` with `status=message`, consumers must read the complete archived Markdown body before any handling, routing, reply, status decision, or no-action or no-op decision.",
-		"`messageType: ping`, `replyPolicy: none`, and other metadata do not waive the body-read requirement.",
-		"A `cat`, `sed`, `rg`, shell log, or tool transcript that omits later body content does not count as a complete archived-body read.",
 	)
 	assertContainsAllNormalized(
 		t, usageSkill,

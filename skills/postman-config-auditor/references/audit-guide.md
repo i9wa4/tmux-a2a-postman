@@ -116,8 +116,8 @@ Important merge rules:
   and each selected skill name maps to a subdirectory containing `SKILL.md`.
 - For `inject: ping`, `inject: compaction_ping`, or a list containing either
   mode, confirm the intent and require `~/...` or absolute paths.
-- For PING timing, trigger source, and operator guidance, use repo doc
-  `docs/ping-events.md` as the source of truth.
+- Treat legacy PING injection settings as historical daemon configuration;
+  they do not define a trigger for the four file-first commands.
 - Prefer omitted `skills` for all-skills catalogs in new or example configs.
   Treat scalar `skills: all` as legacy-only unless compatibility with an
   existing deployed config is the explicit reason.
