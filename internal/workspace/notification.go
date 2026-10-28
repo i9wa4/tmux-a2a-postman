@@ -163,6 +163,13 @@ func validateSnapshotForNotice(s Snapshot, msg Message) error {
 	return nil
 }
 
+// NotifyPaneAtomically makes the native tmux runtime's missing recipient-app
+// capability explicit. A tmux pane is an output stream, not an app-owned input
+// lease or a source of correlated composer/submission receipts.
+func (t Tmux) NotifyPaneAtomically(_ context.Context, _ Binding, _ string) (AtomicNoticeReceipt, error) {
+	return AtomicNoticeReceipt{}, ErrPaneNoticeUnsupported
+}
+
 // NotifyPane is deliberately disabled. Pasting a comment followed by Enter
 // can execute a recipient's partially typed command, including when the
 // comment is separated by a trailing space. Durable mail still succeeds.

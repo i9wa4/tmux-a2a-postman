@@ -75,6 +75,49 @@ func TestNotifyCommittedAtomicCapabilityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTmuxAtomicNoticeCapabilityFailsClosed(t *testing.T) {
+	receipt, err := (Tmux{}).NotifyPaneAtomically(context.Background(), Binding{}, "m-0123456789abcdef0123456789abcdef")
+	if !errors.Is(err, ErrPaneNoticeUnsupported) || receipt != (AtomicNoticeReceipt{}) {
+		t.Fatalf("native tmux claimed app-owned notice: %+v, %v", receipt, err)
+	}
+}
+
+func TestNotifyCommittedRejectsUnprovenAppTransitions(t *testing.T) {
+	m := mailFixture(t)
+	msg, err := m.Send(context.Background(), mailRuntime("worker"), "peer", "body", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := func(to Binding, id string) AtomicNoticeReceipt {
+		return AtomicNoticeReceipt{
+			MessageID: id, Recipient: to, InitialComposerEmpty: true,
+			ImmediateObserved: true, ImmediateSubmittedID: id,
+			SettledSubmittedID: id, SettledComposerEmpty: true,
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		alter func(*AtomicNoticeReceipt)
+	}{
+		{"initial composer occupied", func(r *AtomicNoticeReceipt) { r.InitialComposerEmpty = false }},
+		{"immediate state absent", func(r *AtomicNoticeReceipt) { r.ImmediateObserved = false }},
+		{"settled different message", func(r *AtomicNoticeReceipt) { r.SettledSubmittedID = "m-00000000000000000000000000000000" }},
+		{"settled composer occupied", func(r *AtomicNoticeReceipt) { r.SettledComposerEmpty = false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := noticeRuntime{storedRuntime: mailRuntime("worker")}
+			rt.atomic = func(_ context.Context, to Binding, id string) (AtomicNoticeReceipt, error) {
+				receipt := valid(to, id)
+				tc.alter(&receipt)
+				return receipt, nil
+			}
+			if got := NotifyCommitted(context.Background(), rt, msg); got.Status != "unknown" {
+				t.Fatalf("unproven app transition reported sent: %+v", got)
+			}
+		})
+	}
+}
+
 func TestNotifyCommittedDelayedSettledSubmission(t *testing.T) {
 	m := mailFixture(t)
 	msg, err := m.Send(context.Background(), mailRuntime("worker"), "peer", "body", "", false)
