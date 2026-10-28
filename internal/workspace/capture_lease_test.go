@@ -83,7 +83,7 @@ func TestCaptureLeaseRejectsAmbiguityAndCorruptLedger(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer runtimeDir.Close()
+		defer func() { _ = runtimeDir.Close() }()
 		if err := replaceJSON(runtimeDir, "capture-leases.json", captureLeaseRecord{
 			Version: 1, Generation: 1,
 			Leases: []captureLease{{
@@ -134,7 +134,7 @@ func TestCaptureLeaseRejectsMalformedAndStalePeerRecords(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				defer runtimeDir.Close()
+				defer func() { _ = runtimeDir.Close() }()
 				candidate := captureLease{
 					Role: "worker", Binding: fresh.Caller, Generation: 1,
 					PaneIncarnation: "pane-start-1", ProcessIncarnation: "owner-start-1",
@@ -197,7 +197,7 @@ func readCaptureLeaseBytes(runtimeDir *os.Root) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return io.ReadAll(file)
 }
 
@@ -235,7 +235,7 @@ func TestCaptureLeaseFirstCreateSyncFaultReopenAndRetry(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				defer runtimeDir.Close()
+				defer func() { _ = runtimeDir.Close() }()
 				var record captureLeaseRecord
 				if err := readJSON(runtimeDir, "capture-leases.json", &record); err != nil {
 					return err
@@ -264,7 +264,7 @@ func TestCreateCaptureLeaseJSONOccupiedTempPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	const temp = ".new-occupied"
 	const sentinel = "existing temporary entry"
 	file, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

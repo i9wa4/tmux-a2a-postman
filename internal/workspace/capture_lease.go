@@ -96,7 +96,7 @@ func registerCaptureLeaseWithHooks(ws *os.Root, snapshot Snapshot, candidate cap
 	if err != nil {
 		return 0, err
 	}
-	defer runtimeDir.Close()
+	defer func() { _ = runtimeDir.Close() }()
 
 	record := captureLeaseRecord{}
 	err = readJSON(runtimeDir, "capture-leases.json", &record)
@@ -130,7 +130,8 @@ func registerCaptureLeaseWithHooks(ws *os.Root, snapshot Snapshot, candidate cap
 		}
 		kept = append(kept, lease)
 	}
-	record.Leases = append(kept, candidate)
+	kept = append(kept, candidate)
+	record.Leases = kept
 	if err := validateCaptureLeaseRecord(record); err != nil {
 		return 0, err
 	}
@@ -165,7 +166,7 @@ func createCaptureLeaseJSONWithTemp(root *os.Root, record captureLeaseRecord, sy
 	if err != nil {
 		return err
 	}
-	defer root.Remove(temp)
+	defer func() { _ = root.Remove(temp) }()
 	mid := len(data) / 2
 	_, writeErr := file.Write(data[:mid])
 	if writeErr == nil && afterPartial != nil {

@@ -69,7 +69,7 @@ func TestCaptureLeaseFirstCreateProcessCrash(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				defer dir.Close()
+				defer func() { _ = dir.Close() }()
 				var record captureLeaseRecord
 				err = readJSON(dir, "capture-leases.json", &record)
 				if mode == "mid_temp_write" && !errors.Is(err, os.ErrNotExist) {
@@ -176,7 +176,7 @@ func captureLeaseCrashChild(t *testing.T, mode string) {
 	err = (Store{StateRoot: root}).WithVerified(context.Background(), rt, func(ws *os.Root, snapshot Snapshot) error {
 		if mode == "mid_temp_write" {
 			_, err := registerCaptureLeaseWithHooks(ws, snapshot, lease, 0, syncDirectory, func() error {
-				fmt.Fprintln(os.Stdout, "capture-crash-hook:"+mode)
+				_, _ = fmt.Fprintln(os.Stdout, "capture-crash-hook:"+mode)
 				if err := syscall.Kill(os.Getpid(), syscall.SIGKILL); err != nil {
 					return err
 				}
@@ -192,7 +192,7 @@ func captureLeaseCrashChild(t *testing.T, mode string) {
 			} else if mode != "before_dir_sync" && mode != "failed_dir_sync" {
 				return fmt.Errorf("unknown child mode %q", mode)
 			}
-			fmt.Fprintln(os.Stdout, "capture-crash-hook:"+mode)
+			_, _ = fmt.Fprintln(os.Stdout, "capture-crash-hook:"+mode)
 			if mode == "failed_dir_sync" {
 				return injected
 			}
