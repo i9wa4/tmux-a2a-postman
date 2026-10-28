@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,22 +13,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/testfixture"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
 // rebuiltCLIFixture owns its tmux socket, HOME, state, and rebuilt executable.
 // Every invocation below starts the actual public CLI in a fresh process.
 type rebuiltCLIFixture struct {
-	t         *testing.T
-	dir       string
-	bin       string
-	socket    string
-	home      string
-	stateHome string
-	config    string
-	worker    string
-	peer      string
-	stateRoot string
+	t               *testing.T
+	dir             string
+	bin             string
+	tmuxFixture     *testfixture.RealTmux
+	home            string
+	stateHome       string
+	config          string
+	worker          string
+	peer            string
+	stateRoot       string
+	modCacheCleaned bool
 }
 
 func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
@@ -38,16 +41,21 @@ func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("Go toolchain unavailable for CLI rebuild")
 	}
-	dir, err := os.MkdirTemp("/tmp", "pm937-rebuilt-")
+	rt, err := testfixture.NewRealTmux(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := rt.Root()
 	f := &rebuiltCLIFixture{
-		t: t, dir: dir, bin: filepath.Join(dir, "postman"),
-		socket: filepath.Join(dir, "s"), home: filepath.Join(dir, "home"),
-		stateHome: filepath.Join(dir, "state"), config: filepath.Join(dir, "postman.md"),
+		t: t, dir: dir, bin: filepath.Join(dir, "postman-cli"),
+		tmuxFixture: rt, home: filepath.Join(dir, "home"),
+		stateHome: filepath.Join(dir, "state"), config: filepath.Join(dir, "home", "work", "postman.md"),
 	}
+	t.Cleanup(func() {
+		if err := f.cleanModCache(); err != nil {
+			t.Errorf("private Go module cache cleanup: %v", err)
+		}
+	})
 	work := filepath.Join(f.home, "work")
 	for _, path := range []string{work, f.stateHome} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -58,21 +66,16 @@ func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	buildCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	buildCtx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", f.bin, ".")
+	build.Env = f.buildEnv()
 	if out, err := build.CombinedOutput(); err != nil || buildCtx.Err() != nil {
 		t.Fatalf("rebuild public CLI: %v, context=%v: %s", err, buildCtx.Err(), out)
 	}
-	f.worker = f.tmux("-f", "/dev/null", "new-session", "-d", "-s", "work", "-c", work,
-		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(ctx, "tmux", "-S", f.socket, "kill-server").Run()
-	})
+	f.worker = f.tmux("new-session", "-d", "-s", "work", "-c", work, "-P", "-F", "#{pane_id}")
 	f.tmux("select-pane", "-t", f.worker, "-T", "worker")
-	f.peer = f.tmux("split-window", "-d", "-t", f.worker, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.peer = f.tmux("split-window", "-d", "-t", f.worker, "-P", "-F", "#{pane_id}")
 	f.tmux("select-pane", "-t", f.peer, "-T", "peer")
 	if err := os.WriteFile(f.config, []byte("## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -80,15 +83,36 @@ func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
 	return f
 }
 
+func (f *rebuiltCLIFixture) buildEnv() []string {
+	return append(f.tmuxFixture.Env(),
+		"GOCACHE="+filepath.Join(f.dir, "go-cache"),
+		"GOMODCACHE="+filepath.Join(f.dir, "modcache"))
+}
+
+func (f *rebuiltCLIFixture) cleanModCache() error {
+	if f.modCacheCleaned {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "clean", "-modcache")
+	cmd.Env = f.buildEnv()
+	if out, err := cmd.CombinedOutput(); err != nil || ctx.Err() != nil {
+		return fmt.Errorf("go clean -modcache: %v, context=%v: %s", err, ctx.Err(), out)
+	}
+	f.modCacheCleaned = true
+	return nil
+}
+
 func (f *rebuiltCLIFixture) tmux(args ...string) string {
 	f.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tmux", append([]string{"-S", f.socket}, args...)...).CombinedOutput()
+	out, err := f.tmuxFixture.Tmux(ctx, args...)
 	if err != nil {
 		f.t.Fatalf("owned tmux %v: %v: %s", args, err, out)
 	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(out)
 }
 
 type rebuiltCLIResult struct {
@@ -102,8 +126,7 @@ func (f *rebuiltCLIFixture) run(pane, body string, args ...string) rebuiltCLIRes
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, f.bin, args...)
-	cmd.Env = append(os.Environ(), "HOME="+f.home, "XDG_STATE_HOME="+f.stateHome,
-		"TMUX="+f.socket+",0,0", "TMUX_PANE="+pane)
+	cmd.Env = append(f.tmuxFixture.Env(), "TMUX_PANE="+pane)
 	cmd.Stdin = strings.NewReader(body)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -185,9 +208,10 @@ func (f *rebuiltCLIFixture) replaceCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement := f.bin + ".replacement"
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	build := exec.CommandContext(ctx, "go", "build", "-o", replacement, ".")
+	build.Env = f.buildEnv()
 	if out, err := build.CombinedOutput(); err != nil || ctx.Err() != nil {
 		t.Fatalf("rebuild replacement CLI: %v, context=%v: %s", err, ctx.Err(), out)
 	}
@@ -202,7 +226,31 @@ func (f *rebuiltCLIFixture) replaceCLI(t *testing.T) {
 
 func TestWorkspaceRebuiltCLIFourNoDaemonCommands(t *testing.T) {
 	f := newRebuiltCLIFixture(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "sentinel"), []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"HOME", "POSTMAN_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "TMUX", "TMUX_PANE", "TMUX_TMPDIR"} {
+		t.Setenv(key, outside)
+	}
 	f.exerciseFourCommands(t, "before-replacement")
 	f.replaceCLI(t)
 	f.exerciseFourCommands(t, "after-replacement")
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "sentinel" {
+		t.Fatalf("outside fixture changed: entries=%v err=%v", entries, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(outside, "sentinel")); err != nil || string(got) != "untouched" {
+		t.Fatalf("outside fixture sentinel changed: %q, %v", got, err)
+	}
+	if err := f.cleanModCache(); err != nil {
+		t.Fatalf("private Go module cache cleanup: %v", err)
+	}
+	root := f.tmuxFixture.Root()
+	if err := f.tmuxFixture.Close(); err != nil {
+		t.Fatalf("owned tmux cleanup: %v", err)
+	}
+	if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("owned fixture root remains after cleanup: %v", err)
+	}
 }
