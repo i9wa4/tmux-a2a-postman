@@ -1,0 +1,15 @@
+id: negative-trigger-send-001
+name: Negative Trigger -- First-Contact Send
+description: First-contact sending belongs to postman-send-message.
+tags:
+  - negative-trigger
+inputs:
+  prompt: "Send a first-contact message to another node with send-heredoc, preserving the Markdown body exactly."
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: negative-trigger
+    config:
+      skill_path: skills/postman-usage/SKILL.md
+      mode: negative

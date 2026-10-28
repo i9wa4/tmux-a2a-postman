@@ -145,7 +145,8 @@ func TestReducedSurfaceDocContract_PostmanSendSkillForbidsPostSendPolling(t *tes
 		"tmux-a2a-postman pop",
 		"sleep && tmux-a2a-postman pop",
 		"tmux-a2a-postman get-status",
-		"wait for daemon notification",
+		"wait passively",
+		"no own unread mail",
 	)
 }
 
