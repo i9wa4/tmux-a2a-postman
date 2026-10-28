@@ -1,5 +1,9 @@
 Messaging — send and receive messages
 
+The send-heredoc, pop, and get-status workflow below uses the file-first
+workspace path. Legacy daemon inspection and status fields are identified
+separately below.
+
 Quick workflow (agents):
   Send:
     tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
@@ -15,20 +19,17 @@ Safe body input:
   pipe-oriented guidance.
 
 Reply workflow:
-  tmux-a2a-postman send-heredoc --to <sender> <<'POSTMAN_BODY'
-  DONE: ...
-  POSTMAN_BODY
-
-Reply-required messages carry an input_request_id. Exact replies use:
+  Reply-required messages carry an input_request_id. Exact replies use:
   tmux-a2a-postman send-heredoc --to <sender> --fills-input-request-id <input_request_id> --reply-to <message_id> <<'POSTMAN_BODY'
   DONE: ...
   POSTMAN_BODY
 
-The exact input request id clears the required action; --reply-to is retained for
-traceability and fallback message-link closure. Replies stay on the live
-session daemon automatically.
-After a fill/reply send, check the JSON "fill" and "required_input" fields.
-They show whether the request closed and whether any required input remains open.
+The --fills-input-request-id and --reply-to values must identify the same
+claimed request; together they close that exact required action. Replies use
+the same file-first send path as other messages.
+After a reply, check the returned file-derived `self` state for the exact
+inbound obligation and any remaining required replies. Missing or ambiguous
+state is unknown, not proof that the obligation closed.
 
 Completion gate:
   Filling an input request closes transport, not task acceptance.
@@ -44,15 +45,23 @@ Completion gate:
   references, evidence, and blockers before relaying, approving, or closing
   work.
 
-Inspect open reply-required work without popping inbox mail:
+For the retained daemon path, inspect open reply-required work without popping
+inbox mail:
   tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
 
-get-status also exposes open input-request detail arrays under
+Legacy daemon get-status also exposes open input-request detail arrays under
 nodes[*].flow.input_requests.input_required and waiting_on_input.
 When known, those details include opened_event_id and read_event_id pointers
 to the journal events that created the visible state.
 
-Envelope format (YAML frontmatter):
+File-first mail envelope (schematic JSON header in one HTML comment):
+  <!-- postman {"id":"<message-id>","from":"<sender>","to":"<recipient>","needs_reply":false,"created_at":"<timestamp>"} -->
+
+A blank line separates that canonical JSON header from the Markdown body.
+Reply-required mail also has input_request_id; exact answers have reply_to and
+fills_input_request_id. This envelope is not YAML frontmatter.
+
+Retained daemon mail envelope (YAML frontmatter):
   ---
   params:
     from: <sender node name>
@@ -64,9 +73,9 @@ Envelope format (YAML frontmatter):
   ---
 
 Sender is auto-detected from the tmux pane title (no --from flag).
-`send-heredoc` and `pop` print JSON by default. `pop` claims the next inbox
-message and returns metadata plus an archived message/body path; it does not
-print the full body inline.
+`send-heredoc` and `pop` print JSON by default. File-first `pop` moves the
+next eligible own inbox message to its read archive before returning metadata
+and an archived body path; it does not print the full body inline.
 
 After every successful `pop` with `status=message`, read the complete archived
 Markdown body before any handling, routing, reply, status decision, or

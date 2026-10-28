@@ -1,5 +1,8 @@
 get-status-oneline — print compact all-session status
 
+This topic describes the retained daemon status projection. The file-first
+get-status command returns the caller's saved workspace `self` state instead.
+
 Usage:
   tmux-a2a-postman get-status-oneline
   tmux-a2a-postman get-status-oneline --severity
@@ -22,5 +25,7 @@ Marks:
   🟡 waiting   outbound reply-required message is open
   🟢 ready     pane is live with no open action or wait
 
-Screen progress fingerprints stay out of this compact view; use get-status
-for nodes[*].screen_progress JSON evidence.
+In the retained daemon status projection, screen progress fingerprints stay
+out of this compact view and appear in nodes[*].screen_progress JSON evidence.
+The current file-first get-status command returns saved `self` state; it does
+not expose that daemon projection.

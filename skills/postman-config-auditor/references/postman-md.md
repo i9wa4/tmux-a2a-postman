@@ -129,6 +129,7 @@ skill_path:
     inject: compaction_ping
     skills:
       - postman-config-auditor
+      - postman-send-message
       - postman-usage
 ---
 ```

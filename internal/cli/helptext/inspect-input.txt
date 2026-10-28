@@ -1,5 +1,8 @@
 inspect-input — inspect an open input request by id
 
+This topic describes retained daemon input-request inspection. File-first
+reply obligations are reported in the caller's get-status `self` state.
+
 Usage:
   tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
   tmux-a2a-postman inspect-input --session <tmux-session> --id <id>

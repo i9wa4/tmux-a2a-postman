@@ -30,6 +30,10 @@ its receipt, and returns the final openable archive path. Prefer the absolute
 path. Read the complete archived Markdown through EOF before any handling,
 routing, reply, status decision, or no-action decision. Truncated output,
 frontmatter, reply policy, and notification text never substitute for this.
+If POP output is lost, do not retry blindly or treat `.pop.json` alone as
+proof. `inspect-message` checks legacy session claims, normally through journal
+proof but with a restricted pre-2026-06-30 archive fallback, and cannot reliably
+confirm a file-first claim.
 
 Claiming mail clears unread attention; it does not prove understanding, accept
 a task, or fill a required reply. Empty POP still reports self-state. Never

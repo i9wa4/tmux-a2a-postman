@@ -69,3 +69,7 @@ Modes:
 Use inspect-input for currently open reply-required work. Use inspect-message
 when you already know a historical message_id and need the stored message after
 it was read, archived, or no longer tied to an open input request.
+This command checks legacy session claims, normally through journal proof but
+with a restricted pre-2026-06-30 archive fallback. It cannot reliably recover
+a file-first POP claim; that path's .pop.json receipt alone is not proof of an
+authorized claim.

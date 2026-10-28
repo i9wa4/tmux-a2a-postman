@@ -1,16 +1,63 @@
 # Command Approvals
 
-> Legacy daemon-path reference. The four file-first commands in issue #937
-> use `postman.md` topology and an exact mail reply for `execute-bash`;
-> `--label`, `--category`, `--mode`, `--store-command-text`, and
-> `--record-decision` below are not options of that adapter. Use
-> `tmux-a2a-postman help execute-bash` for the active command contract.
+## 1. File-first command path (issue #937)
+
+The file-first `execute-bash` path is under development and has not passed
+the complete issue #937 acceptance gates. It uses the calling native tmux
+pane for requester identity and the single `command_approver_node` in
+`postman.md` for reviewer identity. This adapter accepts `--command` and an
+optional absolute `--config` or `--postman-md` path. It does not accept the
+legacy `--label`, `--category`, `--mode`, `--store-command-text`, or
+`--record-decision` flags shown later in this document.
+
+For example, from a configured requester pane:
+
+```sh
+tmux-a2a-postman execute-bash --command 'go test ./...'
+```
+
+When a configured reviewer is live, Postman commits a reply-required mail
+request whose JSON body contains `version: 1` and the exact command. The
+reviewer claims it with `tmux-a2a-postman pop`, reads the complete archived
+Markdown body, then replies from the reviewer pane using the request's exact
+message ID and input-request ID. The reply body is JSON with `version: 1`,
+the same command, and `decision` set to `approved` or `rejected`. Replace
+`<requester-node-from-claimed-request>` with the actual sender node of the
+claimed request:
+
+```sh
+tmux-a2a-postman send-heredoc --to '<requester-node-from-claimed-request>' \
+  --reply-to '<request-message-id>' \
+  --fills-input-request-id '<input-request-id>' <<'POSTMAN_BODY'
+{"version":1,"command":"go test ./...","decision":"approved"}
+POSTMAN_BODY
+```
+
+The requester waits up to 300 seconds for that exact reviewer reply;
+unrelated inbox mail remains untouched. Rejection, timeout, cancellation,
+reviewer loss, and ambiguous topology do not run Bash. Only verified absence
+of a configured reviewer permits advisory execution. An older decision never
+authorizes a later invocation. Bash runs outside mailbox locks; its ordinary
+stdout and stderr stream while Postman's result JSON is emitted separately
+on stderr. A nonzero Bash exit is reported as `exited` with its exit status.
+
+`execution.notice` reports the post-commit notification outcome separately.
+Native pane-input notification is disabled because it could submit text
+already typed by the reviewer, so `unavailable` does not withdraw the
+request or grant approval. The reviewer must POP and send the exact reply.
+See `tmux-a2a-postman help execute-bash` and the [README](../README.md) for
+the current command contract and other file-first commands.
+
+## 2. Legacy daemon-path reference
+
+The remainder of this document describes the legacy daemon approval path.
+Keep these examples scoped to that path until issue #937 verifies cutover.
 
 `execute-bash` is a wrapper for lightweight command approval choreography. It
 records command metadata, asks for approval through a durable approval thread,
 and applies the configured mode before running `bash -lc`.
 
-## 1. Policy
+## 3. Policy
 
 Policies live in `postman.toml` under `[[postman.command_approval]]`.
 
@@ -66,7 +113,7 @@ also reports ignored legacy TOML approver keys under
 when both `command_approval.unresolved_command_approvers` and
 `command_approval.deprecated_command_approvers` are absent.
 
-### 1.1. Fail-open rule (#626)
+### 3.1. Fail-open rule (#626)
 
 An absent `command_approver_node` makes every command treated as approved, in
 every mode, including `blocking`. Such commands are recorded with the decision
@@ -85,7 +132,7 @@ Ignored legacy TOML `command_approver_node` values produce
 that status field as a migration failure: the TOML key is ignored, so approval
 remains fail-open unless a Mermaid `command_approver_node` is configured.
 
-## 2. Running Commands
+## 4. Running Commands
 
 ```sh
 tmux-a2a-postman execute-bash \
@@ -100,7 +147,7 @@ reason, expiry, approval thread id, decision, and exit status. Full command
 text is omitted by default. Add `--store-command-text` only when the command
 body is safe to keep in the local audit log.
 
-### 2.1. Positional argv fallback (#838)
+### 4.1. Positional argv fallback (#838)
 
 `--command <bash>` is the documented interface: its value is trimmed of
 leading/trailing whitespace and passed to `bash -lc`, with no further
@@ -147,7 +194,7 @@ will not match the new digest; reusing its old `--thread-id` yields
 unaffected. Prefer `--command <bash>` for any script with more than one
 shell operation; it needs no argv reconstruction at all.
 
-## 3. Modes
+## 5. Modes
 
 `advisory` records the request and audit metadata, warns when approval is not
 present, and continues.
@@ -162,17 +209,17 @@ changed-digest approvals do not run. Missing, stale, rejected, expired, and
 wrong-reviewer threads are retryable (#823 F-012): repeating the identical
 command mints a fresh request instead of resurfacing the old terminal
 diagnosis forever — see
-[3.1](#31-waiting-for-the-decision-synchronously-823) below. A changed-digest
+[5.1](#51-waiting-for-the-decision-synchronously-823) below. A changed-digest
 mismatch is a refusal, not a retryable state: it never mints a new request.
 
 `blocking` is the default mode (#753) when neither a matching policy nor
 `--mode` sets one explicitly. A configured `command_approver_node` that never
 answers now halts the calling agent's work by default, where it previously
 only produced an `advisory` warning; see
-[3.3. Recovering when a blocking approval never lands](#33-recovering-when-a-blocking-approval-never-lands-753)
+[5.3. Recovering when a blocking approval never lands](#53-recovering-when-a-blocking-approval-never-lands-753)
 for how to get unstuck.
 
-### 3.1. Waiting for the decision synchronously (#823)
+### 5.1. Waiting for the decision synchronously (#823)
 
 With a trusted, resolvable `command_approver_node`, `blocking` mode keeps the
 `execute-bash` call open by default and polls the local approval projection
@@ -200,13 +247,13 @@ tmux-a2a-postman execute-bash \
   `wait_timeout` (exit 12), including at exact equality (#831 D6). A caller
   should retry the identical call rather than lower
   `--wait-timeout-seconds`; see
-  [Harness/caller timeout guidance](#32-harnesscaller-timeout-guidance-831)
+  [Harness/caller timeout guidance](#52-harnesscaller-timeout-guidance-831)
   below.
 - Fail-open (#626, no `command_approver_node` configured) and fail-closed (a
   configured but unresolvable `command_approver_node`) are unaffected by
   waiting — those decisions are made before the wait loop is ever
   considered, so an absent or unresolvable approver still behaves exactly as
-  in [1.1. Fail-open rule](#11-fail-open-rule-626).
+  in [3.1. Fail-open rule](#31-fail-open-rule-626).
 - Rejection, expiry, a wait timeout, cancellation (SIGINT/SIGTERM), a
   requester mismatch on a reused `--thread-id`, a failed or lost delivery to
   the approver, a context/session-generation change mid-wait, a repeated
@@ -266,7 +313,7 @@ tmux-a2a-postman execute-bash \
   anything; and an approved-and-already-executed thread stays
   `already_executed` until its own TTL expires, only then becoming
   retryable like any other expired thread. See
-  [3.3](#33-recovering-when-a-blocking-approval-never-lands-753) for how to
+  [5.3](#53-recovering-when-a-blocking-approval-never-lands-753) for how to
   recover `already_executed` sooner than the TTL, if needed.
 - Cancellation and the deadline always win over a late approval (#823
   F-005): both are checked before the wait loop accepts any decision on
@@ -300,7 +347,7 @@ tmux-a2a-postman execute-bash \
   the approver is still discoverable, returning `approver_lost` if it
   disappears mid-wait.
 
-### 3.2. Harness/caller timeout guidance (#831)
+### 5.2. Harness/caller timeout guidance (#831)
 
 Since `--no-wait` is removed, a caller (a postman worker/agent invoking
 `execute-bash`) whose command is not yet decided blocks for up to
@@ -310,7 +357,7 @@ Since `--no-wait` is removed, a caller (a postman worker/agent invoking
 - On `wait_timeout`, the underlying request is very likely still valid: a
   `wait_timeout` result can only occur when the wait deadline passed while the
   request's own expiry had not (see
-  [3.1](#31-waiting-for-the-decision-synchronously-823)'s two-deadline model
+  [5.1](#51-waiting-for-the-decision-synchronously-823)'s two-deadline model
   above; an already-expired request returns `expired` directly instead).
   Retrying the IDENTICAL `execute-bash` call (same
   `--label`/`--category`/`--command`, letting the deterministic thread id reuse
@@ -337,7 +384,7 @@ Since `--no-wait` is removed, a caller (a postman worker/agent invoking
   wrapper's own cancellation, so a kill mid-execution can leave partial
   effects or an orphaned child process.
 
-### 3.3. Recovering when a blocking approval never lands (#753)
+### 5.3. Recovering when a blocking approval never lands (#753)
 
 A `blocking` command that has requested approval but received no decision
 by the time `--wait-timeout-seconds` elapses leaves a `pending` thread and
@@ -354,7 +401,7 @@ refuses to run. To recover:
 2. If the configured `command_approver_node` is reachable, have it record a
    decision through the normal path — either by replying `APPROVED: <reason>`
    or `NOT APPROVED: <reason>` to the delivered approval request (see
-   [4.1](#41-delivery-to-a-valid-command_approver_node-626)), or by running
+   [6.1](#61-delivery-to-a-valid-command_approver_node-626)), or by running
    `--record-decision` directly from that node's own pane:
 
    ```sh
@@ -368,14 +415,15 @@ refuses to run. To recover:
    configured (#831 D1): `--mode advisory` or `--mode warn-only` is refused
    as a policy-floor downgrade even when that configured approver is
    currently unresolvable — the exemption applies only to the genuinely
-   ABSENT case ([1.1. Fail-open rule](#11-fail-open-rule-626), no approver
+   ABSENT case ([3.1. Fail-open rule](#31-fail-open-rule-626), no approver
    configured at all). If the approver is unavailable and the command
    genuinely cannot wait, either have an operator reconfigure/remove the
    `command_approver_node` (accepting the broader fail-open consequences
-   documented in 1.1), or use the direct-shell boundary below.
+   documented in [3.1](#31-fail-open-rule-626)), or use the direct-shell
+   boundary below.
 4. As a last resort, running the command directly in the shell (bypassing
    `execute-bash` entirely) is the explicit, documented escape boundary
-   described in [7. Boundary](#7-boundary): the wrapper coordinates review, it
+   described in [9. Boundary](#9-boundary): the wrapper coordinates review, it
    is not a sandbox, so nothing prevents this — but it also means no approval
    thread, decision, or audit record is created for that run.
 
@@ -386,7 +434,7 @@ the next call then mints a brand-new request automatically (#823 F-012) — or
 pass an explicit `--thread-id` naming a fresh, not-yet-used thread id to
 start an independent approval cycle right away.
 
-## 4. Decisions
+## 6. Decisions
 
 When `execute-bash` requests approval, it prints the approval thread id in the
 wrapper metadata. The configured `command_approver_node`, running
@@ -407,7 +455,7 @@ effect on the outcome. A caller whose pane identity is not the thread's
 
 Use `--record-decision rejected` to reject a pending command.
 
-### 4.1. Delivery to a valid command_approver_node (#626)
+### 6.1. Delivery to a valid command_approver_node (#626)
 
 When a valid `command_approver_node` is configured and a command needs approval,
 `execute-bash` also delivers a reply-required postman message to that node
@@ -442,7 +490,7 @@ decision recorded — passing `--reviewer <command_approver_node_name>` on the
 command line has no effect on this check, since that name is a plain, readable
 config value, not proof of who is actually calling.
 
-## 5. Inspection
+## 7. Inspection
 
 Command approval state is inspectable without re-running the command:
 
@@ -453,7 +501,7 @@ tmux-a2a-postman inspect-command-approvals
 The output shows each approval thread with requester, reviewer, label,
 category, digest, reason, expiry, timestamps, and status.
 
-## 6. Decision History
+## 8. Decision History
 
 Approver approval and rejection decisions are also accumulated as individual
 JSON files under:
@@ -490,14 +538,14 @@ No automatic retention policy deletes these records. Treat them as local,
 owner-only audit data and rotate or archive the directory according to the
 operator's local retention policy.
 
-## 7. Boundary
+## 9. Boundary
 
 This is coordination, not enforcement. `execute-bash` does not sandbox bash,
 prevent direct shell execution, prevent another process from running the same
 command, or enforce OS-level policy. Use it to make agent command review
 explicit and auditable inside a Postman session.
 
-## 8. Upgrade Notes (#831)
+## 10. Upgrade Notes (#831)
 
 For operators upgrading an existing deployment past #831's implementation:
 

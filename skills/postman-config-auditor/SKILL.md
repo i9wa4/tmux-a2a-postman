@@ -29,8 +29,10 @@ policies. The linked references distinguish that declaration from legacy TOML
   `interface_node` has no default and `ui_node` is not an alias: an omitted
   `interface_node` means no interface node (fail closed), and any `ui_node`
   form is warned about and ignored.
-- Diagnose `get-status` evidence for dead-letter, missing route, quiet node, or
-  unread backlog symptoms.
+- Audit dead-letter, missing-route, quiet-node, or unread-backlog reports
+  against configured edges and durable evidence. File-first `get-status`
+  exposes the caller's `self`; use retained daemon diagnostics for node-wide
+  and dead-letter projections.
 
 ## 2. Procedure
 
@@ -45,5 +47,5 @@ policies. The linked references distinguish that declaration from legacy TOML
 ## 3. DO NOT USE FOR
 
 - Generic CLI usage questions.
-- Live inbox/reply/session workflow operation, or first-contact message
-  sending; use `postman-usage`.
+- Live inbox/reply/session workflow operation; use `postman-usage`.
+- Ordinary message sending; use `postman-send-message`.

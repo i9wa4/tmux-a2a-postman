@@ -1,5 +1,16 @@
 Directories — session directory layout
 
+The four file-first commands use workspace state under
+$XDG_STATE_HOME/tmux-a2a-postman when XDG_STATE_HOME is an absolute path.
+When XDG_STATE_HOME is unset or empty, they use
+$HOME/.local/state/tmux-a2a-postman. A nonempty relative XDG_STATE_HOME is
+rejected, and HOME must be absolute. These commands do not use the
+contextId/sessionName daemon layout below. File-first pop claims a message
+into its read archive before returning the path; the agent then reads the
+complete archived body.
+
+The following layout and resolution order apply to the retained daemon path:
+
 Base directory resolution (in priority order):
   1. $POSTMAN_HOME environment variable
   2. base_dir field in config file

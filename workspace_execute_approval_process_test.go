@@ -197,7 +197,7 @@ func (f *publicApprovalFixture) reply(request workspace.Message, command, decisi
 }
 
 func TestWorkspaceExecuteBashPublicApprovalReplies(t *testing.T) {
-	for _, scenario := range []string{"approved", "rejected", "wrong_then_approved"} {
+	for _, scenario := range []string{"approved", "rejected", "wrong_then_approved", "invalid_then_rejected"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newPublicApprovalFixture(t)
 			marker := filepath.Join(f.home, "executed")
@@ -225,9 +225,15 @@ func TestWorkspaceExecuteBashPublicApprovalReplies(t *testing.T) {
 				}
 				unrelated = *ordinary.Message
 			}
+			var invalid workspace.Message
+			if scenario == "invalid_then_rejected" {
+				invalid = f.reply(request, command, "not-a-decision")
+			}
 			decision := scenario
 			if scenario == "wrong_then_approved" {
 				decision = "approved"
+			} else if scenario == "invalid_then_rejected" {
+				decision = "rejected"
 			}
 			good := f.reply(request, command, decision)
 			err = child.Wait()
@@ -241,7 +247,7 @@ func TestWorkspaceExecuteBashPublicApprovalReplies(t *testing.T) {
 			if result.Execution == nil || result.Execution.RequestID != request.ID || result.Execution.ReplyID != good.ID {
 				t.Fatalf("public exact reply correlation: %+v err=%v", result, err)
 			}
-			if scenario == "rejected" {
+			if scenario == "rejected" || scenario == "invalid_then_rejected" {
 				if err == nil || result.Status != "rejected" {
 					t.Fatalf("public rejection: %+v %v", result, err)
 				}
@@ -256,12 +262,16 @@ func TestWorkspaceExecuteBashPublicApprovalReplies(t *testing.T) {
 					t.Fatalf("approved command did not execute once: %q %v", data, err)
 				}
 			}
-			if scenario == "wrong_then_approved" {
+			if scenario == "wrong_then_approved" || scenario == "invalid_then_rejected" {
 				root, err := workspace.DefaultStateRoot(f.home, f.stateHome)
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, id := range []string{wrong.ID, unrelated.ID} {
+				ids := []string{invalid.ID}
+				if scenario == "wrong_then_approved" {
+					ids = []string{wrong.ID, unrelated.ID}
+				}
+				for _, id := range ids {
 					path := filepath.Join(root, "work", "agents", "worker", "inbox", id+".md")
 					if _, err := os.Stat(path); err != nil {
 						t.Fatalf("public execute-bash consumed unrelated reply %s: %v", id, err)

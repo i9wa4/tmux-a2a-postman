@@ -1,7 +1,10 @@
 # Feature Surface Inventory
 
 Compiled for issue #561 (inventory and remove unnecessary feature surfaces).
-Captures the state of `main` HEAD at time of writing.
+This is a historical snapshot of the daemon-backed surface on `main` at the
+time of writing. Its command categories and status descriptions do not define
+the four file-first workspace commands introduced during issue #937; use the
+current README and command help for those contracts.
 
 ## 1. CLI Commands
 
