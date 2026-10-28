@@ -62,13 +62,13 @@
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
           go126 = pkgs.go_1_26.overrideAttrs (_old: rec {
-            version = "1.26.4";
+            version = "1.26.10";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-T2aKMvv8ETLmqIH7lowvHa2mMUkqM5IRc1+7JVpCYC0=";
+              hash = "sha256-/WPog7ovK/ypPBZGsx6+9j4rHk0rMXyXidl2po2B828=";
             };
           });
-          buildGo126Module = pkgs.buildGoModule.override { go = pkgs.go_1_26; };
+          buildGo126Module = pkgs.buildGoModule.override { go = go126; };
           commonDevPackages = with pkgs; [
             gh
             go126
@@ -233,7 +233,7 @@
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-/G6E+StNyCnZeb1ZgdiyK6D8pDLX+2YTlJrCEv74lbQ=";
+            vendorHash = "sha256-A5+98YkUQlft0SQ/Q9w7fLF1X6k0c8rLp1bXbrRxL6o=";
             nativeCheckInputs = [ pkgs.tmux ];
             ldflags = [
               "-s"

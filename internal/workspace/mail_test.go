@@ -172,7 +172,7 @@ func TestMailSendRecoveryDoesNotResurrectClaimedDelivery(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer journal.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(journal.Close)
 		return writeJSON(journal, "send-"+msg.ID+".json", mailTransaction{Version: 1, Kind: "send", Message: msg, Body: msg.Body})
 	})
 	if err != nil {

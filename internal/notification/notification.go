@@ -329,11 +329,12 @@ func promptHasNotification(lines []string, start, end int, filename string) bool
 		return false
 	}
 	prompt := strings.TrimLeft(lines[start], " \t")
-	if strings.HasPrefix(prompt, "❯") {
+	switch {
+	case strings.HasPrefix(prompt, "❯"):
 		prompt = strings.TrimSpace(strings.TrimPrefix(prompt, "❯"))
-	} else if strings.HasPrefix(prompt, "›") {
+	case strings.HasPrefix(prompt, "›"):
 		prompt = strings.TrimSpace(strings.TrimPrefix(prompt, "›"))
-	} else {
+	default:
 		return false
 	}
 	if prompt != "<!-- message start -->" {

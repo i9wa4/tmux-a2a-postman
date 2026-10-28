@@ -142,7 +142,7 @@ func TestConfiguredApprovalNativeWorkspaceAndRealBash(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			defer box.Close()
+			defer func(closeFn func() error) { _ = closeFn() }(box.Close)
 			request, err = readMessage(box, state.Inbound[0].MessageID+".md")
 			return err
 		})

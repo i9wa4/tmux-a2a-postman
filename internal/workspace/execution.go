@@ -164,23 +164,23 @@ func executionBox(ws *os.Root, role string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	box.Close()
+	_ = box.Close()
 	agents, err := privateDir(ws, "agents", false)
 	if err != nil {
 		return nil, err
 	}
-	defer agents.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agents.Close)
 	agent, err := privateDir(agents, role, false)
 	if err != nil {
 		return nil, err
 	}
-	defer agent.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agent.Close)
 	records, err := privateDir(agent, "executions", true)
 	if err != nil {
 		return nil, err
 	}
 	if err = syncDirectory(agent); err != nil {
-		records.Close()
+		_ = records.Close()
 		return nil, err
 	}
 	return records, nil
@@ -192,7 +192,7 @@ func (e Executor) save(ctx context.Context, rt Runtime, result ExecutionResult, 
 		if err != nil {
 			return err
 		}
-		defer box.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(box.Close)
 		if result.Requester != s.Caller.Role || !messageID(result.OperationID) {
 			return ErrUnknown
 		}
@@ -238,7 +238,7 @@ func (e Executor) claimDecision(ctx context.Context, rt Runtime, req Message, co
 		if err != nil {
 			return err
 		}
-		defer inbox.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(inbox.Close)
 		entries, err := boundedEntries(inbox)
 		if err != nil {
 			return err
@@ -427,11 +427,12 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	result.ExitStatus = &code
 	result.Status = "executed"
 	result.AsOf = e.clock().UTC().Format(time.RFC3339Nano)
-	if ctx.Err() != nil {
+	switch {
+	case ctx.Err() != nil:
 		result.Status = "cancelled"
-	} else if runErr != nil {
+	case runErr != nil:
 		result.Status = "execution_failed"
-	} else if code != 0 {
+	case code != 0:
 		result.Status = "exited"
 	}
 	if runErr != nil {

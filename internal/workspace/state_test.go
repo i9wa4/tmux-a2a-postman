@@ -249,7 +249,7 @@ func TestSelfStateActivityIsReadOnlyUnknownForMissingStaleAndConflictingEvidence
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(root.Close)
 	owner := rt.snapshot.Caller.Owner
 	now := time.Now().UTC()
 	text := "private pane activity"
@@ -305,7 +305,7 @@ func TestSelfStateActivityIsReadOnlyUnknownForMissingStaleAndConflictingEvidence
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ws.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(ws.Close)
 	record.CapturedAt = now.Add(500 * time.Millisecond).Format(time.RFC3339Nano)
 	record.Observations[0].CapturedAt = record.CapturedAt
 	put()

@@ -160,7 +160,7 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsUnknownActivity(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer captureFile.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(captureFile.Close)
 	opened, err := captureFile.Stat()
 	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(entry, opened) {
 		t.Fatalf("capture identity changed before access: %v, %v", opened, err)

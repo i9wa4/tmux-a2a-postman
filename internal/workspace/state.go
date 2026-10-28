@@ -86,7 +86,7 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	if err != nil {
 		return err
 	}
-	defer base.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(base.Close)
 	opened, err := base.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
 		return ErrUnknown
@@ -95,12 +95,12 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	if err != nil {
 		return err
 	}
-	defer locks.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(locks.Close)
 	lock, err := locks.OpenFile(name+".lock", os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(lock.Close)
 	li, err := lock.Stat()
 	if err != nil || !privateInfo(li, false) {
 		return ErrUnknown
@@ -111,7 +111,7 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 		}
 		return err
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN) }(int(lock.Fd()))
 	pathInfo, err := locks.Lstat(name + ".lock")
 	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(li, pathInfo) {
 		return ErrUnknown
@@ -131,7 +131,7 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	if err != nil {
 		return err
 	}
-	defer ws.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(ws.Close)
 	var identity workspaceRecord
 	if readJSON(ws, "workspace.json", &identity) != nil || identity != (workspaceRecord{1, fresh.Root, name}) {
 		return ErrUnknown
@@ -140,7 +140,7 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	if err != nil {
 		return err
 	}
-	defer runtimeDir.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(runtimeDir.Close)
 	var saved runtimeRecord
 	if readJSON(runtimeDir, "binding.json", &saved) != nil || saved.Version != 1 || !saved.Owner.valid() ||
 		ValidateBindings(saved.Bindings) != nil || !sameRuntime(saved.Owner, fresh.Caller.Owner) {
@@ -166,12 +166,12 @@ func openOwnBox(ws *os.Root, role, box string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer agents.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agents.Close)
 	agent, err := privateDir(agents, role, false)
 	if err != nil {
 		return nil, err
 	}
-	defer agent.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agent.Close)
 	return privateDir(agent, box, false)
 }
 
@@ -180,7 +180,7 @@ func boundedEntries(root *os.Root) ([]os.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(f.Close)
 	entries, err := f.ReadDir(2049)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
@@ -197,7 +197,7 @@ func readOwnMail(ws *os.Root, role, box string) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(root.Close)
 	entries, err := boundedEntries(root)
 	if err != nil {
 		return nil, err
@@ -252,13 +252,13 @@ func readOwnActivity(ws *os.Root, caller Binding, now time.Time) ActivityState {
 		unknown.Reason = "saved pane evidence unavailable"
 		return unknown
 	}
-	defer agents.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agents.Close)
 	agent, err := privateDir(agents, caller.Role, false)
 	if err != nil {
 		unknown.Reason = "saved pane evidence unavailable"
 		return unknown
 	}
-	defer agent.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agent.Close)
 	captures, err := privateDir(agent, "captures", false)
 	if errors.Is(err, os.ErrNotExist) {
 		return unknown
@@ -267,7 +267,7 @@ func readOwnActivity(ws *os.Root, caller Binding, now time.Time) ActivityState {
 		unknown.Reason = "saved pane evidence unavailable"
 		return unknown
 	}
-	defer captures.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(captures.Close)
 	entries, err := boundedEntries(captures)
 	if err != nil {
 		unknown.Reason = "saved pane evidence unavailable"
@@ -388,7 +388,7 @@ func (m Mail) State(ctx context.Context, rt Runtime, allowed []string) SelfState
 		journal, err := privateDir(ws, "transactions", false)
 		if err == nil {
 			entries, listErr := boundedEntries(journal)
-			journal.Close()
+			_ = journal.Close()
 			if listErr != nil {
 				return listErr
 			}

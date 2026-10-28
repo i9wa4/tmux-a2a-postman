@@ -42,7 +42,7 @@ func pendingApproval(t *testing.T, m Mail) Message {
 			if err != nil {
 				return err
 			}
-			defer box.Close()
+			defer func(closeFn func() error) { _ = closeFn() }(box.Close)
 			req, err = readMessage(box, o.MessageID+".md")
 			return err
 		})
@@ -551,7 +551,7 @@ func TestExecutorCancellationKillsOwnedProcessGroupAndRecordsTerminal(t *testing
 		}
 	case <-time.After(3 * time.Second):
 		// Old parent-only cancellation leaves sleep alive holding the stdout pipe.
-		syscall.Kill(child, syscall.SIGKILL)
+		_ = syscall.Kill(child, syscall.SIGKILL)
 		<-done
 		t.Fatal("cancellation left an owned child holding output")
 	}

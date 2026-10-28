@@ -39,7 +39,7 @@ func (m Mail) SendCrossWithReply(ctx context.Context, source, destination NamedR
 				if err != nil {
 					return err
 				}
-				defer read.Close()
+				defer func(closeFn func() error) { _ = closeFn() }(read.Close)
 				original, err := readMessage(read, replyTo+".md")
 				if err != nil || original.To != from.Caller.Role || original.ToSession != source.Name() ||
 					original.From != to.Caller.Role || original.FromSession != destination.Name() {
@@ -83,7 +83,7 @@ func (m Mail) SendCrossWithReply(ctx context.Context, source, destination NamedR
 			if err != nil {
 				return err
 			}
-			defer journal.Close()
+			defer func(closeFn func() error) { _ = closeFn() }(journal.Close)
 			if err := writeJSON(journal, tx.Kind+"-"+msg.ID+".json", tx); err != nil {
 				return err
 			}
@@ -109,13 +109,13 @@ func (m Mail) recoverCross(sourceWS, destinationWS *os.Root, from, to Snapshot, 
 	if err != nil {
 		return err
 	}
-	defer journal.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(journal.Close)
 	dir, err := journal.Open(".")
 	if err != nil {
 		return err
 	}
 	entries, readErr := dir.ReadDir(1025)
-	dir.Close()
+	_ = dir.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return readErr
 	}
@@ -180,25 +180,26 @@ func (m Mail) finishCross(sourceWS, destinationWS, journal *os.Root, tx mailTran
 	if err != nil {
 		return err
 	}
-	defer inbox.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(inbox.Close)
 	read, err := mailBox(destinationWS, msg.To, "read")
 	if err != nil {
 		return err
 	}
-	defer read.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(read.Close)
 	archived, readErr := readMessage(read, msg.ID+".md")
-	if readErr == nil {
+	switch {
+	case readErr == nil:
 		if !sameMessage(archived, msg) {
 			return errors.New("archived cross-session message conflicts with intent")
 		}
 		if _, err := inbox.Lstat(msg.ID + ".md"); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("cross-session delivery exists in inbox and read")
 		}
-	} else if errors.Is(readErr, os.ErrNotExist) {
+	case errors.Is(readErr, os.ErrNotExist):
 		if err := ensureMessage(inbox, msg); err != nil {
 			return err
 		}
-	} else {
+	default:
 		return readErr
 	}
 	if err := m.step("cross-inbox"); err != nil {
@@ -208,7 +209,7 @@ func (m Mail) finishCross(sourceWS, destinationWS, journal *os.Root, tx mailTran
 	if err != nil {
 		return err
 	}
-	defer sent.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(sent.Close)
 	if err := ensureMessage(sent, msg); err != nil {
 		return err
 	}

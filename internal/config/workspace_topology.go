@@ -51,7 +51,7 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	if err != nil {
 		return result, err
 	}
-	defer f.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(f.Close)
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 1024*1024 {
 		return result, errors.New("topology must be a bounded regular Markdown file")
@@ -233,7 +233,12 @@ func validateWorkspaceMermaid(block string) ([]string, error) {
 		fields := strings.Fields(statement)
 		switch fields[0] {
 		case "graph", "flowchart":
-			if len(fields) != 2 || !strings.Contains("|LR|RL|TB|TD|BT|", "|"+fields[1]+"|") {
+			if len(fields) != 2 {
+				return nil, errors.New("invalid topology graph header")
+			}
+			switch fields[1] {
+			case "LR", "RL", "TB", "TD", "BT":
+			default:
 				return nil, errors.New("invalid topology graph header")
 			}
 			continue

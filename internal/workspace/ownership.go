@@ -86,7 +86,7 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 	if err != nil {
 		return err
 	}
-	defer base.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(base.Close)
 	opened, err := base.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
 		return ErrUnknown
@@ -95,12 +95,12 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 	if err != nil {
 		return err
 	}
-	defer locks.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(locks.Close)
 	lock, err := locks.OpenFile(name+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return err
 	}
-	defer lock.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(lock.Close)
 	lockInfo, err := lock.Stat()
 	if err != nil || !privateInfo(lockInfo, false) {
 		return errors.New("unsafe workspace lock")
@@ -111,7 +111,7 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 		}
 		return err
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN) }(int(lock.Fd()))
 	pathInfo, err := locks.Lstat(name + ".lock")
 	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(lockInfo, pathInfo) {
 		return ErrUnknown
@@ -136,12 +136,12 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 	} else if err == nil {
 		var identity workspaceRecord
 		if readJSON(ws, "workspace.json", &identity) != nil || identity != (workspaceRecord{1, fresh.Root, name}) {
-			ws.Close()
+			_ = ws.Close()
 			return errors.New("workspace original root mismatch or invalid identity record")
 		}
 		runtimeDir, openErr := privateDir(ws, "runtime", false)
 		if openErr != nil {
-			ws.Close()
+			_ = ws.Close()
 			return openErr
 		}
 		var previous runtimeRecord
@@ -163,16 +163,16 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 		if readErr == nil {
 			readErr = replaceJSON(runtimeDir, "binding.json", runtimeRecord{1, fresh.Caller.Owner, fresh.Bindings})
 		}
-		runtimeDir.Close()
+		_ = runtimeDir.Close()
 		if readErr != nil {
-			ws.Close()
+			_ = ws.Close()
 			return readErr
 		}
 	}
 	if err != nil {
 		return err
 	}
-	defer ws.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(ws.Close)
 	return fn(ws, fresh)
 }
 
@@ -238,7 +238,7 @@ func privateDir(parent *os.Root, name string, create bool) (*os.Root, error) {
 	}
 	after, err := root.Stat(".")
 	if err != nil || !os.SameFile(before, after) {
-		root.Close()
+		_ = root.Close()
 		return nil, ErrUnknown
 	}
 	return root, nil
@@ -249,7 +249,7 @@ func readJSON(root *os.Root, name string, value any) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(file.Close)
 	info, err := file.Stat()
 	if err != nil || !privateInfo(info, false) || info.Size() > 64*1024 {
 		return errors.New("unsafe or oversized workspace record")
@@ -304,7 +304,7 @@ func syncDirectory(root *os.Root) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(file.Close)
 	return file.Sync()
 }
 
@@ -313,7 +313,7 @@ func replaceJSON(root *os.Root, name string, value any) error {
 	if err != nil {
 		return err
 	}
-	defer root.Remove(temp)
+	defer func(removeFn func(string) error, name string) { _ = removeFn(name) }(root.Remove, temp)
 	if err := writeJSON(root, temp, value); err != nil {
 		return err
 	}
@@ -331,12 +331,12 @@ func (s Store) createWorkspace(base *os.Root, name string, snapshot Snapshot) er
 	if err := base.Mkdir(temp, 0o700); err != nil {
 		return err
 	}
-	defer base.RemoveAll(temp)
+	defer func(removeFn func(string) error, name string) { _ = removeFn(name) }(base.RemoveAll, temp)
 	staging, err := privateDir(base, temp, false)
 	if err != nil {
 		return err
 	}
-	defer staging.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(staging.Close)
 	if err := writeJSON(staging, "workspace.json", workspaceRecord{1, snapshot.Root, name}); err != nil {
 		return err
 	}
@@ -348,7 +348,7 @@ func (s Store) createWorkspace(base *os.Root, name string, snapshot Snapshot) er
 	if err == nil {
 		err = syncDirectory(runtimeDir)
 	}
-	runtimeDir.Close()
+	_ = runtimeDir.Close()
 	if err != nil {
 		return err
 	}

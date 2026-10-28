@@ -117,7 +117,7 @@ func readMessage(root *os.Root, name string) (Message, error) {
 	if err != nil {
 		return msg, err
 	}
-	defer f.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(f.Close)
 	info, err := f.Stat()
 	if err != nil || !privateInfo(info, false) || info.Size() > 64*1024 {
 		return msg, errors.New("unsafe mail file")
@@ -153,7 +153,7 @@ func writeMessage(root *os.Root, name string, msg Message) error {
 	if err != nil {
 		return err
 	}
-	defer root.Remove(temp)
+	defer func(removeFn func(string) error, name string) { _ = removeFn(name) }(root.Remove, temp)
 	f, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
@@ -183,18 +183,18 @@ func mailBox(ws *os.Root, role, box string) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer agents.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agents.Close)
 	agent, err := privateDir(agents, role, true)
 	if err != nil {
 		return nil, err
 	}
-	defer agent.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(agent.Close)
 	for _, dir := range []string{"draft", "inbox", "read", "sent", "failed", "pane"} {
 		handle, err := privateDir(agent, dir, true)
 		if err != nil {
 			return nil, err
 		}
-		handle.Close()
+		_ = handle.Close()
 	}
 	if err := syncDirectory(agent); err != nil {
 		return nil, err
@@ -244,7 +244,7 @@ func (m Mail) SendWithReply(ctx context.Context, rt Runtime, to, body, replyTo, 
 			if err != nil {
 				return err
 			}
-			defer read.Close()
+			defer func(closeFn func() error) { _ = closeFn() }(read.Close)
 			original, err := readMessage(read, replyTo+".md")
 			if err != nil || original.To != s.Caller.Role || original.From != to ||
 				original.FromSession != "" || original.ToSession != "" {
@@ -289,7 +289,7 @@ func (m Mail) begin(ws *os.Root, tx mailTransaction) error {
 	if err != nil {
 		return err
 	}
-	defer journal.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(journal.Close)
 	if err := writeJSON(journal, tx.Kind+"-"+tx.Message.ID+".json", tx); err != nil {
 		return err
 	}
@@ -310,13 +310,13 @@ func (m Mail) recover(ws *os.Root) error {
 	if err != nil {
 		return err
 	}
-	defer journal.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(journal.Close)
 	dir, err := journal.Open(".")
 	if err != nil {
 		return err
 	}
 	entries, readErr := dir.ReadDir(1025)
-	dir.Close()
+	_ = dir.Close()
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return readErr
 	}
@@ -403,25 +403,26 @@ func (m Mail) publish(ws *os.Root, msg Message) error {
 	if err != nil {
 		return err
 	}
-	defer inbox.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(inbox.Close)
 	read, err := mailBox(ws, msg.To, "read")
 	if err != nil {
 		return err
 	}
-	defer read.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(read.Close)
 	archived, readErr := readMessage(read, msg.ID+".md")
-	if readErr == nil {
+	switch {
+	case readErr == nil:
 		if !sameMessage(archived, msg) {
 			return errors.New("archived message conflicts with send intent")
 		}
 		if _, err := inbox.Lstat(msg.ID + ".md"); !errors.Is(err, os.ErrNotExist) {
 			return errors.New("delivery exists in both inbox and read")
 		}
-	} else if errors.Is(readErr, os.ErrNotExist) {
+	case errors.Is(readErr, os.ErrNotExist):
 		if err := ensureMessage(inbox, msg); err != nil {
 			return err
 		}
-	} else {
+	default:
 		return readErr
 	}
 	if err := m.step("send-inbox"); err != nil {
@@ -431,7 +432,7 @@ func (m Mail) publish(ws *os.Root, msg Message) error {
 	if err != nil {
 		return err
 	}
-	defer sent.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(sent.Close)
 	if err := ensureMessage(sent, msg); err != nil {
 		return err
 	}
@@ -453,13 +454,13 @@ func (m Mail) Claim(ctx context.Context, rt Runtime, selected string) (*Claimed,
 		if err != nil {
 			return err
 		}
-		defer inbox.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(inbox.Close)
 		dir, err := inbox.Open(".")
 		if err != nil {
 			return err
 		}
 		entries, readErr := dir.ReadDir(1025)
-		dir.Close()
+		_ = dir.Close()
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
 			return readErr
 		}
@@ -510,14 +511,15 @@ func (m Mail) archive(ws *os.Root, tx mailTransaction) error {
 	if err != nil {
 		return err
 	}
-	defer inbox.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(inbox.Close)
 	read, err := mailBox(ws, msg.To, "read")
 	if err != nil {
 		return err
 	}
-	defer read.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(read.Close)
 	previous, err := readMessage(read, msg.ID+".md")
-	if errors.Is(err, os.ErrNotExist) {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		current, err := readMessage(inbox, msg.ID+".md")
 		if err != nil || !sameMessage(current, msg) {
 			return errors.New("claim source absent or conflicting")
@@ -533,9 +535,9 @@ func (m Mail) archive(ws *os.Root, tx mailTransaction) error {
 		if err := syncDirectory(read); err != nil {
 			return err
 		}
-	} else if err != nil {
+	case err != nil:
 		return err
-	} else if !sameMessage(previous, msg) {
+	case !sameMessage(previous, msg):
 		return errors.New("claim archive conflicts")
 	}
 	if _, err := inbox.Lstat(msg.ID + ".md"); !errors.Is(err, os.ErrNotExist) {
@@ -548,15 +550,16 @@ func (m Mail) archive(ws *os.Root, tx mailTransaction) error {
 	name := msg.ID + ".pop.json"
 	var prior ClaimReceipt
 	err = readJSON(read, name, &prior)
-	if err == nil {
+	switch {
+	case err == nil:
 		if prior != receipt {
 			return fmt.Errorf("claim receipt conflicts: %s", msg.ID)
 		}
-	} else if errors.Is(err, os.ErrNotExist) {
+	case errors.Is(err, os.ErrNotExist):
 		if err := writeJSON(read, name, receipt); err != nil {
 			return err
 		}
-	} else {
+	default:
 		return err
 	}
 	if err := syncDirectory(read); err != nil {

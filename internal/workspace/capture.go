@@ -129,7 +129,7 @@ func (m Mail) persistUnknownCapture(result *CaptureResult) error {
 	if err != nil {
 		return err
 	}
-	defer base.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(base.Close)
 	opened, err := base.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
 		return ErrUnknown
@@ -138,7 +138,7 @@ func (m Mail) persistUnknownCapture(result *CaptureResult) error {
 	if err != nil {
 		return err
 	}
-	defer receipts.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(receipts.Close)
 	name := result.MessageID + ".json"
 	if err := writeJSON(receipts, name, result); err != nil {
 		return err
@@ -186,17 +186,17 @@ func (m Mail) saveCapture(ctx context.Context, rt Runtime, observed Snapshot, re
 		if err != nil {
 			return err
 		}
-		defer agents.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(agents.Close)
 		agent, err := privateDir(agents, fresh.Caller.Role, false)
 		if err != nil {
 			return err
 		}
-		defer agent.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(agent.Close)
 		captures, err := privateDir(agent, "captures", true)
 		if err != nil {
 			return err
 		}
-		defer captures.Close()
+		defer func(closeFn func() error) { _ = closeFn() }(captures.Close)
 		name := result.MessageID + ".json"
 		// A duplicate attempt never overwrites an earlier observation.
 		if _, err := captures.Lstat(name); err == nil {

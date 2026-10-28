@@ -58,7 +58,7 @@ func TestCaptureRelatedReadsOnlyMailPanesAndSavesIncarnation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(root.Close)
 	if err := readJSON(root, filepath.Base(result.Path), &saved); err != nil || saved.MessageID != msg.ID {
 		t.Fatalf("saved evidence: %#v %v", saved, err)
 	}
@@ -103,7 +103,7 @@ func TestCaptureRetentionPrunesOnlyOwnedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(root.Close)
 	now := time.Now().UTC()
 	oldID := fmt.Sprintf("m-%032x", 1)
 	if err := writeJSON(root, oldID+".json", CaptureResult{Version: 1, MessageID: oldID, CapturedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339Nano)}); err != nil {
@@ -143,7 +143,7 @@ func TestCaptureRetentionCountsFutureOwnedSnapshotsAfterClockRollback(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func(closeFn func() error) { _ = closeFn() }(root.Close)
 	now := time.Now().UTC()
 	for i := 0; i < captureLimit+2; i++ {
 		id := fmt.Sprintf("m-%032x", i)
