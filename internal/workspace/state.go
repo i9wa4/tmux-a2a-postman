@@ -268,33 +268,48 @@ func readOwnActivity(ws *os.Root, caller Binding, now time.Time) ActivityState {
 		return unknown
 	}
 	defer func(closeFn func() error) { _ = closeFn() }(captures.Close)
-	entries, err := boundedEntries(captures)
-	if err != nil {
-		unknown.Reason = "saved pane evidence unavailable"
-		return unknown
-	}
 	var latest CaptureResult
 	var latestAt time.Time
-	for _, entry := range entries {
+	finalCount := 0
+	invalid := errors.New("invalid capture evidence")
+	err = scanCaptureEntries(captures, func(entry os.DirEntry) error {
 		name := entry.Name()
+		if _, _, valid := capturePendingIdentity(name); valid {
+			return nil
+		}
+		if strings.HasSuffix(name, ".owner") {
+			if _, _, valid := capturePendingIdentity(strings.TrimSuffix(name, ".owner")); valid {
+				return nil
+			}
+		}
 		id := strings.TrimSuffix(name, ".json")
 		if name != id+".json" || !messageID(id) {
-			unknown.Reason = "saved pane evidence invalid"
-			return unknown
+			return invalid
+		}
+		finalCount++
+		if finalCount > 2048 {
+			return errors.New("capture record limit exceeded")
 		}
 		var record CaptureResult
 		if readJSON(captures, name, &record) != nil || record.Version != 1 || record.MessageID != id {
-			unknown.Reason = "saved pane evidence invalid"
-			return unknown
+			return invalid
 		}
 		when, err := time.Parse(time.RFC3339Nano, record.CapturedAt)
 		if err != nil {
-			unknown.Reason = "saved pane evidence invalid"
-			return unknown
+			return invalid
 		}
 		if latestAt.IsZero() || when.After(latestAt) {
 			latest, latestAt = record, when
 		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, invalid) {
+			unknown.Reason = "saved pane evidence invalid"
+		} else {
+			unknown.Reason = "saved pane evidence unavailable"
+		}
+		return unknown
 	}
 	if latestAt.IsZero() {
 		return unknown

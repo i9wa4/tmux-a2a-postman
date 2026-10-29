@@ -195,7 +195,7 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsUnknownActivity(t *testing.T)
 			t.Fatalf("status mutated activity evidence: before=%v after=%v err=%v", before, after, err)
 		}
 	}
-	checkActivity("saved pane observation unavailable", 0)
+	checkActivity("saved pane observation conflicts with current pane", 0)
 	if _, err := captureFile.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +207,21 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsUnknownActivity(t *testing.T)
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatal(err)
 	}
+	if len(saved.Observations) != 0 {
+		t.Fatalf("failed native capture retained partial observations: %#v", saved)
+	}
+	// Add an explicit saved fixture observation to exercise status age and
+	// incarnation checks; native capture itself remains fail-closed.
+	saved.Observations = []workspace.PaneObservation{{
+		Role: "worker", Pane: worker, Incarnation: saved.Incarnation,
+		CapturedAt: saved.CapturedAt, Reason: "fixture native capture unavailable",
+	}}
+	changed, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCapture(changed)
+	checkActivity("saved pane observation unavailable", 0)
 	fresh := saved.CapturedAt
 	saved.CapturedAt = time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano)
 	for i := range saved.Observations {
@@ -214,7 +229,7 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsUnknownActivity(t *testing.T)
 			saved.Observations[i].CapturedAt = saved.CapturedAt
 		}
 	}
-	changed, err := json.Marshal(saved)
+	changed, err = json.Marshal(saved)
 	if err != nil {
 		t.Fatal(err)
 	}
