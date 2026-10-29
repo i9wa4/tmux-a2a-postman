@@ -327,6 +327,7 @@ func RunWorkspacePop(args []string) error {
 func RunWorkspaceSendHeredoc(args []string) error {
 	f := newWorkspaceFlags("send-heredoc")
 	capture := f.fs.Bool("capture-related-panes", false, "save bounded evidence from this mail's verified sender and receiver panes")
+	appServerNotice := f.fs.Bool("app-server-notice", false, "ask the recipient app-server to run a bare POP turn after mail commit")
 	to := f.fs.String("to", "", "recipient node")
 	replyTo := f.fs.String("reply-to", "", "claimed message ID")
 	fills := f.fs.String("fills-input-request-id", "", "exact input request ID")
@@ -377,7 +378,12 @@ func RunWorkspaceSendHeredoc(args []string) error {
 		msg, sendErr := c.mail.SendCrossWithReply(ctx, caller, peer, string(body), *replyTo, *fills, *required)
 		result := workspaceOutput{Status: "sent", Message: &msg, Self: c.state(ctx)}
 		if sendErr == nil {
-			notice := workspace.NotifyCommittedAfterCommit(ctx, c.runtime, msg)
+			var notice workspace.NoticeResult
+			if *appServerNotice {
+				notice = c.mail.Store.NotifyCommittedAppServerAfterCommit(ctx, c.boundRuntime(), msg)
+			} else {
+				notice = workspace.NotifyCommittedAfterCommit(ctx, c.runtime, msg)
+			}
 			result.Notice = &notice
 		}
 		if sendErr == nil && *capture {
@@ -403,7 +409,12 @@ func RunWorkspaceSendHeredoc(args []string) error {
 	sent, sendErr := c.mail.SendWithState(ctx, c.boundRuntime(), *to, string(body), *replyTo, *fills, *required, c.livePeers())
 	result := workspaceOutput{Status: "sent", Message: &sent.Message, Self: c.withVerifiedSessionPeers(ctx, sent.Self)}
 	if sendErr == nil {
-		notice := workspace.NotifyCommittedAfterCommit(ctx, c.runtime, sent.Message)
+		var notice workspace.NoticeResult
+		if *appServerNotice {
+			notice = c.mail.Store.NotifyCommittedAppServerAfterCommit(ctx, c.boundRuntime(), sent.Message)
+		} else {
+			notice = workspace.NotifyCommittedAfterCommit(ctx, c.runtime, sent.Message)
+		}
 		result.Notice = &notice
 	}
 	if sendErr == nil && *capture {

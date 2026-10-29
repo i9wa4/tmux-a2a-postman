@@ -72,21 +72,25 @@ func TestTmuxSendLeavesPendingRecipientInputUntouched(t *testing.T) {
 	peer := f.run(t, "new-window", "-d", "-t", "one", "-n", "peer", "-c", f.repo,
 		"-P", "-F", "#{pane_id}", "exec sh -i")
 	f.run(t, "select-pane", "-t", peer, "-T", "peer")
+	f.run(t, "resize-window", "-t", "one", "-x", "200")
 	adapter := f.adapter()
 	adapter.Roles = []string{"worker", "peer"}
 	marker := filepath.Join(filepath.Dir(f.socket), "submitted")
-	pending := "touch " + marker + " "
+	pending := "touch " + marker + "; :"
+	if strings.Contains("touch "+marker, pending) {
+		t.Fatal("pending-input fixture has no non-prefix completion marker")
+	}
 	f.run(t, "send-keys", "-l", "-t", peer, pending)
 	deadline := time.Now().Add(2 * time.Second)
 	var before string
 	for time.Now().Before(deadline) {
 		before = f.run(t, "capture-pane", "-p", "-t", peer)
-		if strings.Contains(before, "touch "+marker) {
+		if strings.Contains(before, pending) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !strings.Contains(before, "touch "+marker) {
+	if !strings.Contains(before, pending) {
 		t.Fatal("owned recipient fixture never showed pending input")
 	}
 	m := mailFixture(t)

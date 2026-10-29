@@ -29,6 +29,7 @@ type Runtime interface {
 type Store struct {
 	StateRoot     string
 	beforePublish func() error
+	noticePublish func(*os.Root, string, appServerNoticeReservation) error
 }
 
 type workspaceRecord struct {
