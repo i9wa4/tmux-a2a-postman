@@ -105,6 +105,30 @@ func TestPostDeliveryReloadsSharedTopologyAfterPreDeliverySyncWait(t *testing.T)
 		t.Fatalf("beginPostEvent(%s) = false", postPath)
 	}
 	rt.dispatchPostDelivery(postPath, name, staleNodes, rt.adjacency, rt.cfg, postDeliveryReservation{})
+	t.Cleanup(func() {
+		// A failed assertion can exit before the sync gate is released.
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		// Delivery can still write into the temporary session after the
+		// notification and mailbox projection become observable.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			rt.postEventsMu.Lock()
+			active := rt.activePostEvents[postPath]
+			rt.postEventsMu.Unlock()
+			if !active {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("post delivery did not finish before test cleanup")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 
 	select {
 	case <-syncEntered:
