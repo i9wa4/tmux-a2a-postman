@@ -50,8 +50,8 @@ func (c workspaceCommand) boundRuntime() workspace.Runtime {
 }
 
 type workspaceFlagSet struct {
-	fs               *flag.FlagSet
-	path, md, legacy *string
+	fs       *flag.FlagSet
+	path, md *string
 }
 
 func newWorkspaceFlags(name string) workspaceFlagSet {
@@ -59,17 +59,13 @@ func newWorkspaceFlags(name string) workspaceFlagSet {
 	fs.SetOutput(os.Stderr)
 	path := fs.String("config", "", "absolute path to postman.md")
 	md := fs.String("postman-md", "", "absolute path to postman.md")
-	legacy := fs.String("context-id", "", "removed daemon context ID")
-	return workspaceFlagSet{fs, path, md, legacy}
+	return workspaceFlagSet{fs, path, md}
 }
 
 func (f workspaceFlagSet) parse(args []string) (string, error) {
-	fs, path, md, legacy := f.fs, f.path, f.md, f.legacy
+	fs, path, md := f.fs, f.path, f.md
 	if err := fs.Parse(args); err != nil {
 		return "", err
-	}
-	if *legacy != "" {
-		return "", errors.New("--context-id is not supported by file-first commands")
 	}
 	if *path != "" && *md != "" {
 		return "", errors.New("use only one of --config and --postman-md")
