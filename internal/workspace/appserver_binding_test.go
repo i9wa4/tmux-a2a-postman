@@ -259,7 +259,7 @@ func TestAppServerNoticePartialInitialWriteCrash(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		name := os.Getenv("PM937_NOTICE_CRASH_NAME")
 		err = publishNewAppServerNotice(root, name, appServerNoticeReservation{Version: 1}, func(root *os.Root, temp string, _ any) error {
 			file, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -338,7 +338,7 @@ func TestPublishNewAppServerNoticeDoesNotReplaceExisting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	name := "notice.json"
 	first := appServerNoticeReservation{Version: 1, AttemptID: "first", MessageID: "message", State: "rpc_started"}
 	if err := publishNewAppServerNotice(root, name, first, writeJSON); err != nil {
@@ -364,7 +364,7 @@ func TestAppServerNoticePostLinkCrashRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		var record appServerNoticeReservation
 		if err := json.Unmarshal([]byte(os.Getenv("PM937_POSTLINK_RECORD")), &record); err != nil {
 			t.Fatal(err)
@@ -476,7 +476,7 @@ func TestAppServerNoticePostLinkCrashRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	var saved appServerNoticeReservation
 	if err := readJSON(root, name, &saved); err != nil || saved != retry {
 		t.Fatalf("strict read failed: %+v %v", saved, err)
@@ -501,7 +501,7 @@ func TestPublishNewAppServerNoticeCleanupFailureRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	record := appServerNoticeReservation{Version: 1, AttemptID: "cleanup-failure", MessageID: "message", State: "reserved"}
 	failure := errors.New("injected cleanup failure")
 	err = publishNewAppServerNoticeWithHooks(root, "notice.json", record, writeJSON, nil,
@@ -575,7 +575,7 @@ func TestAppServerNoticePostLinkFailurePublicRetryLiveOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	var strict appServerNoticeReservation
 	if err := readJSON(root, name, &strict); err != nil || strict != resumed {
 		t.Fatalf("retry did not restore strict single-link record: %+v %v", strict, err)

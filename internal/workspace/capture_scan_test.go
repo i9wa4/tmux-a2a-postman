@@ -21,7 +21,7 @@ func TestScanCaptureEntriesStopsAtBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 
 	visited := 0
 	err = scanCaptureEntries(root, func(os.DirEntry) error {
@@ -51,7 +51,7 @@ func TestPruneCaptureCandidateLimitLeavesFinalsUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	now := time.Now().UTC()
 	expiredID := fmt.Sprintf("m-%032x", 0)
 	writeCaptureFixture(t, root, expiredID, now.Add(-captureRetention-time.Hour))
@@ -110,7 +110,7 @@ func TestPruneCaptureLaterRemoveFailureReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := pruneCapturesKeeping(root, now, ""); err != nil {
 		t.Fatal(err)
 	}

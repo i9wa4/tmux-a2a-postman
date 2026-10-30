@@ -39,7 +39,7 @@ func fakeCodexServer(t *testing.T, handle func(net.Conn, *bufio.Reader, int64)) 
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		reader := bufio.NewReader(conn)
 		req, err := http.ReadRequest(reader)
 		if err != nil {

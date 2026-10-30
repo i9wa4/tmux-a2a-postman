@@ -447,7 +447,7 @@ func TestCaptureNonceCrashBoundariesRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer root.Close()
+			defer func() { _ = root.Close() }()
 			pending, err := newPendingCaptureName(root, msg.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -473,16 +473,19 @@ func TestCaptureNonceCrashBoundariesRetry(t *testing.T) {
 			}
 			_, pendingErr := root.Lstat(pending)
 			_, ownerErr := root.Lstat(pendingOwnerName(pending))
-			if boundary == "unmarked empty pending" {
+			switch boundary {
+			case "unmarked empty pending":
 				if pendingErr != nil || !errors.Is(ownerErr, os.ErrNotExist) {
 					t.Fatalf("unmarked occupant changed: pending=%v owner=%v", pendingErr, ownerErr)
 				}
-			} else if boundary == "marked partial pending" {
+			case "marked partial pending":
 				if !errors.Is(pendingErr, os.ErrNotExist) || !errors.Is(ownerErr, os.ErrNotExist) {
 					t.Fatalf("marked orphan remains: pending=%v owner=%v", pendingErr, ownerErr)
 				}
-			} else if !errors.Is(pendingErr, os.ErrNotExist) || ownerErr != nil {
-				t.Fatalf("owner-only marker changed: pending=%v owner=%v", pendingErr, ownerErr)
+			default:
+				if !errors.Is(pendingErr, os.ErrNotExist) || ownerErr != nil {
+					t.Fatalf("owner-only marker changed: pending=%v owner=%v", pendingErr, ownerErr)
+				}
 			}
 		})
 	}
@@ -502,7 +505,7 @@ func TestCaptureRecoversPendingOnlyCrash(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		_, _, err = writePendingCapture(root, filepath.Base(pending), old)
 		return err
 	}(); err != nil {
@@ -521,7 +524,7 @@ func TestCaptureRecoversPendingOnlyCrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	var saved CaptureResult
 	if err := readJSON(root, filepath.Base(final), &saved); err != nil || saved.MessageID != msg.ID {
 		t.Fatalf("retry final unreadable: %#v %v", saved, err)
@@ -542,7 +545,7 @@ func TestCaptureRecoversLinkedPairCrash(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		_, _, err = writePendingCapture(root, filepath.Base(pending), old)
 		return err
 	}(); err != nil {
@@ -564,7 +567,7 @@ func TestCaptureRecoversLinkedPairCrash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	var saved CaptureResult
 	if err := readJSON(root, filepath.Base(final), &saved); err != nil || saved.MessageID != msg.ID {
 		t.Fatalf("recovered final unreadable: %#v %v", saved, err)
@@ -583,7 +586,7 @@ func TestCaptureRecoversMarkedNonceLinkedPair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	pending, err := newPendingCaptureName(root, msg.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -612,7 +615,7 @@ func TestCapturePrunesOnlyExpiredPrivatePending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	now := time.Now().UTC()
 	oldID := fmt.Sprintf("m-%032x", 900)
 	freshID := fmt.Sprintf("m-%032x", 901)
@@ -662,7 +665,7 @@ func TestCapturePartialWriteChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	pending, err := newPendingCaptureName(root, id)
 	if err != nil {
 		t.Fatal(err)
@@ -749,7 +752,7 @@ func TestCapturePartialWriteIdleRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	// Retention runs without a later capture or successful publication.
 	if err := pruneCaptures(root, time.Now().UTC()); err != nil {
 		t.Fatal(err)
@@ -776,7 +779,7 @@ func TestCaptureUnmarkedPendingNeverBecomesRecoveryAuthority(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer root.Close()
+				defer func() { _ = root.Close() }()
 				pending := filepath.Base(pendingPath)
 				if attempt == "nonce" {
 					pending = "." + msg.ID + ".json.pending." + strings.Repeat("a", 32)
@@ -831,7 +834,7 @@ func TestCaptureCrashResidueBeyondMailSnapshotLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	for i := range 2050 {
 		id := fmt.Sprintf("m-%032x", i+10000)
 		name := "." + id + ".json.pending." + strings.Repeat("a", 28) + fmt.Sprintf("%04x", i)
@@ -887,19 +890,22 @@ func TestCaptureUnlinkAndRollbackUncertainty(t *testing.T) {
 			if len(got.Observations) != 0 || !strings.Contains(got.Reason, "injected") {
 				t.Fatalf("fault advertised observations: %#v", got)
 			}
-			if phase == "capture-before-rollback-remove" {
+			switch phase {
+			case "capture-before-rollback-remove":
 				if got.Path != final {
 					t.Fatalf("rollback uncertainty lost possible path: %#v", got)
 				}
 				if _, err := os.Lstat(final); err != nil {
 					t.Fatalf("uncertain final absent: %v", err)
 				}
-			} else if phase == "capture-before-rollback-sync" {
+			case "capture-before-rollback-sync":
 				if got.Path != final {
 					t.Fatalf("sync uncertainty lost possible path: %#v", got)
 				}
-			} else if got.Path != "" {
-				t.Fatalf("successful rollback advertised capture: %#v", got)
+			default:
+				if got.Path != "" {
+					t.Fatalf("successful rollback advertised capture: %#v", got)
+				}
 			}
 			if _, err := os.Lstat(pending); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("owned pending not cleaned: %v", err)

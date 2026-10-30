@@ -170,13 +170,14 @@ func (s *codexSocket) readFrame() (byte, []byte, error) {
 		return 0, nil, fmt.Errorf("%w: unsupported or masked server frame", ErrUnknown)
 	}
 	size := uint64(header[1] & 0x7f)
-	if size == 126 {
+	switch size {
+	case 126:
 		var extra [2]byte
 		if _, err := io.ReadFull(s.read, extra[:]); err != nil {
 			return 0, nil, err
 		}
 		size = uint64(binary.BigEndian.Uint16(extra[:]))
-	} else if size == 127 {
+	case 127:
 		var extra [8]byte
 		if _, err := io.ReadFull(s.read, extra[:]); err != nil {
 			return 0, nil, err

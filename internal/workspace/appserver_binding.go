@@ -55,12 +55,12 @@ func (s Store) RegisterAppServer(ctx context.Context, rt Runtime, socketPath str
 		if err != nil {
 			return err
 		}
-		defer runtimeDir.Close()
+		defer func() { _ = runtimeDir.Close() }()
 		appServers, err := privateDir(runtimeDir, "appserver", true)
 		if err != nil {
 			return err
 		}
-		defer appServers.Close()
+		defer func() { _ = appServers.Close() }()
 		if err := syncDirectory(runtimeDir); err != nil {
 			return err
 		}
@@ -107,12 +107,12 @@ func (s Store) ReserveAppServerNotice(ctx context.Context, rt Runtime, msg Messa
 		if err != nil {
 			return err
 		}
-		defer runtimeDir.Close()
+		defer func() { _ = runtimeDir.Close() }()
 		appServers, err := privateDir(runtimeDir, "appserver", false)
 		if err != nil {
 			return err
 		}
-		defer appServers.Close()
+		defer func() { _ = appServers.Close() }()
 		var registration appServerRegistration
 		if err := readJSON(appServers, msg.To+".json", &registration); err != nil ||
 			registration.Version != 1 || registration.Binding != target ||
@@ -123,7 +123,7 @@ func (s Store) ReserveAppServerNotice(ctx context.Context, rt Runtime, msg Messa
 		if err != nil {
 			return err
 		}
-		defer notices.Close()
+		defer func() { _ = notices.Close() }()
 		if err := syncDirectory(runtimeDir); err != nil {
 			return err
 		}
@@ -230,12 +230,12 @@ func (s Store) transitionAppServerNotice(ctx context.Context, rt Runtime, msg Me
 		if err != nil {
 			return err
 		}
-		defer runtimeDir.Close()
+		defer func() { _ = runtimeDir.Close() }()
 		notices, err := privateDir(runtimeDir, "appserver-notices", false)
 		if err != nil {
 			return err
 		}
-		defer notices.Close()
+		defer func() { _ = notices.Close() }()
 		var record appServerNoticeReservation
 		if err := readAppServerNotice(notices, msg.ID+".json", &record); err != nil ||
 			record.Version != 1 || record.MessageID != msg.ID ||
@@ -312,7 +312,7 @@ func readAppServerNotice(root *os.Root, name string, value *appServerNoticeReser
 	if err != nil {
 		return err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	match := ""
 	for {
 		// Stream entries so ordinary accumulated reservation records do
