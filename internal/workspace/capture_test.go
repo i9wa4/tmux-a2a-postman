@@ -43,6 +43,38 @@ func relatedCaptureRuntime() *captureRuntime {
 	return &captureRuntime{storedRuntime: base}
 }
 
+func TestOversizedCaptureRejectedBeforeFileCreation(t *testing.T) {
+	root, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	id := fmt.Sprintf("m-%032x", 321)
+	value := CaptureResult{
+		Version:      1,
+		MessageID:    id,
+		Observations: []PaneObservation{{Role: "worker", Text: strings.Repeat("x", 64*1024)}},
+	}
+	pending, err := newPendingCaptureName(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created, marked, err := writePendingCapture(root, pending, value); err == nil || created || marked {
+		t.Fatalf("oversized pending capture created: created=%v marked=%v err=%v", created, marked, err)
+	}
+	for _, name := range []string{pending, pendingOwnerName(pending)} {
+		if _, err := root.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("oversized capture left %s: %v", name, err)
+		}
+	}
+	if err := writeJSON(root, "oversized.json", value); err == nil {
+		t.Fatal("oversized JSON write succeeded")
+	}
+	if _, err := root.Lstat("oversized.json"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversized JSON write left a file: %v", err)
+	}
+}
+
 func TestCaptureRelatedReadsOnlyMailPanesAndSavesIncarnation(t *testing.T) {
 	m := mailFixture(t)
 	rt := relatedCaptureRuntime()

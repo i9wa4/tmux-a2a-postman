@@ -285,6 +285,9 @@ func writeJSON(root *os.Root, name string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
+	if len(data) > 64*1024 {
+		return errors.New("oversized workspace record")
+	}
 	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err

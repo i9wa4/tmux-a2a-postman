@@ -346,6 +346,9 @@ func writePendingCaptureWithHook(root *os.Root, name string, value CaptureResult
 		return false, false, err
 	}
 	data = append(data, '\n')
+	if len(data) > 64*1024 {
+		return false, false, errors.New("oversized capture record")
+	}
 	file, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return false, false, err
