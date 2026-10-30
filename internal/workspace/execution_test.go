@@ -80,6 +80,55 @@ func TestExecutorVerifiedAbsenceRunsRealBashAndRecordsExit(t *testing.T) {
 	}
 }
 
+func TestExecutorLegacyLeaseSpansApprovalWaitAndRun(t *testing.T) {
+	m := mailFixture(t)
+	path := legacyLockPath(m.Store)
+	e := Executor{Mail: m, Resolve: approvalResolver("peer")}
+	e.wait = func(context.Context) error {
+		if legacyTryExclusive(t, path) {
+			t.Fatal("legacy daemon entered during approval wait")
+		}
+		req := pendingApproval(t, m)
+		approvalReply(t, m, req, requestCommand(t, req), "approved")
+		return nil
+	}
+	runs := 0
+	e.run = func(context.Context, string, io.Writer, io.Writer) (int, error) {
+		runs++
+		if legacyTryExclusive(t, path) {
+			t.Fatal("legacy daemon entered during Bash dispatch")
+		}
+		return 0, nil
+	}
+	result, err := e.Execute(context.Background(), mailRuntime("worker"), "probe")
+	if err != nil || result.Status != "executed" || runs != 1 {
+		t.Fatalf("execution result: %+v %v runs=%d", result, err, runs)
+	}
+	if !legacyTryExclusive(t, path) {
+		t.Fatal("legacy daemon cannot enter after terminal audit and lease release")
+	}
+}
+
+func TestExecutorRejectsLegacyExclusiveBeforeSideEffects(t *testing.T) {
+	m := mailFixture(t)
+	path := legacyLockPath(m.Store)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release := holdLegacyExclusive(t, path)
+	runs := 0
+	e := Executor{Mail: m, Resolve: approvalResolver("")}
+	e.run = func(context.Context, string, io.Writer, io.Writer) (int, error) { runs++; return 0, nil }
+	result, err := e.Execute(context.Background(), mailRuntime("worker"), "probe")
+	if !errors.Is(err, ErrBusy) || result.Status != "unavailable" || runs != 0 {
+		t.Fatalf("legacy exclusive admitted execute: %+v %v runs=%d", result, err, runs)
+	}
+	if _, err := os.Stat(filepath.Join(m.Store.StateRoot, "repo")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy exclusion created workspace: %v", err)
+	}
+	release()
+}
+
 func TestExecutorApprovalRequestNoticeFailurePreservesExactWait(t *testing.T) {
 	m := mailFixture(t)
 	var notifiedID string

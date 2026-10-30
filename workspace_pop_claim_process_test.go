@@ -79,7 +79,7 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 		child.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+stateHome,
 			"TMUX="+socket+",0,0", "TMUX_PANE="+pane, "POSTMAN_TEST_PUBLIC_ARGS="+string(encoded))
 		child.Stdin = strings.NewReader(body)
-		out, err := child.CombinedOutput()
+		out, err := child.Output()
 		if err != nil {
 			t.Fatalf("public CLI %v: %v: %s", args, err, out)
 		}

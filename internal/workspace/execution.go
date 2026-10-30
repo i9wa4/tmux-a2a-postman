@@ -300,6 +300,11 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if rt == nil || e.Resolve == nil || strings.TrimSpace(command) == "" || strings.ContainsRune(command, 0) {
 		return fail("unavailable", ErrUnknown)
 	}
+	lease, err := e.Mail.Store.acquireLegacyLease()
+	if err != nil {
+		return fail("unavailable", err)
+	}
+	defer lease.Close()
 	initial, err := rt.Snapshot(ctx)
 	if err != nil {
 		return fail("unavailable", err)

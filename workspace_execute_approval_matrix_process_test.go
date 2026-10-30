@@ -91,7 +91,7 @@ func (f *executionProcessFixture) child(ctx context.Context, command string) *ex
 		f.t.Fatal(err)
 	}
 	child := exec.CommandContext(ctx, f.self, "-test.run=^TestIssue937PublicCLIChild$")
-	child.Env = append(os.Environ(), "HOME="+f.home, "XDG_STATE_HOME="+f.stateHome,
+	child.Env = append(os.Environ(), "HOME="+f.home, "XDG_CONFIG_HOME="+filepath.Join(f.home, ".config"), "XDG_STATE_HOME="+f.stateHome,
 		"TMUX="+f.socket+",0,0", "TMUX_PANE="+f.worker, "POSTMAN_TEST_PUBLIC_ARGS="+string(args))
 	return child
 }

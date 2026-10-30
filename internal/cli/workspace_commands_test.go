@@ -48,3 +48,24 @@ func TestWorkspaceTopologyPathXDGAndExplicitOverride(t *testing.T) {
 		t.Fatalf("explicit override depended on invalid XDG: %q %v", got, err)
 	}
 }
+
+func TestSupportedWorkspaceRoot(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".local", "state", "tmux-a2a-postman")
+	if got, err := supportedWorkspaceRoot(home, "", root); err != nil || got != root {
+		t.Fatalf("same root: %q %v", got, err)
+	}
+	for _, legacy := range []string{filepath.Join(home, "other"), "relative", ""} {
+		if _, err := supportedWorkspaceRoot(home, "", legacy); err == nil {
+			t.Fatalf("accepted divergent legacy root %q", legacy)
+		}
+	}
+	if _, err := supportedWorkspaceRoot(home, "relative", root); err == nil {
+		t.Fatal("accepted relative XDG state root")
+	}
+	xdg := t.TempDir()
+	custom := filepath.Join(xdg, "tmux-a2a-postman")
+	if got, err := supportedWorkspaceRoot(home, xdg, custom); err != nil || got != custom {
+		t.Fatalf("same XDG root: %q %v", got, err)
+	}
+}

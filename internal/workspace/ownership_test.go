@@ -1,13 +1,19 @@
 package workspace
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/lock"
 )
 
 type storedRuntime struct {
@@ -104,6 +110,249 @@ func TestStoreRejectsLiveAndUnknownOwnerBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsMutationWhileLegacyDaemonLockHeld(t *testing.T) {
+	store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
+	legacyDir := filepath.Join(store.StateRoot, "lock")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := lock.NewSessionLock(filepath.Join(legacyDir, fmt.Sprintf("user-%d.lock", os.Geteuid())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err = store.WithVerified(context.Background(), storageRuntime(), func(*os.Root, Snapshot) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, ErrBusy) || called {
+		t.Fatalf("legacy daemon lock admission: err=%v called=%v", err, called)
+	}
+	if err := legacy.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WithVerified(context.Background(), storageRuntime(), noMutation); err != nil {
+		t.Fatal("legacy daemon lock was not released", err)
+	}
+	legacyPath := filepath.Join(legacyDir, fmt.Sprintf("user-%d.lock", os.Geteuid()))
+	if err := store.WithVerified(context.Background(), storageRuntime(), func(*os.Root, Snapshot) error {
+		if contender, err := lock.NewSessionLock(legacyPath); err == nil {
+			_ = contender.Release()
+			t.Fatal("legacy daemon acquired exclusive lock during file-first mutation")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err = lock.NewSessionLock(legacyPath)
+	if err != nil {
+		t.Fatal("file-first mutation did not release legacy lock", err)
+	}
+	if err := legacy.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A separate process models the legacy daemon's lifetime-exclusive user lock.
+func TestLegacyLockChild(t *testing.T) {
+	mode := os.Getenv("POSTMAN_LEGACY_LOCK_CHILD")
+	if mode == "" {
+		return
+	}
+	path := os.Getenv("POSTMAN_LEGACY_LOCK_PATH")
+	if mode == "hold-workspace" {
+		store := Store{StateRoot: os.Getenv("POSTMAN_STATE_ROOT")}
+		err := store.WithVerified(context.Background(), storageRuntime(), func(*os.Root, Snapshot) error {
+			fmt.Println("READY")
+			_, _ = os.Stdin.Read(make([]byte, 1))
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	legacy, err := lock.NewSessionLock(path)
+	if mode == "try" && errors.Is(err, syscall.EWOULDBLOCK) {
+		fmt.Println("BLOCKED")
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Release()
+	if mode == "try" {
+		fmt.Println("ACQUIRED")
+		return
+	}
+	if mode != "hold" {
+		t.Fatalf("invalid child mode %q", mode)
+	}
+	fmt.Println("READY")
+	_, _ = os.Stdin.Read(make([]byte, 1))
+}
+
+func legacyLockPath(store Store) string {
+	return filepath.Join(store.StateRoot, "lock", fmt.Sprintf("user-%d.lock", os.Geteuid()))
+}
+
+func legacyTryExclusive(t *testing.T, path string) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestLegacyLockChild$")
+	cmd.Env = append(os.Environ(), "POSTMAN_LEGACY_LOCK_CHILD=try", "POSTMAN_LEGACY_LOCK_PATH="+path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("legacy contender failed: %v: %s", err, out)
+	}
+	if strings.Contains(string(out), "BLOCKED") {
+		return false
+	}
+	if strings.Contains(string(out), "ACQUIRED") {
+		return true
+	}
+	t.Fatalf("legacy contender gave no result: %s", out)
+	return false
+}
+
+func holdLegacyExclusive(t *testing.T, path string) func() {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLegacyLockChild$")
+	cmd.Env = append(os.Environ(), "POSTMAN_LEGACY_LOCK_CHILD=hold", "POSTMAN_LEGACY_LOCK_PATH="+path)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() || scanner.Text() != "READY" {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("legacy child never locked: %q %v", scanner.Text(), scanner.Err())
+	}
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		_ = stdin.Close()
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("legacy child exit: %v", err)
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+func TestNewWorkspaceLocksAcrossProcesses(t *testing.T) {
+	store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLegacyLockChild$")
+	cmd.Env = append(os.Environ(), "POSTMAN_LEGACY_LOCK_CHILD=hold-workspace", "POSTMAN_STATE_ROOT="+store.StateRoot)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		_ = stdin.Close()
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("workspace child exit: %v", err)
+		}
+	}
+	t.Cleanup(release)
+	scanner := bufio.NewScanner(stdout)
+	if !scanner.Scan() || scanner.Text() != "READY" {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		released = true
+		t.Fatalf("workspace child never entered: %q %v", scanner.Text(), scanner.Err())
+	}
+	called := false
+	err = store.WithVerified(context.Background(), storageRuntime(), func(*os.Root, Snapshot) error { called = true; return nil })
+	if !errors.Is(err, ErrBusy) || called {
+		t.Fatalf("same workspace was not serialized: %v called=%v", err, called)
+	}
+	other := storageRuntime()
+	other.snapshot.Root = "~/other"
+	if err := store.WithVerified(context.Background(), other, noMutation); err != nil {
+		t.Fatalf("different workspace was blocked: %v", err)
+	}
+	if legacyTryExclusive(t, legacyLockPath(store)) {
+		t.Fatal("legacy exclusive entered while new workspace mutation active")
+	}
+	release()
+	if err := store.WithVerified(context.Background(), storageRuntime(), noMutation); err != nil {
+		t.Fatalf("workspace lock not released: %v", err)
+	}
+}
+
+func TestLegacyLeaseCrossProcessAndInodeReuse(t *testing.T) {
+	store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
+	path := legacyLockPath(store)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	release := holdLegacyExclusive(t, path)
+	called := false
+	err := store.WithVerified(context.Background(), storageRuntime(), func(*os.Root, Snapshot) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, ErrBusy) || called {
+		t.Fatalf("legacy exclusive admitted mutation: %v called=%v", err, called)
+	}
+	if lease, err := store.acquireLegacyLease(); !errors.Is(err, ErrBusy) {
+		if lease != nil {
+			_ = lease.Close()
+		}
+		t.Fatalf("legacy exclusive admitted whole-operation lease: %v", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	lease, err := store.acquireLegacyLease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("legacy lock inode changed across restart: %v", err)
+	}
+	if legacyTryExclusive(t, path) {
+		t.Fatal("legacy exclusive entered during new whole-operation lease")
+	}
+	if err := store.WithVerified(context.Background(), storageRuntime(), noMutation); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !legacyTryExclusive(t, path) {
+		t.Fatal("legacy exclusive did not enter after new lease release")
+	}
+}
+
 func TestStoreNonblockingLockSerializesIndependentCallers(t *testing.T) {
 	store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -156,7 +405,7 @@ func TestStoreRejectsChangedRuntimeAndPartialPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		if entry.Name() != "locks" {
+		if entry.Name() != "locks" && entry.Name() != "lock" {
 			t.Fatal("partial workspace visible or staging leak:", entry.Name())
 		}
 	}
@@ -257,5 +506,17 @@ func TestStoreNativeOwnershipRejectsOtherLiveSession(t *testing.T) {
 	f.run(t, "kill-session", "-t", owner.Caller.Owner.Session)
 	if err := store.WithVerified(context.Background(), next, noMutation); err != nil {
 		t.Fatalf("verified native takeover: %v", err)
+	}
+}
+
+func TestLegacyLockFileNameUIDPolicy(t *testing.T) {
+	root := t.TempDir()
+	uid := os.Getuid()
+	got, err := legacyLockFileName(root, uid, uid)
+	if err != nil || got != fmt.Sprintf("user-%d.lock", uid) {
+		t.Fatalf("legacy real-UID name: %q %v", got, err)
+	}
+	if _, err := legacyLockFileName(root, uid, uid+1); err == nil {
+		t.Fatal("accepted split real/effective UID")
 	}
 }

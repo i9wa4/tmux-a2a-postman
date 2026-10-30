@@ -70,6 +70,20 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --s
 Use `--agent claude-code` for Claude Code. The skills explain safe sending,
 mailbox operation, and configuration auditing respectively.
 
+Before activating the file-first path for an existing installation, identify
+one state root, UID, tmux socket/session, and recipient pane. Inventory and
+disable every old daemon launch path that can reach that mail or approval state
+or that recipient pane, including an explicit `--config` path, launcher-only
+`POSTMAN_HOME`, and alternate `XDG_STATE_HOME` or tmux socket/session settings.
+Verify every such daemon has exited before new writes; check pending mail and
+approval requests first. The file-first path checks that its selected state
+root matches the auto-discovered legacy configuration and uses the legacy lock
+inode for same-root exclusion. Verify the new route with a private recipient
+before switching production delivery. For rollback, stop new writers first,
+then restore the old launcher and route; preserve existing mail and do not
+replay an uncertain send. Installed alternate selectors and migration remain
+tracked separately.
+
 ## 2. Send and receive
 
 These commands are illustrative syntax, not a recorded run:

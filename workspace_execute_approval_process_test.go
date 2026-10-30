@@ -86,7 +86,7 @@ func (f *publicApprovalFixture) child(ctx context.Context, pane string, args ...
 		f.t.Fatal(err)
 	}
 	cmd := exec.CommandContext(ctx, f.self, "-test.run=^TestIssue937PublicCLIChild$")
-	cmd.Env = append(os.Environ(), "HOME="+f.home, "XDG_STATE_HOME="+f.stateHome,
+	cmd.Env = append(os.Environ(), "HOME="+f.home, "XDG_CONFIG_HOME="+filepath.Join(f.home, ".config"), "XDG_STATE_HOME="+f.stateHome,
 		"TMUX="+f.socket+",0,0", "TMUX_PANE="+pane, "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
 	return cmd
 }

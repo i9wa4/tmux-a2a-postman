@@ -1,10 +1,12 @@
 package workspace
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +16,104 @@ import (
 	"testing"
 	"time"
 )
+
+// The old daemon's EX lock must stay excluded even after each state
+// transition returns and the app-server turn is already being submitted.
+func TestAppServerNoticeHoldsLegacyLeaseThroughTurnAndAudit(t *testing.T) {
+	mail := mailFixture(t)
+	ctx := context.Background()
+	worker, peer := mailRuntime("worker"), mailRuntime("peer")
+	pid := strconv.Itoa(os.Getpid())
+	worker.snapshot.Bindings[1].PanePID = pid
+	peer.snapshot.Bindings[1].PanePID = pid
+	peer.snapshot.Caller = peer.snapshot.Bindings[1]
+
+	atTurn := make(chan struct{}, 1)
+	releaseTurn := make(chan struct{})
+	defer func() {
+		select {
+		case <-releaseTurn:
+		default:
+			close(releaseTurn)
+		}
+	}()
+	socket := fakeCodexServer(t, func(conn net.Conn, reader *bufio.Reader, initID int64) {
+		initReply, _ := json.Marshal(map[string]any{"id": initID, "result": map[string]any{}})
+		if writeTestFrame(conn, initReply) != nil {
+			return
+		}
+		if _, err := readMaskedTestFrame(reader); err != nil { // initialized
+			return
+		}
+		threadFrame, err := readMaskedTestFrame(reader)
+		if err != nil {
+			return
+		}
+		var thread struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+		}
+		if json.Unmarshal(threadFrame, &thread) != nil || thread.Method != "thread/start" {
+			return
+		}
+		threadReply, _ := json.Marshal(map[string]any{
+			"id": thread.ID, "result": map[string]any{"thread": map[string]any{"id": "thr-1"}},
+		})
+		if writeTestFrame(conn, threadReply) != nil {
+			return
+		}
+		turnFrame, err := readMaskedTestFrame(reader)
+		if err != nil {
+			return
+		}
+		var turn struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+		}
+		if json.Unmarshal(turnFrame, &turn) != nil || turn.Method != "turn/start" {
+			return
+		}
+		atTurn <- struct{}{}
+		<-releaseTurn
+		turnReply, _ := json.Marshal(map[string]any{
+			"id":     turn.ID,
+			"result": map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}},
+		})
+		_ = writeTestFrame(conn, turnReply)
+	})
+	if err := mail.Store.RegisterAppServer(ctx, peer, socket); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := mail.Send(ctx, worker, "peer", "body", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultCh := make(chan NoticeResult, 1)
+	go func() { resultCh <- mail.Store.NotifyCommittedAppServerAfterCommit(ctx, worker, msg) }()
+	select {
+	case <-atTurn:
+	case result := <-resultCh:
+		t.Fatalf("notice ended before turn/start: %+v", result)
+	case <-time.After(5 * time.Second):
+		t.Fatal("app-server never received turn/start")
+	}
+	lockPath := legacyLockPath(mail.Store)
+	if legacyTryExclusive(t, lockPath) {
+		t.Fatal("old daemon EX entered during app-server turn submission")
+	}
+	close(releaseTurn)
+	select {
+	case result := <-resultCh:
+		if result.Status != "accepted" {
+			t.Fatalf("notice failed after turn acceptance: %+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("notice did not finish")
+	}
+	if !legacyTryExclusive(t, lockPath) {
+		t.Fatal("old daemon EX did not enter after terminal notice audit")
+	}
+}
 
 func TestAppServerReservationBindsRecipientAndResumesOwnAttempt(t *testing.T) {
 	mail := mailFixture(t)

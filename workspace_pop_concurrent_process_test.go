@@ -84,7 +84,7 @@ func TestWorkspacePopProcessConcurrentExactClaim(t *testing.T) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		out, err := child(ctx, pane, body, args...).CombinedOutput()
+		out, err := child(ctx, pane, body, args...).Output()
 		if err != nil || ctx.Err() != nil {
 			t.Fatalf("public CLI %v: %v, context=%v: %s", args, err, ctx.Err(), out)
 		}
@@ -136,7 +136,7 @@ func TestWorkspacePopProcessConcurrentExactClaim(t *testing.T) {
 			<-start
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			raw, err := child(ctx, worker, "", "pop", "--postman-md", config, sent.Message.ID).CombinedOutput()
+			raw, err := child(ctx, worker, "", "pop", "--postman-md", config, sent.Message.ID).Output()
 			results <- raceResult{raw: raw, err: err, timedOut: ctx.Err() != nil}
 		}()
 	}

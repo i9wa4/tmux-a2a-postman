@@ -92,6 +92,21 @@ func (f workspaceFlagSet) parse(args []string) (string, error) {
 	return *path, nil
 }
 
+// supportedWorkspaceRoot permits the default state root only when the
+// auto-discovered legacy daemon would use that same lock directory. An old
+// daemon launched with an explicit alternate config still needs a retired
+// launcher cutover before this path can be activated.
+func supportedWorkspaceRoot(home, xdg, legacyRoot string) (string, error) {
+	root, err := workspace.DefaultStateRoot(home, xdg)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(legacyRoot) || filepath.Clean(legacyRoot) != root {
+		return "", errors.New("legacy state root differs from file-first state root")
+	}
+	return root, nil
+}
+
 func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, error) {
 	var c workspaceCommand
 	topology, err := config.LoadWorkspaceTopology(ctx, path)
@@ -102,7 +117,11 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 	if err != nil {
 		return c, err
 	}
-	root, err := workspace.DefaultStateRoot(home, os.Getenv("XDG_STATE_HOME"))
+	legacyConfig, err := config.LoadConfig("")
+	if err != nil {
+		return c, err
+	}
+	root, err := supportedWorkspaceRoot(home, os.Getenv("XDG_STATE_HOME"), config.ResolveBaseDir(legacyConfig.BaseDir))
 	if err != nil {
 		return c, err
 	}

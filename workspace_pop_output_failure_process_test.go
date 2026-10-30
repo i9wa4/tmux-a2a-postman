@@ -84,7 +84,7 @@ func TestWorkspacePopProcessOutputFailureKeepsOneClaim(t *testing.T) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		out, err := child(ctx, pane, body, args...).CombinedOutput()
+		out, err := child(ctx, pane, body, args...).Output()
 		if err != nil {
 			t.Fatalf("public CLI %v: %v: %s", args, err, out)
 		}

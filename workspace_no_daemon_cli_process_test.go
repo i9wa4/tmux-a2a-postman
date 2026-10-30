@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -123,10 +124,15 @@ type rebuiltCLIResult struct {
 
 func (f *rebuiltCLIFixture) run(pane, body string, args ...string) rebuiltCLIResult {
 	f.t.Helper()
+	return f.runWithEnv(pane, body, nil, args...)
+}
+
+func (f *rebuiltCLIFixture) runWithEnv(pane, body string, extraEnv []string, args ...string) rebuiltCLIResult {
+	f.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, f.bin, args...)
-	cmd.Env = append(f.tmuxFixture.Env(), "TMUX_PANE="+pane)
+	cmd.Env = append(f.tmuxFixture.Env(), append([]string{"TMUX_PANE=" + pane, "POSTMAN_HOME="}, extraEnv...)...)
 	cmd.Stdin = strings.NewReader(body)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -232,6 +238,22 @@ func TestWorkspaceRebuiltCLIFourNoDaemonCommands(t *testing.T) {
 	}
 	for _, key := range []string{"HOME", "POSTMAN_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "TMUX", "TMUX_PANE", "TMUX_TMPDIR"} {
 		t.Setenv(key, outside)
+	}
+	customConfigHome := filepath.Join(f.dir, "custom-config")
+	configDir := filepath.Join(customConfigHome, "tmux-a2a-postman")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	customRoot := filepath.Join(f.dir, "legacy-custom-state")
+	if err := os.WriteFile(filepath.Join(configDir, "postman.toml"), []byte("[postman]\nbase_dir = "+strconv.Quote(customRoot)+"\nedges = [\"worker --- peer\"]\n\n[worker]\n[peer]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused := f.runWithEnv(f.worker, "", []string{"XDG_CONFIG_HOME=" + customConfigHome}, "get-status", "--postman-md", f.config)
+	if refused.exit == 0 || !json.Valid(refused.stdout) || !bytes.Contains(refused.stdout, []byte("legacy state root differs")) {
+		t.Fatalf("custom legacy root was not refused with JSON stdout: exit=%d stdout=%q stderr=%q", refused.exit, refused.stdout, refused.stderr)
+	}
+	if _, err := os.Stat(f.stateRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refused root created state: %v", err)
 	}
 	f.exerciseFourCommands(t, "before-replacement")
 	f.replaceCLI(t)

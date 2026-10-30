@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
 
 var ErrBusy = errors.New("workspace mutation is busy")
@@ -58,12 +59,86 @@ func DefaultStateRoot(home, xdg string) (string, error) {
 	return filepath.Join(xdg, "tmux-a2a-postman"), nil
 }
 
+// legacyLockFileName uses the legacy daemon's real-UID naming rule. A
+// real/effective UID split cannot safely share its same-user lock.
+func legacyLockFileName(stateRoot string, realUID, effectiveUID int) (string, error) {
+	if realUID != effectiveUID {
+		return "", errors.New("real and effective UIDs differ for legacy lock")
+	}
+	return filepath.Base(config.CurrentUserDaemonLockPath(stateRoot)), nil
+}
+
+// acquireLegacyLease excludes the lifetime-locked legacy daemon for a complete
+// logical operation. The caller must hold the returned descriptor until its
+// terminal audit is done. A shared lease permits independent new operations.
+func (s Store) acquireLegacyLease() (*os.File, error) {
+	name, err := legacyLockFileName(s.StateRoot, os.Getuid(), os.Geteuid())
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(s.StateRoot) {
+		return nil, errors.New("state root must be absolute")
+	}
+	if err := os.MkdirAll(s.StateRoot, 0o700); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(s.StateRoot)
+	if err != nil || !privateInfo(info, true) {
+		return nil, errors.New("state root is not a private real directory")
+	}
+	base, err := os.OpenRoot(s.StateRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer base.Close()
+	opened, err := base.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, ErrUnknown
+	}
+	locks, err := privateDir(base, "lock", true)
+	if err != nil {
+		return nil, err
+	}
+	defer locks.Close()
+	lease, err := locks.OpenFile(name, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	valid := false
+	defer func() {
+		if !valid {
+			_ = lease.Close()
+		}
+	}()
+	syscall.CloseOnExec(int(lease.Fd()))
+	leaseInfo, err := lease.Stat()
+	if err != nil || !privateInfo(leaseInfo, false) {
+		return nil, errors.New("unsafe legacy daemon lock")
+	}
+	if err := syscall.Flock(int(lease.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, ErrBusy
+		}
+		return nil, err
+	}
+	pathInfo, err := locks.Lstat(name)
+	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(leaseInfo, pathInfo) {
+		return nil, ErrUnknown
+	}
+	valid = true
+	return lease, nil
+}
+
 // WithVerified holds a nonblocking interprocess lock only through registration
 // and fn's short file mutation. Never wait for a reply, notify, or execute Bash
 // inside fn. The workspace handle is valid only during fn.
 func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, Snapshot) error) error {
 	if rt == nil || fn == nil {
 		return ErrUnknown
+	}
+	legacyName, err := legacyLockFileName(s.StateRoot, os.Getuid(), os.Geteuid())
+	if err != nil {
+		return err
 	}
 	first, err := rt.Snapshot(ctx)
 	if err != nil {
@@ -115,6 +190,34 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN) }(int(lock.Fd()))
 	pathInfo, err := locks.Lstat(name + ".lock")
 	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(lockInfo, pathInfo) {
+		return ErrUnknown
+	}
+	// The daemon holds this user lock exclusively for its lifetime. A shared
+	// lock rejects daemon overlap while allowing independent file-first work.
+	legacyLocks, err := privateDir(base, "lock", true)
+	if err != nil {
+		return err
+	}
+	defer func(closeFn func() error) { _ = closeFn() }(legacyLocks.Close)
+	legacyLock, err := legacyLocks.OpenFile(legacyName, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func(closeFn func() error) { _ = closeFn() }(legacyLock.Close)
+	syscall.CloseOnExec(int(legacyLock.Fd()))
+	legacyInfo, err := legacyLock.Stat()
+	if err != nil || !privateInfo(legacyInfo, false) {
+		return errors.New("unsafe legacy daemon lock")
+	}
+	if err := syscall.Flock(int(legacyLock.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return ErrBusy
+		}
+		return err
+	}
+	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN) }(int(legacyLock.Fd()))
+	legacyPathInfo, err := legacyLocks.Lstat(legacyName)
+	if err != nil || !privateInfo(legacyPathInfo, false) || !os.SameFile(legacyInfo, legacyPathInfo) {
 		return ErrUnknown
 	}
 	fresh, err := rt.Snapshot(ctx)

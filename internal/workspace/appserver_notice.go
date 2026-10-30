@@ -16,6 +16,15 @@ func (s Store) NotifyCommittedAppServerAfterCommit(ctx context.Context, rt Runti
 		result.Reason = "app-server notice requires a committed same-session message"
 		return result
 	}
+	// Keep the old daemon excluded across every short state transition, app-server
+	// write, turn submission, and terminal binding audit. A daemon that starts
+	// between mail commit and this lease makes the notice unavailable.
+	lease, err := s.acquireLegacyLease()
+	if err != nil {
+		result.Reason = "legacy daemon lease unavailable: " + err.Error()
+		return result
+	}
+	defer lease.Close()
 	before, err := rt.Snapshot(ctx)
 	if err != nil || validateSnapshotForNotice(before, msg) != nil {
 		result.Reason = "sender binding unavailable"
