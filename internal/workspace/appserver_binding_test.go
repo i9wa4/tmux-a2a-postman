@@ -389,7 +389,7 @@ func TestAppServerNoticePostLinkCrashRecovery(t *testing.T) {
 	socketDir := t.TempDir()
 	if len(filepath.Join(socketDir, "app.sock")) >= 100 {
 		var err error
-		socketDir, err = os.MkdirTemp(os.TempDir(), "p-")
+		socketDir, err = os.MkdirTemp("/tmp", "p-")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -543,7 +543,7 @@ func TestAppServerNoticePostLinkFailurePublicRetryLiveOwner(t *testing.T) {
 	socketDir := t.TempDir()
 	if len(filepath.Join(socketDir, "app.sock")) >= 100 {
 		var err error
-		socketDir, err = os.MkdirTemp(os.TempDir(), "p-")
+		socketDir, err = os.MkdirTemp("/tmp", "p-")
 		if err != nil {
 			t.Fatal(err)
 		}
