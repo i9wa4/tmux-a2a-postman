@@ -386,15 +386,11 @@ func TestAppServerNoticePostLinkCrashRecovery(t *testing.T) {
 	worker.snapshot.Bindings[1].PanePID = pid
 	peer.snapshot.Bindings[1].PanePID = pid
 	peer.snapshot.Caller = peer.snapshot.Bindings[1]
-	socketDir := t.TempDir()
-	if len(filepath.Join(socketDir, "app.sock")) >= 100 {
-		var err error
-		socketDir, err = os.MkdirTemp("/tmp", "p-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketDir, err := os.MkdirTemp("/tmp", "pm937-app-")
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	socket := filepath.Join(socketDir, "app.sock")
 	if err := mail.Store.RegisterAppServer(ctx, peer, socket); err != nil {
 		t.Fatal(err)
@@ -540,15 +536,11 @@ func TestAppServerNoticePostLinkFailurePublicRetryLiveOwner(t *testing.T) {
 	worker.snapshot.Bindings[1].PanePID = pid
 	peer.snapshot.Bindings[1].PanePID = pid
 	peer.snapshot.Caller = peer.snapshot.Bindings[1]
-	socketDir := t.TempDir()
-	if len(filepath.Join(socketDir, "app.sock")) >= 100 {
-		var err error
-		socketDir, err = os.MkdirTemp("/tmp", "p-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketDir, err := os.MkdirTemp("/tmp", "pm937-app-")
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
 	if err := mail.Store.RegisterAppServer(ctx, peer, filepath.Join(socketDir, "app.sock")); err != nil {
 		t.Fatal(err)
 	}
