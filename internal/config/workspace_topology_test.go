@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,43 @@ func TestWorkspaceTopologyReadsReviewerWithoutCatalogSideEffects(t *testing.T) {
 	linked, err := LoadWorkspaceTopology(context.Background(), alias)
 	if err != nil || linked.Reviewer != got.Reviewer {
 		t.Fatal(linked, err)
+	}
+}
+
+func TestWorkspaceTopologyAcceptsExistingTemplateSections(t *testing.T) {
+	path, err := filepath.Abs(filepath.Join("testdata", "postman-with-templates.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadWorkspaceTopology(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"agent", "approver", "critic", "diplomat", "guardian", "messenger", "orchestrator", "worker", "worker-alt"}
+	if !slices.Equal(got.Nodes, want) || got.Reviewer != "approver" || got.InterfaceNode != "messenger" || !slices.Contains(got.Edges["orchestrator"], "worker") {
+		t.Fatal("template sections changed routing or role discovery", got)
+	}
+}
+
+func TestWorkspaceTopologyReservedSectionsDoNotDeclareAuthority(t *testing.T) {
+	for _, section := range []string{"common_template", "message_footer"} {
+		t.Run(section, func(t *testing.T) {
+			// Mixed-case numbered headings use the existing heading normalization.
+			content := "## 1. `" + strings.ToUpper(section) + "`\n```mermaid\ngraph LR\nworker --- impostor:::command_approver_node\n```\n## 2. `worker`\nWorker\n"
+			got, err := LoadWorkspaceTopology(context.Background(), topologyFixture(t, content))
+			if err != nil || !slices.Equal(got.Nodes, []string{"worker"}) || got.Reviewer != "" || len(got.Edges) != 0 {
+				t.Fatal("presentation prose became topology", got, err)
+			}
+			for _, invalid := range []string{
+				content + "## 3. `" + section + "`\nDuplicate reserved section\n",
+				content + "## `unrecognized_template`\nNot a reserved section\n",
+				content + "## `edges`\n```mermaid\ngraph LR\nworker --- " + section + "\n```\n",
+			} {
+				if _, err := LoadWorkspaceTopology(context.Background(), topologyFixture(t, invalid)); err == nil {
+					t.Fatal("invalid or ambiguous topology accepted", invalid)
+				}
+			}
+		})
 	}
 }
 

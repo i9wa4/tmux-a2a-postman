@@ -22,6 +22,8 @@ parser.add_argument("--terminal", choices=["both", "plain", "bracketed"], defaul
 parser.add_argument("--case", choices=["all", *CASES], default="all")
 parser.add_argument("--mode", choices=["mock", "live"], default="mock")
 parser.add_argument("--postman", required=True)
+parser.add_argument("--postman-md", type=pathlib.Path,
+                    help="copy an existing orchestrator/worker/approver topology unchanged (rally/approval/rejected)")
 parser.add_argument("--codex", default="codex")
 parser.add_argument("--model", default="gpt-6-luna")
 parser.add_argument("--baseline", action="store_true", help="expect unmodified main to fail to notify (rally only)")
@@ -30,6 +32,8 @@ parser.add_argument("--output", type=pathlib.Path)
 args = parser.parse_args()
 if args.mode == "live" and args.agent != "codex":
     parser.error("--mode live requires --agent codex; terminal fixtures are deterministic")
+if args.postman_md and args.case not in ["rally", "approval", "rejected"]:
+    parser.error("--postman-md requires --case rally, approval or rejected")
 postman = str(pathlib.Path(args.postman).resolve())
 codex = shutil.which(args.codex) if args.agent == "codex" else None
 if not shutil.which("tmux") or (args.agent == "codex" and not codex):
@@ -66,14 +70,19 @@ def run_case(case, terminal):
         sessions["worker"] = "child"
     configs = {role: dirs[role] / "postman.md" for role in roles}
     for role in roles:
-        config = "## `edges`\n```mermaid\ngraph LR\norchestrator --- " + roles[1] + "\n"
+        config = "## 1. `edges`\n```mermaid\ngraph LR\norchestrator --- " + roles[1] + "\n"
         config += "class approver command_approver_node\n" if approval else ""
         config += "```\n"
+        config += ("\n## 2. `common_template`\nShared instructions are not a node.\n"
+                   "\n## 3. `message_footer`\nPresentation text is not a node.\n")
         if cross:
             config = ("---\ninterface_node: " + role + "\nworkspace_tree:\n"
                       "  - session_name: work\n    interface_node: orchestrator\n"
                       "  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n---\n" + config)
-        configs[role].write_text(config)
+        if args.postman_md:
+            configs[role].write_bytes(args.postman_md.read_bytes())
+        else:
+            configs[role].write_text(config)
     trace = []
     model = ModelFixture(recipient, trace) if codex and args.mode == "mock" else None
     socket = root / "tmux.sock"
@@ -100,6 +109,9 @@ def run_case(case, terminal):
     started, panes = False, {}
     nonces = {role: uuid.uuid4().hex for role in roles}
     report = {"case": case, "agent": args.agent, "terminal": terminal, "mode": args.mode, "baseline": args.baseline, "root": str(root)}
+    if args.postman_md:
+        report["topology_source"] = str(args.postman_md.resolve())
+        report["topology_sha256"] = hashlib.sha256(configs[initiator].read_bytes()).hexdigest()
     if codex:
         report["codex_version"] = subprocess.check_output([codex, "--version"], env=env, text=True).strip()
 
@@ -132,7 +144,10 @@ def run_case(case, terminal):
         began = time.monotonic()
         initial = subprocess.run([postman, "send-heredoc", "--postman-md", str(configs[initiator]), "--to", to, "--reply-required"],
                                  input="Smoke ping; full archive read required.\nUnicode 日本語\nEOF_MARKER\n", env=sender_env(initiator),
-                                 text=True, capture_output=True, check=True, timeout=15)
+                                 text=True, capture_output=True, timeout=15)
+        if initial.returncode:
+            raise RuntimeError("send-heredoc failed after " + str(time.monotonic() - began) + "s: " +
+                               initial.stdout + initial.stderr)
         return {"seconds": time.monotonic() - began, **json.loads(initial.stdout)}
 
     def verify_proof(proof, ready):
@@ -243,6 +258,17 @@ def run_case(case, terminal):
                 if len(visited) != 4:
                     raise RuntimeError("duplicate or missing notification claim")
                 report["claims"] = proofs
+        if case == "rally":
+            # All four claims have finished here. Approval requesters can still
+            # be processing an already-claimed decision hint after the wrapper
+            # returns; sampling their short-lived lock is not an idle boundary.
+            status = subprocess.run([postman, "get-status", "--postman-md", str(configs[initiator])],
+                                    env=sender_env(initiator), text=True, capture_output=True, timeout=15)
+            if status.returncode:
+                raise RuntimeError("final get-status failed: " + status.stdout + status.stderr)
+            report["final_status"] = json.loads(status.stdout)
+            if not report["final_status"]["self"]["known"]:
+                raise RuntimeError("final mailbox status unavailable")
         report["result"] = "pass"
     except Exception as error:
         report["result"], report["error"] = "failed", str(error)

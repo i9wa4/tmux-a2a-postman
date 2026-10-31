@@ -96,7 +96,13 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 		return err
 	}
 	defer func(closeFn func() error) { _ = closeFn() }(locks.Close)
-	lock, err := locks.OpenFile(name+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	// On macOS, concurrent openat(O_CREAT) can spuriously fail with ENOENT
+	// (golang/go#81246). Exclusive creation followed by opening the existing
+	// file avoids that kernel path without retrying a workspace mutation.
+	lock, err := locks.OpenFile(name+".lock", os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		lock, err = locks.OpenFile(name+".lock", os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	}
 	if err != nil {
 		return err
 	}
