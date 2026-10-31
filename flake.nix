@@ -239,6 +239,7 @@
               pkgs.bashInteractive
               pkgs.python3
             ];
+            env.POSTMAN_TEST_BASH = "${pkgs.bashInteractive}/bin/bash";
             postInstall = ''
               mkdir -p $out/share/tmux-a2a-postman
               cp integrations/bash/*.py $out/share/tmux-a2a-postman/

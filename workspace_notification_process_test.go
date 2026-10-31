@@ -136,21 +136,47 @@ func (f *rebuiltCLIFixture) bashRecipient(t *testing.T, pane, mode, config strin
 	if err := os.WriteFile(handler, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// Use the emitted setup as a regular file: /dev/fd process substitution is
+	// not available in every Nix build sandbox.
+	setup := f.run(pane, "", "notifier-script")
+	if setup.exit != 0 {
+		t.Fatalf("emit recipient setup: %s", setup.stderr)
+	}
+	setupPath := base + ".setup.bash"
+	if err := os.WriteFile(setupPath, setup.stdout, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	rc := base + ".bashrc"
 	var env strings.Builder
 	for _, pair := range [][2]string{{"HOME", f.home}, {"XDG_STATE_HOME", f.stateHome}, {"POSTMAN_BIN", f.bin}, {"POSTMAN_CONFIG", config}, {"POSTMAN_HANDLER", handler}, {"POSTMAN_RECIPIENT_MODE", mode}, {"POSTMAN_RECIPIENT_EVIDENCE", evidence}, {"POSTMAN_TEST_DECISION", os.Getenv("POSTMAN_TEST_DECISION")}} {
 		fmt.Fprintf(&env, "export %s=%s\n", pair[0], quote952(pair[1]))
 	}
-	text := env.String() + "source <(\"$POSTMAN_BIN\" notifier-script) || exit\nPS1='postman> '\nprintf ready > " + quote952(ready) + "\n"
+	text := env.String() + "source " + quote952(setupPath) + " || exit\nPS1='postman> '\nprintf ready > " + quote952(ready) + "\n"
 	if err := os.WriteFile(rc, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Fatal(err)
+	bash := os.Getenv("POSTMAN_TEST_BASH")
+	if bash == "" {
+		bash, err = exec.LookPath("bash")
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
+	// Preserve startup errors even when the recipient shell exits immediately.
+	f.tmux("set-option", "-p", "-t", pane, "remain-on-exit", "on")
 	f.tmux("respawn-pane", "-k", "-t", pane, "exec "+quote952(bash)+" --noprofile --rcfile "+quote952(rc)+" -i")
-	wait952(t, "recipient setup", func() bool { _, err := os.Stat(ready); return err == nil })
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		dead := f.tmux("display-message", "-p", "-t", pane, "#{pane_dead}")
+		if dead == "1" || time.Now().After(deadline) {
+			t.Fatalf("recipient setup failed (bash=%s, pane=%s, dead=%s):\n%s", bash, pane, dead,
+				f.tmux("capture-pane", "-p", "-S", "-", "-t", pane))
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
 	// Do not send until Bash is actually reading input after registration.
 	wait952(t, "Readline prompt", func() bool { return strings.Contains(f.tmux("capture-pane", "-p", "-t", pane), "postman>") })
 	return evidence, rc
