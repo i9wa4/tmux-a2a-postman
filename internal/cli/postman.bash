@@ -15,12 +15,15 @@ if [[ ! -x $POSTMAN_BIN || ! -x $POSTMAN_HANDLER || ! -r $POSTMAN_CONFIG ]]; the
   printf '%s\n' 'Postman binary/handler must be executable and topology readable.' >&2
   return 1
 fi
-set -o emacs
+if ! set -o emacs; then
+  printf '%s\n' 'Postman requires Bash with Readline support (Nix: bashInteractive).' >&2
+  return 1
+fi
 _postman_receive() {
   local result
   # One POP per cue. READLINE_LINE and READLINE_POINT remain untouched.
   result=$("$POSTMAN_BIN" pop --postman-md "$POSTMAN_CONFIG") || return
   printf '%s\n' "$result" | "$POSTMAN_HANDLER"
 }
-bind -x '"\C-x\C-p":_postman_receive'
+bind -x '"\C-x\C-p":_postman_receive' || return
 "$POSTMAN_BIN" register-notifier --postman-md "$POSTMAN_CONFIG"

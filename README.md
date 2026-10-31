@@ -78,8 +78,15 @@ Readline integration bundled with the installed binary:
 export POSTMAN_BIN="$(command -v tmux-a2a-postman)"
 export POSTMAN_CONFIG="$HOME/.config/tmux-a2a-postman/postman.md"
 export POSTMAN_HANDLER="$HOME/bin/postman-handler"
-source <("$POSTMAN_BIN" notifier-script)
+postman_setup="$(mktemp)" &&
+  "$POSTMAN_BIN" notifier-script > "$postman_setup" &&
+  source "$postman_setup"
+rm -f "$postman_setup"
+unset postman_setup
 ```
+
+Use `bashInteractive` on Nix: the build-time `bash` package has no Readline.
+The temporary setup file also works without `/dev/fd` process substitution.
 
 This selects Emacs Readline and reserves Ctrl-x Ctrl-p. Notifications invoke
 one POP and pass the result JSON to the handler on stdin. The handler must read

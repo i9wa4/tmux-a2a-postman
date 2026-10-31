@@ -6,6 +6,11 @@ The normal route is recipient-owned Bash/Readline. Follow the setup in
 [README](../../README.md#1-install-and-configure) or `help register-notifier`.
 The installed binary emits its own setup with `notifier-script`. Source it
 from the receiving pane's interactive Bash after assigning the role title.
+Materialize the emitted setup in a private regular file before sourcing it,
+as in README; this does not require `/dev/fd` process substitution. Nix tests
+pin `bashInteractive` explicitly instead of inheriting build-time Bash from
+PATH. The setup fails if Readline cannot be enabled or the key cannot be bound.
+
 The setup selects Emacs Readline, reserves Ctrl-x Ctrl-p, and registers the
 exact native role, pane and pane-process incarnation. Registration must be a
 direct child of that pane's Bash, not an arbitrary sender or nested shell.
