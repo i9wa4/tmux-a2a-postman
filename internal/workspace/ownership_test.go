@@ -134,6 +134,87 @@ func TestStoreNonblockingLockSerializesIndependentCallers(t *testing.T) {
 	}
 }
 
+func TestStoreConcurrentFirstAdmission(t *testing.T) {
+	// Fresh directories keep every round on the initial lock creation path.
+	// In particular, macOS openat(O_CREAT) used to return ENOENT here.
+	const callers = 16
+	for range 20 {
+		store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
+		start := make(chan struct{})
+		parked := make(chan struct{}, callers)
+		results := make(chan error, callers)
+		for range callers {
+			go func() {
+				parked <- struct{}{}
+				<-start
+				results <- store.WithVerified(context.Background(), storageRuntime(), noMutation)
+			}()
+		}
+		for range callers {
+			<-parked
+		}
+		close(start)
+		admitted := 0
+		for range callers {
+			err := <-results
+			if err == nil {
+				admitted++
+			} else if !errors.Is(err, ErrBusy) {
+				t.Errorf("concurrent first admission: %v", err)
+			}
+		}
+		if admitted == 0 {
+			t.Fatal("no caller acquired the initial workspace lock")
+		}
+		if err := store.WithVerified(context.Background(), storageRuntime(), noMutation); err != nil {
+			t.Fatal("workspace unusable after concurrent creation:", err)
+		}
+	}
+}
+
+func TestStoreRejectsUnsafeExistingLock(t *testing.T) {
+	for _, kind := range []string{"symlink", "hardlink", "unsafe-mode"} {
+		t.Run(kind, func(t *testing.T) {
+			store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
+			locks := filepath.Join(store.StateRoot, "locks")
+			if err := os.MkdirAll(locks, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(locks, "target")
+			if err := os.WriteFile(target, []byte("untouched"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(locks, "repo.lock")
+			var err error
+			switch kind {
+			case "symlink":
+				err = os.Symlink("target", path)
+			case "hardlink":
+				err = os.Link(target, path)
+			case "unsafe-mode":
+				err = os.WriteFile(path, nil, 0o600)
+				if err == nil {
+					err = os.Chmod(path, 0o644)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			err = store.WithVerified(context.Background(), storageRuntime(), func(*os.Root, Snapshot) error {
+				called = true
+				return nil
+			})
+			if err == nil || called {
+				t.Fatalf("unsafe lock accepted: %v, mutation=%v", err, called)
+			}
+			if data, err := os.ReadFile(target); err != nil || string(data) != "untouched" {
+				t.Fatalf("lock target changed: %q %v", data, err)
+			}
+		})
+	}
+}
+
 func TestStoreRejectsChangedRuntimeAndPartialPublication(t *testing.T) {
 	store := Store{StateRoot: filepath.Join(t.TempDir(), "state")}
 	runtime := storageRuntime()
