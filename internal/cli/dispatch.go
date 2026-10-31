@@ -2,30 +2,17 @@ package cli
 
 import "fmt"
 
-type Config struct {
-	ContextID   string
-	ConfigPath  string
-	LogFilePath string
-}
+type Config struct{ ConfigPath string }
 
 type Handlers struct {
-	Start                             func(contextID, configPath, logFilePath string) error
-	Pop                               func(args []string) error
-	CaptureProfile                    func(args []string) error
-	GetSessionStatus                  func(args []string) error
-	GetSessionStatusOneline           func(args []string) error
-	InspectInput                      func(args []string) error
-	InspectMessage                    func(args []string) error
-	InspectCommandApprovals           func(args []string) error
-	InspectDaemonSubmit               func(args []string) error
-	ReconcileCommandApprovalReplySlot func(args []string) error
-	BackfillVerdictEvents             func(args []string) error
-	ExecuteBash                       func(args []string) error
-	SendMessage                       func(args []string) error
-	SendHeredoc                       func(args []string) error
-	Stop                              func(args []string) error
-	Version                           func(args []string) error
-	Help                              func(args []string)
+	Pop              func([]string) error
+	GetSessionStatus func([]string) error
+	ExecuteBash      func([]string) error
+	SendHeredoc      func([]string) error
+	RegisterNotifier func([]string) error
+	NotifierScript   func([]string) error
+	Version          func([]string) error
+	Help             func([]string)
 }
 
 type Result struct {
@@ -34,121 +21,35 @@ type Result struct {
 	ShowUsage bool
 }
 
-func Dispatch(command string, args []string, cfg Config, handlers Handlers) Result {
+func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 	if isSubcommandHelpRequest(args) && hasCommandHelpTopic(command) {
-		if handlers.Help == nil {
-			return Result{
-				Label: "postman " + command,
-				Err:   fmt.Errorf("help handler is not configured"),
-			}
-		}
-		handlers.Help([]string{command})
+		h.Help([]string{command})
 		return Result{}
 	}
-
+	var handler func([]string) error
 	switch command {
-	case "start":
-		return Result{
-			Label: "postman start",
-			Err:   handlers.Start(cfg.ContextID, cfg.ConfigPath, cfg.LogFilePath),
-		}
-	case "capture-profile":
-		return Result{
-			Label: "postman capture-profile",
-			Err:   handlers.CaptureProfile(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
 	case "pop":
-		return Result{
-			Label: "postman pop",
-			Err:   handlers.Pop(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
+		handler = h.Pop
 	case "get-status":
-		return Result{
-			Label: "postman get-status",
-			Err:   handlers.GetSessionStatus(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "get-status-oneline":
-		return Result{
-			Label: "postman get-status-oneline",
-			Err:   handlers.GetSessionStatusOneline(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "inspect-input":
-		return Result{
-			Label: "postman inspect-input",
-			Err:   handlers.InspectInput(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "inspect-message":
-		return Result{
-			Label: "postman inspect-message",
-			Err:   handlers.InspectMessage(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "inspect-command-approvals":
-		return Result{
-			Label: "postman inspect-command-approvals",
-			Err:   handlers.InspectCommandApprovals(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "inspect-daemon-submit":
-		return Result{
-			Label: "postman inspect-daemon-submit",
-			Err:   handlers.InspectDaemonSubmit(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "reconcile-command-approval-reply-slot":
-		return Result{
-			Label: "postman reconcile-command-approval-reply-slot",
-			Err:   handlers.ReconcileCommandApprovalReplySlot(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "backfill-verdict-events":
-		return Result{
-			Label: "postman backfill-verdict-events",
-			Err:   handlers.BackfillVerdictEvents(args),
-		}
+		handler = h.GetSessionStatus
 	case "execute-bash":
-		return Result{
-			Label: "postman execute-bash",
-			Err:   handlers.ExecuteBash(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "send":
-		return Result{
-			Label: "postman send",
-			Err:   handlers.SendMessage(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
+		handler = h.ExecuteBash
 	case "send-heredoc":
-		return Result{
-			Label: "postman send-heredoc",
-			Err:   handlers.SendHeredoc(prependConfig(cfg.ConfigPath, prependContextID(cfg.ContextID, args))),
-		}
-	case "stop":
-		return Result{
-			Label: "postman stop",
-			Err:   handlers.Stop(prependConfig(cfg.ConfigPath, args)),
-		}
+		handler = h.SendHeredoc
+	case "register-notifier":
+		handler = h.RegisterNotifier
+	case "notifier-script":
+		return Result{Label: "postman notifier-script", Err: h.NotifierScript(args)}
 	case "version":
-		return Result{
-			Label: "postman version",
-			Err:   handlers.Version(args),
-		}
+		return Result{Label: "postman version", Err: h.Version(args)}
 	case "help":
-		handlers.Help(args)
+		h.Help(args)
 		return Result{}
 	default:
-		return Result{
-			Label:     "postman",
-			Err:       fmt.Errorf("unknown command %q", command),
-			ShowUsage: true,
-		}
+		return Result{Label: "postman", Err: fmt.Errorf("unknown command %q", command), ShowUsage: true}
 	}
-}
-
-func prependContextID(contextID string, args []string) []string {
-	if contextID == "" {
-		return args
+	if cfg.ConfigPath != "" {
+		args = append([]string{"--config", cfg.ConfigPath}, args...)
 	}
-	return append([]string{"--context-id", contextID}, args...)
-}
-
-func prependConfig(configPath string, args []string) []string {
-	if configPath == "" {
-		return args
-	}
-	return append([]string{"--config", configPath}, args...)
+	return Result{Label: "postman " + command, Err: handler(args)}
 }

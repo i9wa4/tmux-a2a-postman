@@ -1,88 +1,22 @@
-tmux-a2a-postman — A2A message routing daemon for tmux panes
+tmux-a2a-postman — file-first tmux workspace mail
 
-AI agents send and receive messages. Each message is routed to the recipient
-by the daemon. Use send-heredoc to send and pop to claim/open.
-Use an explicit command. Bare `tmux-a2a-postman` prints usage; it does not start the daemon.
+The four active workspace commands use private files and native tmux identity;
+no Postman daemon is required. A configured postman.md supplies roles, edges,
+and an optional command reviewer. Missing or ambiguous identity fails closed.
 
-Quick Start:
-  1. Start daemon:    tmux-a2a-postman start
-  2. Send a message:
-     tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
-     message text
-     POSTMAN_BODY
-  3. Claim/open msg:  tmux-a2a-postman pop
+  send-heredoc  Publish separate receiver inbox and sender sent copies
+  pop           Claim one own unread message and return its archive path
+  get-status    Read own saved-file state without claiming mail
+  execute-bash  Run Bash after the configured exact approval protocol
+  notifier-script  Print Bash/Readline recipient setup for sourcing
+  register-notifier  Register the recipient shell after installing its hook
+  version       Print build version JSON
+  help [topic]  Show command help
 
-Key Concepts:
-  Node       An AI agent identified by its tmux pane title.
-  Edge       A bidirectional routing rule between two nodes (configured in edges).
-  Envelope   YAML frontmatter at the top of each message file:
-               ---
-               params:
-                 from: <sender>
-                 to: <recipient>
-                 timestamp: <ISO 8601>
-               ---
+Default topology: $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or
+~/.config/tmux-a2a-postman/postman.md when XDG_CONFIG_HOME is unset.
+The four workspace commands accept an absolute --config or --postman-md.
+Use quoted heredoc stdin for send-heredoc. Read a complete archived body
+after every successful pop. Bare tmux-a2a-postman prints usage.
 
-Default operator surface:
-  send-heredoc               Send a message with an explicit quoted heredoc
-  pop                        Claim and archive the oldest unread inbox message
-  capture-profile            Explicitly capture daemon heap or goroutine profile
-  get-status                 Print canonical session status JSON
-  get-status-oneline         Print compact all-session status
-  inspect-input              Inspect open reply-required work by id
-  inspect-daemon-submit      Inspect daemon-submit timeout state by id
-  inspect-message            Inspect claimed (popped) message content by id
-  backfill-verdict-events    Emit verdict_event JSONL rows from read archives
-  execute-bash               Run bash through command approval choreography
-  inspect-command-approvals  Inspect command approval threads
-  reconcile-command-approval-reply-slot
-                             Reconcile a proven terminal command-approval slot
-  version                    Print the build version JSON
-
-Lifecycle and recovery:
-  start                      Start the daemon (single-column TUI)
-  stop                       Stop the running daemon for this tmux session
-  Use `help commands` for the full command list and diagnostic topics.
-
-Messaging Protocol:
-  send-heredoc --to <node> <<'POSTMAN_BODY' Send a message from quoted heredoc stdin
-  pop                                        Claim and archive oldest message
-  capture-profile --type heap|goroutine --output -|PATH
-                                             Capture one explicit daemon profile
-  get-status                                Inspect agent-readable session status
-  get-status-oneline                        Inspect compact all-session status
-  inspect-input --id <id>                   Inspect an open input request by id
-  inspect-daemon-submit --id <request_id>   Inspect daemon-submit timeout state by id
-  inspect-message --id <message_id>         Inspect claimed (popped) message by id
-  backfill-verdict-events --session-dir <dir>
-                                             Emit verdict_event JSONL rows from read archives
-  execute-bash --label <label> --command <bash>
-                                           Run bash through approval choreography
-  inspect-command-approvals                 Inspect command approval threads
-  reconcile-command-approval-reply-slot     Reconcile proven terminal approval slot
-  version                                   Print the build version JSON
-
-Topics:
-  commands             tmux-a2a-postman help commands
-  capture-profile      tmux-a2a-postman help capture-profile
-  config               tmux-a2a-postman help config
-  directories          tmux-a2a-postman help directories
-  messaging            tmux-a2a-postman help messaging
-  start                tmux-a2a-postman help start
-  stop                 tmux-a2a-postman help stop
-  send-heredoc         tmux-a2a-postman help send-heredoc
-  send                 tmux-a2a-postman help send
-  pop                  tmux-a2a-postman help pop
-  get-status           tmux-a2a-postman help get-status
-  get-status-oneline   tmux-a2a-postman help get-status-oneline
-  inspect-input        tmux-a2a-postman help inspect-input
-  inspect-daemon-submit tmux-a2a-postman help inspect-daemon-submit
-  inspect-message      tmux-a2a-postman help inspect-message
-  backfill-verdict-events tmux-a2a-postman help backfill-verdict-events
-  execute-bash         tmux-a2a-postman help execute-bash
-  inspect-command-approvals tmux-a2a-postman help inspect-command-approvals
-  reconcile-command-approval-reply-slot tmux-a2a-postman help reconcile-command-approval-reply-slot
-  version              tmux-a2a-postman help version
-  help                 tmux-a2a-postman help help
-
-Run `tmux-a2a-postman help <topic>` for detailed information.
+Receiving roles need Bash/Readline setup: help register-notifier.

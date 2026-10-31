@@ -1,69 +1,15 @@
-get-status — print canonical session status JSON
+get-status — read own saved-file state
 
 Usage:
-  tmux-a2a-postman get-status
-  tmux-a2a-postman get-status --debug
-  tmux-a2a-postman get-status --tasks
-  tmux-a2a-postman get-status --help
+  tmux-a2a-postman get-status [--config <absolute-path>]
+  tmux-a2a-postman get-status [--postman-md <absolute-path>]
 
-Output:
-  JSON session status contract.
-  Use nodes[*].visible_state for per-node state, queues for backlog counts,
-  and compact for the compact display token.
-  schema_version is 5. visible_state and compact remain stable summary fields.
-  Reply-aware fields include input_required_count, waiting_on_input_count,
-  and info_unread_count. nodes[*].flow.input_requests includes input_required
-  and waiting_on_input detail arrays for open input requests. Details
-  include direction, message_id, input_request_id, sender, recipient,
-  reply_policy, opened_at, opened_at_source, and read_at when available.
-  nodes[*].flow.input_requests.request_satisfaction aggregates opened_count,
-  filled_count, fill_rate, average_time_to_fill_seconds, open_count,
-  dead_lettered_count, stale_open_count, and longest_open_age_seconds. This is
-  a weak responsiveness signal only: it measures whether required input
-  requests were filled, not whether replies were correct.
-  Use inspect-input --id <message_id-or-input_request_id> to inspect a specific
-  open input request without reading inbox mail.
-  Contextual severity fields include severity, severity_source,
-  severity_reason, compact_severity, delivery, nodes[*].node_local,
-  nodes[*].flow, and nodes[*].queues.
-  Severity ranks from least to most urgent:
-  ok, working, expected_wait, needs_action, blocked, attention_stale,
-  delivery_stuck, delivery_failure.
-  delivery.state distinguishes ok, queued, delivery_stuck, delivery_failure,
-  and unknown. Pending post delivery becomes delivery_stuck after 180 seconds.
-  nodes[*].flow separates expected waits from required action and blocked
-  reports. Blocked reports are proven from structured blocked_report metadata
-  and inferred from an exact first-line BLOCKED: report.
-  nodes[*].screen_progress provides non-content pane evidence:
-  evidence_state, last_capture_at, last_screen_change_at, and
-  screen_fingerprint. Raw pane text is not included.
-  nodes[*].convention_meter reports per-node checked_messages,
-  violation_count, violation_rate, and counts for missing verdictOf,
-  completion evidence, and reply references. This is a weak convention
-  adherence signal only, not a task correctness verdict.
-  With --tasks, tasks contains read-only external task/run projection entries
-  for messages that carry task_id or run_id metadata. It exposes task_id,
-  run_id, originating_message_id, thread_id, assigned_node, latest_message_id,
-  open_input_request_ids, state, terminal_message_id, and ambiguity fields.
-  Messages without external task/run metadata do not create task entries.
+Returns JSON status=ok with self when saved evidence is sound. self includes
+known, workspace, node, mailbox, as_of, unread, inbound and outbound exact
+reply obligations, verified local peers, and next_action. Missing, damaged,
+ambiguous, or busy state is unavailable, with a reason; unknown is never
+reported as zero obligations.
 
-Debug diagnostics:
-  --debug adds runtime_diagnostics as an optional object without changing
-  schema_version. It requests a point-in-time daemon runtime snapshot with Go
-  memory, GC, goroutine, count-only daemon cardinality fields, and
-  daemon_submit queue health. daemon_submit includes worker_limit,
-  active_worker_count, active_request_count, pending_request_count,
-  oldest_pending_age_seconds, claimed_request_count,
-  oldest_claimed_age_seconds, late_response_count,
-  oldest_late_response_age_seconds, saturation_count, and last_saturated_at
-  when present. This is not a persisted time series. It omits mailbox body
-  content, pane content, local absolute paths, per-message identifiers, and
-  unbounded lists.
-
-  The daemon also writes the same class of scalar memory and queue counters to
-  postman.log at startup and every 10 minutes as
-  component=daemon_runtime event=memory_snapshot source=passive_log. Those
-  passive log lines are the normal first signal for memory optimization
-  analysis. On supported hosts they include process RSS as rss_bytes; otherwise
-  rss_supported or rss_available marks RSS unavailable without a zero-value
-  placeholder. capture-profile remains an explicit follow-up diagnostic.
+This command reads saved files under a shared lock. It does not register
+the caller, claim mail, notify panes, capture pane text, run Bash, or call
+a daemon. It takes no positional arguments.

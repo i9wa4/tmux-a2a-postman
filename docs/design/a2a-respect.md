@@ -1,5 +1,10 @@
 # A2A Respect Design
 
+> Research/reference material. Historical daemon/runtime API descriptions below
+> are not current operational instructions. Current behavior is specified in
+> [file-first architecture](file-first-architecture.md) and
+> [notification](notification.md).
+
 This page defines how tmux-a2a-postman should respect the Agent2Agent (A2A)
 Protocol vocabulary and model while staying honest about what it implements.
 
@@ -316,7 +321,7 @@ That direction fits A2A respect well. A2A `Message.parts` can become a future
 body projection, while frontmatter remains metadata.
 
 Path and body-reference display follows
-[Path Display Policy](path-display-policy.md): user-facing home paths can be
+[Path Display Policy](file-first-architecture.md): user-facing home paths can be
 `~`-shortened, while absolute file paths need an explicit machine-readable
 field when agents must open the file directly. `pop` remains the receiver-owned
 state transition: daemon notifications hint that mail exists, and the receiver

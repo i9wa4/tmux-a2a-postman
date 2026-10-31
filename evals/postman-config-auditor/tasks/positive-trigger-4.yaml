@@ -1,10 +1,10 @@
 id: positive-trigger-004
-name: Positive Trigger 4
-description: Trigger for skill_path catalog behavior audits.
+name: Recipient activation audit
+description: Trigger for daemonless recipient setup audits.
 tags:
   - positive-trigger
 inputs:
-  prompt: "Audit postman.md skill_path config: one entry uses inject: [ping, compaction_ping], another uses block list syntax, and both ~/.claude/skills and ~/.codex/skills define the same skill name. Does postman-config-auditor catch runtime selector mistakes and later-entry duplicate precedence?"
+  prompt: "Audit our postman.md workspace_tree and recipient Bash notifier registrations. The mail commits but a child interface does not POP. Check the direct route and native binding."
 expected:
   should_trigger: true
 graders:
@@ -12,7 +12,6 @@ graders:
     name: contains-keywords
     config:
       contains:
-        - "skill_path"
-        - "inject"
-        - "runtime"
-        - "duplicate"
+        - "workspace_tree"
+        - "recipient"
+        - "binding"

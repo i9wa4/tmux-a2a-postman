@@ -1,24 +1,8 @@
-help — show command and topic help
+help — command documentation
 
-Usage:
-  tmux-a2a-postman help
-  tmux-a2a-postman help <topic>
-  tmux-a2a-postman <command> --help
+  tmux-a2a-postman help [topic]
 
-Topics:
-  commands
-  config
-  directories
-  messaging
-  start
-  stop
-  send-heredoc
-  send
-  pop
-  get-status
-  get-status-oneline
-  inspect-input
-  inspect-daemon-submit
-  inspect-message
-  version
-  help
+Core topics: send-heredoc, pop, get-status, execute-bash.
+Setup: register-notifier, notifier-script, config, directories.
+Other topics: commands, messaging, version, help.
+No Postman daemon or startup command is needed.

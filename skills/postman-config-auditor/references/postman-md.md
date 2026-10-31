@@ -1,339 +1,82 @@
-# postman.md Format Reference
+# postman.md format
 
-This reference describes the Markdown format parsed by tmux-a2a-postman. It is
-based on the implementation in `internal/config/markdown.go` and the load order
-in `internal/config/config.go`.
+## 1. Selection and local topology
 
-Claude Code and Codex CLI runtime differences are tracked in the repository
-docs as Agent Runtime Feature Differences. Keep this file focused on
-`postman.md` syntax; do not duplicate the long-term runtime comparison here.
+Each invocation reads exactly one bounded regular Markdown file. Default:
+`$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, falling back to HOME/.config.
+An absolute `--config` or `--postman-md` selects another file. No TOML,
+split-node overlays, template injection, catalog loader or daemon defaults
+are involved. Install skills through the agent's ordinary skill mechanism.
 
-## 1. Purpose
-
-`postman.md` is a Markdown overlay for topology, shared templates, node role
-text, and a small set of YAML frontmatter settings. It is not a general
-Markdown configuration language.
-
-Supported files:
-
-| File type            | XDG path                                            |
-| -------------------- | --------------------------------------------------- |
-| Main Markdown config | `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`      |
-| Split node Markdown  | `$XDG_CONFIG_HOME/tmux-a2a-postman/nodes/{node}.md` |
-
-Implicit project-local `.tmux-a2a-postman/` overlays are retired. Keep
-workspace-specific alternatives explicit by passing `--config`.
-
-## 2. Global Frontmatter
-
-Only a leading `---` block is parsed. The main `postman.md` frontmatter is
-YAML. Keep it small: scalar settings plus the `skill_path` catalog list are the
-supported public surface.
-
-Supported global keys in `postman.md`:
-
-| Key              | Effect                                                              |
-| ---------------- | ------------------------------------------------------------------- |
-| `interface_node` | Sets `Config.InterfaceNode` as a frontmatter override               |
-| `reply_command`  | Sets `Config.ReplyCommand` when non-empty                           |
-| `skill_path`     | Appends catalogs to role context, daemon PINGs, or compaction PINGs |
-
-Rules:
-
-- Prefer marking the interface node in the Mermaid graph with
-  `class <node> interface_node`. Inline `:::interface_node` also works.
-  Frontmatter `interface_node` is an explicit override.
-- `ui_node` is not an alias and has no compatibility reader. A frontmatter
-  `ui_node` key, a `class <node> ui_node` statement, and an inline `:::ui_node`
-  class are each warned about (naming the file and the form) and ignored; they
-  can neither set nor mask `interface_node`.
-- Mark the execute-bash command approver in the Mermaid graph with
-  `class <node> command_approver_node`. Inline
-  `<node>:::command_approver_node` also works. Exactly one distinct
-  `command_approver_node` may be marked in the document.
-- Migration checks must confirm `get-status` has neither
-  `command_approval.unresolved_command_approvers` nor
-  `command_approval.deprecated_command_approvers`. The deprecated marker means
-  ignored legacy TOML approver keys are still present.
-- Empty frontmatter `interface_node:` is meaningful and explicitly means no
-  interface node. Omitting the key means the same: there is no default.
-- `skill_path` may be a scalar path or a YAML list of path entries.
-- `skill_path` list items may be scalar paths or mappings with `path`,
-  optional `inject`, and `skills`.
-- Only `skill_path` mappings accept `inject`. It may be a scalar mode or a YAML
-  list of modes.
-- For `skill_path` mappings, omitted `inject` appends the generated catalog to
-  normal role context.
-- For `skill_path` mappings, `inject: ping` stores the generated catalog for
-  every daemon PING role content and keeps it out of normal role context.
-- For `skill_path` mappings, `inject: compaction_ping` stores the generated
-  catalog for compaction-triggered daemon PING role content and keeps it out of
-  normal role context.
-- For `skill_path` mappings, a YAML list containing `ping` and
-  `compaction_ping` routes the same selected catalog to each listed daemon PING
-  target.
-- Flow-style YAML lists such as `inject: [ping, compaction_ping]` are accepted
-  by the parser, but examples and documentation should prefer block-list style
-  for multi-inject entries.
-- `runtime` is unsupported under `skill_path`; list explicit path entries for
-  the skill catalogs that should be included.
-- Multiple configured paths are combined when they exist; duplicate skills are
-  deduped by `SKILL.md` frontmatter `name`, and the later `skill_path` entry
-  wins when names collide. Path order controls duplicate precedence and the
-  rendered source-path display order.
-- PING paths must be global/user-level:
-  `~/...` or absolute. Repo-local relative paths are invalid for PING catalogs
-  and remain valid only for normal role catalogs.
-- Omitted `skills` means every skill under that path.
-- When `skills` is present, use a YAML list of explicit skill directory names.
-  A real skill named `all` is selected with `skills: [all]`.
-- The scalar `skills: all` remains accepted as a legacy shorthand for existing
-  configs, but new examples should omit `skills` for all-skills catalogs.
-- Glob patterns such as `postman-*` are unsupported; list skill names
-  explicitly.
-- Rendered catalogs contain at most one entry per skill frontmatter `name`.
-  Later path entries override earlier entries with the same name.
-- An unclosed frontmatter block is an error.
-
-Example:
-
-```text
----
-reply_command: tmux-a2a-postman send-heredoc --to {from_node}
-skill_path:
-  - path: skills
-    skills:
-      - repo-local
-      - bash
-      - github
-      - markdown
-  - path: ~/.config/tmux-a2a-postman/skills
-    inject:
-      - ping
-      - compaction_ping
-    skills:
-      - postman-usage
-  - path: ~/.claude/skills
-    inject: compaction_ping
-  - path: ~/.codex/skills
-    inject: compaction_ping
-    skills:
-      - postman-config-auditor
-      - postman-usage
----
-```
-
-Each `path` points to a directory containing one subdirectory per skill, each
-with a `SKILL.md` file. For normal role catalogs, relative paths are resolved
-from the directory containing the `postman.md` file. `~/...` expands to the
-current user's home directory, and symlinked skill directories are followed.
-Generated catalogs read `name` and `description` from selected `SKILL.md`
-frontmatter and render a compact Markdown list. `skill_path` entries with
-omitted `inject` append that list to `common_template`, which reaches normal
-role context, so use them for compact runtime-agnostic catalogs only.
-`skill_path` entries with `inject: ping` keep their list out of
-`common_template` and append it to every daemon PING role content.
-`skill_path` entries with `inject: compaction_ping` keep their list out of
-`common_template` and append it only to daemon PING role content when pane
-capture detects a context-compaction marker. `inject` may also be a YAML list;
-the same selected catalog is routed to each listed target. Flow-style YAML
-lists such as `inject: [ping, compaction_ping]` are valid, but examples should
-prefer block-list style. PING catalog entries are not selected by runtime; list
-explicit `~/...` or absolute skill tree paths for the catalogs that should be
-included. If multiple configured paths exist, their selected skills are
-combined into one catalog for the target. Skills are deduped by `SKILL.md`
-frontmatter `name`; when names collide, the later `skill_path` entry wins.
-Path order also controls the rendered source-path display order. Repo-local
-relative paths are invalid in this mode. See repo doc `docs/ping-events.md` for
-PING event timing and trigger details.
-Skill frontmatter may use single-line `description`, `description: |`, or
-`description: >-`.
-
-## 3. H2 Section Parsing
-
-The main `postman.md` parser only recognizes h2 headings that contain a
-backtick-wrapped name.
-
-Parsed examples:
-
-```text
-## `edges`
-## `worker`
-## 1. `worker-alt` Node
-```
-
-Ignored examples:
-
-```text
-# `worker`
-### `worker`
-## Worker
-## edges
-```
-
-Reserved h2 names:
-
-| H2 name           | Meaning                        |
-| ----------------- | ------------------------------ |
-| `edges`           | Mermaid topology section       |
-| `common_template` | Sets `Config.CommonTemplate`   |
-| `message_footer`  | Sets or appends message footer |
-
-All other h2 backtick names become node sections. The section body runs until
-the next parsed h2 heading or end of file.
-
-## 4. Edges Section
-
-The `edges` h2 section must contain a fenced `mermaid` block. The parser reads
-the first Mermaid fence in that section.
-
-````text
+````markdown
 ## `edges`
 
 ```mermaid
 graph LR
-    messenger --- orchestrator
     orchestrator --- worker
-    orchestrator --- critic
-    class messenger interface_node
-    class orchestrator command_approver_node
-    classDef interface_node fill:#e0f2fe
-    classDef command_approver_node fill:#fef3c7
-```
-````
-
-Edge rules:
-
-- Only `---` is parsed as an edge operator.
-- The interface node may be marked with a `class messenger interface_node`
-  statement, or with inline class syntax such as `messenger:::interface_node`.
-- The command approver node may be marked with a
-  `class orchestrator command_approver_node` statement, or with inline class
-  syntax such as `orchestrator:::command_approver_node`. It is global for all
-  execute-bash policies.
-- `graph`, `flowchart`, `subgraph`, `end`, `direction`, `classDef`, `class`,
-  `style`, `click`, `linkStyle`, `accTitle`, and `accDescr` statements are
-  skipped.
-- `%%` Mermaid comments are stripped.
-- Multiple statements on one line can be separated by `;`.
-- Mermaid node decorations such as labels, shapes, classes, and quoted names
-  are normalized to the node id.
-- Arrows such as `-->` are not valid postman edges.
-- Node ids are configuration-owned protocol names. The parser does not know
-  that `critic`, `reviewer`, or other role-like words are synonyms.
-
-Equivalent normalized edge output:
-
-```text
-messenger --- orchestrator
-orchestrator --- worker
-orchestrator --- critic
+    orchestrator --- reviewer
+    class orchestrator interface_node
+    class reviewer command_approver_node
 ```
 
-## 5. Node Sections
+## `orchestrator`
 
-A node section is any non-reserved h2 backtick heading in main `postman.md`.
-The node name is the first backtick-wrapped value, lowercased.
+Role instructions for the agent's own setup.
 
-```text
 ## `worker`
 
-### `role`
+Worker instructions.
 
-Primary task executor.
+## `reviewer`
 
-### Workflow
-
-Execute tasks from orchestrator. Reply with DONE or BLOCKED.
-```
-
-Node role extraction:
-
-- An h3 `role` section is preferred.
-- The role body runs until the next h2 or h3 heading.
-- The h3 `role` section is removed from the node template body.
-- If no h3 `role` section exists, node-section frontmatter key `role` is used.
-- After role extraction, leading frontmatter is stripped from the template.
-
-Other h3 sections are kept in the node template.
-
-Frontmatter fallback example:
-
-```text
-## `critic`
-
----
-role: Reviewer
----
-
-Review changes and reply with APPROVED or REJECTED.
-```
-
-## 6. Split Node Markdown
-
-`nodes/{node}.md` defines one node. The node name comes from the filename
-without `.md`.
-
-The split-node parser supports the same role extraction as node sections:
-
-- Prefer an h3 `role` section.
-- Fall back to leading frontmatter key `role`.
-- Strip role section and frontmatter from the stored template.
-
-Split node Markdown does not parse `edges`, `common_template`, or
-`message_footer`.
-
-## 7. Merge Behavior
-
-Effective configuration is loaded from low to high priority:
-
-1. Embedded defaults from `internal/config/postman.default.toml`
-2. XDG `postman.toml`
-3. XDG `nodes/*.toml`
-4. XDG `nodes/*.md`
-5. XDG `postman.md`
-
-The daemon snapshots this effective configuration once at startup. Edits to
-`postman.toml`, `postman.md`, or `nodes/*` require a daemon restart before they
-affect routing, role templates, daemon defaults, or skill catalogs. Runtime
-watchers remain for mail delivery, read/archive moves, and daemon submit queues;
-they do not hot-reload global config.
-
-Important rules:
-
-- Main config files merge node fields rather than replacing whole nodes.
-- Split `nodes/*.toml` files replace that node at their load layer.
-- Split `nodes/*.md` files update only non-empty role and template fields.
-- `postman.md` edges replace lower-layer edges only when the parsed edge list is
-  non-empty.
-- `workspace_tree` is TOML-only. `postman.md` does not parse or override
-  explicit workspace hierarchy metadata.
-- A Mermaid `interface_node` class in the `edges` graph sets `interface_node`
-  when frontmatter does not set it. Frontmatter `interface_node` wins within the
-  same Markdown file, and postman.md wins over TOML.
-- A Mermaid `command_approver_node` class in the `edges` graph sets the global
-  execute-bash command approver. There is no TOML or per-policy override for
-  this field.
-- XDG `postman.md` `message_footer` replaces the lower-layer footer.
-- `skill_path` is applied within the Markdown layer that declares it. Entries
-  with omitted `inject` append generated catalogs to that layer's
-  `common_template` content; entries with `inject: ping` or
-  `inject: compaction_ping`, including YAML lists that contain those modes,
-  stay separate and append only to matching daemon PING role content.
-- When multiple entries select the same skill frontmatter `name`, the later
-  entry wins and the rendered catalog includes one body for that name.
-- Nodes referenced by valid edges are materialized automatically.
-
-## 8. Minimal Valid postman.md
-
-````text
-## `edges`
-
-```mermaid
-graph LR
-    messenger --- orchestrator
-    orchestrator --- worker
-```
+Review requests and return exact decisions.
 ````
 
-This is enough to define the topology. Node templates are optional.
+The strict Mermaid subset accepts graph/flowchart direction, `---` edges,
+simple labels/classes, `class` and `classDef`. Other edge operators and
+malformed/duplicate sections fail. Node names are alphanumeric and hyphens,
+start alphanumeric, and are at most 64 characters. Unique pane titles bind
+roles. A class cannot invent an otherwise unknown node. Only one designated
+reviewer/interface is allowed. An absent interface has no implicit default.
+
+`command_approver_node` belongs in Mermaid; legacy frontmatter approval keys
+are rejected. YAML `interface_node` can explicitly designate the local role.
+Unknown frontmatter does not install hooks or inject instructions. Role prose
+is available to the agent's setup; Postman does not automatically render it
+into mail or launch an agent.
+
+## 2. Direct parent/child interfaces
+
+Each session uses the same explicit tree declaration, but designates its own
+local interface role. For example, the parent's frontmatter is:
+
+```yaml
+---
+interface_node: orchestrator
+workspace_tree:
+  - session_name: parent
+    interface_node: orchestrator
+  - session_name: child
+    parent_session_name: parent
+    interface_node: worker
+---
+```
+
+The child uses `interface_node: worker` with the same tree. Both interface
+roles must be configured nodes. Send to `child:worker` from the parent
+interface or `parent:orchestrator` from the child interface. Replies retain
+the exact original session/role route. Grandchild shortcuts, siblings,
+undeclared sessions, cycles, duplicate names and ambiguous live bindings fail.
+Session names select a route, never replace native runtime verification.
+The sessions need different workspace roots below HOME.
+
+## 3. Recipient setup
+
+Every receiving role needs the Bash/Readline integration emitted by
+`notifier-script`, sourced in its own dedicated Bash pane. See
+[README](../../../README.md#1-install-and-configure). A fresh shell must
+register itself again. Missing/stale notification setup does not prevent
+durable mail publication and does not grant command approval.
+
+[Agent Runtime Feature Differences](../../../docs/agent-runtime-feature-differences.md)
+is the long-term runtime comparison; do not duplicate it here.

@@ -1,5 +1,5 @@
 {
-  description = "tmux-a2a-postman - File-based communication daemon for tmux panes";
+  description = "tmux-a2a-postman - Daemonless file-first communication for tmux agents";
 
   nixConfig = {
     extra-substituters = [
@@ -62,13 +62,13 @@
         let
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
           go126 = pkgs.go_1_26.overrideAttrs (_old: rec {
-            version = "1.26.4";
+            version = "1.26.10";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-T2aKMvv8ETLmqIH7lowvHa2mMUkqM5IRc1+7JVpCYC0=";
+              hash = "sha256-/WPog7ovK/ypPBZGsx6+9j4rHk0rMXyXidl2po2B828=";
             };
           });
-          buildGo126Module = pkgs.buildGoModule.override { go = pkgs.go_1_26; };
+          buildGo126Module = pkgs.buildGoModule.override { go = go126; };
           commonDevPackages = with pkgs; [
             gh
             go126
@@ -233,8 +233,17 @@
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-/G6E+StNyCnZeb1ZgdiyK6D8pDLX+2YTlJrCEv74lbQ=";
-            nativeCheckInputs = [ pkgs.tmux ];
+            vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
+            nativeCheckInputs = [
+              pkgs.tmux
+              pkgs.bashInteractive
+              pkgs.python3
+            ];
+            env.POSTMAN_TEST_BASH = "${pkgs.bashInteractive}/bin/bash";
+            postInstall = ''
+              mkdir -p $out/share/tmux-a2a-postman
+              cp integrations/bash/*.py $out/share/tmux-a2a-postman/
+            '';
             ldflags = [
               "-s"
               "-w"

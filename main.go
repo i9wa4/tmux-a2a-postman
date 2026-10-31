@@ -25,7 +25,6 @@ func main() {
 	fs := flag.NewFlagSet("postman", flag.ContinueOnError)
 	showVersion := fs.Bool("version", false, "show version")
 	showHelp := fs.Bool("help", false, "show help")
-	contextID := fs.String("context-id", "", "context ID (auto-generated if not specified)")
 	configPath := fs.String("config", "", "path to config file (auto-detect from XDG_CONFIG_HOME if not specified)")
 
 	fs.Usage = func() {
@@ -55,38 +54,13 @@ func main() {
 		return
 	}
 
-	result := cli.Dispatch(
-		command,
-		args,
-		cli.Config{
-			ContextID:   *contextID,
-			ConfigPath:  *configPath,
-			LogFilePath: "",
-		},
-		cli.Handlers{
-			Start:                             cli.RunStartWithFlags,
-			CaptureProfile:                    cli.RunCaptureProfile,
-			Pop:                               cli.RunPop,
-			GetSessionStatus:                  cli.RunGetSessionStatus,
-			GetSessionStatusOneline:           func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
-			InspectInput:                      cli.RunInspectInput,
-			InspectMessage:                    cli.RunInspectMessage,
-			InspectCommandApprovals:           cli.RunInspectCommandApprovals,
-			InspectDaemonSubmit:               cli.RunInspectDaemonSubmit,
-			ReconcileCommandApprovalReplySlot: cli.RunReconcileCommandApprovalReplySlot,
-			BackfillVerdictEvents:             cli.RunBackfillVerdictEvents,
-			ExecuteBash:                       cli.RunExecuteBash,
-			SendMessage:                       cli.RunSendMessage,
-			SendHeredoc:                       cli.RunSendHeredoc,
-			Stop: func(args []string) error {
-				return cli.RunStop(os.Stdout, args)
-			},
-			Version: func(args []string) error {
-				return cli.RunVersion(os.Stdout, args)
-			},
-			Help: cli.RunHelp,
-		},
-	)
+	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath}, cli.Handlers{
+		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
+		ExecuteBash: cli.RunWorkspaceExecuteBash, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		RegisterNotifier: cli.RunWorkspaceRegisterNotifier,
+		NotifierScript:   func(args []string) error { return cli.RunNotifierScript(os.Stdout, args) },
+		Version:          func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
+	})
 	if result.Err != nil {
 		fmt.Fprintf(os.Stderr, "❌ %s: %v\n", result.Label, result.Err)
 		if result.ShowUsage {
