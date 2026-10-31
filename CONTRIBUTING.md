@@ -11,56 +11,56 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
-Transport tests use isolated real tmux servers, temporary HOME/state, and the
-Bash/Readline adapter shipped in the CLI. Run them without model credentials:
+Transport tests use isolated real tmux servers and private HOME/state. The
+controller performs only the initial send or execute request; deterministic
+agent consoles receive the actual pasted notification and `C-m`, then own POP,
+complete-file reading and exact replies. No model or runtime API is required.
 
 ```sh
 go test ./... -count=1
-go test . -run 'TestNotification' -v -count=1
+nix run .#notification-smoke -- --case all --output /tmp/postman-report.json
+# Without Nix:
+python3 scripts/validation/notification-smoke.py \
+  --postman "$(command -v tmux-a2a-postman)" --agent fixture --terminal both
 ```
 
-The notification tests perform only the initial send from the controller.
-The recipient hook owns POP, full-file reading and exact reply. The disabled
-adapter case proves no receipt or reply is fabricated. Containers must reap
-orphan processes (for example Docker `--init`), so tmux cleanup can verify
-server exit. Remove only owned fixtures; never kill unrelated tmux servers.
+The default matrix has sixteen cases: plain line input and bracketed-paste
+input, each covering rally, busy recipient, concurrent independent messages,
+parent-to-child, child-to-parent, approval, rejection and blocked notification.
+`TestNotificationDrivenTerminalAgents` runs it during `go test` and `nix build`.
+Nix flake checks also build this package. Default checks require no AI client
+or model server. `--case` selects a single case.
 
-The **real Codex** suite uses a local Responses API fixture that returns fixed
-tool calls, so there are no credentials, paid model calls, or model reasoning
-requirements. Actual Codex accepts native notices and executes the recipient
-helper in the same conversation. The controller never POPs or replies.
+Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
+transport outcomes, pre-paste rejection, mailbox-lock independence,
+wrong/uncommitted routes, and shell input rejection. No unknown attempt is
+replayed.
+
+Optional real Codex checks use a local Responses API fixture with fixed tool
+calls. This replaces model decisions only; the actual Codex input editor and
+its recipient tools handle the notification. It needs no account or API key:
 
 ```sh
-nix run .#codex-notification-smoke -- --case all --output /tmp/postman-report.json
-nix run .#codex-notification-smoke -- --case concurrent
-# Or use installed tools without Nix:
-python3 scripts/validation/codex-notification-smoke.py \
-  --postman "$(command -v tmux-a2a-postman)" --codex "$(command -v codex)" --case all
+python3 scripts/validation/notification-smoke.py --agent codex --case rally \
+  --codex "$(command -v codex)" --postman "$(command -v tmux-a2a-postman)"
 ```
 
-Cases: `rally`, `busy`, `concurrent`, `parent-child`, `child-parent`,
-`approval`, `rejected`, `disabled`. The default runs all; `nix flake check`
-includes the same suite. Checks assert original thread/context, full-file
-digests, exact replies, unique claims, bounded send, busy queueing and preserved
-unsubmitted drafts. Go fault tests cover duplicate/concurrent same-message
-notices, wrong runtime identity, disconnect, mismatched receipts, timeout and
-short-lived helper reaping.
+The private Codex test matches vde-layout's `--yolo --no-daemon --no-alt-screen`
+launch. Production transport has no Codex dependency or API calls. `--mode live`
+explicitly uses installed model authentication and does not fall back to mock.
+Actual Claude model behavior is not asserted by terminal fixtures; they verify
+the common terminal protocol also used by local consoles and Claude Code.
 
-The private fixture matches vde-layout's `--yolo --no-daemon --no-alt-screen`
-Codex launch. It creates its own HOME, CODEX_HOME, tmux socket, state and model
-endpoint. Its known tool commands run in that fixture. Production Codex policy
-is not changed by registration. Reports include runtime versions, thread and
-mail IDs, claims, hashes, model-fixture trace and pane transcripts; temporary
-evidence remains at the printed path. Only owned tmux servers are killed.
+Reports include submitted terminal text, conversation/context identifiers,
+archive digests, exact request/reply IDs and pane transcripts. Temporary
+evidence stays at the printed path. The old-main `--case rally --baseline`
+control must commit mail but produce no recipient actions. The blocked case
+enters only fixture tmux copy mode; delivery remains unread. Tests never provide
+receiver POP/reply actions from the controller.
 
-`--mode live` explicitly uses the installed Codex authentication selector and
-chosen `--model` with the same isolated launch; it makes real model calls and
-fails if authentication/model/tool execution fails. There is no fallback from
-live to mock. Default mock mode never reads or copies authentication. To compare
-old main, build its binary separately and run `--case rally --baseline` against
-it: durable delivery must remain unread for more than the native queue watcher
-interval, with no recipient action. The disabled case tests the same negative
-control on the new binary by removing only fixture registration.
+Containers must reap orphan processes (for example Docker `--init`). Remove
+only owned fixtures; never kill unrelated tmux servers. Stage new files before
+Nix checks so the flake source includes the complete runtime tests.
 
 Go version policy:
 

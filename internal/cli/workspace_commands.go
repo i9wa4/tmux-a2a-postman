@@ -7,7 +7,6 @@ import (
 	"flag"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -472,64 +471,6 @@ func RunWorkspaceExecuteBash(args []string) error {
 		return errors.New(execution.Status + ": " + execution.Reason)
 	}
 	return nil
-}
-
-// RunWorkspaceRegisterNotifier configures a recipient; it is not a worker.
-func RunWorkspaceRegisterNotifier(args []string) error {
-	f := newWorkspaceFlags("register-notifier")
-	runtime := f.fs.String("runtime", "codex", "recipient runtime: codex or bash")
-	path, err := f.parse(args)
-	if err != nil {
-		return err
-	}
-	if f.fs.NArg() != 0 {
-		return errors.New("register-notifier takes no positional arguments")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c, err := openWorkspaceCommand(ctx, path)
-	if err != nil {
-		return err
-	}
-	if *runtime == "bash" {
-		return c.mail.Store.RegisterNotifier(ctx, c.boundRuntime())
-	}
-	if *runtime != "codex" {
-		return errors.New("unsupported recipient runtime")
-	}
-	thread := os.Getenv("CODEX_THREAD_ID")
-	if thread == "" {
-		return errors.New("run register-notifier from the existing Codex conversation; CODEX_THREAD_ID is required")
-	}
-	home := os.Getenv("CODEX_HOME")
-	if home == "" {
-		home = filepath.Join(c.runtime.Home, ".codex")
-	}
-	home, err = filepath.EvalSymlinks(home)
-	if err != nil {
-		return err
-	}
-	program, err := exec.LookPath("codex")
-	if err != nil {
-		return err
-	}
-	program, err = filepath.Abs(program)
-	if err != nil {
-		return err
-	}
-	root := c.runtime.Home
-	if c.caller.Root != "~" {
-		root = filepath.Join(root, strings.TrimPrefix(c.caller.Root, "~/"))
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return err
-	}
-	n := workspace.CodexNotifier{ThreadID: thread, Home: home, Program: program, Topology: path, Root: root}
-	if err := c.mail.Store.RegisterCodexNotifier(ctx, c.boundRuntime(), n); err != nil {
-		return err
-	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "registered", "runtime": "codex", "thread_id": thread, "node": c.caller.Caller.Role})
 }
 
 // Retry only lock admission proven to precede any mutation. A claimed/partially

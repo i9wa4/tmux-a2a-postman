@@ -111,23 +111,23 @@
         in
         {
           apps = {
-            codex-notification-smoke = {
+            notification-smoke = {
               type = "app";
               program = "${
                 pkgs.writeShellApplication {
-                  name = "codex-notification-smoke";
+                  name = "notification-smoke";
                   runtimeInputs = [
                     pkgs.python3
                     pkgs.tmux
                   ];
                   text = ''
-                    exec python3 ${./scripts/validation}/codex-notification-smoke.py \
+                    exec python3 ${./scripts/validation}/notification-smoke.py \
                       --postman ${config.packages.default}/bin/tmux-a2a-postman \
-                      --codex ${pkgs.codex}/bin/codex "$@"
+                      "$@"
                   '';
                 }
-              }/bin/codex-notification-smoke";
-              meta.description = "Test real Codex notification rallies with a deterministic local model.";
+              }/bin/notification-smoke";
+              meta.description = "Test generic tmux input notifications with deterministic terminal agents.";
             };
 
             update = {
@@ -255,14 +255,9 @@
             vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
             nativeCheckInputs = [
               pkgs.tmux
-              pkgs.bashInteractive
+              pkgs.bash
               pkgs.python3
             ];
-            env.POSTMAN_TEST_BASH = "${pkgs.bashInteractive}/bin/bash";
-            postInstall = ''
-              mkdir -p $out/share/tmux-a2a-postman
-              cp integrations/bash/*.py $out/share/tmux-a2a-postman/
-            '';
             ldflags = [
               "-s"
               "-w"
@@ -272,23 +267,7 @@
           };
 
           # nix develop
-          checks.codex-notification =
-            pkgs.runCommand "codex-notification"
-              {
-                nativeBuildInputs = [
-                  pkgs.python3
-                  pkgs.tmux
-                  pkgs.bash
-                ];
-              }
-              ''
-                mkdir -p $out
-                python3 ${./scripts/validation}/codex-notification-smoke.py \
-                  --postman ${config.packages.default}/bin/tmux-a2a-postman \
-                  --codex ${pkgs.codex}/bin/codex --case all --mode mock \
-                  --output $out/report.json
-              '';
-
+          checks.notification = config.packages.default;
           devShells = {
             default = pkgs.mkShell {
               buildInputs = commonDevPackages ++ goDevPackages;

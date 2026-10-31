@@ -9,11 +9,11 @@
 3. For `workspace_tree`, check unique session names, direct parent relation,
    separate HOME-relative roots, exact local interface designation and live
    peer identity. Same-named local roles are different from session:node peers.
-4. Confirm each receiving Codex conversation registered its own CODEX_THREAD_ID,
-   private home, workspace and current native binding. Re-register after
-   conversation changes and keep role pane titles stable. Optional Bash
-   automation sources notifier-script instead. Role prose and installed skills
-   alone do not create an activation source. See the README setup.
+4. Confirm receiving panes host the intended existing agent consoles, preserve
+   unique configured role titles, and accept pasted text plus `C-m`. The same
+   tmux transport applies to Codex, Claude Code and local LLMs. No per-agent
+   notifier registration, model API or shell hook is needed. Shell prompts and
+   tmux copy mode are not receiving agent consoles.
 5. Check send result `notice` separately from mail delivery. Acceptance is not
    POP, full reading or a response. Never repair a notice failure by blind
    resend, bypassing ownership, editing mailbox files or adding idle polling.

@@ -24,6 +24,6 @@ All four commands accept an absolute --config or --postman-md path; otherwise
 postman.md resolves from XDG_CONFIG_HOME or HOME/.config. No command accepts
 a daemon context ID. Bare tmux-a2a-postman prints usage.
 
-Recipient setup:
-  Run register-notifier --runtime codex from each existing Codex conversation.
-  Optional Bash automation uses notifier-script. See help register-notifier.
+Recipient input:
+  Start the agent in its configured role pane. Notifications use the same
+  tmux text/paste/C-m path for every agent; no registration or model API.

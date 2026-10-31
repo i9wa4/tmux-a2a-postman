@@ -72,13 +72,13 @@ The sessions need different workspace roots below HOME.
 
 ## 3. Recipient setup
 
-Each receiving Codex conversation must execute
-`register-notifier --runtime codex` from its own tool context. Keep role pane
-titles stable with Codex's `tui.terminal_title = []`, and re-register after
-conversation changes/restarts. See
-[README](../../../README.md#1-install-and-configure). Optional dedicated Bash
-automation uses `notifier-script`. Missing/stale registration leaves mail
-durable and never grants command approval.
+Receiving roles, reply recipients and reviewers must be existing agent consoles
+in their configured tmux panes. Notifications paste text and submit `C-m`
+through the same transport for every agent type. No thread ID or notifier
+registration is used. Preserve role pane titles in the agent configuration;
+Codex uses `tui.terminal_title = []`. See
+[README](../../../README.md#1-install-and-configure). Missing/blocked input
+leaves mail durable and never grants command approval.
 
 [Agent Runtime Feature Differences](../../../docs/agent-runtime-feature-differences.md)
 is the long-term runtime comparison; do not duplicate it here.

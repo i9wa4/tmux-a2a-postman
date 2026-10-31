@@ -13,7 +13,7 @@ State lives below `${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman`:
 locks/<workspace>.lock
 <workspace>/workspace.json
 <workspace>/runtime/binding.json
-<workspace>/runtime/notifiers/<role>.json
+<workspace>/runtime/notice-locks/<role>.lock
 <workspace>/runtime/notices/<message-id>.json
 <workspace>/agents/<role>/{draft,inbox,read,sent,failed}/
 <workspace>/agents/<role>/read/<message-id>.pop.json
@@ -56,9 +56,9 @@ Directory ancestry and same-named local roles cannot authorize or redirect
 mail. Each workspace retains independent ownership, inbox/read and sent files.
 
 After durable publication, the same CLI makes a bounded attempt through the
-recipient-owned [notification adapter](notification.md). Sending never waits
-for POP, response, or work completion. A recipient handler can invoke Codex
-noninteractively; no persistent Postman worker is introduced.
+common [tmux input transport](notification.md). Sending never waits for POP,
+response, or work completion. The existing agent console receives the hint;
+no persistent Postman worker or model API adapter is introduced.
 
 ## 4. Commands and observations
 

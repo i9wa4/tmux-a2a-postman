@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recipient tool used by the smoke model; never called by the controller."""
+"""Recipient action used by terminal fixtures and Codex tools, never the controller."""
 import hashlib
 import json
 import os
@@ -13,7 +13,7 @@ phase, nonce = sys.argv[1:]
 role = os.environ["POSTMAN_SMOKE_ROLE"]
 root = pathlib.Path(os.environ["POSTMAN_SMOKE_EVIDENCE"])
 postman, config = os.environ["POSTMAN_BIN"], os.environ["POSTMAN_CONFIG"]
-thread_id = os.environ["CODEX_THREAD_ID"]
+thread_id = os.environ.get("CODEX_THREAD_ID", os.environ["POSTMAN_SMOKE_CONVERSATION"])
 case = os.environ["POSTMAN_SMOKE_CASE"]
 
 
@@ -34,9 +34,7 @@ def cli(args, body=None):
 
 
 if phase == "setup":
-    if os.environ.get("POSTMAN_SMOKE_BASELINE") != "1":
-        cli(["register-notifier", "--runtime", "codex", "--postman-md", config])
-    (root / (role + ".ready.json")).write_text(json.dumps({"thread_id": thread_id, "nonce": nonce}))
+    (root / (role + ".ready.json")).write_text(json.dumps({"conversation_id": thread_id, "nonce": nonce}))
     if case == "busy" and role == "worker":
         (root / "busy").touch()
         deadline = time.monotonic() + 30
@@ -44,15 +42,18 @@ if phase == "setup":
             if time.monotonic() > deadline:
                 raise RuntimeError("controller did not release busy fixture")
             time.sleep(0.05)
-    print("REGISTERED", role, thread_id)
+    print("RECIPIENT_READY", role, thread_id)
 else:
     pop = cli(["pop", "--postman-md", config, phase])
+    if pop["status"] == "empty" and case in ["approval", "rejected"]:
+        print("DECISION_ALREADY_CLAIMED_BY_WRAPPER")
+        sys.exit(0)
     if pop["status"] != "message":
         raise RuntimeError("notification did not produce a claim: " + json.dumps(pop))
     archive = pathlib.Path(pop["markdown_absolute_path"])
     full = archive.read_bytes()
     msg = pop["message"]
-    proof = {"role": role, "thread_id": thread_id, "context_nonce": nonce, "message": msg,
+    proof = {"role": role, "conversation_id": thread_id, "context_nonce": nonce, "message": msg,
              "full_archive_sha256": hashlib.sha256(full).hexdigest(), "archive": str(archive)}
     count = len(list(root.glob(role + ".claim.*.json"))) + 1
     if msg["needs_reply"]:

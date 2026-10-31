@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Codex/tmux notification tests; deterministic model fixture by default."""
+"""Agent-independent tmux notification tests; deterministic terminal agents by default."""
 import argparse
 import concurrent.futures
 import hashlib
@@ -17,35 +17,43 @@ from codex_smoke_model import ModelFixture
 
 CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled"]
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--agent", choices=["fixture", "codex"], default="fixture")
+parser.add_argument("--terminal", choices=["both", "plain", "bracketed"], default="both")
 parser.add_argument("--case", choices=["all", *CASES], default="all")
 parser.add_argument("--mode", choices=["mock", "live"], default="mock")
 parser.add_argument("--postman", required=True)
 parser.add_argument("--codex", default="codex")
 parser.add_argument("--model", default="gpt-6-luna")
 parser.add_argument("--baseline", action="store_true", help="expect unmodified main to fail to notify (rally only)")
-parser.add_argument("--timeout", type=int, default=150, help="seconds per awaited step")
+parser.add_argument("--timeout", type=int, default=30, help="seconds per awaited step")
 parser.add_argument("--output", type=pathlib.Path)
 args = parser.parse_args()
+if args.mode == "live" and args.agent != "codex":
+    parser.error("--mode live requires --agent codex; terminal fixtures are deterministic")
 postman = str(pathlib.Path(args.postman).resolve())
-codex = shutil.which(args.codex)
-if not codex or not shutil.which("tmux"):
-    parser.error("Codex and tmux executables are required")
+codex = shutil.which(args.codex) if args.agent == "codex" else None
+if not shutil.which("tmux") or (args.agent == "codex" and not codex):
+    parser.error("tmux is required; --agent codex additionally needs Codex")
 if args.baseline and args.case != "rally":
     parser.error("--baseline requires --case rally")
-recipient = str(pathlib.Path(__file__).with_name("codex_smoke_recipient.py").resolve())
+recipient = str(pathlib.Path(__file__).with_name("notification_recipient.py").resolve())
 
 
-def run_case(case):
-    root = pathlib.Path(tempfile.mkdtemp(prefix="postman-codex-" + case + "-"))
+def run_case(case, terminal):
+    # Short canonical paths avoid macOS Unix-socket limits and /tmp aliases
+    # disagreeing with the agent's trusted-project cwd.
+    root = pathlib.Path(tempfile.mkdtemp(prefix="pm-input-", dir="/tmp")).resolve()
     home, evidence = root / "home", root / "evidence"
     work, ch = home / "work", home / ".codex"
     work.mkdir(parents=True)
-    ch.mkdir(mode=0o700)
+    if codex:
+        ch.mkdir(mode=0o700)
     evidence.mkdir()
     bin_dir = root / "bin"
     bin_dir.mkdir()
     for name, path in {"tmux-a2a-postman": postman, "codex": codex, "tmux": shutil.which("tmux")}.items():
-        (bin_dir / name).symlink_to(path)
+        if path:
+            (bin_dir / name).symlink_to(path)
     cross, approval = case in ["parent-child", "child-parent"], case in ["approval", "rejected"]
     roles = ["orchestrator", "approver" if approval else "worker"]
     initiator = "worker" if case == "child-parent" else "orchestrator"
@@ -67,7 +75,7 @@ def run_case(case):
                       "  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n---\n" + config)
         configs[role].write_text(config)
     trace = []
-    model = ModelFixture(recipient, trace) if args.mode == "mock" else None
+    model = ModelFixture(recipient, trace) if codex and args.mode == "mock" else None
     socket = root / "tmux.sock"
     env = dict(os.environ, HOME=str(home), CODEX_HOME=str(ch), XDG_STATE_HOME=str(root / "state"),
                PATH=str(bin_dir) + ":" + os.environ["PATH"], TERM="tmux-256color",
@@ -86,18 +94,21 @@ def run_case(case):
     if model:
         settings = ('model_provider = "postman_smoke"\n' + settings + '\n[model_providers.postman_smoke]\n'
                     'name = "Postman smoke fixture"\nwire_api = "responses"\nrequires_openai_auth = false\nbase_url = ' + json.dumps(model.url) + '\n')
-    (ch / "config.toml").write_text(settings)
+    if codex:
+        (ch / "config.toml").write_text(settings)
     tm = ["tmux", "-u", "-S", str(socket)]
     started, panes = False, {}
     nonces = {role: uuid.uuid4().hex for role in roles}
-    report = {"case": case, "mode": args.mode, "baseline": args.baseline, "root": str(root),
-              "codex_version": subprocess.check_output([codex, "--version"], env=env, text=True).strip()}
+    report = {"case": case, "agent": args.agent, "terminal": terminal, "mode": args.mode, "baseline": args.baseline, "root": str(root)}
+    if codex:
+        report["codex_version"] = subprocess.check_output([codex, "--version"], env=env, text=True).strip()
 
     def tmux(*commands):
         return subprocess.check_output(tm + list(commands), env=env, text=True).strip()
 
     def wait_for(description, check):
         end = time.monotonic() + args.timeout
+        next_probe = 0
         while time.monotonic() < end:
             errors = list(evidence.glob("*.error.txt"))
             if errors:
@@ -105,6 +116,11 @@ def run_case(case):
             found = check()
             if found:
                 return found
+            if time.monotonic() >= next_probe:
+                for role, pane in panes.items():
+                    if tmux("display-message", "-p", "-t", pane, "#{pane_dead}") == "1":
+                        raise RuntimeError(role + " exited before " + description)
+                next_probe = time.monotonic() + 0.5
             time.sleep(0.1)
         raise RuntimeError("timed out: " + description)
 
@@ -121,7 +137,7 @@ def run_case(case):
 
     def verify_proof(proof, ready):
         role = proof["role"]
-        if proof["thread_id"] != ready[role]["thread_id"] or proof["context_nonce"] != nonces[role]:
+        if proof["conversation_id"] != ready[role]["conversation_id"] or proof["context_nonce"] != nonces[role]:
             raise RuntimeError("recipient conversation changed")
         raw = pathlib.Path(proof["archive"]).read_bytes()
         if hashlib.sha256(raw).hexdigest() != proof["full_archive_sha256"]:
@@ -147,22 +163,22 @@ def run_case(case):
                       "Do not edit project files or use external services. Run python3 " + shlex.quote(recipient) + " setup " + nonces[role] +
                       ". Then wait for Postman notifications in THIS conversation. For each notification, run python3 " + shlex.quote(recipient) +
                       " <exact-notified-message-id> " + nonces[role] + ". The helper POPs, reads the complete archive and sends the correlated test reply. Do not poll.")
-            # Match vde-layout's --yolo/no-daemon/no-alt-screen launch only in this private fixture.
-            launch = ["env", "POSTMAN_SMOKE_ROLE=" + role, "POSTMAN_CONFIG=" + str(configs[role]), codex,
-                      "--no-daemon", "--no-alt-screen", "--model", args.model, "--dangerously-bypass-approvals-and-sandbox", prompt]
+            launch = ["env", "POSTMAN_SMOKE_ROLE=" + role, "POSTMAN_CONFIG=" + str(configs[role]),
+                      "POSTMAN_SMOKE_CONVERSATION=" + uuid.uuid4().hex]
+            if codex:
+                # Real vde-layout-style Codex; transport is still ordinary tmux input.
+                launch += [codex, "--no-daemon", "--no-alt-screen", "--model", args.model,
+                           "--dangerously-bypass-approvals-and-sandbox", prompt]
+            else:
+                launch += [shutil.which("python3"), "-u", str(pathlib.Path(__file__).with_name("terminal_agent.py")), nonces[role], terminal]
             tmux("respawn-pane", "-k", "-t", pane, "exec " + shlex.join(launch))
             path = evidence / (role + ".ready.json")
             wait_for(role + " setup", lambda p=path: p.exists() and p.stat().st_size)
             ready[role] = json.loads(path.read_text())
-            print(json.dumps({"event": "recipient_ready", "case": case, "role": role, "thread_id": ready[role]["thread_id"]}), flush=True)
+            print(json.dumps({"event": "recipient_ready", "case": case, "role": role, "conversation_id": ready[role]["conversation_id"]}), flush=True)
         report["conversations"] = ready
-        draft = "UNSUBMITTED_DRAFT_" + uuid.uuid4().hex
-        tmux("send-keys", "-t", panes[receiver], "-l", draft)
         if case == "disabled":
-            registration = list((root / "state").glob("**/notifiers/" + receiver + ".json"))
-            if len(registration) != 1:
-                raise RuntimeError("expected exactly one recipient registration")
-            registration[0].unlink()
+            tmux("copy-mode", "-t", panes[receiver])
         if case == "busy":
             wait_for("recipient busy in a real Codex tool", lambda: (evidence / "busy").exists())
         if approval:
@@ -196,7 +212,7 @@ def run_case(case):
             if args.baseline or case == "disabled":
                 if sends[0]["notice"]["status"] != "unavailable":
                     raise RuntimeError("negative control unexpectedly accepted notification")
-                time.sleep(12)  # Longer than Codex's native 10-second external-queue check.
+                time.sleep(0.5)  # No event-driven receiver action may occur without terminal input.
                 if list(evidence.glob("*.claim.*.json")):
                     raise RuntimeError("recipient acted without a working notification route")
                 inboxes = list((root / "state").glob("**/inbox/" + sends[0]["message"]["id"] + ".md"))
@@ -209,7 +225,7 @@ def run_case(case):
                 if case == "busy":
                     time.sleep(1)
                     if list(evidence.glob("*.claim.*.json")):
-                        raise RuntimeError("busy Codex unexpectedly ran another recipient tool")
+                        raise RuntimeError("busy recipient unexpectedly handled another notification")
                     (evidence / "release").touch()
                     report["queued_while_busy"] = True
                 wait_for("notification-driven rally", lambda: len(list(evidence.glob("*.claim.*.json"))) == 4)
@@ -227,10 +243,6 @@ def run_case(case):
                 if len(visited) != 4:
                     raise RuntimeError("duplicate or missing notification claim")
                 report["claims"] = proofs
-        screen = tmux("capture-pane", "-p", "-t", panes[receiver])
-        if draft not in screen.replace("\n", ""):
-            raise RuntimeError("Codex composer draft was not preserved")
-        report["draft_preserved"] = True
         report["result"] = "pass"
     except Exception as error:
         report["result"], report["error"] = "failed", str(error)
@@ -243,16 +255,24 @@ def run_case(case):
         if model:
             model.close()
         report["model_fixture_trace"] = trace
+        if codex and args.mode == "mock" and report["result"] != "pass":
+            report["runtime_logs"] = {p.name: p.read_text(errors="replace")[-4000:]
+                                      for p in (ch / "log").glob("*.log")}
         (root / "report.json").write_text(json.dumps(report, indent=2))
         print(json.dumps({"case": case, "result": report["result"], "report": str(root / "report.json")}), flush=True)
         if report["result"] != "pass":
-            print(json.dumps({"error": report.get("error"), "screens": {r: s[-4000:] for r, s in report.get("screens", {}).items()}}), flush=True)
+            print(json.dumps({"error": report.get("error"), "screens": {r: s[-4000:] for r, s in report.get("screens", {}).items()},
+                              "runtime_logs": report.get("runtime_logs", {})}), flush=True)
     return report
 
 
 reports = []
-for selected in CASES if args.case == "all" else [args.case]:
-    reports.append(run_case(selected))
+terminals = ["plain", "bracketed"] if args.terminal == "both" and not codex else ["bracketed" if codex else args.terminal]
+for terminal in terminals:
+    for selected in CASES if args.case == "all" else [args.case]:
+        reports.append(run_case(selected, terminal))
+        if reports[-1]["result"] != "pass":
+            break
     if reports[-1]["result"] != "pass":
         break
 output = args.output or pathlib.Path(reports[0]["root"]) / "suite.json"

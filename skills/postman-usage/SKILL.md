@@ -14,18 +14,17 @@ description: |
 
 ## 1. Claim and read mail
 
-For an existing Codex conversation, execute `register-notifier --runtime codex`
-once from that conversation's tool context. Native CODEX_THREAD_ID binds the
-recipient; re-register after `/new`, switching/resuming conversations, or
-restarting. Keep its role pane title stable (`tui.terminal_title = []`). Codex's
-native queue activates that same conversation when idle, including
-`--no-daemon`; notices can take a ten-second watcher interval. No composer input
-is submitted. See [recipient setup](../../README.md#1-install-and-configure).
+A genuine pane notification uses `<!-- message start -->` /
+`<!-- end of message -->` and says `You've got mail:` with an exact mail
+filename. The foreground sender pastes it into your existing agent input and
+submits with `C-m`, as in the original workflow. This is common to Codex, Claude
+Code and local LLM consoles; no model API, thread ID, registration or shell hook
+is required.
 
-On a genuine Postman notification, POP the exact notified message ID, then
-read the full archive and follow the existing role contract. Optional Bash
-recipients use `notifier-script` and an executable handler instead; existing
-Claude interactive TUI activation remains unsupported.
+On that notification, POP the exact notified ID, read the complete archive, and
+follow the existing role contract. Keep the native pane title bound to your
+configured role. See
+[notification setup](../../README.md#1-install-and-configure).
 
 For manual receipt or an explicit known-mail trigger, use:
 

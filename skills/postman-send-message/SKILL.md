@@ -41,12 +41,13 @@ post-operation self-state separately. Notification failure does not undo a
 committed delivery. A failed or uncertain invocation is not permission for a
 blind resend; retain its identifiers and inspect the recorded operation.
 
-Each receiving Codex conversation must register its own native queue with
-`register-notifier --runtime codex`, including senders awaiting replies and
-reviewers. Optional Bash automation has a separate Readline setup.
-`notice.status=accepted` proves only native queue/key acceptance, never POP or
-response. Missing/stale setup reports `unavailable`; ambiguous enqueue reports
-`unknown` and is not replayed. Do not start a daemon or submit composer input.
+The foreground sender pastes the notification into the existing recipient
+agent's tmux input and submits it with `C-m`. This transport is shared by all
+agent runtimes, including the sender receiving a reply and the command reviewer.
+No notifier registration, model-specific API or Postman daemon is needed.
+`notice.status=accepted` proves tmux paste/key acceptance, never POP or
+response. Unavailable targets report `unavailable`; an ambiguous attempt reports
+`unknown` and is never replayed. Delivery remains committed in both cases.
 
 Unrelated sends and POP do not close required replies. Verify exact fill or
 unresolved state in the returned output; missing state is unknown.

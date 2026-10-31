@@ -14,9 +14,10 @@ Cross-session mail uses session:node for a declared direct parent/child
 interface. Replies use the original from_session:from. Local mail uses from.
 No directory ancestry or same-named role authorizes a cross-session route.
 
-Set up receiving roles with help register-notifier. Codex notices enter the existing
-conversation; it POPs the notified ID. Optional Bash automation uses Readline. Notice acceptance, POP claim,
-full body read, and response are separate facts. No polling or daemon is needed.
+The sender pastes a notification into the existing recipient agent's tmux input
+and submits C-m. This transport is shared by all agent types, with no model API
+or notifier registration. Notice acceptance, POP, full read and reply are
+separate facts. No polling loop or Postman daemon is needed.
 
 Each Markdown archive starts with a one-line JSON HTML-comment envelope,
 then a blank line and literal body. POP returns markdown_absolute_path and

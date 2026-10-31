@@ -70,63 +70,45 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --s
 Use `--agent claude-code` for Claude Code. The skills explain safe sending,
 mailbox operation, and configuration auditing respectively.
 
-For existing **Codex CLI conversations** (tested with 0.162.1 and 0.163.0),
-start Codex in each role's tmux pane at the workspace root. Keep its native
-pane title stable with this Codex configuration:
+Start the agents in tmux panes titled with their configured roles. The same
+notification transport serves Codex, Claude Code and local LLM consoles: after
+mail commits, Postman pastes a short notification into the recipient's existing
+input field and submits it with `C-m`. The recipient then POPs the exact mail,
+reads its full archive, and replies through ordinary Postman commands.
 
-```toml
-[tui]
-terminal_title = []
-```
+This preserves the original pane-notification workflow. No model-specific API,
+thread ID, recipient registration, shell hook, or resident Postman process is
+required. The named tmux buffer, paste, short input-processing delay, and submit
+run in one bounded foreground command list. Independent sends to one recipient
+are serialized so their notification text cannot mix.
 
-Then have **each running Codex conversation execute** this once as a tool:
+Agents must accept terminal text and `C-m` and retain their configured role
+pane titles. Configure title updates in the agent if needed; for Codex,
+`tui.terminal_title = []` preserves vde-layout's role titles. The agent's own
+sandbox, tool permissions and model authentication remain its responsibility.
+An ordinary shell prompt or tmux copy mode reports notification unavailable
+while leaving the committed mail intact. Start the role's agent console first.
 
-```sh
-tmux-a2a-postman register-notifier --runtime codex
-```
+As with the original pane input, notification text enters the current composer.
+Postman does not save/restore human drafts or claim exclusive control of an
+agent's input editor. Use the role panes for the agent's automated mail flow.
 
-An explicit absolute `--postman-md` path is also supported. Registration uses
-Codex's own `CODEX_THREAD_ID`, `CODEX_HOME` and executable, together with the
-verified native tmux binding. Do not run it from a separate shell or invent a
-thread ID. Register again after `/new`, switching/resuming conversations, or
-restarting the recipient. All receiving roles, including the requester and
-reviewer, need registration. CODEX_HOME must be a private directory owned by
-the user. Codex sandbox/approval settings must allow the CLI to access its
-local tmux socket, workspace state and Codex home.
-
-Notifications enter **that existing conversation's native Codex input queue**.
-Codex retains its history and processes the notice when idle; its external queue
-watcher currently checks every ten seconds. This works with
-`--no-daemon --no-alt-screen`, as used by vde-layout. Postman starts a
-short-lived `codex app-server --stdio` only to read thread metadata and enqueue
-the notice; it exits immediately afterward. It never creates/resumes another
-conversation, starts a model turn itself, or submits typed composer input.
-Installed skills instruct the recipient to POP the notified ID, read the full
-archive, and reply. Claude's existing interactive TUI currently has no
-notification adapter.
-
-For deterministic Bash automation, the optional `notifier-script` integration
-remains available; see
-[notification design](docs/design/notification.md#3-optional-bash-automation).
-The former fresh-conversation `codex exec` handler is removed: use native Codex
-registration to retain the role's conversation.
-
-To verify the real Codex/tmux path without authentication or paid model access:
+Verify the complete transport without AI models, API accounts or Codex:
 
 ```sh
-nix run .#codex-notification-smoke -- --case all
+nix run .#notification-smoke -- --case all
 ```
 
-The local model fixture supplies fixed tool calls; **real Codex** accepts
-notifications and runs the recipient's POP/read/reply commands. Tests cover
-rallies, busy recipients, concurrent arrivals, parent/child routes, approval and
-rejection, and a disabled-notification control. See
-[Contributing](CONTRIBUTING.md) for individual cases, reports and optional
-live-model execution.
+Deterministic terminal agents receive the actual pasted text and submit key,
+then POP, read through EOF, and reply. Sixteen cases cover plain line input and
+bracketed-paste input, including rallies, busy receivers, concurrent messages,
+parent/child routes, approval/rejection, and blocked notification controls.
+An additional test uses the real Codex TUI with fixed local model responses
+through this **same tmux input path**. See [Contributing](CONTRIBUTING.md).
 
 The commands use only Markdown topology and the XDG state root. Old Postman
 daemon commands, daemon RPC, Postman TOML configuration, and legacy root/lock
-gates are removed. The first send, POP, notifier registration, or execution
+gates are removed. The first send, POP, or execution
 creates private state directories as needed. Initial `get-status` is read-only
 and reports unknown if state is missing; it does not require startup or
 initialization.
@@ -147,10 +129,10 @@ tmux-a2a-postman get-status
 `send-heredoc` reads literal quoted-heredoc stdin, verifies the local edge, then
 synchronously publishes separate private receiver-inbox and sender-sent copies.
 Its JSON includes the committed `message`, file-derived `self` state, and a
-separate `notice` result. The notification path uses the recipient's registered
-runtime adapter. `notice.status=accepted` means Codex durably queued the notice
-(or tmux accepted the optional Bash key); only POP receipts prove claims, and
-exact replies prove responses. Missing/stale setup produces
+separate `notice` result. The notification path uses the common
+tmux input transport. `notice.status=accepted` means tmux accepted the
+notification paste and submit key; only POP receipts prove claims, and exact
+replies prove responses. Unavailable or blocked input produces
 `notice.status=unavailable`; transport ambiguity produces `unknown`.
 Notification failure never reverses committed mail. Sending waits only for
 bounded delivery and notification work, never for POP, a reply, or completion.
@@ -199,9 +181,8 @@ to stderr. A nonzero Bash exit is reported as `exited`. The wrapper coordinates
 review and audit; it does not sandbox Bash.
 
 After the approval request commits, `execution.notice` separately reports
-the notification outcome through the same registered runtime route. Register
-the reviewer's existing conversation and have it read the full request and reply
-with the exact decision.
+the notification outcome through the same tmux input route. The existing
+reviewer receives the hint, reads the full request and sends the exact decision.
 A notification failure never grants approval or creates another request. The
 waiting foreground wrapper claims its own exact decision, so the blocked
 requester model does not have to run POP.
