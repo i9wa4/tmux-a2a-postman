@@ -111,6 +111,25 @@
         in
         {
           apps = {
+            codex-notification-smoke = {
+              type = "app";
+              program = "${
+                pkgs.writeShellApplication {
+                  name = "codex-notification-smoke";
+                  runtimeInputs = [
+                    pkgs.python3
+                    pkgs.tmux
+                  ];
+                  text = ''
+                    exec python3 ${./scripts/validation}/codex-notification-smoke.py \
+                      --postman ${config.packages.default}/bin/tmux-a2a-postman \
+                      --codex ${pkgs.codex}/bin/codex "$@"
+                  '';
+                }
+              }/bin/codex-notification-smoke";
+              meta.description = "Test real Codex notification rallies with a deterministic local model.";
+            };
+
             update = {
               type = "app";
               program = "${pkgs.writeShellScriptBin "update" ''
@@ -253,6 +272,23 @@
           };
 
           # nix develop
+          checks.codex-notification =
+            pkgs.runCommand "codex-notification"
+              {
+                nativeBuildInputs = [
+                  pkgs.python3
+                  pkgs.tmux
+                  pkgs.bash
+                ];
+              }
+              ''
+                mkdir -p $out
+                python3 ${./scripts/validation}/codex-notification-smoke.py \
+                  --postman ${config.packages.default}/bin/tmux-a2a-postman \
+                  --codex ${pkgs.codex}/bin/codex --case all --mode mock \
+                  --output $out/report.json
+              '';
+
           devShells = {
             default = pkgs.mkShell {
               buildInputs = commonDevPackages ++ goDevPackages;

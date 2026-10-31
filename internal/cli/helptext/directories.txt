@@ -4,7 +4,8 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman/
   locks/<workspace>.lock           short interprocess workspace lock
   <workspace>/workspace.json      canonical original HOME-relative identity
   <workspace>/runtime/binding.json   replaceable native tmux binding
-  <workspace>/runtime/bash-notifiers/<role>.json   recipient-owned hook binding
+  <workspace>/runtime/notifiers/<role>.json   recipient-owned runtime binding
+  <workspace>/runtime/notices/<id>.json        bounded notice attempt/receipt
   <workspace>/agents/<role>/
     draft/ inbox/ read/ sent/ failed/   independent private Markdown copies
     read/<message-id>.pop.json     durable POP claim receipt

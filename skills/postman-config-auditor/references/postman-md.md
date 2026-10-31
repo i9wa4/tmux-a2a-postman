@@ -72,11 +72,13 @@ The sessions need different workspace roots below HOME.
 
 ## 3. Recipient setup
 
-Every receiving role needs the Bash/Readline integration emitted by
-`notifier-script`, sourced in its own dedicated Bash pane. See
-[README](../../../README.md#1-install-and-configure). A fresh shell must
-register itself again. Missing/stale notification setup does not prevent
-durable mail publication and does not grant command approval.
+Each receiving Codex conversation must execute
+`register-notifier --runtime codex` from its own tool context. Keep role pane
+titles stable with Codex's `tui.terminal_title = []`, and re-register after
+conversation changes/restarts. See
+[README](../../../README.md#1-install-and-configure). Optional dedicated Bash
+automation uses `notifier-script`. Missing/stale registration leaves mail
+durable and never grants command approval.
 
 [Agent Runtime Feature Differences](../../../docs/agent-runtime-feature-differences.md)
 is the long-term runtime comparison; do not duplicate it here.

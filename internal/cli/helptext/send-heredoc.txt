@@ -22,9 +22,9 @@ configured role; the recipient must be a configured outgoing edge.
 
 On success, separate private receiver-inbox and sender-sent copies are
 durable. JSON status is sent and includes message, mandatory file-derived
-self, and a separate notice outcome. The default route uses the registered
-Bash/Readline hook (see help register-notifier). accepted means the key was
-queued, not POP or reply. Missing/stale setup reports notice.status=unavailable;
+self, and a separate notice outcome. The route uses the registered recipient runtime
+(see help register-notifier). accepted means the native Codex notice or optional
+Bash key was queued, not POP or reply. Missing/stale setup reports notice.status=unavailable;
 transport ambiguity reports unknown. This never rolls back mail. Send does
 not wait for recipient POP, reply, or task completion.
 An uncertain send or notice is not permission for a blind retry.

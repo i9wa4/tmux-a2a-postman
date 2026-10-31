@@ -1,7 +1,26 @@
-Recipient setup — Bash/Readline notification
+Recipient setup — existing Codex conversation or optional Bash automation
 
-In a dedicated interactive Bash tmux pane titled with its configured role:
+From each existing Codex conversation, execute as a tool:
+  tmux-a2a-postman register-notifier --runtime codex
 
+Options: --runtime codex|bash (default codex), --config or --postman-md
+absolute path. No positional arguments. Codex CLI 0.162.1/0.163.0 are tested.
+
+Codex supplies CODEX_THREAD_ID and CODEX_HOME; do not invent IDs or register
+from a separate shell. Its executable must be on PATH and CODEX_HOME must be
+private. The registered thread cwd must match the native workspace root.
+Keep Codex's tui.terminal_title=[] to preserve configured role pane titles.
+Register again after /new, switching/resuming conversations or restarting.
+Register senders waiting for replies and reviewers as well as workers.
+
+Notifications enter the existing conversation's native input queue. Codex's
+own idle watcher currently checks every ten seconds, including --no-daemon.
+Busy recipients consume later. The short-lived stdio helper exits after queue
+insertion. No thread/turn is started/resumed by Postman and no composer input
+is submitted. The recipient must POP the notified ID, fully read the archive,
+and send any exact reply. Codex's tool sandbox/approval policy still applies.
+
+For optional dedicated interactive Bash automation:
   export POSTMAN_BIN=/absolute/path/to/tmux-a2a-postman
   export POSTMAN_CONFIG=/absolute/path/to/postman.md
   export POSTMAN_HANDLER=/absolute/path/to/recipient-handler
@@ -11,22 +30,12 @@ In a dedicated interactive Bash tmux pane titled with its configured role:
   rm -f "$postman_setup"
   unset postman_setup
 
-Use bashInteractive on Nix; the build-time bash package has no Readline.
-The regular setup file works without /dev/fd process substitution.
+Use bashInteractive on Nix. The setup selects Emacs Readline, reserves Ctrl-x
+Ctrl-p and calls register-notifier --runtime bash directly from that shell.
+It retains pending input, POPs once and passes JSON to POSTMAN_HANDLER on stdin.
+The handler fully reads markdown_absolute_path and sends any exact reply.
+Never read terminal stdin. Re-source after shell restart.
 
-notifier-script prints the setup shipped in this binary. Source it once in
-that recipient shell (or from its Bash rcfile). It selects Emacs Readline,
-reserves Ctrl-x Ctrl-p, and calls register-notifier directly from Bash.
-register-notifier accepts --config or --postman-md and no positional args.
-It binds only the calling role and the native pane/PID incarnation.
-
-A notification queues that key sequence, without Enter or message text.
-The Readline hook preserves pending input, calls POP once, and passes its
-JSON to POSTMAN_HANDLER on stdin. The handler must read the full archived
-Markdown through EOF and send any exactly correlated reply. It must never
-read the terminal. No polling loop or Postman background process is needed.
-
-The supported recipient host is dedicated Bash with this binding, including
-a handler that invokes codex exec. An existing Codex/Claude interactive TUI
-cannot use this Bash hook. Missing or stale setup reports unavailable;
-accepted means the key was queued, not that POP or reply was observed.
+accepted proves queue/key acceptance only, not POP or response. Missing/stale
+setup is unavailable; ambiguous enqueue is unknown and must not be replayed.
+Durable mail remains committed. Existing Claude TUI activation is unsupported.

@@ -25,6 +25,43 @@ adapter case proves no receipt or reply is fabricated. Containers must reap
 orphan processes (for example Docker `--init`), so tmux cleanup can verify
 server exit. Remove only owned fixtures; never kill unrelated tmux servers.
 
+The **real Codex** suite uses a local Responses API fixture that returns fixed
+tool calls, so there are no credentials, paid model calls, or model reasoning
+requirements. Actual Codex accepts native notices and executes the recipient
+helper in the same conversation. The controller never POPs or replies.
+
+```sh
+nix run .#codex-notification-smoke -- --case all --output /tmp/postman-report.json
+nix run .#codex-notification-smoke -- --case concurrent
+# Or use installed tools without Nix:
+python3 scripts/validation/codex-notification-smoke.py \
+  --postman "$(command -v tmux-a2a-postman)" --codex "$(command -v codex)" --case all
+```
+
+Cases: `rally`, `busy`, `concurrent`, `parent-child`, `child-parent`,
+`approval`, `rejected`, `disabled`. The default runs all; `nix flake check`
+includes the same suite. Checks assert original thread/context, full-file
+digests, exact replies, unique claims, bounded send, busy queueing and preserved
+unsubmitted drafts. Go fault tests cover duplicate/concurrent same-message
+notices, wrong runtime identity, disconnect, mismatched receipts, timeout and
+short-lived helper reaping.
+
+The private fixture matches vde-layout's `--yolo --no-daemon --no-alt-screen`
+Codex launch. It creates its own HOME, CODEX_HOME, tmux socket, state and model
+endpoint. Its known tool commands run in that fixture. Production Codex policy
+is not changed by registration. Reports include runtime versions, thread and
+mail IDs, claims, hashes, model-fixture trace and pane transcripts; temporary
+evidence remains at the printed path. Only owned tmux servers are killed.
+
+`--mode live` explicitly uses the installed Codex authentication selector and
+chosen `--model` with the same isolated launch; it makes real model calls and
+fails if authentication/model/tool execution fails. There is no fallback from
+live to mock. Default mock mode never reads or copies authentication. To compare
+old main, build its binary separately and run `--case rally --baseline` against
+it: durable delivery must remain unread for more than the native queue watcher
+interval, with no recipient action. The disabled case tests the same negative
+control on the new binary by removing only fixture registration.
+
 Go version policy:
 
 - Keep `go.mod` at major.minor (for example `go 1.26`)

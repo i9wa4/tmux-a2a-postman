@@ -26,4 +26,4 @@ _postman_receive() {
   printf '%s\n' "$result" | "$POSTMAN_HANDLER"
 }
 bind -x '"\C-x\C-p":_postman_receive' || return
-"$POSTMAN_BIN" register-notifier --postman-md "$POSTMAN_CONFIG"
+"$POSTMAN_BIN" register-notifier --runtime bash --postman-md "$POSTMAN_CONFIG"

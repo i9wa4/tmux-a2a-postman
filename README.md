@@ -70,56 +70,66 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --s
 Use `--agent claude-code` for Claude Code. The skills explain safe sending,
 mailbox operation, and configuration auditing respectively.
 
-Set up each receiving role in a dedicated **interactive Bash** pane. Set its
-pane title to the role, configure an executable handler, then source the
-Readline integration bundled with the installed binary:
+For existing **Codex CLI conversations** (tested with 0.162.1 and 0.163.0),
+start Codex in each role's tmux pane at the workspace root. Keep its native
+pane title stable with this Codex configuration:
 
-```sh
-export POSTMAN_BIN="$(command -v tmux-a2a-postman)"
-export POSTMAN_CONFIG="$HOME/.config/tmux-a2a-postman/postman.md"
-export POSTMAN_HANDLER="$HOME/bin/postman-handler"
-postman_setup="$(mktemp)" &&
-  "$POSTMAN_BIN" notifier-script > "$postman_setup" &&
-  source "$postman_setup"
-rm -f "$postman_setup"
-unset postman_setup
+```toml
+[tui]
+terminal_title = []
 ```
 
-Use `bashInteractive` on Nix: the build-time `bash` package has no Readline.
-The temporary setup file also works without `/dev/fd` process substitution.
+Then have **each running Codex conversation execute** this once as a tool:
 
-This selects Emacs Readline and reserves Ctrl-x Ctrl-p. Notifications invoke
-one POP and pass the result JSON to the handler on stdin. The handler must read
-`markdown_absolute_path` completely, then handle the mail and send any exact
-reply. It must use piped stdin, never the terminal. Existing typed input stays
-in the composer and is never submitted by the notification. Source this setup
-from that pane's Bash rcfile to restore it on shell restart.
+```sh
+tmux-a2a-postman register-notifier --runtime codex
+```
 
-[integrations/bash/codex-handler.py](integrations/bash/codex-handler.py) is a
-ready-to-use executable handler for `codex exec --sandbox workspace-write`. Copy
-it to the handler path, make it executable, and install/configure Codex
-normally. The handler runs a fresh noninteractive turn with the complete
-archived mail and reply instructions. Codex's own sandbox and approval policy
-still apply. For a no-model smoke check, use the executable
-[integrations/bash/receipt-handler.py](integrations/bash/receipt-handler.py)
-as the handler on both sides. It fully reads the archive and returns a digest
-receipt with exact correlation; it never claims task completion.
-Python 3 is needed by these example handlers. There is
-no paid model requirement for transport tests.
+An explicit absolute `--postman-md` path is also supported. Registration uses
+Codex's own `CODEX_THREAD_ID`, `CODEX_HOME` and executable, together with the
+verified native tmux binding. Do not run it from a separate shell or invent a
+thread ID. Register again after `/new`, switching/resuming conversations, or
+restarting the recipient. All receiving roles, including the requester and
+reviewer, need registration. CODEX_HOME must be a private directory owned by
+the user. Codex sandbox/approval settings must allow the CLI to access its
+local tmux socket, workspace state and Codex home.
 
-This integration supports a Bash-hosted recipient, including the Codex handler;
-it does not inject into an existing Codex or Claude interactive TUI. All
-receiving roles, including the sender waiting for a reply and the reviewer,
-need the setup. Keep the Bash recipient at its prompt while waiting for mail.
-A busy handler may defer keyboard processing until it returns; known remaining
-unread mail in `self` is an explicit trigger for further POP, never a reason to
-poll while idle.
+Notifications enter **that existing conversation's native Codex input queue**.
+Codex retains its history and processes the notice when idle; its external queue
+watcher currently checks every ten seconds. This works with
+`--no-daemon --no-alt-screen`, as used by vde-layout. Postman starts a
+short-lived `codex app-server --stdio` only to read thread metadata and enqueue
+the notice; it exits immediately afterward. It never creates/resumes another
+conversation, starts a model turn itself, or submits typed composer input.
+Installed skills instruct the recipient to POP the notified ID, read the full
+archive, and reply. Claude's existing interactive TUI currently has no
+notification adapter.
 
-The commands use only Markdown topology and the XDG state root. Old daemon
-commands, RPC, TOML configuration, and legacy root/lock gates are removed.
-The first send, POP, notifier registration, or execution creates private
-state directories as needed. Initial `get-status` is read-only and reports
-unknown if state is missing; it does not require startup or initialization.
+For deterministic Bash automation, the optional `notifier-script` integration
+remains available; see
+[notification design](docs/design/notification.md#3-optional-bash-automation).
+The former fresh-conversation `codex exec` handler is removed: use native Codex
+registration to retain the role's conversation.
+
+To verify the real Codex/tmux path without authentication or paid model access:
+
+```sh
+nix run .#codex-notification-smoke -- --case all
+```
+
+The local model fixture supplies fixed tool calls; **real Codex** accepts
+notifications and runs the recipient's POP/read/reply commands. Tests cover
+rallies, busy recipients, concurrent arrivals, parent/child routes, approval and
+rejection, and a disabled-notification control. See
+[Contributing](CONTRIBUTING.md) for individual cases, reports and optional
+live-model execution.
+
+The commands use only Markdown topology and the XDG state root. Old Postman
+daemon commands, daemon RPC, Postman TOML configuration, and legacy root/lock
+gates are removed. The first send, POP, notifier registration, or execution
+creates private state directories as needed. Initial `get-status` is read-only
+and reports unknown if state is missing; it does not require startup or
+initialization.
 
 ## 2. Send and receive
 
@@ -134,13 +144,13 @@ tmux-a2a-postman pop
 tmux-a2a-postman get-status
 ```
 
-`send-heredoc` reads literal quoted-heredoc stdin, verifies the local edge,
-then synchronously publishes separate private receiver-inbox and sender-sent
-copies. Its JSON includes the committed `message`, file-derived `self`
-state, and a separate `notice` result. The default notification path queues
-the registered recipient's Readline key without Enter or body text.
-`notice.status=accepted` means the key was queued; only POP receipts prove
-claims, and exact replies prove responses. Missing/stale setup produces
+`send-heredoc` reads literal quoted-heredoc stdin, verifies the local edge, then
+synchronously publishes separate private receiver-inbox and sender-sent copies.
+Its JSON includes the committed `message`, file-derived `self` state, and a
+separate `notice` result. The notification path uses the recipient's registered
+runtime adapter. `notice.status=accepted` means Codex durably queued the notice
+(or tmux accepted the optional Bash key); only POP receipts prove claims, and
+exact replies prove responses. Missing/stale setup produces
 `notice.status=unavailable`; transport ambiguity produces `unknown`.
 Notification failure never reverses committed mail. Sending waits only for
 bounded delivery and notification work, never for POP, a reply, or completion.
@@ -189,8 +199,9 @@ to stderr. A nonzero Bash exit is reported as `exited`. The wrapper coordinates
 review and audit; it does not sandbox Bash.
 
 After the approval request commits, `execution.notice` separately reports
-the notification outcome through the same Bash/Readline route. Configure the
-reviewer's handler to read the full request and reply with the exact decision.
+the notification outcome through the same registered runtime route. Register
+the reviewer's existing conversation and have it read the full request and reply
+with the exact decision.
 A notification failure never grants approval or creates another request. The
 waiting foreground wrapper claims its own exact decision, so the blocked
 requester model does not have to run POP.

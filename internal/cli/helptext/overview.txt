@@ -9,7 +9,7 @@ and an optional command reviewer. Missing or ambiguous identity fails closed.
   get-status    Read own saved-file state without claiming mail
   execute-bash  Run Bash after the configured exact approval protocol
   notifier-script  Print Bash/Readline recipient setup for sourcing
-  register-notifier  Register the recipient shell after installing its hook
+  register-notifier  Register the existing Codex conversation or Bash hook
   version       Print build version JSON
   help [topic]  Show command help
 
@@ -19,4 +19,4 @@ The four workspace commands accept an absolute --config or --postman-md.
 Use quoted heredoc stdin for send-heredoc. Read a complete archived body
 after every successful pop. Bare tmux-a2a-postman prints usage.
 
-Receiving roles need Bash/Readline setup: help register-notifier.
+Receiving roles need runtime registration: help register-notifier.

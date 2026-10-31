@@ -242,7 +242,7 @@ func TestNotificationDisabledCannotDriveRoundTrip(t *testing.T) {
 	proof, _ := f.bashRecipient(t, f.peer, "receiver", f.config)
 	// Delete only the recipient registration; the live recipient remains waiting.
 	name, _ := workspace.Name("~/work")
-	path := filepath.Join(f.stateRoot, name, "runtime", "bash-notifiers", "peer.json")
+	path := filepath.Join(f.stateRoot, name, "runtime", "notifiers", "peer.json")
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}

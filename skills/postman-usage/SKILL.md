@@ -14,12 +14,18 @@ description: |
 
 ## 1. Claim and read mail
 
-The supported host is a dedicated Bash pane with the installed binary's
-`notifier-script` sourced and an executable handler configured. Its genuine
-Readline notification invokes POP and passes JSON to that handler. The handler
-must read the complete archive before handling it; no Enter or body text is
-injected. See [recipient setup](../../README.md#1-install-and-configure).
-An existing interactive Codex/Claude TUI is not a Bash recipient.
+For an existing Codex conversation, execute `register-notifier --runtime codex`
+once from that conversation's tool context. Native CODEX_THREAD_ID binds the
+recipient; re-register after `/new`, switching/resuming conversations, or
+restarting. Keep its role pane title stable (`tui.terminal_title = []`). Codex's
+native queue activates that same conversation when idle, including
+`--no-daemon`; notices can take a ten-second watcher interval. No composer input
+is submitted. See [recipient setup](../../README.md#1-install-and-configure).
+
+On a genuine Postman notification, POP the exact notified message ID, then
+read the full archive and follow the existing role contract. Optional Bash
+recipients use `notifier-script` and an executable handler instead; existing
+Claude interactive TUI activation remains unsupported.
 
 For manual receipt or an explicit known-mail trigger, use:
 

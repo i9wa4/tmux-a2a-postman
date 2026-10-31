@@ -41,10 +41,12 @@ post-operation self-state separately. Notification failure does not undo a
 committed delivery. A failed or uncertain invocation is not permission for a
 blind resend; retain its identifiers and inspect the recorded operation.
 
-The default notification route requires recipient-owned Bash/Readline setup,
-including the sender when waiting for a reply. `notice.status=accepted` proves
-only key acceptance; missing/stale setup reports `unavailable`, and uncertain
-transport reports `unknown`. Do not select a transport flag or start a daemon.
+Each receiving Codex conversation must register its own native queue with
+`register-notifier --runtime codex`, including senders awaiting replies and
+reviewers. Optional Bash automation has a separate Readline setup.
+`notice.status=accepted` proves only native queue/key acceptance, never POP or
+response. Missing/stale setup reports `unavailable`; ambiguous enqueue reports
+`unknown` and is not replayed. Do not start a daemon or submit composer input.
 
 Unrelated sends and POP do not close required replies. Verify exact fill or
 unresolved state in the returned output; missing state is unknown.
