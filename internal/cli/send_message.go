@@ -600,7 +600,10 @@ func runSendHeredocWithContext(ctx commandContext, args []string) error {
 			enterCount = 1
 		}
 		verifyDelay := time.Duration(cfg.EnterVerifyDelay * float64(time.Second))
-		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax, notification.SendToPane)
+		notifyStatus = performCLINotification(paneID, notificationMsg, enterDelay, tmuxTimeout, enterCount, true, verifyDelay, cfg.EnterRetryMax,
+			func(paneID, message string, enterDelay, tmuxTimeout time.Duration, enterCount int, bypassCooldown bool, verifyDelay time.Duration, maxRetries int) error {
+				return notification.SendToPaneWithFilename(paneID, message, filename, enterDelay, tmuxTimeout, enterCount, bypassCooldown, verifyDelay, maxRetries)
+			})
 	}
 	output := sendOutput{
 		Sent:                filename,

@@ -1,5 +1,11 @@
 # Command Approvals
 
+> Legacy daemon-path reference. The four file-first commands in issue #937
+> use `postman.md` topology and an exact mail reply for `execute-bash`;
+> `--label`, `--category`, `--mode`, `--store-command-text`, and
+> `--record-decision` below are not options of that adapter. Use
+> `tmux-a2a-postman help execute-bash` for the active command contract.
+
 `execute-bash` is a wrapper for lightweight command approval choreography. It
 records command metadata, asks for approval through a durable approval thread,
 and applies the configured mode before running `bash -lc`.

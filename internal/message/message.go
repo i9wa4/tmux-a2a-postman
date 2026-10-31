@@ -1442,6 +1442,7 @@ func sendDeliveryNotification(target controlplane.Target, cfg *config.Config, ad
 	}
 	delivery := controlplane.PaneDelivery{
 		Content:        notificationMsg,
+		Filename:       filepath.Base(notificationPath),
 		EnterDelay:     enterDelay,
 		TmuxTimeout:    tmuxTimeout,
 		EnterCount:     cfg.GetNodeConfig(recipientSimpleName).EnterCount,

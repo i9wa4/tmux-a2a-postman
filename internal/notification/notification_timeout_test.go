@@ -75,6 +75,8 @@ func TestSendToPaneChainTimeoutIsNonRetryableAndNotRepasted(t *testing.T) {
 
 	n := NewPaneNotifier(0)
 	n.stderr = timeoutTestDiscardWriter{}
+	n.identify = func(string) (string, error) { return "server/session/pane", nil }
+	n.capture = func(string) (string, error) { return "❯\n", nil }
 
 	// enterCount 2 and verify retries enabled: all would trigger further tmux
 	// invocations if the timeout were treated as a plain retryable failure.

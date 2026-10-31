@@ -43,11 +43,18 @@ func TestDeliverNotificationWithRetryNeverRepastesAfterAmbiguousTimeout(t *testi
 			script := `#!/bin/sh
 echo "$*" >> "$FAKE_TMUX_LOG"
 case "$*" in
+  *display-message*)
+    printf 'server\t123\t456\t$1\t%%7\t789\n'
+    exit 0 ;;
   *paste-buffer*)
     if [ "$FAKE_TMUX_HANG" = chain ]; then while :; do :; done; fi
     exit 0 ;;
   *capture-pane*)
-    printf '❯ You got mail: x.md\n'
+    if grep -q paste-buffer "$FAKE_TMUX_LOG"; then
+      printf "❯ You've got mail: x.md\\n"
+    else
+      printf '❯ \n'
+    fi
     exit 0 ;;
   *send-keys*)
     while :; do :; done ;;

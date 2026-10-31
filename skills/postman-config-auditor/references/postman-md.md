@@ -1,5 +1,15 @@
 # postman.md Format Reference
 
+For the four file-first adapters,
+`internal/config/workspace_topology.go` reads one absolute `postman.md` and its
+bounded role, edge, interface, command-reviewer, and frontmatter
+`workspace_tree` topology for direct parent-child interface routing. It rejects
+unsupported or ambiguous Mermaid statements rather than silently skipping them,
+and does not merge TOML, split nodes, skill catalogs, or daemon PING settings.
+The broader parser and merge rules below describe the retained legacy daemon
+path; use `tmux-a2a-postman help config` for the current four-command topology
+contract.
+
 This reference describes the Markdown format parsed by tmux-a2a-postman. It is
 based on the implementation in `internal/config/markdown.go` and the load order
 in `internal/config/config.go`.
@@ -306,8 +316,9 @@ Important rules:
 - Split `nodes/*.md` files update only non-empty role and template fields.
 - `postman.md` edges replace lower-layer edges only when the parsed edge list is
   non-empty.
-- `workspace_tree` is TOML-only. `postman.md` does not parse or override
-  explicit workspace hierarchy metadata.
+- In the legacy daemon merge path, `workspace_tree` is TOML-only. The four
+  file-first commands instead parse explicit session and parent hierarchy from
+  `postman.md` frontmatter `workspace_tree`; they do not merge daemon TOML.
 - A Mermaid `interface_node` class in the `edges` graph sets `interface_node`
   when frontmatter does not set it. Frontmatter `interface_node` wins within the
   same Markdown file, and postman.md wins over TOML.

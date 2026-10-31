@@ -131,6 +131,7 @@ func (t Target) PostPath(filename string) string {
 
 type PaneDelivery struct {
 	Content        string
+	Filename       string
 	EnterDelay     time.Duration
 	TmuxTimeout    time.Duration
 	EnterCount     int
@@ -500,11 +501,6 @@ func (a TmuxInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDeli
 			return backend.PaneCurrentCommand(context.Background(), multiplexer.TmuxPaneID(paneID))
 		}
 	}
-	sendToPane := a.SendToPane
-	if sendToPane == nil {
-		sendToPane = notification.SendToPane
-	}
-
 	enterCount := notification.ResolveEnterCount(delivery.EnterCount, func() (string, error) {
 		if target.Brain.Runtime != "" && target.Brain.Runtime != BrainRuntimeUnknown {
 			return target.Brain.Runtime, nil
@@ -515,7 +511,14 @@ func (a TmuxInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDeli
 	paneSender := a.PaneSender
 	if paneSender == nil {
 		paneSender = notification.PaneSenderFunc(func(paneDelivery notification.PaneDelivery) error {
-			return sendToPane(
+			if a.SendToPane == nil {
+				return notification.SendToPaneWithFilename(
+					paneDelivery.PaneID, paneDelivery.Message, paneDelivery.Filename, paneDelivery.EnterDelay,
+					paneDelivery.TmuxTimeout, paneDelivery.EnterCount, paneDelivery.BypassCooldown,
+					paneDelivery.VerifyDelay, paneDelivery.MaxRetries,
+				)
+			}
+			return a.SendToPane(
 				paneDelivery.PaneID,
 				paneDelivery.Message,
 				paneDelivery.EnterDelay,
@@ -531,6 +534,7 @@ func (a TmuxInteractiveDeliveryAdapter) Deliver(target Target, delivery PaneDeli
 	return paneSender.DeliverPane(notification.PaneDelivery{
 		PaneID:         target.Hand.Address,
 		Message:        delivery.Content,
+		Filename:       delivery.Filename,
 		EnterDelay:     delivery.EnterDelay,
 		TmuxTimeout:    delivery.TmuxTimeout,
 		EnterCount:     enterCount,

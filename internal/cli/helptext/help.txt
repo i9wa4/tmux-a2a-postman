@@ -5,20 +5,15 @@ Usage:
   tmux-a2a-postman help <topic>
   tmux-a2a-postman <command> --help
 
-Topics:
+File-first topics:
   commands
   config
-  directories
-  messaging
-  start
-  stop
   send-heredoc
-  send
   pop
   get-status
-  get-status-oneline
-  inspect-input
-  inspect-daemon-submit
-  inspect-message
+  execute-bash
   version
-  help
+
+The remaining registered topics describe legacy daemon-backed commands
+during the issue #937 cutover. They do not define flags or output for the
+four file-first commands. Unknown-topic errors list every registered topic.

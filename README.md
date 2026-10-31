@@ -1,565 +1,170 @@
 # tmux-a2a-postman
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/i9wa4/tmux-a2a-postman)
+`tmux-a2a-postman` coordinates local AI coding agents in tmux panes through
+private workspace mail files. Issue #937's file-first command path is under
+development and has not passed its complete acceptance and review gates.
 
-`tmux-a2a-postman` turns tmux panes into a coordinated agent team.
+Any AI coding agent that can run commands in a tmux pane can use the same
+`send-heredoc`, `pop`, `get-status`, and `execute-bash` commands. These four
+commands derive workspace identity from the native tmux server, session and
+pane, then use a configured `postman.md` for roles and Mermaid edges. They do
+not require a running Postman daemon.
 
-Reliable handoffs for AI coding agents, configured in Markdown.
+## 1. Install and configure
 
-Define roles and handoff edges in `postman.md`; the daemon routes local mail
-between matching tmux pane titles and keeps inbox/read state visible with CLI
-commands.
-
-Any AI coding agent that can run commands in a tmux pane can participate;
-postman keeps handoffs local with filesystem-backed inboxes.
-
-Postman is intentionally a thin coordination layer, not a full agent runtime
-or harness. It connects existing terminal processes from the outside, then
-makes their work traceable through mailbox threads, reply-required approval
-threads, journal/projection state, and tmux pane state.
-
-## 1. Concept
-
-```mermaid
-graph TD
-    operator((human\noperator))
-    config["postman.md / postman.toml\nroles, edges, templates"]
-    daemon["postman daemon\nroutes mail\nnotifies panes"]
-    mailbox[("filesystem mailboxes\npost/ inbox/{node}/ read/ dead-letter/")]
-
-    subgraph project_a["tmux session: project A"]
-        a_messenger["messenger\ninterface_node"]
-        a_orchestrator["orchestrator"]
-        a_worker["worker"]
-        a_reviewer["reviewer"]
-
-        a_messenger <--> |brief / status| a_orchestrator
-        a_orchestrator <--> |delegate / report| a_worker
-        a_orchestrator <--> |review request| a_reviewer
-    end
-
-    subgraph project_b["tmux session: project B"]
-        b_messenger["messenger\ninterface_node"]
-        b_orchestrator["orchestrator"]
-        b_worker["worker"]
-        b_reviewer["reviewer"]
-
-        b_messenger <--> |brief / status| b_orchestrator
-        b_orchestrator <--> |delegate / report| b_worker
-        b_orchestrator <--> |review request| b_reviewer
-    end
-
-    operator --> |starts| daemon
-    operator <--> |talks with| a_messenger
-    operator <--> |talks with| b_messenger
-    config --> daemon
-    daemon <--> mailbox
-    daemon -.->|deliver + notify| project_a
-    daemon -.->|deliver + notify| project_b
-    mailbox -.->|pop + inspect| project_a
-    mailbox -.->|pop + inspect| project_b
-```
-
-`postman.md` names the agent roles and the allowed conversation edges. The
-daemon discovers tmux panes by title, routes messages through local files, and
-keeps an archive that agents can inspect later.
-
-Each tmux session is a separate project workspace. `interface_node` marks the
-role the human talks to first. It has no default: leave it out and there is no
-interface node (nothing is exempted, escalated to, or used to narrow the startup
-PING). Mark it with the Mermaid class shown below, the `postman.md` frontmatter
-key `interface_node:`, or `[postman] interface_node` in TOML. The old `ui_node`
-name is not an alias; any `ui_node` form is warned about and ignored. The
-daemon keeps routing, delivery, and archived mail outside the agent panes.
-
-## 2. Why Use It
-
-- Shape agent work in Markdown: `postman.md` is a soft harness for roles,
-  conversation edges, local instructions, escalation rules, and checklists.
-- Keep the hard dependency small: if an AI coding agent can run in a tmux pane
-  and execute commands, it can participate in principle.
-- Trust explicit local state: the daemon tracks delivery, unread/read archives,
-  dead letters, and reply-required slots through files and status commands
-  instead of a hidden workflow engine.
-- Keep command-control rails backend-independent: mailbox and approval threads
-  can record what was requested and accepted across agent CLIs, while OS-level
-  sandboxing and hard enforcement stay with the host or runtime.
-- Avoid missed handoffs: pending replies, status views, and archived Markdown
-  messages help operators and agents catch unresolved tasks before they drift.
-
-## 3. Install
-
-Prerequisites:
-
-- macOS or Linux
-- tmux 3.0 or newer
-- Stable tmux pane titles for agent roles
-
-Postman uses tmux pane titles as node names. Before starting a postman
-session, disable or neutralize terminal title updates in agent CLIs:
-
-- Claude Code: set `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` in the environment
-  used to launch `claude`.
-- Codex CLI: add this to `$CODEX_HOME/config.toml` (`~/.codex/config.toml` by
-  default), or use `/title` to remove title items:
-
-  ```toml
-  [tui]
-  terminal_title = []
-  ```
-
-Install with Go:
+Prerequisites are macOS or Linux, Go, and tmux. Install the binary with:
 
 ```sh
 go install github.com/i9wa4/tmux-a2a-postman@latest
 ```
 
-Or run with Nix:
+For the development branch, create
+`$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or use
+`~/.config/tmux-a2a-postman/postman.md` when XDG_CONFIG_HOME is unset.
+Each of the four commands also accepts an absolute `--config` or
+`--postman-md` path. The default and overrides are independent of the
+caller's current directory. A missing, unreadable, or ambiguous topology
+fails closed.
 
-```sh
-nix run github:i9wa4/tmux-a2a-postman
-```
-
-## 4. Quick Start
-
-After installing the binary, optionally install the packaged agent skills so
-assistants can discover postman commands while working:
-
-For Codex CLI:
-
-```sh
-gh skill install i9wa4/tmux-a2a-postman postman-usage \
-  --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
-  --agent codex --scope user
-```
-
-For Claude Code:
-
-```sh
-gh skill install i9wa4/tmux-a2a-postman postman-usage \
-  --agent claude-code --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-config-auditor \
-  --agent claude-code --scope user
-```
-
-The daemon works without these skills; they only help assistants send first
-messages, inspect live session state, and audit config.
-
-Create tmux panes for a small conversation topology. In postman, the graph is
-the coordination map: nodes are tmux pane titles/agent roles, edges are the
-allowed conversation paths, and `interface_node` marks the role the human talks
-to first. The same graph appears in `postman.md`, so the screenshot and the
-copyable config stay aligned:
-
-```mermaid
-graph LR
-    messenger --- orchestrator
-    orchestrator --- worker
-    orchestrator --- reviewer
-    class messenger interface_node
-    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
-```
-
-````text
-```mermaid
-graph LR
-    messenger --- orchestrator
-    orchestrator --- worker
-    orchestrator --- reviewer
-    class messenger interface_node
-    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
-```
-````
-
-For repeatable agent teams, use
-[yuki-yano/vde-layout](https://github.com/yuki-yano/vde-layout) presets to
-recreate the tmux pane and window layout after starting tmux. Keep vde-layout
-YAML responsible for panes and commands; keep `postman.md` responsible for
-role names, conversation edges, and local instructions. vde-layout is setup
-tooling; tmux remains the hard runtime dependency.
-
-Use this as a complete, copyable `postman.md`. The optional skill catalog YAML
-stays in the same frontmatter header; leave paths commented until the matching
-skill tree exists. Postman treats `~/.codex/skills` and `~/.claude/skills` as
-explicit skill trees; if both exist and are uncommented, both are loaded into
-the same selected catalog. It does not select catalogs by runtime. Duplicate
-skills are deduped by `SKILL.md` frontmatter `name`; when names collide, the
-later `skill_path` entry wins. Omit `inject` for a normal role-context catalog.
-Use a YAML list to reuse one path for both daemon PING catalog targets.
-Markdown under
-`common_template` and node sections is free-form role guidance, so short
-sections can cover identity, boundaries, local conventions, escalation rules,
-or checklists. Only the backtick-wrapped H2 section names and Mermaid edges are
-structural; `### role` sets the short role summary, and other H3 headings are
-ordinary Markdown:
+This is illustrative configuration syntax, not runtime output:
 
 ````markdown
----
-# Optional: after installing packaged skills, uncomment only paths that exist.
-# For PING catalogs, use explicit user-level skill tree paths; postman does not
-# select skill catalogs by runtime. If multiple paths are uncommented, all are
-# included; later entries win duplicate skill names. `inject` may be a scalar
-# or YAML list.
-# skill_path:
-#   - path: ~/.codex/skills
-#     inject:
-#       - ping
-#       - compaction_ping
-#     skills:
-#       - postman-usage
-#       - postman-config-auditor
-#   - path: ~/.claude/skills
-#     inject:
-#       - ping
-#       - compaction_ping
-#     skills:
-#       - postman-usage
-#       - postman-config-auditor
----
-
 ## `edges`
 
 ```mermaid
 graph LR
-    messenger --- orchestrator
     orchestrator --- worker
     orchestrator --- reviewer
-    class messenger interface_node
-    classDef interface_node fill:#e0f2fe
+    class orchestrator interface_node
+    class reviewer command_approver_node
 ```
-
-## `common_template`
-
-You are one role in this local tmux-a2a-postman session.
-
-- Read inbox mail with `tmux-a2a-postman pop`.
-- Send role-to-role mail with `tmux-a2a-postman send-heredoc --to <node>`.
-- Use `DONE` only when assigned work is complete. Use `BLOCKED` when it is not.
-
-## `messenger`
-
-### `role`
-
-Human-facing intake and status relay.
-
-### Intake
-
-Receive the human request, send implementation work to `orchestrator`, and
-relay final DONE or BLOCKED status back to the human. Do not implement code
-locally.
 
 ## `orchestrator`
 
-### `role`
-
-Task coordinator for this session.
-
-### Responsibilities
-
-Break work into clear requests, delegate implementation to `worker`, request
-review from `reviewer` when useful, and report final DONE or BLOCKED status to
-`messenger`.
+Coordinate work and accept evidence.
 
 ## `worker`
 
-### `role`
-
-Primary implementation role.
-
-### Reply Contract
-
-Execute tasks from `orchestrator`. Report DONE with evidence, or BLOCKED with
-the missing requirement or external blocker.
-
-### Boundaries
-
-Keep edits scoped to the request. Report BLOCKED before changing unrelated
-files or expanding scope.
+Implement assigned work and report evidence.
 
 ## `reviewer`
 
-### `role`
-
-Implementation reviewer.
-
-### Quality Bar
-
-Review work requested by `orchestrator`. Report APPROVED when the change is
-ready, or BLOCKED with concrete findings.
+Review command requests and reply with an exact decision.
 ````
 
-Save the file at `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or the
-`~/.config/tmux-a2a-postman/postman.md` fallback.
+Run each role in a tmux pane with its role as the pane title. The parser
+accepts a strict Mermaid subset: `---` declares an edge. Only configured
+adjacent nodes can exchange mail. Other topology sections can hold role
+instructions. `interface_node` is optional; marking a reviewer with
+`command_approver_node` enables blocking command approval.
 
-Start the daemon after writing `postman.md`:
+Packaged Codex or Claude Code skills can be installed with `gh skill install`
+for agent instructions:
 
 ```sh
-tmux-a2a-postman start
+gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --scope user
 ```
 
-After changing `postman.md`, `postman.toml`, or `nodes/*` later, restart the
-daemon so topology, role templates, daemon defaults, and skill catalogs are
-reloaded:
+Use `--agent claude-code` for Claude Code. The skills explain safe sending,
+mailbox operation, and configuration auditing respectively.
 
-Press `q` in the daemon TUI to shut down the running daemon, then start it
-again:
+Before activating the file-first path for an existing installation, identify
+one state root, UID, tmux socket/session, and recipient pane. Inventory and
+disable every old daemon launch path that can reach that mail or approval state
+or that recipient pane, including an explicit `--config` path, launcher-only
+`POSTMAN_HOME`, and alternate `XDG_STATE_HOME` or tmux socket/session settings.
+Verify every such daemon has exited before new writes; check pending mail and
+approval requests first. The file-first path checks that its selected state
+root matches the auto-discovered legacy configuration and uses the legacy lock
+inode for same-root exclusion. Verify the new route with a private recipient
+before switching production delivery. For rollback, stop new writers first,
+then restore the old launcher and route; preserve existing mail and do not
+replay an uncertain send. Installed alternate selectors and migration remain
+tracked separately.
+
+## 2. Send and receive
+
+These commands are illustrative syntax, not a recorded run:
 
 ```sh
-tmux-a2a-postman start
-```
-
-Send a message from an agent pane whose title matches a configured role:
-
-```sh
-tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
-Implement the requested change and report DONE or BLOCKED.
+tmux-a2a-postman send-heredoc --to worker --reply-required <<'POSTMAN_BODY'
+Implement the change and report the result.
 POSTMAN_BODY
-```
 
-When `postman.toml` defines workspace tree hierarchy, `send-heredoc` also
-accepts tree aliases and writes the compiled explicit recipient into the
-message:
-
-```sh
-tmux-a2a-postman send-heredoc --to @parent <<'POSTMAN_BODY'
-Coordinate this project with the configured parent session.
-POSTMAN_BODY
-```
-
-Use `@parent/<node>` to address a specific parent node, or
-`@child/<label-or-session-or-id>` to address a configured child
-representative. Message footers keep the concrete `session:node` recipient and
-add relationship aliases, such as `@parent` or `@child/api`, when they are
-available.
-
-Configured `edges` still authorize sends exactly as before. In addition, a
-direct parent and child session can exchange mail over a derived interface
-edge: set `[postman] interface_node` for the daemon's own session, and a bare
-`interface_node` in the peer's `[[postman.workspace_tree]]` entry. The daemon's
-own entry may omit its declaration (the `[postman]` value designates it); if it
-sets one it must equal that value. The edge joins the two declared nodes, is
-evaluated on every send and delivery against the live view (discovered and
-unique node, enabled and owned session), and is never cached or merged into
-`edges`. `representative` stays an alias default only. See
-`tmux-a2a-postman help config`.
-
-Known limitation: derived edges are not supported in a mixed tmux plus Herdr
-topology. When tmux and Herdr report the same node name, the collision is not
-marked ambiguous for derived-edge authorization, so a derived edge can still be
-authorized for that name. Do not rely on derived edges there; Herdr-facing
-support is deferred.
-
-Read the next inbox message:
-
-```sh
 tmux-a2a-postman pop
-```
-
-Recipients usually run `pop` after a pane notification or message footer says
-mail is waiting. After every successful `pop` with `status=message`, read the
-complete archived Markdown body before any handling, routing, reply, status
-decision, or no-action or no-op decision. `messageType: ping`,
-`replyPolicy: none`, and other metadata do not allow skipping the body.
-Truncated output from bounded stdout does not count as a complete read. To
-inspect mail you already popped later, use `inspect-message --id <message_id>`;
-it never returns unread inbox mail (status `not_claimed`), so consume that with
-`pop` first.
-
-`send-heredoc` uses an atomic direct handoff to the session `post/` queue and
-reports `submit_path: post` after that handoff succeeds. For owned live
-sessions, ordinary sends do not enter daemon-submit; `--reply-required` sends
-first ask the owning daemon to validate verdict-debt policy. If that validation
-is rejected, times out, or the request/response fails, the command exits before
-creating a `post/` entry. A daemon consumes successful `post/` handoffs
-asynchronously when it is running: `processed` means consumption was observed,
-while `queued` means the local handoff succeeded but consumption was not yet
-observed. Do not blindly resend a queued message; inspect status, inbox/read
-state, archived message evidence, or recipient-side confirmation first.
-
-To legitimately clear verdict debt through the normal CLI interface instead of
-waiting for the grace-period timeout fallback, stamp `--verdict <text>` and
-`--verdict-of <input_request_id>` (provided together) on an outgoing message
-addressed to the filler; this clears the matching debt item before that same
-send's own debt-cap check runs. `--verdict` must be a single line with no
-control characters. The verdict text is an operator-recorded stamp for the
-debt gate, not evidence that the filled request was actually re-checked.
-
-`pop` still uses daemon-submit when the running daemon owns the session and
-otherwise uses direct filesystem access. Its `submit_path` identifies that
-route, including on empty results. If daemon-submit `pop` times out, treat the
-result as unknown and inspect status or archived message evidence before
-retrying. Use `inspect-daemon-submit --id <request_id>` and
-`get-status --debug` for bounded daemon-submit queue health.
-Configure daemon-submit concurrency with
-`daemon_submit_worker_limit` in `postman.toml`; the default is 8 workers per
-managed session, so a busy session cannot consume another session's submit
-slots. Values above 16 are clamped with a daemon warning.
-
-The daemon writes passive runtime memory snapshots to `postman.log` at startup
-and every 10 minutes. These `component=daemon_runtime
-event=memory_snapshot source=passive_log` lines are intended for normal log
-analysis and require no operator action. They include only scalar Go memory,
-process RSS when supported by the host OS, GC, goroutine, daemon cardinality,
-and daemon-submit queue counters; they omit mailbox body content, pane content,
-local absolute paths, message identifiers, node names, and unbounded lists.
-Linux snapshots include `rss_bytes`; unsupported hosts or read failures mark
-`rss_supported=false` or `rss_available=false` instead of reporting a
-misleading zero value.
-
-For incident diagnostics, `capture-profile` can capture one heap or goroutine
-profile from the running daemon through an explicit daemon-submit request after
-log analysis points to heap growth, retained objects, goroutine growth, or stuck
-work:
-
-```sh
-tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof
-tmux-a2a-postman capture-profile --type goroutine --output ./postman-goroutine.pprof
-```
-
-Profiling is disabled during normal operation: there is no default listener,
-endpoint, or background collector. Each capture requires an operator command
-with an explicit destination, either `--output -` for stdout or an output path
-for the daemon to write. Heap profiles help explain high heap telemetry or
-retained objects; goroutine profiles help explain growing goroutine counts or
-stuck work. Captures are point-in-time and may briefly add CPU and memory
-pressure proportional to profile size, bounded by `--max-bytes`.
-
-By default, `capture-profile` refuses to overwrite an existing output file.
-Pass `--force` to allow overwriting:
-
-```sh
-tmux-a2a-postman capture-profile --type heap --output ./postman-heap.pprof --force
-```
-
-Inspect live session state:
-
-```sh
 tmux-a2a-postman get-status
-tmux-a2a-postman get-status-oneline
 ```
 
-`get-status` includes `nodes[*].flow.input_requests.request_satisfaction`,
-a per-node responsiveness projection over reply-required request lifecycles.
-It reports opened and filled counts, fill rate, time to fill, open backlog, and
-stale open backlog using `input_request_stale_seconds`. Dead-lettered required
-requests are counted separately while remaining unfilled. This measures whether
-required input requests were filled; it does not judge whether replies were
-correct.
+`send-heredoc` reads literal quoted-heredoc stdin, verifies the local edge,
+then synchronously publishes separate private receiver-inbox and sender-sent
+copies. Its JSON includes the committed `message`, file-derived `self`
+state, and a separate `notice` result. Native pane-input notification is
+disabled because it could submit text already typed by the recipient.
+`notice.status=unavailable` reports that limitation without reversing
+committed mail. Neither mail nor a notice should be blindly retried after an
+uncertain result.
 
-Message lifecycle logs use `component=message_lifecycle` and stable trace
-fields so operators can follow one message across enqueue, daemon-submit,
-delivery, pop/read archive, dead-letter, projection sync, and late-response
-events. Start with `message_id=<filename>` when known; for daemon-submit
-timeouts, start with `daemon_submit_request_id=<request_id>` and then correlate
-the emitted `message_id`, `sender`, `recipient`, `context_id`,
-`tmux_session`, `input_request_id`, `reply_to`, and `delivery_attempt` fields.
-`message_path` is a local operator log field and may name mailbox-relative or
-daemon-submit files; public reports should use message ids, request ids, and
-repo-relative evidence instead of machine-local paths.
+`pop` atomically claims one own unread message and returns an openable
+`markdown_absolute_path` plus its `pop_receipt_absolute_path`. The body is
+not embedded in JSON. Read the complete archived Markdown through EOF before
+handling the message. A successful claim is not repeated; an empty POP still
+returns `self` state. An optional exact message ID selects only that
+eligible own message.
 
-Use explicit subcommands. Running `tmux-a2a-postman` without a subcommand only
-prints usage.
+Replies use the exact `--reply-to <message-id>` and
+`--fills-input-request-id <input-request-id>` from the original required
+message. `--reply-required` opens an obligation; `--no-reply` does not.
+Filling an input request closes transport, not task acceptance. A completion
+report should carry `Task artifact:`, `Original checklist: PASS`,
+`Evidence:`, and `Remaining blockers: none`. Use `BLOCKED` with
+`Original checklist: FAIL` while requirements remain. Receivers verify
+the checklist status, durable references, evidence, and blockers before
+relaying, approving, or closing work.
 
-## 5. Messaging Rules
+The `self` object reports known/unknown state, workspace and role, unread
+count, exact inbound/outbound obligations, verified local peers, next action,
+and observation time. `get-status` reads this saved-file state without
+claiming mail or capturing panes. Missing or damaged evidence is unknown,
+not zero work.
 
-Use `send-heredoc` with a quoted delimiter for agent-safe messages. The quotes
-keep shell-sensitive text literal, including backticks, variables, quotes, code
-fences, and multiline commands.
+## 3. Execute a reviewed command
 
-Use `--reply-required` only when the recipient must answer:
+This command is illustrative syntax, not a recorded run:
 
 ```sh
-tmux-a2a-postman send-heredoc --to reviewer --reply-required <<'POSTMAN_BODY'
-Review the implementation and reply with DONE or BLOCKED.
-POSTMAN_BODY
+tmux-a2a-postman execute-bash --command 'go test ./...'
 ```
 
-Reply-required messages carry an `input_request_id`. Exact replies should fill
-that request:
+A configured, live `command_approver_node` receives an exact
+reply-required request. The requester waits up to 300 seconds for a matching
+reply from that reviewer. Its body is JSON with `version: 1`, the exact
+`command`, and `decision` set to `approved` or `rejected`; the reply must
+also fill the request's exact input ID. Unrelated inbox mail is left alone.
+Only verified reviewer absence permits advisory execution. Ambiguous
+configuration or a lost reviewer fails closed. Bash runs outside the mailbox
+lock; command stdout/stderr stream normally, and Postman writes result JSON
+to stderr. A nonzero Bash exit is reported as `exited`. The wrapper coordinates
+review and audit; it does not sandbox Bash.
 
-```sh
-tmux-a2a-postman send-heredoc \
-  --to orchestrator \
-  --reply-to <message-id> \
-  --fills-input-request-id <input-request-id> <<'POSTMAN_BODY'
-DONE: Requirements satisfied.
-Task artifact: <artifact-reference>
-Original checklist: PASS
-Evidence: <commands or links>
-Remaining blockers: none
-POSTMAN_BODY
-```
+After the approval request commits, `execution.notice` separately reports
+the notification outcome. Native pane-input notification is disabled and
+reports `unavailable`; this never grants approval or creates another request.
+The reviewer must POP and send the exact decision.
 
-When evidence presence gating is active, completion claims can include replay
-evidence in the generated outer envelope:
+## 4. Optional pane evidence
 
-```sh
-tmux-a2a-postman send-heredoc \
-  --to orchestrator \
-  --evidence-command 'go test ./... -count=1' \
-  --evidence-cwd "$PWD" \
-  --evidence-env-allowlist PATH,HOME \
-  --evidence-timeout-seconds 120 \
-  --evidence-side-effect-class read-only \
-  --evidence-artifact reports/go-test.json \
-  --evidence-hash sha256:<64-hex-digest> <<'POSTMAN_BODY'
-DONE: Requirements satisfied.
-POSTMAN_BODY
-```
+`send-heredoc` and `pop` accept `--capture-related-panes`. Native pane-text
+capture currently fails closed with explicit unknown evidence and no text:
+mutable tmux titles cannot prove continuous role attribution during a read.
+Positive native capture and its trust boundary remain open in issue #937.
+Capture failure is supplemental and never reverses committed mail.
 
-If any `--evidence-*` flag is set, all required replay contract fields must be
-present and valid.
-
-After a fill/reply send, check the JSON `fill` and `required_input` fields.
-They show whether the request closed and whether any required input remains
-open. Terminal-looking replies such as `DONE:` also include a `notice` when
-required input is still open.
-
-Filling an input request closes transport, not task acceptance. For required
-work, send `DONE` only after checking the original requirements against
-evidence. Receivers verify the checklist status, durable references, evidence,
-and blockers before relaying, approving, or closing work.
-
-`DONE`, `ACK`, `PING`, and `HEARTBEAT_OK` are terminal no-reply messages.
-
-## 6. Configuration
-
-Most users only maintain `postman.md` under the global config directory:
-
-- `$XDG_CONFIG_HOME/tmux-a2a-postman/`
-- `~/.config/tmux-a2a-postman/` fallback when `XDG_CONFIG_HOME` is unset
-
-`postman.toml` is optional. Embedded defaults are enough for the daemon to run;
-add TOML only when you need to change daemon-level defaults or define workspace
-tree hierarchy for tree aliases.
-
-The daemon reads global configuration once at startup. Restart it after editing
-`postman.md`, `postman.toml`, or `nodes/*`; runtime watchers continue to handle
-mail delivery, read/archive moves, and daemon submit queues.
-
-Workspace tree hierarchy is explicit TOML metadata; it is not inferred from
-checkout layout or live pane cwd. Each record names a session, optional stable
-ID, optional label, optional parent session, and sibling order. Status output
-reports labels and stable IDs only. Duplicate session records are reported as
-ambiguous.
-
-In `postman.md`, keep conversation edges in the Mermaid `edges` graph, durable
-role guidance under role headings, and optional `skill_path` catalogs in the
-frontmatter. Every node named in the graph is materialized automatically; mark
-the human-facing role with the Mermaid `interface_node` class.
-
-Detailed configuration references:
-
-- [postman.md syntax](skills/postman-config-auditor/references/postman-md.md)
-- [configuration defaults and merge policy](docs/design/config-ssot.md)
-- [command approval wrapper](docs/command-approvals.md)
-- [evidence replay contract](docs/design/evidence-replay-contract.md)
-- [PING event timing](docs/ping-events.md)
-- [daemon session ownership](docs/design/daemon-session-model.md)
-- [Herdr read-only compatibility policy](docs/design/herdr-readonly-discovery-spike.md#4-compatibility-authority)
-
-Command help lives in the binary: `tmux-a2a-postman help`,
-`tmux-a2a-postman help commands`, and `tmux-a2a-postman help config`. Claude
-Code and Codex CLI have different runtime surfaces outside postman; see
-[docs/agent-runtime-feature-differences.md](docs/agent-runtime-feature-differences.md).
+The active command help is `tmux-a2a-postman help send-heredoc`,
+`help pop`, `help get-status`, and `help execute-bash`. See
+[postman.md syntax](skills/postman-config-auditor/references/postman-md.md)
+and
+[agent runtime feature differences](docs/agent-runtime-feature-differences.md)
+for further context. Claude Code and Codex CLI have different runtime surfaces
+outside postman.

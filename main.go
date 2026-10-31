@@ -66,8 +66,8 @@ func main() {
 		cli.Handlers{
 			Start:                             cli.RunStartWithFlags,
 			CaptureProfile:                    cli.RunCaptureProfile,
-			Pop:                               cli.RunPop,
-			GetSessionStatus:                  cli.RunGetSessionStatus,
+			Pop:                               cli.RunWorkspacePop,
+			GetSessionStatus:                  cli.RunWorkspaceGetStatus,
 			GetSessionStatusOneline:           func(args []string) error { return cli.RunGetSessionStatusOneline(os.Stdout, args) },
 			InspectInput:                      cli.RunInspectInput,
 			InspectMessage:                    cli.RunInspectMessage,
@@ -75,9 +75,9 @@ func main() {
 			InspectDaemonSubmit:               cli.RunInspectDaemonSubmit,
 			ReconcileCommandApprovalReplySlot: cli.RunReconcileCommandApprovalReplySlot,
 			BackfillVerdictEvents:             cli.RunBackfillVerdictEvents,
-			ExecuteBash:                       cli.RunExecuteBash,
+			ExecuteBash:                       cli.RunWorkspaceExecuteBash,
 			SendMessage:                       cli.RunSendMessage,
-			SendHeredoc:                       cli.RunSendHeredoc,
+			SendHeredoc:                       cli.RunWorkspaceSendHeredoc,
 			Stop: func(args []string) error {
 				return cli.RunStop(os.Stdout, args)
 			},
