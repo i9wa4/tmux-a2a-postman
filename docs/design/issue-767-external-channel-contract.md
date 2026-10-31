@@ -1,5 +1,10 @@
 # #767: external-channel contract for decoupling human interaction from tmux
 
+> Research/reference material. Historical daemon/runtime API descriptions below
+> are not current operational instructions. Current behavior is specified in
+> [file-first architecture](file-first-architecture.md) and
+> [notification](notification.md).
+
 Documentation-only design artifact. No production code in this PR.
 Defines the channel-independent contract #767 requires before any
 external (e.g. voice-first) channel can connect to the node designated by

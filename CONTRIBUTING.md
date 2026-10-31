@@ -11,12 +11,56 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
-Tmux discovery integration checks are opt-in so the default test suite stays
-usable without a live tmux server. To exercise the tmux-backed discovery lane:
+Transport tests use isolated real tmux servers and private HOME/state. The
+controller performs only the initial send or execute request; deterministic
+agent consoles receive the actual pasted notification and `C-m`, then own POP,
+complete-file reading and exact replies. No model or runtime API is required.
 
 ```sh
-TMUX_A2A_POSTMAN_TMUX_INTEGRATION=1 go test ./internal/discovery -run 'TestDiscoverNodes_With(ChildProcess|PaneTitle)' -count=1
+go test ./... -count=1
+nix run .#notification-smoke -- --case all --output /tmp/postman-report.json
+# Without Nix:
+python3 scripts/validation/notification-smoke.py \
+  --postman "$(command -v tmux-a2a-postman)" --agent fixture --terminal both
 ```
+
+The default matrix has sixteen cases: plain line input and bracketed-paste
+input, each covering rally, busy recipient, concurrent independent messages,
+parent-to-child, child-to-parent, approval, rejection and blocked notification.
+`TestNotificationDrivenTerminalAgents` runs it during `go test` and `nix build`.
+Nix flake checks also build this package. Default checks require no AI client
+or model server. `--case` selects a single case.
+
+Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
+transport outcomes, pre-paste rejection, mailbox-lock independence,
+wrong/uncommitted routes, and shell input rejection. No unknown attempt is
+replayed.
+
+Optional real Codex checks use a local Responses API fixture with fixed tool
+calls. This replaces model decisions only; the actual Codex input editor and
+its recipient tools handle the notification. It needs no account or API key:
+
+```sh
+python3 scripts/validation/notification-smoke.py --agent codex --case rally \
+  --codex "$(command -v codex)" --postman "$(command -v tmux-a2a-postman)"
+```
+
+The private Codex test matches vde-layout's `--yolo --no-daemon --no-alt-screen`
+launch. Production transport has no Codex dependency or API calls. `--mode live`
+explicitly uses installed model authentication and does not fall back to mock.
+Actual Claude model behavior is not asserted by terminal fixtures; they verify
+the common terminal protocol also used by local consoles and Claude Code.
+
+Reports include submitted terminal text, conversation/context identifiers,
+archive digests, exact request/reply IDs and pane transcripts. Temporary
+evidence stays at the printed path. The old-main `--case rally --baseline`
+control must commit mail but produce no recipient actions. The blocked case
+enters only fixture tmux copy mode; delivery remains unread. Tests never provide
+receiver POP/reply actions from the controller.
+
+Containers must reap orphan processes (for example Docker `--init`). Remove
+only owned fixtures; never kill unrelated tmux servers. Stage new files before
+Nix checks so the flake source includes the complete runtime tests.
 
 Go version policy:
 
@@ -83,4 +127,4 @@ skills from the published repository tag or release.
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset
 expectations.
 
-Agent-specific operating notes live in [CLAUDE.md](CLAUDE.md).
+Canonical agent instructions live in [AGENTS.md](AGENTS.md).

@@ -1,17 +1,16 @@
 id: positive-trigger-send-001
-name: Positive Trigger -- Send Procedure (first-contact MUST LOAD)
+name: Negative Trigger -- Ordinary Send
 description: >-
-  Discriminates the first original MUST-LOAD trigger: before any
-  first-contact or initial node send.
+  Ordinary sends belong to postman-send-message.
 tags:
   - positive-trigger
 inputs:
-  prompt: "Use postman-usage to send the first-contact message to another node with send-heredoc, preserving the Markdown body exactly."
+  prompt: "Send an ordinary message to another node with send-heredoc, preserving the Markdown body exactly."
 expected:
-  should_trigger: true
+  should_trigger: false
 graders:
   - type: trigger
-    name: positive-trigger
+    name: negative-trigger
     config:
       skill_path: skills/postman-usage/SKILL.md
-      mode: positive
+      mode: negative

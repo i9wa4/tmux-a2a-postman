@@ -1,130 +1,35 @@
-execute-bash — run bash through command approval choreography
+execute-bash — run one exact Bash command with file-mail approval
 
 Usage:
-  tmux-a2a-postman execute-bash --label <label> --command <bash>
-  tmux-a2a-postman execute-bash --label <label> --mode blocking --reviewer <node> --command <bash>
-  tmux-a2a-postman execute-bash --thread-id <thread> --record-decision approved
+  tmux-a2a-postman execute-bash --command '<bash>'
+  tmux-a2a-postman execute-bash --command '<bash>' --config <absolute-postman.md>
 
-Execution flags:
-  --label <label>              Command label used for policy matching and audit
-  --category <category>        Optional category used for policy matching
-  --reviewer <node>            Reviewer override
-  --mode <mode>                advisory, warn-only, or blocking; may only
-                                NARROW the effective policy floor once an
-                                approver is configured -- an attempt to
-                                downgrade below the configured/default floor
-                                is refused
-  --reason <text>              Reason stored on approval requests and decisions
-  --command <bash>             Bash string run with bash -lc
-  --approval-ttl-seconds <n>   Approval request expiry; omitted uses the
-                                effective TTL floor (config-declared, or 900
-                                by default); an explicit value may only
-                                TIGHTEN (shorten) that floor, never lengthen it
-  --override-approval          Continue in warn-only mode without approval;
-                                refused with an error if the effective mode is
-                                not warn-only
-  --store-command-text         Store full command text in audit events
-  --json                       Emit wrapper metadata as JSON on stderr
-  --wait-timeout-seconds <n>   How long blocking mode waits for a decision
-                                before giving up; default is 300 (5 minutes);
-                                must be a positive, finite number of seconds
+Options:
+  --command <bash>              Exact Bash source (required)
+  --config <absolute-path>      Explicit postman.md override
+  --postman-md <absolute-path>  Alias for --config
 
-Removed flags:
-  --requester                  Removed. The effective requester is always the
-                                calling pane's tmux title, never a
-                                caller-supplied value.
-  --no-wait                    Removed. Blocking mode always waits for the
-                                matching approval thread to resolve, bounded
-                                by --wait-timeout-seconds.
+The caller is the current native tmux pane. The reviewer comes only from
+postman.md's command_approver_node. A configured and live reviewer receives
+a reply-required mail request whose JSON body has version=1 and the exact
+command. The requester waits at most 300 seconds for the exact reply from
+that reviewer, matching reply_to and fills_input_request_id. The reviewer
+must POP the request before replying. Its reply body is JSON containing
+version=1, the exact command, and decision=approved or rejected. Unrelated
+inbox messages remain untouched. Rejection, timeout, cancellation, reviewer
+loss, or ambiguous topology does not run Bash. Only verified reviewer
+absence permits advisory execution.
 
-Decision flags:
-  --thread-id <thread>         Approval thread id to decide or reuse
-  --record-decision <decision> approved or rejected. The decision's reviewer
-                                identity is always the calling process's own
-                                tmux pane title, never --reviewer; a caller
-                                whose pane is not the thread's command_approver_node
-                                is refused and no decision is recorded.
+After the approval request mail commits, execution.notice separately
+reports the notification outcome through the common tmux paste/C-m route
+to the existing reviewer. accepted proves only terminal input acceptance. Notification failure does not withdraw the request,
+approve it, or create a second request. The reviewer POPs, fully reads, and
+sends the exact decision; the foreground wrapper claims that matching reply.
 
-Modes:
-  advisory   Records request and audit metadata, then runs even without approval.
-  warn-only  Records request and blocks unless --override-approval is supplied.
-  blocking   With a trusted, resolvable reviewer, always waits (bounded by
-             --wait-timeout-seconds, default 300s) for the matching thread's
-             decision and then runs the command in the same invocation.
-             Runs only when the resolved decision is a non-expired approved
-             decision from the configured reviewer for the exact command
-             digest, AND only once: an approval is single-use, so a
-             concurrent or repeated call after execution gets
-             "already_executed" instead of running again -- until that
-             approval's own TTL expires, at which point a retry mints a
-             fresh request automatically. Rejection, expiry, a wait
-             timeout, cancellation (SIGINT/SIGTERM, including precisely
-             during the approval claim), a requester mismatch, delivery
-             failure, mid-wait approver loss, a context/session-generation
-             change, and no live current session writer (session_unavailable,
-             a genuine cold start with no bootstrapped session yet) each
-             produce a distinct --json "status" and process exit code
-             (10-23). These exit codes can numerically collide with the
-             executed command's own exit status (0-255) -- the --json
-             "status" field is the authoritative way to tell them apart,
-             not the bare exit code. Retrying the identical command always
-             converges instead of sticking forever: no request yet creates
-             one; a still-pending request is reused and re-delivered
-             (recovering a failed delivery without duplicating the
-             request); a rejected, expired, stale, historical-only, or
-             wrong-reviewer thread is superseded by a freshly minted
-             request on the next call. A requester mismatch, digest
-             mismatch, or unresolvable approver is a refusal and never
-             mints -- including when a concurrent racer for the same
-             thread wins with a different policy context: the loser
-             refuses and never delivers a prompt describing its own,
-             different policy under the winner's correlation. See
-             docs/command-approvals.md.
+Bash runs outside mailbox locks. Command stdout/stderr stream normally;
+Postman status JSON is emitted separately on stderr with execution, self,
+and reason. A nonzero Bash exit is status=exited with its exit_status.
+Each invocation is independent: an older decision never grants a new run.
+The durable pre-dispatch audit is never replayed as command authorization.
 
-Fail-open rule (command_approver_node):
-  When no command_approver_node is configured by marking a real node in
-  postman.md Mermaid edges with class <node> command_approver_node (same
-  family as interface_node), every mode above, including blocking, fails open. Every
-  command runs and is recorded distinctly as auto_approved_no_reviewer rather
-  than a real approval. The approver is global; per-policy approver routing is
-  not supported. A configured but currently unresolvable
-  command_approver_node is different: blocking fails closed and does not run
-  the command; advisory continues; and warn-only still requires explicit
-  --override-approval. An unresolvable command_approver_node also produces a
-  load-time warning and a visible marker in get-status.
-
-  When a valid command_approver_node exists, execute-bash also delivers the approval
-  request to it directly as a reply-required message; reply with a body
-  starting APPROVED:/NOT APPROVED: while preserving the given thread_id, the
-  exact fills_input_request_id, and command_hash frontmatter fields to record
-  a decision without running --record-decision yourself. A reply body that
-  doesn't start with one of those two prefixes is logged and not recorded.
-  Only a reply whose sender matches the resolved command_approver_node is ever
-  honored, regardless of the reviewer audit label. The same rule applies to
-  --record-decision itself: the decision's reviewer identity is always the
-  calling process's own tmux pane title, never the --reviewer flag, and a
-  caller whose pane is not the command_approver_node is refused outright.
-
-Positional argv fallback (#838):
-  --command's value is trimmed of leading/trailing whitespace, not used
-  byte-for-byte. When --command is omitted, trailing positional arguments
-  after -- become the command: exactly one argument is legacy, unchanged
-  shell source (same text and digest as before #838; like --command, its
-  surrounding whitespace is trimmed, and operators inside it keep their shell
-  meaning); two or more arguments are each individually POSIX-single-quoted
-  and space-joined, reconstructing the original argv boundaries that the
-  pre-#838 unquoted join lost, so an operator or expansion in its own
-  argument (;, &&, |, $(...)) is a literal argument, not a shell operator.
-  This changes the reconstructed text (and therefore the digest
-  and default thread id) for any TWO-OR-MORE-argument positional invocation
-  relative to pre-#838 behavior; a pending approval minted before upgrading
-  will not match the new digest and needs a fresh request (reusing its old
-  --thread-id yields digest_mismatch). One-argument positional usage is
-  unaffected. Prefer --command <bash> for any script with more than one
-  shell operation -- it is the documented, tested interface and needs no
-  argv reconstruction at all.
-
-Bypass boundary:
-  This wrapper coordinates command review through Postman. It does not sandbox
-  bash, prevent direct shell execution, or enforce OS-level policy. Use it for
-  local agent choreography and durable audit trails, not as a security boundary.
+This wrapper coordinates review and audit; it does not sandbox Bash.

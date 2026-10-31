@@ -1,77 +1,30 @@
-Messaging — send and receive messages
+Messaging — file-first transport
 
-Quick workflow (agents):
-  Send:
-    tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
-    message text
-    POSTMAN_BODY
-  Claim/open: tmux-a2a-postman pop
-
-Safe body input:
-  Use send-heredoc with a quoted heredoc delimiter for frequent agent-to-agent
-  messages. The quoted delimiter preserves command substitutions, backticks,
-  $HOME variables, quotes, code fences, and shell examples as literal text.
-  Do not pass message text through argv, file-body shortcuts, or generic
-  pipe-oriented guidance.
-
-Reply workflow:
-  tmux-a2a-postman send-heredoc --to <sender> <<'POSTMAN_BODY'
-  DONE: ...
+Send literal Markdown via quoted heredoc stdin:
+  tmux-a2a-postman send-heredoc --to worker --reply-required <<'POSTMAN_BODY'
+  Task request.
   POSTMAN_BODY
 
-Reply-required messages carry an input_request_id. Exact replies use:
-  tmux-a2a-postman send-heredoc --to <sender> --fills-input-request-id <input_request_id> --reply-to <message_id> <<'POSTMAN_BODY'
-  DONE: ...
+Reply after POP and a complete read:
+  tmux-a2a-postman send-heredoc --to <sender> --reply-to <message-id> --fills-input-request-id <input-request-id> --no-reply <<'POSTMAN_BODY'
+  Task result and evidence.
   POSTMAN_BODY
 
-The exact input request id clears the required action; --reply-to is retained for
-traceability and fallback message-link closure. Replies stay on the live
-session daemon automatically.
-After a fill/reply send, check the JSON "fill" and "required_input" fields.
-They show whether the request closed and whether any required input remains open.
+Cross-session mail uses session:node for a declared direct parent/child
+interface. Replies use the original from_session:from. Local mail uses from.
+No directory ancestry or same-named role authorizes a cross-session route.
 
-Completion gate:
-  Filling an input request closes transport, not task acceptance.
-  Before DONE, compare the original requirements/checklist against evidence.
-  Use this compact proof shape when work is complete:
-    DONE: Requirements satisfied.
-    Task artifact: <artifact-reference>
-    Original checklist: PASS
-    Evidence: <commands, issue/PR links, tests, or verification output>
-    Remaining blockers: none
-  Use BLOCKED with Original checklist: FAIL when any requested item is
-  unresolved or unverified. Receivers should verify checklist status, durable
-  references, evidence, and blockers before relaying, approving, or closing
-  work.
+The sender pastes a notification into the existing recipient agent's tmux input
+and submits C-m. This transport is shared by all agent types, with no model API
+or notifier registration. Notice acceptance, POP, full read and reply are
+separate facts. No polling loop or Postman daemon is needed.
 
-Inspect open reply-required work without popping inbox mail:
-  tmux-a2a-postman inspect-input --id <message_id-or-input_request_id>
+Each Markdown archive starts with a one-line JSON HTML-comment envelope,
+then a blank line and literal body. POP returns markdown_absolute_path and
+pop_receipt_absolute_path; it does not inline the body. After every successful
+POP, read the complete archive through EOF before any handling or reply.
 
-get-status also exposes open input-request detail arrays under
-nodes[*].flow.input_requests.input_required and waiting_on_input.
-When known, those details include opened_event_id and read_event_id pointers
-to the journal events that created the visible state.
-
-Envelope format (YAML frontmatter):
-  ---
-  params:
-    from: <sender node name>
-    to: <recipient node name>
-    messageId: <message filename>
-    replyPolicy: <none|required>
-    input_request_id: <required reply token>
-    timestamp: <ISO 8601 timestamp>
-  ---
-
-Sender is auto-detected from the tmux pane title (no --from flag).
-`send-heredoc` and `pop` print JSON by default. `pop` claims the next inbox
-message and returns metadata plus an archived message/body path; it does not
-print the full body inline.
-
-After every successful `pop` with `status=message`, read the complete archived
-Markdown body before any handling, routing, reply, status decision, or
-no-action or no-op decision.
-`messageType: ping`, `replyPolicy: none`, and other JSON metadata do not allow
-skipping the archived body. Truncated command output from `cat`, `sed`, `rg`,
-shell logs, or other bounded stdout paths is not a complete read; use a
-complete file-read path or verified chunks through EOF.
+Filling an input request closes transport, not task acceptance.
+Completion reports include Task artifact:, Original checklist: PASS, Evidence:,
+and Remaining blockers: none. Use BLOCKED with Original checklist: FAIL while
+requirements remain. Verify evidence and blockers before closing work.
