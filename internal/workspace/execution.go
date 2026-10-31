@@ -300,11 +300,6 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if rt == nil || e.Resolve == nil || strings.TrimSpace(command) == "" || strings.ContainsRune(command, 0) {
 		return fail("unavailable", ErrUnknown)
 	}
-	lease, err := e.Mail.Store.acquireLegacyLease()
-	if err != nil {
-		return fail("unavailable", err)
-	}
-	defer func() { _ = lease.Close() }()
 	initial, err := rt.Snapshot(ctx)
 	if err != nil {
 		return fail("unavailable", err)
@@ -354,7 +349,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		result.RequestID, result.InputRequestID = req.ID, req.InputRequestID
 		// The request is already durable. A hint failure cannot undo it or
 		// authorize a second approval request for this invocation.
-		notice := NotifyCommittedAfterCommit(waiting, rt, req)
+		notice := e.Mail.Store.NotifyCommittedAfterCommit(waiting, rt, rt, req)
 		result.Notice = &notice
 		for {
 			if err = waiting.Err(); err != nil || !e.clock().Before(deadline) {

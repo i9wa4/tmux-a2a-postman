@@ -1,188 +1,67 @@
-# Notification Design
+# Recipient notification
 
-`tmux-a2a-postman` now keeps notification behavior intentionally small. The
-daemon delivers mail to the recipient inbox, sends a pane hint to that recipient
-when delivery succeeds, and emits auto-PING messages when the daemon starts or
-when a node appears. If the same role reappears with a new pane ID, that
-replacement pane is treated as newly appeared. It also gets a PING after the
-configured delay. Compaction recovery can send a separate compaction-triggered
-PING. See [Ping Events](../ping-events.md) for the full trigger and timing
-matrix. It does not run a separate policy layer for operator escalation.
+## 1. Supported integration
 
-## 1. Surfaces
+The normal route is recipient-owned Bash/Readline. Follow the setup in
+[README](../../README.md#1-install-and-configure) or `help register-notifier`.
+The installed binary emits its own setup with `notifier-script`. Source it
+from the receiving pane's interactive Bash after assigning the role title.
+The setup selects Emacs Readline, reserves Ctrl-x Ctrl-p, and registers the
+exact native role, pane and pane-process incarnation. Registration must be a
+direct child of that pane's Bash, not an arbitrary sender or nested shell.
 
-| Surface     | Trigger                              | Destination         |
-| ----------- | ------------------------------------ | ------------------- |
-| Inbox file  | Routed `send-heredoc` or daemon PING | `inbox/{node}/`     |
-| Pane hint   | Successful inbox delivery            | Recipient tmux pane |
-| Status JSON | `get-status`                         | stdout              |
-| Status line | `get-status-oneline`                 | stdout              |
-| Default TUI | Daemon runtime status snapshots      | daemon pane         |
+The recipient handler receives one POP-result JSON document on piped stdin. It
+reads the complete archive through EOF, performs its work and sends any exact
+reply. The supplied Codex handler uses `codex exec --sandbox workspace-write`
+for a fresh noninteractive turn; Codex configuration and sandbox policy still
+apply. Other executable handlers can implement deterministic roles such as a
+local reviewer. Interactive Codex/Claude TUI input is not supported by this
+adapter.
 
-## 2. Delivery Path
+## 2. Delivery and notification
 
-1. `send-heredoc` writes a message request.
-2. The daemon validates the route from `edges`.
-3. Valid mail is moved into `inbox/{node}/`.
-4. The recipient pane receives `notification_template`.
-5. The recipient claims and archives the message with `pop`; `pop` returns
-   metadata plus the archived message/body path instead of pushing the full
-   body into the pane hint.
-6. The recipient reads the complete archived Markdown body before any handling,
-   routing, reply, status decision, or no-action or no-op decision. This
-   applies to daemon PING mail, `messageType: ping`, `replyPolicy: none`, and
-   every other message type.
+After publication the CLI verifies the committed sent copy, destination
+workspace ownership and registered target. The transport rechecks the native
+binding and that Bash owns the foreground prompt, then queues only Ctrl-x
+Ctrl-p. It never sends Enter, a command, a body or a generated shell string.
+Readline invokes the installed function while retaining READLINE_LINE and
+READLINE_POINT, so a pending command is not submitted. No screen-content
+heuristic or check-then-Enter is used.
 
-Unroutable mail goes to `dead-letter/`. Dead-letter handling embeds its own
-manual recovery guidance and is separate from normal pane hints. The durable
-dead-letter journal event preserves the original message ID, sender, recipient,
-source `post/` path, dead-letter path, failure reason, and any exact
-input-request identifiers parsed from the message metadata.
+Same-session and declared direct parent/child interface routes share this
+path. The latter uses the verified destination runtime and its registration,
+never the sender's same-named local role. Notification runs outside mailbox
+locks with a fresh two-second budget after commit.
 
-## 3. Status Model
+| Outcome              | Evidence                                                             |
+| -------------------- | -------------------------------------------------------------------- |
+| Durable delivery     | Independent sent and inbox/read mail files                           |
+| `accepted` notice    | tmux accepted the Readline key sequence                              |
+| `unavailable` notice | Setup/target could not be verified; no notification attempt          |
+| `unknown` notice     | Transport outcome may be ambiguous; never blindly retry              |
+| POP claim            | Receiver read archive and `.pop.json` receipt exist                  |
+| Full read            | Recipient-specific evidence, such as the smoke handler's body digest |
+| Response             | Exactly correlated sender/recipient mail and claim receipt           |
 
-get-status, get-status-oneline, and the default TUI are three views over the
-same canonical contract.
+Acceptance does not prove POP, full read, understanding, or a response. A busy
+handler may defer queued input until it returns. Missing or stale registration
+leaves durable unread mail and an explicit notification failure. New known
+unread self-state is an action trigger; idle repeated POP/status loops are not.
+Handlers must not read terminal stdin or replace the recipient Bash with an
+interactive TUI while retaining its registration. Dedicated recipient panes
+are the supported host; a shell restart requires sourcing setup again.
 
-| State     | Meaning                                       | Compact mark     |
-| --------- | --------------------------------------------- | ---------------- |
-| `initial` | No positive live evidence has arrived yet     | `⚫` black circle |
-| `ready`   | Pane is live with no open action or wait      | `🟢` green mark   |
-| `waiting` | Node is waiting for a reply-required response | `🟡` yellow mark  |
-| `pending` | Node has inbound reply-required action        | `🔷` blue diamond |
-| `stale`   | Previously known pane/session is stale        | `🔴` red mark     |
+## 3. Verification
 
-A live pane that simply has not changed for a long time is internally `idle`
-and remains `ready` in the visible status model.
+`TestNotificationDrivenRoundTrip` uses real tmux, the rebuilt CLI's emitted
+setup, and real Bash/Readline. After the initial send only the notification
+hook invokes the handler. The handler POPs, reads the full file, records a
+SHA256 digest, sends an exact reply, and the return notification drives the
+sender claim. The test also preserves an unsubmitted composer command.
+`TestNotificationDisabledCannotDriveRoundTrip` removes registration and proves
+that durable delivery alone produces no recipient actions.
 
-`initial` is neutral. Non-AI panes, unreachable or unclassified sessions, and
-configured or expected AI panes with no positive response or activity remain
-`initial` until evidence moves them to `ready`, `waiting`, `pending`, or
-`stale`.
-
-Session fallback may report `unavailable` when this daemon cannot provide
-canonical status for a tmux session. It is displayed with the neutral `⚫`
-mark, but it is not a per-node state.
-
-The status payload exposes `queues.post_count`, `queues.inbox_count`,
-`queues.dead_letter_count`, and per-node input-request counts for mailbox
-backlog checks. Per-node state is reported as `nodes[*].visible_state`.
-
-The schema version 5 payload exposes contextual severity:
-`severity`, `severity_source`, `severity_reason`, `compact_severity`,
-`delivery`, `nodes[*].node_local`, `nodes[*].flow`, and `nodes[*].queues`.
-These fields distinguish expected waits from actionable or broken conditions
-without changing the visible-state fields.
-
-It also exposes `nodes[*].convention_meter`, a weak per-node convention
-adherence projection over journaled messages. The meter counts missing
-`verdictOf`, missing completion evidence, and missing reply references.
-
-Replay keeps a narrow read-only reader for pre-v4 `session_health_snapshot`
-archives, but new writers and live machine consumers use status terminology.
-See [Schema and Event Terminology](schema-event-terminology.md).
-
-| Severity           | Meaning                                           |
-| ------------------ | ------------------------------------------------- |
-| `ok`               | No open action, wait, local work, or delivery bug |
-| `working`          | Local pane activity or queued delivery is present |
-| `expected_wait`    | Waiting for an expected required reply            |
-| `needs_action`     | Inbound required reply is open                    |
-| `blocked`          | Open blocked report exists                        |
-| `attention_stale`  | Pane or session evidence is stale or unavailable  |
-| `delivery_stuck`   | Pending post delivery is at least 180 seconds old |
-| `delivery_failure` | Dead-letter delivery failure exists               |
-
-`get-status-oneline` keeps compact operator marks by default. Pending, waiting,
-stale, and initial visible states keep their legacy marks; ready nodes also
-consult contextual node severity so active local work renders as `🔵` and
-blocked or stale attention renders as `🔴` instead of plain green. Use the
-`--severity` flag when the operator needs an ASCII severity token. Tokens with
-`?` are inferred, for example a `BLOCKED:` first line without structured
-blocked-report metadata.
-
-## 4. Configuration
-
-The remaining notification-related public settings are:
-
-| Field                      | Purpose                                                     |
-| -------------------------- | ----------------------------------------------------------- |
-| `notification_template`    | Pane hint rendered when mail arrives; not full message body |
-| `message_footer`           | Reply guidance rendered before the sender body separator    |
-| `draft_template`           | Structured envelope for stored `send-heredoc` Markdown      |
-| `daemon_message_template`  | Structured envelope for daemon-originated PING mail         |
-| `interface_node`           | Human-facing node; no default, omitted = none (fail closed) |
-| `auto_enable_new_sessions` | Auto-enable sessions with configured node panes             |
-
-Stored message Markdown is an envelope. The default `send-heredoc` template
-keeps recipient instructions, reply guidance, and sender-authored content
-separate. Generated transport/header content appears first under
-`Recipient Instructions` and `Sender Message`; then a visible `---` separator
-introduces the original sender body. Sender body Markdown is inserted verbatim
-after that separator, so headings such as `#` and `##` are not normalized or
-rewritten. Recipient role instructions are normalized when inserted into the
-generated envelope: their shallowest ATX heading becomes `###`, relative
-nesting is preserved, and fenced code blocks are left untouched. This keeps
-embedded `postman.md` instructions visually inside `Recipient Instructions`
-without producing `#####` headings immediately under the generated `##`
-envelope heading.
-The default message footer and daemon PING template render `You can talk to:`
-as a concise bullet list of adjacent nodes. When a node has `postman.md` or
-TOML `role` text, only the first non-empty role line is shown as the summary;
-full node templates are not dumped into the contact list. Custom footers can
-keep using `{can_talk_to}` for the legacy comma-separated node list or
-`{contacts_section}` for the role-aware Markdown list.
-
-For daemon PING bodies, this contact list is an informational hint from
-configured or discovered same-session topology, effectively the `postman.md`
-routes known to the daemon. It is not a live-health guarantee. Startup PINGs
-can render configured contacts before adjacent nodes have confirmed liveness,
-so `- none` means no configured or discovered contact is known for that
-recipient, not merely that known contacts are currently non-live. Delivery and
-pane notification behavior remains liveness-aware and separate from daemon PING
-body rendering.
-
-Daemon PING mail uses the same generated-envelope pattern with
-`Recipient Instructions` and `Daemon Message`.
-
-Pane notifications are intentionally not a body delivery surface. The default
-notification says to run `tmux-a2a-postman pop` to claim the message and get the
-archived body path. This preserves the receiver-owned mailbox state transition:
-the daemon may hint that mail arrived, but the receiver decides when to pop the
-inbox item and open the referenced body.
-
-Consumers must not make handling, routing, reply, status, no-action, or no-op
-decisions from metadata-only inspection. After `pop` returns `status=message`,
-the archived Markdown body is the authoritative instruction surface. If a
-runtime reads it through bounded stdout, it must detect truncation and continue
-with verified chunks through EOF; truncated output is not a complete body read.
-
-No separate claim/open alias exists today. The command name `pop` remains the
-canonical state-machine operation; the user-facing wording and `pop` JSON
-fields carry the clearer claim/open/message-file semantics.
-
-`interface_node` is not a general escalation channel. It is normally set by
-marking a node in the `postman.md` Mermaid graph with
-`class <node> interface_node`; inline `:::interface_node`, frontmatter
-`interface_node:`, and TOML `[postman] interface_node` are the other explicit
-surfaces (frontmatter wins over the Mermaid class, which wins over TOML). There
-is no embedded default and no `ui_node` alias: the legacy `ui_node` forms are
-warned about and ignored. When empty or unset, startup auto-PING may target all
-discovered nodes, and no node is exempted from the verdict gate or used as an
-escalation push target (fail closed). When explicitly set, startup auto-PING is
-limited to matching roles discovered in enabled sessions.
-The narrowing is intentional startup-noise control: an explicit non-empty
-`interface_node` declares the human-facing bootstrap entry point, so the initial
-daemon PING does not fan out to non-interface agents and consume context before
-a human or operator involves them. Leaving `interface_node` unset or explicitly
-empty means no startup entry point was chosen, so startup auto-PING may fan out.
-`auto_enable_new_sessions` defaults to true, so a single user daemon can
-discover project sessions that already have configured node panes.
-
-Runtime threshold-push escalation is the scoped exception to the earlier
-deferral of a general escalation channel. The daemon may push a pane
-notification to the configured UI-facing node when configured runtime facts
-cross thresholds: oldest open input request age, dead-letter count, unread
-backlog, or stale-node evidence. This is threshold-push on runtime facts, not a
-general product-policy escalation layer, and all thresholds default to
-disabled.
+Parent/child tests run both directions. Approval tests exercise approved and
+rejected decisions through this same notification route; the requester wrapper
+receives its decision without a requester model POP. No test requires paid model
+access. See [the recorded smoke check](../../.task-artifacts/952-smoke.md).

@@ -1,5 +1,10 @@
 # Herdr Read-Only Discovery Spike
 
+> Research/reference material. Historical daemon/runtime API descriptions below
+> are not current operational instructions. Current behavior is specified in
+> [file-first architecture](file-first-architecture.md) and
+> [notification](notification.md).
+
 Issue: #658.
 
 ## 1. Purpose

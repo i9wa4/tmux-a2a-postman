@@ -1,19 +1,8 @@
-help — show command and topic help
+help — command documentation
 
-Usage:
-  tmux-a2a-postman help
-  tmux-a2a-postman help <topic>
-  tmux-a2a-postman <command> --help
+  tmux-a2a-postman help [topic]
 
-File-first topics:
-  commands
-  config
-  send-heredoc
-  pop
-  get-status
-  execute-bash
-  version
-
-The remaining registered topics describe legacy daemon-backed commands
-during the issue #937 cutover. They do not define flags or output for the
-four file-first commands. Unknown-topic errors list every registered topic.
+Core topics: send-heredoc, pop, get-status, execute-bash.
+Setup: register-notifier, notifier-script, config, directories.
+Other topics: commands, messaging, version, help.
+No Postman daemon or startup command is needed.

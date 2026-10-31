@@ -11,12 +11,19 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
-Tmux discovery integration checks are opt-in so the default test suite stays
-usable without a live tmux server. To exercise the tmux-backed discovery lane:
+Transport tests use isolated real tmux servers, temporary HOME/state, and the
+Bash/Readline adapter shipped in the CLI. Run them without model credentials:
 
 ```sh
-TMUX_A2A_POSTMAN_TMUX_INTEGRATION=1 go test ./internal/discovery -run 'TestDiscoverNodes_With(ChildProcess|PaneTitle)' -count=1
+go test ./... -count=1
+go test . -run 'TestNotification' -v -count=1
 ```
+
+The notification tests perform only the initial send from the controller.
+The recipient hook owns POP, full-file reading and exact reply. The disabled
+adapter case proves no receipt or reply is fabricated. Containers must reap
+orphan processes (for example Docker `--init`), so tmux cleanup can verify
+server exit. Remove only owned fixtures; never kill unrelated tmux servers.
 
 Go version policy:
 
@@ -83,4 +90,4 @@ skills from the published repository tag or release.
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset
 expectations.
 
-Agent-specific operating notes live in [CLAUDE.md](CLAUDE.md).
+Canonical agent instructions live in [AGENTS.md](AGENTS.md).

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -270,4 +271,37 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsUnknownActivity(t *testing.T)
 	if err != nil || !reflect.DeepEqual(before, final) {
 		t.Fatalf("unavailable status mutated saved files: before=%v after=%v err=%v", before, final, err)
 	}
+}
+
+type fileSnapshot struct {
+	mode os.FileMode
+	hash [32]byte
+}
+
+func snapshotRegularFiles(root string) (map[string]fileSnapshot, error) {
+	result := make(map[string]fileSnapshot)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		snapshot := fileSnapshot{mode: info.Mode()}
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			snapshot.hash = sha256.Sum256(data)
+		}
+		result[rel] = snapshot
+		return nil
+	})
+	return result, err
 }

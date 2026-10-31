@@ -49,3 +49,7 @@ go.work.sum
 
 # Project-local config (dev override)
 .tmux-a2a-postman/
+
+# Python recipient examples
+__pycache__/
+*.pyc

@@ -3,169 +3,166 @@ package workspace
 import (
 	"context"
 	"errors"
+	"os"
+	"strconv"
 	"time"
 )
 
-// ErrPaneNoticeUnsupported reports that native pane-input notification is
-// disabled because even a body-free hint can submit pending recipient input.
-var ErrPaneNoticeUnsupported = errors.New("pane-input notification disabled")
-
-// ErrPaneNoticeBusy means the recipient app could not acquire exclusive input
-// or could not atomically establish an empty composer. No input was submitted.
-var ErrPaneNoticeBusy = errors.New("recipient input is busy")
-
-// NoticeResult describes the pane hint separately from durable mail. Unknown
-// means tmux may have accepted part of a chained paste; callers must not
-// retry the mail or the hint automatically.
+// NoticeResult records acceptance separately from durable delivery. accepted
+// never means POP, full-body reading, or a reply was observed.
 type NoticeResult struct {
 	Status string `json:"status"`
 	Pane   string `json:"pane,omitempty"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// AtomicNoticeReceipt is app-owned evidence for one committed message. The
-// implementation must observe an empty composer while it owns input, submit
-// exactly once, and observe the immediate and settled recipient UI. A terminal
-// pre-capture followed by tmux Enter cannot meet this contract.
-// ImmediateSubmittedID is empty when the immediate capture is pending or
-// ambiguous; any visible submitted ID must match MessageID. The settled
-// capture must prove submission of MessageID with an empty composer.
-type AtomicNoticeReceipt struct {
-	MessageID            string
-	Recipient            Binding
-	InitialComposerEmpty bool
-	ImmediateObserved    bool
-	ImmediateSubmittedID string
-	SettledSubmittedID   string
-	SettledComposerEmpty bool
-}
-
-// AtomicPaneNotifier is an optional recipient-app capability, separate from
-// the mail commit. It must atomically verify blank input or hold an exclusive
-// lease across every input writer before submitting the ID-correlated notice.
-// On ambiguity it returns an error and must never retry Enter blindly.
-type AtomicPaneNotifier interface {
-	NotifyPaneAtomically(context.Context, Binding, string) (AtomicNoticeReceipt, error)
-}
-
-// PostCommitNoticeBudget is a separate, finite opportunity to notify the
-// recipient after durable mail has committed. Earlier state work may consume
-// the send command's context without consuming this budget.
 const PostCommitNoticeBudget = 2 * time.Second
 
-// NotifyCommittedAfterCommit preserves committed mail even if the send
-// context has expired. It carries context values forward, but gives the
-// optional notice its own bounded deadline.
-func NotifyCommittedAfterCommit(ctx context.Context, rt Runtime, msg Message) NoticeResult {
-	return notifyCommittedWithin(ctx, rt, msg, PostCommitNoticeBudget)
+type notifierRegistration struct {
+	Version int     `json:"version"`
+	Binding Binding `json:"binding"`
 }
 
-func notifyCommittedWithin(ctx context.Context, rt Runtime, msg Message, budget time.Duration) NoticeResult {
-	noticeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+// RegisterNotifier is called directly by recipient Bash after installing its
+// Readline binding. A sender cannot register another pane's notifier.
+func (s Store) RegisterNotifier(ctx context.Context, rt Runtime) error {
+	return s.WithVerified(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
+		if snapshot.Caller.PanePID != strconv.Itoa(os.Getppid()) {
+			return errors.New("notifier registration must be a direct child of the pane's Bash process")
+		}
+		runtimeDir, err := privateDir(ws, "runtime", false)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = runtimeDir.Close() }()
+		notices, err := privateDir(runtimeDir, "bash-notifiers", true)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = notices.Close() }()
+		if err := syncDirectory(runtimeDir); err != nil {
+			return err
+		}
+		return replaceJSON(notices, snapshot.Caller.Role+".json", notifierRegistration{1, snapshot.Caller})
+	})
+}
+
+// NotifyCommittedAfterCommit gives a committed send a separate finite notice
+// budget. Cross-session mail supplies the already authorized named peer as
+// destination. Local mail supplies the native caller runtime as destination.
+func (s Store) NotifyCommittedAfterCommit(ctx context.Context, source, destination Runtime, msg Message) NoticeResult {
+	noticeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PostCommitNoticeBudget)
 	defer cancel()
-	return NotifyCommitted(noticeCtx, rt, msg)
+	return s.notifyCommitted(noticeCtx, source, destination, msg)
 }
 
-// NotifyCommitted is called only after Send returns a committed message. It
-// never changes the send result and never reads mailbox or pane content.
-func NotifyCommitted(ctx context.Context, rt Runtime, msg Message) NoticeResult {
+type bashNotifier interface {
+	notifyBash(context.Context, Binding) error
+}
+
+func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime, msg Message) NoticeResult {
 	result := NoticeResult{Status: "unavailable"}
-	if !messageID(msg.ID) || msg.To == "" || rt == nil {
+	if source == nil || destination == nil || !messageID(msg.ID) {
 		result.Reason = "committed message or runtime unavailable"
 		return result
 	}
-	// The caller runtime contains only the sender session's bindings. A
-	// qualified recipient must never be resolved by a same-named local role.
-	if msg.FromSession != "" || msg.ToSession != "" {
-		result.Reason = "cross-session pane notification unsupported"
-		return result
-	}
-	from, err := rt.Snapshot(ctx)
-	if err != nil || validateSnapshotForNotice(from, msg) != nil {
-		result.Reason = "recipient native binding unavailable"
+	var from Snapshot
+	err := s.withView(ctx, source, func(ws *os.Root, snapshot Snapshot) error {
+		if snapshot.Caller.Role != msg.From {
+			return ErrUnknown
+		}
+		sent, err := openOwnBox(ws, msg.From, "sent")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = sent.Close() }()
+		committed, err := readMessage(sent, msg.ID+".md")
+		if err != nil || !sameMessage(committed, msg) {
+			return ErrUnknown
+		}
+		from = snapshot
+		return nil
+	})
+	if err != nil {
+		result.Reason = "committed sender binding unavailable: " + err.Error()
 		return result
 	}
 	var target Binding
-	for _, item := range from.Bindings {
-		if item.Role == msg.To {
-			target = item
-			break
+	err = s.withView(ctx, destination, func(ws *os.Root, snapshot Snapshot) error {
+		if msg.ToSession == "" {
+			if snapshot.Root != from.Root || !sameRuntime(snapshot.Caller.Owner, from.Caller.Owner) {
+				return ErrUnknown
+			}
+		} else {
+			named, ok := destination.(NamedRuntime)
+			sender, sourceOK := source.(NamedRuntime)
+			if !ok || !sourceOK || named.Name() != msg.ToSession || sender.Name() != msg.FromSession || snapshot.Caller.Role != msg.To {
+				return ErrUnknown
+			}
 		}
-	}
-	if !target.Owner.valid() {
-		result.Reason = "recipient pane is not live"
+		for _, b := range snapshot.Bindings {
+			if b.Role == msg.To {
+				target = b
+			}
+		}
+		if !target.Owner.valid() {
+			return ErrUnknown
+		}
+		runtimeDir, err := privateDir(ws, "runtime", false)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = runtimeDir.Close() }()
+		notices, err := privateDir(runtimeDir, "bash-notifiers", false)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = notices.Close() }()
+		var registered notifierRegistration
+		if err := readJSON(notices, msg.To+".json", &registered); err != nil {
+			return err
+		}
+		if registered.Version != 1 || registered.Binding != target {
+			return errors.New("recipient notifier binding is stale")
+		}
+		return nil
+	})
+	if err != nil {
+		result.Reason = "recipient Bash notifier unavailable: " + err.Error()
 		return result
 	}
 	result.Pane = target.Owner.Pane
-	notifier, ok := rt.(AtomicPaneNotifier)
+	notifier, ok := destination.(bashNotifier)
 	if !ok {
-		result.Reason = "runtime has no atomic pane notifier"
+		result.Reason = "recipient runtime has no Bash notification transport"
 		return result
 	}
-	receipt, err := notifier.NotifyPaneAtomically(ctx, target, msg.ID)
-	if err != nil {
-		if errors.Is(err, ErrPaneNoticeUnsupported) || errors.Is(err, ErrPaneNoticeBusy) {
-			result.Status = "unavailable"
-			result.Reason = err.Error()
-			return result
-		}
+	// No mailbox lock is held across transport. No Enter or body text is sent.
+	if err := notifier.notifyBash(ctx, target); err != nil {
 		result.Status = "unknown"
 		result.Reason = err.Error()
 		return result
 	}
-	if receipt.MessageID != msg.ID || receipt.Recipient != target ||
-		!receipt.InitialComposerEmpty || !receipt.ImmediateObserved ||
-		(receipt.ImmediateSubmittedID != "" && receipt.ImmediateSubmittedID != msg.ID) ||
-		receipt.SettledSubmittedID != msg.ID || !receipt.SettledComposerEmpty {
-		result.Status = "unknown"
-		result.Reason = "recipient UI transition not proven"
-		return result
-	}
-	if err := ctx.Err(); err != nil {
-		result.Status = "unknown"
-		result.Reason = "notification deadline elapsed: " + err.Error()
-		return result
-	}
-	after, err := rt.Snapshot(ctx)
-	if err != nil || validateSnapshotForNotice(after, msg) != nil {
-		result.Status = "unknown"
-		result.Reason = "recipient binding changed after notice"
-		return result
-	}
-	var stillBound bool
-	for _, item := range after.Bindings {
-		if item.Role == msg.To && item == target {
-			stillBound = true
-			break
-		}
-	}
-	if !stillBound {
-		result.Status = "unknown"
-		result.Reason = "recipient binding changed after notice"
-		return result
-	}
-	if err := ctx.Err(); err != nil {
-		result.Status = "unknown"
-		result.Reason = "notification deadline elapsed: " + err.Error()
-		return result
-	}
-	result.Status = "sent"
+	result.Status = "accepted"
+	result.Reason = "Readline notification queued; recipient POP and response not observed"
 	return result
 }
 
-func validateSnapshotForNotice(s Snapshot, msg Message) error {
-	if _, err := validateSnapshot(s); err != nil {
-		return err
-	}
-	if s.Caller.Role != msg.From {
+func (t Tmux) notifyBash(ctx context.Context, target Binding) error {
+	peer := t
+	peer.Pane = target.Owner.Pane
+	snapshot, err := peer.Snapshot(ctx)
+	if err != nil || snapshot.Caller != target {
 		return ErrUnknown
 	}
-	return nil
+	command, err := tmuxOutput(ctx, t.Socket, "display-message", "-p", "-t", target.Owner.Pane, "#{pane_current_command}")
+	if err != nil || command != "bash\n" {
+		return errors.New("recipient is not at its registered Bash Readline prompt")
+	}
+	_, err = tmuxOutput(ctx, t.Socket, "send-keys", "-t", target.Owner.Pane, "C-x", "C-p")
+	return err
 }
 
-// NotifyPane is deliberately disabled. Pasting a comment followed by Enter
-// can execute a recipient's partially typed command, including when the
-// comment is separated by a trailing space. Durable mail still succeeds.
-func (t Tmux) NotifyPane(_ context.Context, _ Binding, _ string) error {
-	return ErrPaneNoticeUnsupported
+func (r NamedRuntime) notifyBash(ctx context.Context, target Binding) error {
+	return r.tmux.notifyBash(ctx, target)
 }

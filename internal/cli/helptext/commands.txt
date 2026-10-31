@@ -23,3 +23,7 @@ execute-bash
 All four commands accept an absolute --config or --postman-md path; otherwise
 postman.md resolves from XDG_CONFIG_HOME or HOME/.config. No command accepts
 a daemon context ID. Bare tmux-a2a-postman prints usage.
+
+Recipient setup:
+  help register-notifier explains the Bash/Readline hook. Source the output
+  of notifier-script in each receiving Bash; registration is recipient-owned.

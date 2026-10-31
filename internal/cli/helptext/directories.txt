@@ -1,19 +1,17 @@
-Directories — session directory layout
+Directories — private workspace mail
 
-Base directory resolution (in priority order):
-  1. $POSTMAN_HOME environment variable
-  2. base_dir field in config file
-  3. $XDG_STATE_HOME/tmux-a2a-postman (default)
-     (falls back to ~/.local/state/tmux-a2a-postman)
+${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman/
+  locks/<workspace>.lock           short interprocess workspace lock
+  <workspace>/workspace.json      canonical original HOME-relative identity
+  <workspace>/runtime/binding.json   replaceable native tmux binding
+  <workspace>/runtime/bash-notifiers/<role>.json   recipient-owned hook binding
+  <workspace>/agents/<role>/
+    draft/ inbox/ read/ sent/ failed/   independent private Markdown copies
+    read/<message-id>.pop.json     durable POP claim receipt
+    executions/                   command audit, never reusable authorization
+    pane/                         optional bounded observations
+  <workspace>/transactions/        interrupted mail operation recovery
 
-Layout:
-  {baseDir}/
-  └── {contextId}/
-      └── {sessionName}/
-          ├── draft/          # internal: draft staging area (use send instead)
-          ├── post/           # internal: outbox queue managed by postman daemon
-          ├── inbox/
-          │   └── {node}/     # daemon delivers messages here
-          ├── read/           # agent moves messages here after reading
-          ├── snapshot/       # internal: bounded daemon-submit/runtime snapshots
-          └── dead-letter/    # unroutable messages land here
+Workspace names flatten the escaped HOME-relative root, not the session name.
+A live independent session cannot mutate another session's workspace.
+Commands create required directories on first use; get-status never initializes.

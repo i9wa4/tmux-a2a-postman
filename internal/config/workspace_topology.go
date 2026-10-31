@@ -71,7 +71,7 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	if err := validateWorkspaceFrontmatter(content); err != nil {
 		return result, err
 	}
-	fm, _, _, _, err := parsePostmanFrontmatter(content)
+	fm, err := workspaceFrontmatter(content)
 	if err != nil {
 		return result, err
 	}

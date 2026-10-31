@@ -1,5 +1,5 @@
 {
-  description = "tmux-a2a-postman - File-based communication daemon for tmux panes";
+  description = "tmux-a2a-postman - Daemonless file-first communication for tmux agents";
 
   nixConfig = {
     extra-substituters = [
@@ -233,8 +233,16 @@
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-A5+98YkUQlft0SQ/Q9w7fLF1X6k0c8rLp1bXbrRxL6o=";
-            nativeCheckInputs = [ pkgs.tmux ];
+            vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
+            nativeCheckInputs = [
+              pkgs.tmux
+              pkgs.bashInteractive
+              pkgs.python3
+            ];
+            postInstall = ''
+              mkdir -p $out/share/tmux-a2a-postman
+              cp integrations/bash/*.py $out/share/tmux-a2a-postman/
+            '';
             ldflags = [
               "-s"
               "-w"

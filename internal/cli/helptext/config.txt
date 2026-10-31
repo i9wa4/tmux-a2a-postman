@@ -28,8 +28,6 @@ Example syntax (not a recorded run):
       class reviewer command_approver_node
   ```
 
-The legacy postman.toml daemon configuration, session status projection,
-auto-PING, and command approval policy fields do not configure these four
-file-first adapters. Legacy commands still have their own help topics while
-the issue #937 cutover is incomplete. See help send-heredoc, help pop,
-help get-status, and help execute-bash for their exact current options.
+Only this Markdown topology configures the commands. TOML overlays, daemon
+policy settings, startup and daemon RPC are removed. State uses the absolute
+XDG_STATE_HOME or HOME/.local/state. See help register-notifier for setup.

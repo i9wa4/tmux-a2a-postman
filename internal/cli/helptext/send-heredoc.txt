@@ -22,9 +22,11 @@ configured role; the recipient must be a configured outgoing edge.
 
 On success, separate private receiver-inbox and sender-sent copies are
 durable. JSON status is sent and includes message, mandatory file-derived
-self, and a separate notice outcome. Native pane-input notification is
-disabled because it could submit text already typed by the recipient;
-notice.status=unavailable reports that limit. It never rolls back mail.
+self, and a separate notice outcome. The default route uses the registered
+Bash/Readline hook (see help register-notifier). accepted means the key was
+queued, not POP or reply. Missing/stale setup reports notice.status=unavailable;
+transport ambiguity reports unknown. This never rolls back mail. Send does
+not wait for recipient POP, reply, or task completion.
 An uncertain send or notice is not permission for a blind retry.
 
 The optional capture result cannot change the mail result. Native pane-text

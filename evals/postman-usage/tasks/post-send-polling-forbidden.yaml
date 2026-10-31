@@ -15,7 +15,7 @@ graders:
       contains:
         - "send-heredoc"
         - "POSTMAN_BODY"
-        - "wait for daemon notification"
+        - "wait for recipient notification"
       not_contains:
         - "tmux-a2a-postman pop"
         - "sleep && tmux-a2a-postman pop"

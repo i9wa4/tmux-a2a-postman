@@ -8,6 +8,8 @@ and an optional command reviewer. Missing or ambiguous identity fails closed.
   pop           Claim one own unread message and return its archive path
   get-status    Read own saved-file state without claiming mail
   execute-bash  Run Bash after the configured exact approval protocol
+  notifier-script  Print Bash/Readline recipient setup for sourcing
+  register-notifier  Register the recipient shell after installing its hook
   version       Print build version JSON
   help [topic]  Show command help
 
@@ -16,3 +18,5 @@ Default topology: $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or
 The four workspace commands accept an absolute --config or --postman-md.
 Use quoted heredoc stdin for send-heredoc. Read a complete archived body
 after every successful pop. Bare tmux-a2a-postman prints usage.
+
+Receiving roles need Bash/Readline setup: help register-notifier.
