@@ -24,7 +24,7 @@ func (s Store) NotifyCommittedAppServerAfterCommit(ctx context.Context, rt Runti
 		result.Reason = "legacy daemon lease unavailable: " + err.Error()
 		return result
 	}
-	defer lease.Close()
+	defer func() { _ = lease.Close() }()
 	before, err := rt.Snapshot(ctx)
 	if err != nil || validateSnapshotForNotice(before, msg) != nil {
 		result.Reason = "sender binding unavailable"

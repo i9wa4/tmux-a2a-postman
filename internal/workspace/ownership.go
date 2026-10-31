@@ -90,7 +90,7 @@ func (s Store) acquireLegacyLease() (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer base.Close()
+	defer func() { _ = base.Close() }()
 	opened, err := base.Stat(".")
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, ErrUnknown
@@ -99,7 +99,7 @@ func (s Store) acquireLegacyLease() (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer locks.Close()
+	defer func() { _ = locks.Close() }()
 	lease, err := locks.OpenFile(name, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
 		return nil, err

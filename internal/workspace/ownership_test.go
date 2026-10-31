@@ -180,7 +180,11 @@ func TestLegacyLockChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer legacy.Release()
+	defer func() {
+		if err := legacy.Release(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if mode == "try" {
 		fmt.Println("ACQUIRED")
 		return

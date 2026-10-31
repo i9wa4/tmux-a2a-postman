@@ -304,7 +304,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if err != nil {
 		return fail("unavailable", err)
 	}
-	defer lease.Close()
+	defer func() { _ = lease.Close() }()
 	initial, err := rt.Snapshot(ctx)
 	if err != nil {
 		return fail("unavailable", err)
