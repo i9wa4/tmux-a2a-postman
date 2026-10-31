@@ -473,25 +473,6 @@ func RunWorkspaceExecuteBash(args []string) error {
 	return nil
 }
 
-// RunWorkspaceRegisterNotifier configures a recipient; it is not a worker.
-func RunWorkspaceRegisterNotifier(args []string) error {
-	f := newWorkspaceFlags("register-notifier")
-	path, err := f.parse(args)
-	if err != nil {
-		return err
-	}
-	if f.fs.NArg() != 0 {
-		return errors.New("register-notifier takes no positional arguments")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	c, err := openWorkspaceCommand(ctx, path)
-	if err != nil {
-		return err
-	}
-	return c.mail.Store.RegisterNotifier(ctx, c.boundRuntime())
-}
-
 // Retry only lock admission proven to precede any mutation. A claimed/partially
 // committed operation is never replayed. This is bounded foreground contention
 // handling, not an idle POP loop or delivery retry.

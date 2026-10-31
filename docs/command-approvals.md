@@ -9,7 +9,7 @@ ambiguous identity fails closed. This is operational coordination, not a
 sandbox or unbypassable security boundary.
 
 A present reviewer receives a fresh reply-required mail through ordinary
-durable send and the registered Bash/Readline notification adapter. Set up the
+durable send and the common tmux input notification transport. Set up the
 reviewer as described in [README](../README.md#1-install-and-configure).
 The request body is `{"version":1,"command":"<exact command>"}`. The reviewer
 POPs, reads the whole archive and sends ordinary mail addressing the requester,

@@ -22,12 +22,17 @@ configured role; the recipient must be a configured outgoing edge.
 
 On success, separate private receiver-inbox and sender-sent copies are
 durable. JSON status is sent and includes message, mandatory file-derived
-self, and a separate notice outcome. The default route uses the registered
-Bash/Readline hook (see help register-notifier). accepted means the key was
-queued, not POP or reply. Missing/stale setup reports notice.status=unavailable;
-transport ambiguity reports unknown. This never rolls back mail. Send does
-not wait for recipient POP, reply, or task completion.
-An uncertain send or notice is not permission for a blind retry.
+self, and a separate notice outcome. The sender pastes a mail hint into the
+existing recipient's tmux input and submits C-m, as in the original workflow.
+This path is shared by Codex, Claude Code and local LLM consoles. No model API,
+thread ID, registration or shell hook is needed. accepted means tmux accepted
+paste/key input, not POP or reply. Unavailable/blocked targets report unavailable;
+ambiguous input reports unknown and is not replayed. Mail is never rolled back.
+Send never waits for recipient POP, reply or task completion.
+
+Notifications use the agent's current composer. Postman serializes its own
+writers but does not save/restore drafts or exclude human input. Shell prompts
+and tmux copy/input modes are rejected before paste. Use existing agent panes.
 
 The optional capture result cannot change the mail result. Native pane-text
 capture currently reports unknown and no text until stable role attribution

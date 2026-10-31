@@ -15,7 +15,7 @@ var helpTopicFiles = map[string]string{
 	"": "helptext/overview.txt", "commands": "helptext/commands.txt", "config": "helptext/config.txt",
 	"directories": "helptext/directories.txt", "help": "helptext/help.txt", "messaging": "helptext/messaging.txt",
 	"send-heredoc": "helptext/send-heredoc.txt", "pop": "helptext/pop.txt", "get-status": "helptext/get-status.txt",
-	"execute-bash": "helptext/execute-bash.txt", "register-notifier": "helptext/register-notifier.txt", "notifier-script": "helptext/register-notifier.txt", "version": "helptext/version.txt",
+	"execute-bash": "helptext/execute-bash.txt", "version": "helptext/version.txt",
 }
 
 func RunHelp(args []string) {

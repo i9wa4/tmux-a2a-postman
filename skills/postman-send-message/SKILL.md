@@ -41,10 +41,13 @@ post-operation self-state separately. Notification failure does not undo a
 committed delivery. A failed or uncertain invocation is not permission for a
 blind resend; retain its identifiers and inspect the recorded operation.
 
-The default notification route requires recipient-owned Bash/Readline setup,
-including the sender when waiting for a reply. `notice.status=accepted` proves
-only key acceptance; missing/stale setup reports `unavailable`, and uncertain
-transport reports `unknown`. Do not select a transport flag or start a daemon.
+The foreground sender pastes the notification into the existing recipient
+agent's tmux input and submits it with `C-m`. This transport is shared by all
+agent runtimes, including the sender receiving a reply and the command reviewer.
+No notifier registration, model-specific API or Postman daemon is needed.
+`notice.status=accepted` proves tmux paste/key acceptance, never POP or
+response. Unavailable targets report `unavailable`; an ambiguous attempt reports
+`unknown` and is never replayed. Delivery remains committed in both cases.
 
 Unrelated sends and POP do not close required replies. Verify exact fill or
 unresolved state in the returned output; missing state is unknown.

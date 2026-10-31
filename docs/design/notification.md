@@ -1,72 +1,86 @@
 # Recipient notification
 
-## 1. Supported integration
+## 1. Original pane-input workflow
 
-The normal route is recipient-owned Bash/Readline. Follow the setup in
-[README](../../README.md#1-install-and-configure) or `help register-notifier`.
-The installed binary emits its own setup with `notifier-script`. Source it
-from the receiving pane's interactive Bash after assigning the role title.
-Materialize the emitted setup in a private regular file before sourcing it,
-as in README; this does not require `/dev/fd` process substitution. Nix tests
-pin `bashInteractive` explicitly instead of inheriting build-time Bash from
-PATH. The setup fails if Readline cannot be enabled or the key cannot be bound.
+Notifications are independent of the agent/model runtime. After durable mail
+commits, the foreground CLI finds the verified recipient tmux pane, pastes a
+mail hint into its existing input editor and submits it with `C-m`. The agent
+POPs the notified ID, reads the complete archive and sends any exact reply.
+Codex, Claude Code and local LLM consoles use the same path.
 
-The setup selects Emacs Readline, reserves Ctrl-x Ctrl-p, and registers the
-exact native role, pane and pane-process incarnation. Registration must be a
-direct child of that pane's Bash, not an arbitrary sender or nested shell.
+This preserves the original `set-buffer` → `paste-buffer` → `C-m` behavior.
+The greeting, `You've got mail:` filename hint and HTML protocol sentinels are
+retained. The hint is one line for compatibility with plain line-oriented input;
+it includes the exact POP ID and full-read instruction, never the mail body.
+There is no model API, thread ID, notifier registration or Readline hook.
+Existing agents are started by the user's launcher, such as vde-layout.
 
-The recipient handler receives one POP-result JSON document on piped stdin. It
-reads the complete archive through EOF, performs its work and sends any exact
-reply. The supplied Codex handler uses `codex exec --sandbox workspace-write`
-for a fresh noninteractive turn; Codex configuration and sandbox policy still
-apply. Other executable handlers can implement deterministic roles such as a
-local reviewer. Interactive Codex/Claude TUI input is not supported by this
-adapter.
+A unique named buffer prevents collisions with unrelated tmux buffers. One
+command list creates the buffer, pastes it with bracketed-paste support when
+the terminal enables it, deletes the consumed buffer, waits 150 ms for the UI,
+and sends a real `C-m`. A separate per-recipient file lock serializes Postman
+writers. No mailbox lock spans terminal input. Failed attempts clean up only
+their own buffer and never repeat a paste or Enter on an uncertain outcome.
 
-## 2. Delivery and notification
+## 2. Binding, commit and evidence
 
-After publication the CLI verifies the committed sent copy, destination
-workspace ownership and registered target. The transport rechecks the native
-binding and that Bash owns the foreground prompt, then queues only Ctrl-x
-Ctrl-p. It never sends Enter, a command, a body or a generated shell string.
-Readline invokes the installed function while retaining READLINE_LINE and
-READLINE_POINT, so a pending command is not submitted. No screen-content
-heuristic or check-then-Enter is used.
+Before input, the CLI verifies its exact committed sent copy, authorized
+same-session or direct parent/child destination and current native target
+binding. It rechecks server/session/pane/PID and role before sending. Native
+identity and ownership checks remain; model-specific gates do not apply.
+An ordinary shell prompt or tmux input/copy mode is rejected before paste.
+A fresh two-second post-commit budget bounds notification work independently
+of sender cancellation. Sending never waits for POP, a reply or completion.
 
-Same-session and declared direct parent/child interface routes share this
-path. The latter uses the verified destination runtime and its registration,
-never the sender's same-named local role. Notification runs outside mailbox
-locks with a fresh two-second budget after commit.
+The source reserves `runtime/notices/<id>.json` as `unknown` immediately before
+the attempt and marks it accepted after tmux success. Concurrent/repeated
+attempts for the same committed message never submit twice. A pre-paste
+rejection does not reserve an attempt, so the exact committed message can be
+notified later. Ambiguous input or receipt persistence remains unknown and is
+never replayed. This is bounded foreground evidence, not a background
+delivery/retry queue.
 
-| Outcome              | Evidence                                                             |
-| -------------------- | -------------------------------------------------------------------- |
-| Durable delivery     | Independent sent and inbox/read mail files                           |
-| `accepted` notice    | tmux accepted the Readline key sequence                              |
-| `unavailable` notice | Setup/target could not be verified; no notification attempt          |
-| `unknown` notice     | Transport outcome may be ambiguous; never blindly retry              |
-| POP claim            | Receiver read archive and `.pop.json` receipt exist                  |
-| Full read            | Recipient-specific evidence, such as the smoke handler's body digest |
-| Response             | Exactly correlated sender/recipient mail and claim receipt           |
+| Outcome              | Evidence                                                 |
+| -------------------- | -------------------------------------------------------- |
+| Durable delivery     | Independent sent and inbox/read files                    |
+| `accepted` notice    | tmux accepted paste and C-m                              |
+| `unavailable` notice | Binding/target/input could not be admitted before paste  |
+| `unknown` notice     | Paste/submit or receipt persistence may be ambiguous     |
+| POP claim            | Final read archive and `.pop.json` receipt               |
+| Full read            | Recipient evidence such as a complete-file SHA256 digest |
+| Response             | Exactly correlated reply and claim receipt               |
 
-Acceptance does not prove POP, full read, understanding, or a response. A busy
-handler may defer queued input until it returns. Missing or stale registration
-leaves durable unread mail and an explicit notification failure. New known
-unread self-state is an action trigger; idle repeated POP/status loops are not.
-Handlers must not read terminal stdin or replace the recipient Bash with an
-interactive TUI while retaining its registration. Dedicated recipient panes
-are the supported host; a shell restart requires sourcing setup again.
+Acceptance does not prove POP, full reading, understanding or response. Failed
+notifications leave durable unread mail and never undo a committed send or
+permit an approval command. Known unread self-state is an explicit POP trigger;
+idle polling and automatic replay are unnecessary.
 
-## 3. Verification
+## 3. Agent input contract
 
-`TestNotificationDrivenRoundTrip` uses real tmux, the rebuilt CLI's emitted
-setup, and real Bash/Readline. After the initial send only the notification
-hook invokes the handler. The handler POPs, reads the full file, records a
-SHA256 digest, sends an exact reply, and the return notification drives the
-sender claim. The test also preserves an unsubmitted composer command.
-`TestNotificationDisabledCannotDriveRoundTrip` removes registration and proves
-that durable delivery alone produces no recipient actions.
+Receiving panes must host agents accepting pasted text and `C-m`, with stable
+configured role titles. The agent controls its model access, tool permissions,
+input handling while busy, and draft editing. As with the original transport,
+Postman writes into the current composer; it does not snapshot/restore human
+drafts or infer an empty composer from screen captures. The per-recipient lock
+serializes Postman writers, not human input or arbitrary external key senders.
+These limits apply uniformly to every agent type.
 
-Parent/child tests run both directions. Approval tests exercise approved and
-rejected decisions through this same notification route; the requester wrapper
-receives its decision without a requester model POP. No test requires paid model
-access. See [the recorded smoke check](../../.task-artifacts/952-smoke.md).
+## 4. Verification
+
+`nix run .#notification-smoke -- --case all` uses real tmux and deterministic
+terminal agents without any AI model or runtime API. Both canonical line input
+and raw bracketed-paste input receive the actual notification bytes and submit
+key. Only that submitted input triggers the agent's POP/read/reply helper.
+The sixteen-case matrix covers rally, busy, concurrent arrivals, parent/child
+both directions, approval/rejection and blocked notification. Conversation
+context, exact IDs, archive hashes, distinct claims and bounded sends are
+verified. Copy-mode blocking and old-main controls commit mail but produce no
+receiver action. The controller never POPs or replies.
+
+An additional eight-case real Codex TUI matrix uses fixed local model responses,
+matching vde-layout's launch, through the same tmux input path. It exercises no
+Codex app-server/queue adapter. Claude/local-console compatibility rests on this
+common terminal protocol; terminal fixtures do not claim a paid Claude/model
+run. Go tests cover transport ambiguity, no replay, concurrency, lock
+independence and shell input rejection. See
+[Contributing](../../CONTRIBUTING.md).
