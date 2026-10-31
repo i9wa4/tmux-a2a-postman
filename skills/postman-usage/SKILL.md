@@ -14,7 +14,14 @@ description: |
 
 ## 1. Claim and read mail
 
-A genuine Postman pane notification may cue the exact bare command:
+The supported host is a dedicated Bash pane with the installed binary's
+`notifier-script` sourced and an executable handler configured. Its genuine
+Readline notification invokes POP and passes JSON to that handler. The handler
+must read the complete archive before handling it; no Enter or body text is
+injected. See [recipient setup](../../README.md#1-install-and-configure).
+An existing interactive Codex/Claude TUI is not a Bash recipient.
+
+For manual receipt or an explicit known-mail trigger, use:
 
 ```sh
 tmux-a2a-postman pop

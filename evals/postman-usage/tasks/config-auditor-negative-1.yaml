@@ -11,7 +11,7 @@ description: >-
 tags:
   - negative-trigger
 inputs:
-  prompt: "Fix a wrong node name in postman.md's skill_path frontmatter."
+  prompt: "Fix a wrong interface role in postman.md's workspace_tree frontmatter."
 expected:
   should_trigger: false
 graders:

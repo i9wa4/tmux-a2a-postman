@@ -2,60 +2,8 @@ package config
 
 import (
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
 	"strings"
 )
-
-// parseFrontmatter parses the supported Markdown frontmatter syntax subset.
-// This is intentionally not real YAML. Supported syntax is a leading ---
-// delimited block with one single-line key: value pair per non-empty line.
-// Parse rules:
-//   - Splits on the FIRST colon only; values may contain colons
-//   - Multi-line values are NOT supported
-//   - Quoted strings are NOT supported (quotes are literal characters)
-//   - Leading/trailing whitespace on key and value is trimmed
-//   - Blank lines are allowed
-//
-// Returns a map of lowercase keys to string values.
-func parseFrontmatter(content string) (map[string]string, error) {
-	result := make(map[string]string)
-	lines := strings.Split(content, "\n")
-	start, end, ok, err := frontmatterBounds(lines)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return result, nil
-	}
-
-	previousEmptyValue := false
-	for i, line := range lines[start+1 : end] {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-		if previousEmptyValue && hasIndentPrefix(line) {
-			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
-		}
-		if strings.HasPrefix(trimmed, "- ") {
-			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
-		}
-		idx := strings.Index(line, ":")
-		if idx == -1 {
-			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
-		}
-		key := strings.TrimSpace(strings.ToLower(line[:idx]))
-		value := strings.TrimSpace(line[idx+1:])
-		if key == "" {
-			return nil, unsupportedFrontmatterSyntaxError(start+i+2, line)
-		}
-		result[key] = value
-		previousEmptyValue = value == ""
-	}
-	return result, nil
-}
 
 func frontmatterBounds(lines []string) (int, int, bool, error) {
 	start := 0
@@ -74,43 +22,11 @@ func frontmatterBounds(lines []string) (int, int, bool, error) {
 	return 0, 0, true, fmt.Errorf("unclosed markdown frontmatter starting at line %d", start+1)
 }
 
-func hasIndentPrefix(line string) bool {
-	return strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")
-}
-
-func unsupportedFrontmatterSyntaxError(lineNumber int, line string) error {
-	return fmt.Errorf(
-		"unsupported markdown frontmatter syntax at line %d: %q (supported syntax is one single-line key: value pair per non-empty line; lists, nesting, and multiline values are unsupported)",
-		lineNumber,
-		line,
-	)
-}
-
-// extractMermaidBlock finds the content of the first ```mermaid...``` fence.
-// Returns the content between the fences (not including the fence lines),
-// or empty string if not found.
-func extractMermaidBlock(content string) string {
-	const openFence = "```mermaid"
-	const closeFence = "```"
-
-	start := strings.Index(content, openFence)
-	if start == -1 {
-		return ""
-	}
-	// Skip past the opening fence line
-	afterOpen := content[start+len(openFence):]
-	end := strings.Index(afterOpen, closeFence)
-	if end == -1 {
-		return ""
-	}
-	return afterOpen[:end]
-}
-
 // parseMermaidEdges extracts edge definitions from a Mermaid graph block.
 // Strips graph headers and non-edge directives.
 // Normalizes Mermaid node decorations and keeps "---" as the config edge
 // separator.
-// Returns a []string in the Config.Edges format.
+// Returns normalized local edge definitions.
 func parseMermaidEdges(mermaidBlock string) []string {
 	var edges []string
 	for _, statement := range mermaidStatements(mermaidBlock) {
@@ -127,39 +43,11 @@ func parseMermaidEdges(mermaidBlock string) []string {
 
 const (
 	mermaidInterfaceNodeClass       = "interface_node"
-	mermaidLegacyUINodeClass        = "ui_node" // #764: ignored with a warning, never designates a node
 	mermaidCommandApproverNodeClass = "command_approver_node"
 )
 
 func parseMermaidInterfaceNode(mermaidBlock string) (string, bool, error) {
 	return parseMermaidDesignatedNode(mermaidBlock, mermaidInterfaceNodeClass)
-}
-
-// legacyMermaidUINodeForms lists the legacy ui_node forms found in a Mermaid
-// block, each as a human-readable form description, so the loader can warn
-// that they are ignored. It reports the class-statement form
-// (`class X ui_node`) and the inline form (`X:::ui_node`) separately. It never
-// returns an error and never designates a node: legacy forms cannot set or mask
-// interface_node (#764).
-func legacyMermaidUINodeForms(mermaidBlock string) []string {
-	var forms []string
-	for _, statement := range mermaidStatements(mermaidBlock) {
-		statement = strings.TrimSpace(statement)
-		if statement == "" {
-			continue
-		}
-		if nodes := parseMermaidClassDesignatedNodeStatement(statement, mermaidLegacyUINodeClass); len(nodes) > 0 {
-			forms = append(forms, fmt.Sprintf("Mermaid class statement %q (nodes %s)", statement, strings.Join(nodes, ",")))
-			continue
-		}
-		if shouldSkipMermaidStatement(statement) {
-			continue
-		}
-		if nodes := parseMermaidInlineDesignatedNodeStatement(statement, mermaidLegacyUINodeClass); len(nodes) > 0 {
-			forms = append(forms, fmt.Sprintf("Mermaid inline :::ui_node class in %q (nodes %s)", statement, strings.Join(nodes, ",")))
-		}
-	}
-	return forms
 }
 
 func parseMermaidCommandApproverNode(mermaidBlock string) (string, bool, error) {
@@ -467,76 +355,16 @@ func extractBacktickName(text string) string {
 	return strings.ToLower(strings.TrimSpace(rest[:end]))
 }
 
-// extractNodeFields extracts role from reserved ### `key` sections within a
-// node body. Returns the field value and the body with reserved sections
-// stripped. If no reserved sections are found, returns an empty string and the
-// original body unchanged.
-func extractNodeFields(body string) (role, template string) {
-	lines := strings.Split(body, "\n")
-
-	type reserved struct {
-		key     string
-		heading int
-		start   int
-		end     int // exclusive
-	}
-	var sections []reserved
-
-	for i, line := range lines {
-		if !strings.HasPrefix(line, "### ") {
-			continue
-		}
-		heading := strings.TrimSpace(line[4:]) // strip "### "
-		name := extractBacktickName(heading)
-		if name != "role" {
-			continue
-		}
-		// Find body end: next heading (## or ###) or EOF
-		end := len(lines)
-		for j := i + 1; j < len(lines); j++ {
-			if strings.HasPrefix(lines[j], "## ") || strings.HasPrefix(lines[j], "### ") {
-				end = j
-				break
-			}
-		}
-		sections = append(sections, reserved{key: name, heading: i, start: i + 1, end: end})
-	}
-
-	if len(sections) == 0 {
-		return "", body
-	}
-
-	// Build exclude set and extract values
-	exclude := make(map[int]bool)
-	values := make(map[string]string)
-	for _, sec := range sections {
-		values[sec.key] = strings.TrimSpace(strings.Join(lines[sec.start:sec.end], "\n"))
-		for j := sec.heading; j < sec.end; j++ {
-			exclude[j] = true
-		}
-	}
-
-	var kept []string
-	for i, line := range lines {
-		if !exclude[i] {
-			kept = append(kept, line)
-		}
-	}
-	return values["role"], strings.TrimSpace(strings.Join(kept, "\n"))
-}
-
 // reservedH2Names maps backtick-wrapped h2 names to their canonical section keys.
 // These names are NOT treated as node definitions.
 var reservedH2Names = map[string]string{
-	"edges":           "edges",
-	"common_template": "common_template",
-	"message_footer":  "message_footer",
+	"edges": "edges",
 }
 
 // extractH2Sections parses Markdown content into a map of section key -> body.
 //
 // Backtick-wrapped names are extracted from h2 headings. Reserved names
-// (edges, common_template) become special sections; all others become node
+// (edges) become special sections; all others become node
 // sections.
 // Section body is the text from the heading line (exclusive) until the next
 // h2 heading or end of content.
@@ -592,159 +420,4 @@ func stripFrontmatter(content string) string {
 		return content
 	}
 	return strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
-}
-
-// loadMarkdownConfig parses a postman.md (single-file format) into a Config.
-// Returns a zero-value Config with only explicitly-set fields populated.
-// Global frontmatter keys: interface_node → Config.InterfaceNode override
-// (the legacy ui_node key is warned about and ignored, #764),
-// reply_command → Config.ReplyCommand,
-// skill_path → generated skill catalog appended to Config.CommonTemplate, or
-// to daemon PING role content when an entry uses inject: ping or inject: compaction_ping.
-// Mermaid edges may mark the interface node with the interface_node class when
-// frontmatter does not override it (legacy ui_node classes warn and are
-// ignored). Mermaid edges may also mark the command approval
-// reviewer with the command_approver_node class.
-// Reserved h2 sections: "## `edges`" → Mermaid edges;
-// "## `common_template`" → Config.CommonTemplate.
-// Node h2 sections: "## `name`" → node template with ### `role` h3 field.
-func loadMarkdownConfig(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	content := string(raw)
-	cfg := &Config{Nodes: make(map[string]NodeConfig), NodeOrder: []string{}, PingSkillCatalogs: make(map[string]string), CompactionSkillCatalogs: make(map[string]string)}
-
-	// Parse global frontmatter.
-	fm, skillCatalogSpecs, pingSkillCatalogSpecs, compactionSkillCatalogSpecs, err := parsePostmanFrontmatter(content)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if _, ok := fm["ui_node"]; ok {
-		warnLegacyUINode(path, "postman.md frontmatter key ui_node")
-	}
-	if v, ok := fm["interface_node"]; ok {
-		cfg.InterfaceNode = v
-		cfg.interfaceNodeSet = true
-	}
-	if v, ok := fm["reply_command"]; ok && v != "" {
-		cfg.ReplyCommand = v
-	}
-
-	// Parse h2 sections (without frontmatter interfering with h2 detection)
-	bodyContent := stripFrontmatter(content)
-	nodeOrder, sections := extractH2Sections(bodyContent)
-	cfg.recordNodeNames(nodeOrder...)
-
-	// Edges section
-	if edgesBody, ok := sections["edges"]; ok {
-		mermaidBlock := extractMermaidBlock(edgesBody)
-		cfg.Edges = parseMermaidEdges(mermaidBlock)
-		for _, form := range legacyMermaidUINodeForms(mermaidBlock) {
-			warnLegacyUINode(path, form)
-		}
-		if !cfg.interfaceNodeSet {
-			interfaceNode, ok, err := parseMermaidInterfaceNode(mermaidBlock)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", path, err)
-			}
-			if ok {
-				cfg.InterfaceNode = interfaceNode
-				cfg.interfaceNodeSet = true
-			}
-		}
-		commandApproverNode, ok, err := parseMermaidCommandApproverNode(mermaidBlock)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		if ok {
-			cfg.CommandApproverNode = commandApproverNode
-		}
-	}
-
-	// Common template section
-	if commonBody, ok := sections["common_template"]; ok {
-		cfg.CommonTemplate = strings.TrimSpace(commonBody)
-	}
-	if len(skillCatalogSpecs) > 0 {
-		commonTemplate, err := appendSkillCatalogsToCommonTemplate(cfg.CommonTemplate, path, skillCatalogSpecs)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		cfg.CommonTemplate = commonTemplate
-	}
-	if len(pingSkillCatalogSpecs) > 0 {
-		catalogs, err := renderInjectedSkillCatalogs(path, pingSkillCatalogSpecs)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		cfg.PingSkillCatalogs = catalogs
-	}
-	if len(compactionSkillCatalogSpecs) > 0 {
-		catalogs, err := renderInjectedSkillCatalogs(path, compactionSkillCatalogSpecs)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		cfg.CompactionSkillCatalogs = catalogs
-	}
-
-	// Message footer section
-	if footerBody, ok := sections["message_footer"]; ok {
-		cfg.MessageFooter = strings.TrimSpace(footerBody)
-	}
-
-	// Node sections
-	for key, body := range sections {
-		if _, reserved := reservedH2Names[key]; reserved {
-			continue
-		}
-		// Validate against reserved names
-		if key == "postman" {
-			log.Printf("warning: skipping reserved node name %q in %s", key, path)
-			continue
-		}
-		// Try h3 reserved sections first, fall back to frontmatter
-		role, tmpl := extractNodeFields(body)
-		if role == "" {
-			fm, err := parseFrontmatter(body)
-			if err != nil {
-				return nil, fmt.Errorf("%s: node %q: %w", path, key, err)
-			}
-			role = fm["role"]
-		}
-		// Strip frontmatter from template (harmless if absent)
-		tmpl = strings.TrimSpace(stripFrontmatter(tmpl))
-		cfg.Nodes[key] = NodeConfig{Template: tmpl, Role: role}
-	}
-
-	return cfg, nil
-}
-
-// loadNodeMarkdownFile parses a nodes/name.md split-file format into a NodeConfig.
-// Uses ### `role` h3 section (preferred) with frontmatter fallback.
-// The remaining body (after stripping reserved sections and frontmatter) becomes
-// NodeConfig.Template. Returns: nodeName (filename without .md extension),
-// NodeConfig, error.
-func loadNodeMarkdownFile(path string) (string, NodeConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", NodeConfig{}, err
-	}
-	content := string(raw)
-	nodeName := strings.TrimSuffix(filepath.Base(path), ".md")
-
-	// Try h3 reserved sections first, fall back to frontmatter
-	role, tmpl := extractNodeFields(content)
-	if role == "" {
-		fm, err := parseFrontmatter(content)
-		if err != nil {
-			return "", NodeConfig{}, fmt.Errorf("%s: %w", path, err)
-		}
-		role = fm["role"]
-	}
-	// Strip frontmatter from template (harmless if absent)
-	tmpl = strings.TrimSpace(stripFrontmatter(tmpl))
-
-	return nodeName, NodeConfig{Template: tmpl, Role: role}, nil
 }

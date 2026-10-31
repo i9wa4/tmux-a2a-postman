@@ -98,8 +98,8 @@ func TestTmuxSendLeavesPendingRecipientInputUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notice := NotifyCommitted(context.Background(), adapter, sent.Message)
-	if notice.Status != "unavailable" || !errors.Is(adapter.NotifyPane(context.Background(), Binding{}, ""), ErrPaneNoticeUnsupported) {
+	notice := m.Store.NotifyCommittedAfterCommit(context.Background(), adapter, adapter, sent.Message)
+	if notice.Status != "unavailable" {
 		t.Fatalf("native pane notification was not disabled: %+v", notice)
 	}
 	after := f.run(t, "capture-pane", "-p", "-t", peer)

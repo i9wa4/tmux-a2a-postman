@@ -49,23 +49,11 @@ func TestWorkspaceTopologyPathXDGAndExplicitOverride(t *testing.T) {
 	}
 }
 
-func TestSupportedWorkspaceRoot(t *testing.T) {
-	home := t.TempDir()
-	root := filepath.Join(home, ".local", "state", "tmux-a2a-postman")
-	if got, err := supportedWorkspaceRoot(home, "", root); err != nil || got != root {
-		t.Fatalf("same root: %q %v", got, err)
-	}
-	for _, legacy := range []string{filepath.Join(home, "other"), "relative", ""} {
-		if _, err := supportedWorkspaceRoot(home, "", legacy); err == nil {
-			t.Fatalf("accepted divergent legacy root %q", legacy)
+func TestRemovedDaemonCommandsAreUnknown(t *testing.T) {
+	for _, command := range []string{"start", "stop", "send", "inspect-daemon-submit", "inspect-command-approvals", "get-status-oneline", "capture-profile", "reconcile-command-approval-reply-slot", "backfill-verdict-events"} {
+		got := Dispatch(command, nil, Config{}, Handlers{})
+		if got.Err == nil || !got.ShowUsage {
+			t.Fatalf("retired command %s still dispatches: %+v", command, got)
 		}
-	}
-	if _, err := supportedWorkspaceRoot(home, "relative", root); err == nil {
-		t.Fatal("accepted relative XDG state root")
-	}
-	xdg := t.TempDir()
-	custom := filepath.Join(xdg, "tmux-a2a-postman")
-	if got, err := supportedWorkspaceRoot(home, xdg, custom); err != nil || got != custom {
-		t.Fatalf("same XDG root: %q %v", got, err)
 	}
 }

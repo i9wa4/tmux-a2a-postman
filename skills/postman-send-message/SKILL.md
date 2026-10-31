@@ -41,6 +41,11 @@ post-operation self-state separately. Notification failure does not undo a
 committed delivery. A failed or uncertain invocation is not permission for a
 blind resend; retain its identifiers and inspect the recorded operation.
 
+The default notification route requires recipient-owned Bash/Readline setup,
+including the sender when waiting for a reply. `notice.status=accepted` proves
+only key acceptance; missing/stale setup reports `unavailable`, and uncertain
+transport reports `unknown`. Do not select a transport flag or start a daemon.
+
 Unrelated sends and POP do not close required replies. Verify exact fill or
 unresolved state in the returned output; missing state is unknown.
 
@@ -52,7 +57,7 @@ POP, sleep/POP, or status loops as a wait mechanism. Use
 [session flow](../postman-usage/references/session-flow.md) for bounded status,
 known mail, stale evidence, and escalation.
 
-For cross-workspace directory routing, use only a
-currently verified configured edge and a recipient syntax the installed
-command actually accepts; do not infer eligibility from directory ancestry,
-declarations, or matching node names.
+For cross-session mail use `session:node` only across a declared direct
+parent/child interface route with verified native peers. Reply to the original
+`from_session:from`; local replies use `from`. Do not infer eligibility from
+directory ancestry or matching local node names.

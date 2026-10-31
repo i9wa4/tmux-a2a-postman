@@ -21,10 +21,11 @@ loss, or ambiguous topology does not run Bash. Only verified reviewer
 absence permits advisory execution.
 
 After the approval request mail commits, execution.notice separately
-reports the notification outcome. Native pane-input notification is
-disabled because it could submit pending reviewer input, so it reports
-unavailable. This does not withdraw the request, approve it, or create a
-second request; the reviewer must POP and send the exact decision.
+reports the notification outcome through the registered reviewer's Readline
+hook. See help register-notifier for recipient setup. accepted proves only
+notification acceptance. Notification failure does not withdraw the request,
+approve it, or create a second request. The reviewer POPs, fully reads, and
+sends the exact decision; the foreground wrapper claims that matching reply.
 
 Bash runs outside mailbox locks. Command stdout/stderr stream normally;
 Postman status JSON is emitted separately on stderr with execution, self,

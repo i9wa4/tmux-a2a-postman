@@ -94,8 +94,7 @@ func parseWorkspaceSessions(content string, nodes map[string]bool) ([]WorkspaceS
 }
 
 func validWorkspaceSessionName(name string) bool {
-	clean, err := ValidateSessionName(name)
-	return err == nil && clean == name && !strings.ContainsAny(name, ": \t\r\n")
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/:\\ \t\r\n\x00")
 }
 
 // InterfaceRoute checks the declared direct relationship and exact interface

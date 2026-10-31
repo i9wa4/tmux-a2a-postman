@@ -1,8 +1,8 @@
 # tmux-a2a-postman
 
 `tmux-a2a-postman` coordinates local AI coding agents in tmux panes through
-private workspace mail files. Issue #937's file-first command path is under
-development and has not passed its complete acceptance and review gates.
+private workspace mail files and foreground commands. No resident Postman
+process is needed.
 
 Any AI coding agent that can run commands in a tmux pane can use the same
 `send-heredoc`, `pop`, `get-status`, and `execute-bash` commands. These four
@@ -70,19 +70,49 @@ gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --s
 Use `--agent claude-code` for Claude Code. The skills explain safe sending,
 mailbox operation, and configuration auditing respectively.
 
-Before activating the file-first path for an existing installation, identify
-one state root, UID, tmux socket/session, and recipient pane. Inventory and
-disable every old daemon launch path that can reach that mail or approval state
-or that recipient pane, including an explicit `--config` path, launcher-only
-`POSTMAN_HOME`, and alternate `XDG_STATE_HOME` or tmux socket/session settings.
-Verify every such daemon has exited before new writes; check pending mail and
-approval requests first. The file-first path checks that its selected state
-root matches the auto-discovered legacy configuration and uses the legacy lock
-inode for same-root exclusion. Verify the new route with a private recipient
-before switching production delivery. For rollback, stop new writers first,
-then restore the old launcher and route; preserve existing mail and do not
-replay an uncertain send. Installed alternate selectors and migration remain
-tracked separately.
+Set up each receiving role in a dedicated **interactive Bash** pane. Set its
+pane title to the role, configure an executable handler, then source the
+Readline integration bundled with the installed binary:
+
+```sh
+export POSTMAN_BIN="$(command -v tmux-a2a-postman)"
+export POSTMAN_CONFIG="$HOME/.config/tmux-a2a-postman/postman.md"
+export POSTMAN_HANDLER="$HOME/bin/postman-handler"
+source <("$POSTMAN_BIN" notifier-script)
+```
+
+This selects Emacs Readline and reserves Ctrl-x Ctrl-p. Notifications invoke
+one POP and pass the result JSON to the handler on stdin. The handler must read
+`markdown_absolute_path` completely, then handle the mail and send any exact
+reply. It must use piped stdin, never the terminal. Existing typed input stays
+in the composer and is never submitted by the notification. Source this setup
+from that pane's Bash rcfile to restore it on shell restart.
+
+[integrations/bash/codex-handler.py](integrations/bash/codex-handler.py) is a
+ready-to-use executable handler for `codex exec --sandbox workspace-write`. Copy
+it to the handler path, make it executable, and install/configure Codex
+normally. The handler runs a fresh noninteractive turn with the complete
+archived mail and reply instructions. Codex's own sandbox and approval policy
+still apply. For a no-model smoke check, use the executable
+[integrations/bash/receipt-handler.py](integrations/bash/receipt-handler.py)
+as the handler on both sides. It fully reads the archive and returns a digest
+receipt with exact correlation; it never claims task completion.
+Python 3 is needed by these example handlers. There is
+no paid model requirement for transport tests.
+
+This integration supports a Bash-hosted recipient, including the Codex handler;
+it does not inject into an existing Codex or Claude interactive TUI. All
+receiving roles, including the sender waiting for a reply and the reviewer,
+need the setup. Keep the Bash recipient at its prompt while waiting for mail.
+A busy handler may defer keyboard processing until it returns; known remaining
+unread mail in `self` is an explicit trigger for further POP, never a reason to
+poll while idle.
+
+The commands use only Markdown topology and the XDG state root. Old daemon
+commands, RPC, TOML configuration, and legacy root/lock gates are removed.
+The first send, POP, notifier registration, or execution creates private
+state directories as needed. Initial `get-status` is read-only and reports
+unknown if state is missing; it does not require startup or initialization.
 
 ## 2. Send and receive
 
@@ -100,11 +130,14 @@ tmux-a2a-postman get-status
 `send-heredoc` reads literal quoted-heredoc stdin, verifies the local edge,
 then synchronously publishes separate private receiver-inbox and sender-sent
 copies. Its JSON includes the committed `message`, file-derived `self`
-state, and a separate `notice` result. Native pane-input notification is
-disabled because it could submit text already typed by the recipient.
-`notice.status=unavailable` reports that limitation without reversing
-committed mail. Neither mail nor a notice should be blindly retried after an
-uncertain result.
+state, and a separate `notice` result. The default notification path queues
+the registered recipient's Readline key without Enter or body text.
+`notice.status=accepted` means the key was queued; only POP receipts prove
+claims, and exact replies prove responses. Missing/stale setup produces
+`notice.status=unavailable`; transport ambiguity produces `unknown`.
+Notification failure never reverses committed mail. Sending waits only for
+bounded delivery and notification work, never for POP, a reply, or completion.
+Neither mail nor a notice should be blindly resent after an uncertain result.
 
 `pop` atomically claims one own unread message and returns an openable
 `markdown_absolute_path` plus its `pop_receipt_absolute_path`. The body is
@@ -149,9 +182,11 @@ to stderr. A nonzero Bash exit is reported as `exited`. The wrapper coordinates
 review and audit; it does not sandbox Bash.
 
 After the approval request commits, `execution.notice` separately reports
-the notification outcome. Native pane-input notification is disabled and
-reports `unavailable`; this never grants approval or creates another request.
-The reviewer must POP and send the exact decision.
+the notification outcome through the same Bash/Readline route. Configure the
+reviewer's handler to read the full request and reply with the exact decision.
+A notification failure never grants approval or creates another request. The
+waiting foreground wrapper claims its own exact decision, so the blocked
+requester model does not have to run POP.
 
 ## 4. Optional pane evidence
 

@@ -92,21 +92,6 @@ func (f workspaceFlagSet) parse(args []string) (string, error) {
 	return *path, nil
 }
 
-// supportedWorkspaceRoot permits the default state root only when the
-// auto-discovered legacy daemon would use that same lock directory. An old
-// daemon launched with an explicit alternate config still needs a retired
-// launcher cutover before this path can be activated.
-func supportedWorkspaceRoot(home, xdg, legacyRoot string) (string, error) {
-	root, err := workspace.DefaultStateRoot(home, xdg)
-	if err != nil {
-		return "", err
-	}
-	if !filepath.IsAbs(legacyRoot) || filepath.Clean(legacyRoot) != root {
-		return "", errors.New("legacy state root differs from file-first state root")
-	}
-	return root, nil
-}
-
 func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, error) {
 	var c workspaceCommand
 	topology, err := config.LoadWorkspaceTopology(ctx, path)
@@ -117,11 +102,7 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 	if err != nil {
 		return c, err
 	}
-	legacyConfig, err := config.LoadConfig("")
-	if err != nil {
-		return c, err
-	}
-	root, err := supportedWorkspaceRoot(home, os.Getenv("XDG_STATE_HOME"), config.ResolveBaseDir(legacyConfig.BaseDir))
+	root, err := workspace.DefaultStateRoot(home, os.Getenv("XDG_STATE_HOME"))
 	if err != nil {
 		return c, err
 	}
@@ -318,7 +299,12 @@ func RunWorkspacePop(args []string) error {
 		_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(err))
 		return err
 	}
-	claimed, claimErr := c.mail.PopWithState(ctx, c.boundRuntime(), selected, c.livePeers())
+	var claimed workspace.PopResult
+	claimErr := retryWorkspaceAdmission(ctx, func() (bool, error) {
+		var err error
+		claimed, err = c.mail.PopWithState(ctx, c.boundRuntime(), selected, c.livePeers())
+		return claimed.Claim == nil, err
+	})
 	result := workspaceOutput{Status: "empty", Self: c.withVerifiedSessionPeers(ctx, claimed.Self)}
 	if claimed.Claim != nil {
 		result.Status = "message"
@@ -342,7 +328,6 @@ func RunWorkspacePop(args []string) error {
 func RunWorkspaceSendHeredoc(args []string) error {
 	f := newWorkspaceFlags("send-heredoc")
 	capture := f.fs.Bool("capture-related-panes", false, "save bounded evidence from this mail's verified sender and receiver panes")
-	appServerNotice := f.fs.Bool("app-server-notice", false, "ask the recipient app-server to run a bare POP turn after mail commit")
 	to := f.fs.String("to", "", "recipient node")
 	replyTo := f.fs.String("reply-to", "", "claimed message ID")
 	fills := f.fs.String("fills-input-request-id", "", "exact input request ID")
@@ -390,15 +375,15 @@ func RunWorkspaceSendHeredoc(args []string) error {
 			_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(routeErr))
 			return routeErr
 		}
-		msg, sendErr := c.mail.SendCrossWithReply(ctx, caller, peer, string(body), *replyTo, *fills, *required)
+		var msg workspace.Message
+		sendErr := retryWorkspaceAdmission(ctx, func() (bool, error) {
+			var err error
+			msg, err = c.mail.SendCrossWithReply(ctx, caller, peer, string(body), *replyTo, *fills, *required)
+			return msg.ID == "", err
+		})
 		result := workspaceOutput{Status: "sent", Message: &msg, Self: c.state(ctx)}
 		if sendErr == nil {
-			var notice workspace.NoticeResult
-			if *appServerNotice {
-				notice = c.mail.Store.NotifyCommittedAppServerAfterCommit(ctx, c.boundRuntime(), msg)
-			} else {
-				notice = workspace.NotifyCommittedAfterCommit(ctx, c.runtime, msg)
-			}
+			notice := c.mail.Store.NotifyCommittedAfterCommit(ctx, caller, peer, msg)
 			result.Notice = &notice
 		}
 		if sendErr == nil && *capture {
@@ -421,15 +406,15 @@ func RunWorkspaceSendHeredoc(args []string) error {
 		_ = writeWorkspaceOutput(os.Stdout, unavailableWorkspaceOutput(err))
 		return err
 	}
-	sent, sendErr := c.mail.SendWithState(ctx, c.boundRuntime(), *to, string(body), *replyTo, *fills, *required, c.livePeers())
+	var sent workspace.SendResult
+	sendErr := retryWorkspaceAdmission(ctx, func() (bool, error) {
+		var err error
+		sent, err = c.mail.SendWithState(ctx, c.boundRuntime(), *to, string(body), *replyTo, *fills, *required, c.livePeers())
+		return sent.Message.ID == "", err
+	})
 	result := workspaceOutput{Status: "sent", Message: &sent.Message, Self: c.withVerifiedSessionPeers(ctx, sent.Self)}
 	if sendErr == nil {
-		var notice workspace.NoticeResult
-		if *appServerNotice {
-			notice = c.mail.Store.NotifyCommittedAppServerAfterCommit(ctx, c.boundRuntime(), sent.Message)
-		} else {
-			notice = workspace.NotifyCommittedAfterCommit(ctx, c.runtime, sent.Message)
-		}
+		notice := c.mail.Store.NotifyCommittedAfterCommit(ctx, c.boundRuntime(), c.runtime, sent.Message)
 		result.Notice = &notice
 	}
 	if sendErr == nil && *capture {
@@ -486,4 +471,42 @@ func RunWorkspaceExecuteBash(args []string) error {
 		return errors.New(execution.Status + ": " + execution.Reason)
 	}
 	return nil
+}
+
+// RunWorkspaceRegisterNotifier configures a recipient; it is not a worker.
+func RunWorkspaceRegisterNotifier(args []string) error {
+	f := newWorkspaceFlags("register-notifier")
+	path, err := f.parse(args)
+	if err != nil {
+		return err
+	}
+	if f.fs.NArg() != 0 {
+		return errors.New("register-notifier takes no positional arguments")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, err := openWorkspaceCommand(ctx, path)
+	if err != nil {
+		return err
+	}
+	return c.mail.Store.RegisterNotifier(ctx, c.boundRuntime())
+}
+
+// Retry only lock admission proven to precede any mutation. A claimed/partially
+// committed operation is never replayed. This is bounded foreground contention
+// handling, not an idle POP loop or delivery retry.
+func retryWorkspaceAdmission(ctx context.Context, attempt func() (bool, error)) error {
+	for {
+		untouched, err := attempt()
+		if !untouched || !errors.Is(err, workspace.ErrBusy) {
+			return err
+		}
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
