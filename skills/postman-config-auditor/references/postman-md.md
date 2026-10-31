@@ -39,6 +39,13 @@ start alphanumeric, and are at most 64 characters. Unique pane titles bind
 roles. A class cannot invent an otherwise unknown node. Only one designated
 reviewer/interface is allowed. An absent interface has no implicit default.
 
+The existing `common_template` and `message_footer` H2 sections are reserved
+alongside `edges`; numbered headings are accepted. They never become topology
+nodes or grant routes/reviewer authority.
+Their contents remain presentation/setup prose; the topology reader does not
+render templates or load skill catalogs. Other node headings still require
+valid, unique role names.
+
 `command_approver_node` belongs in Mermaid; legacy frontmatter approval keys
 are rejected. YAML `interface_node` can explicitly designate the local role.
 Unknown frontmatter does not install hooks or inject instructions. Role prose
