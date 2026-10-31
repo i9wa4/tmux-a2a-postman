@@ -144,7 +144,10 @@ def run_case(case, terminal):
         began = time.monotonic()
         initial = subprocess.run([postman, "send-heredoc", "--postman-md", str(configs[initiator]), "--to", to, "--reply-required"],
                                  input="Smoke ping; full archive read required.\nUnicode 日本語\nEOF_MARKER\n", env=sender_env(initiator),
-                                 text=True, capture_output=True, check=True, timeout=15)
+                                 text=True, capture_output=True, timeout=15)
+        if initial.returncode:
+            raise RuntimeError("send-heredoc failed after " + str(time.monotonic() - began) + "s: " +
+                               initial.stdout + initial.stderr)
         return {"seconds": time.monotonic() - began, **json.loads(initial.stdout)}
 
     def verify_proof(proof, ready):
