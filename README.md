@@ -58,6 +58,11 @@ adjacent nodes can exchange mail. Other topology sections can hold role
 instructions. `interface_node` is optional; marking a reviewer with
 `command_approver_node` enables blocking command approval.
 
+Existing `common_template` and `message_footer` sections, including numbered
+headings, remain reserved and are excluded from topology nodes. They may stay
+in `postman.md`; the CLI reads routing from `edges` without rendering templates
+or loading the referenced skill catalogs.
+
 Packaged Codex or Claude Code skills can be installed with `gh skill install`
 for agent instructions:
 

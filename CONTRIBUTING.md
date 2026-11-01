@@ -31,6 +31,23 @@ parent-to-child, child-to-parent, approval, rejection and blocked notification.
 Nix flake checks also build this package. Default checks require no AI client
 or model server. `--case` selects a single case.
 
+Generated test topologies include numbered `common_template` and
+`message_footer` sections. Additional regression cases use a production-shaped
+configuration with role prose, skill metadata and the full role graph for
+rallies and approved/rejected commands. They also check final `get-status`
+after the complete rally.
+
+To test an existing configuration unchanged in private fixture panes:
+
+```sh
+nix run .#notification-smoke -- --case rally \
+  --postman-md "$HOME/.config/tmux-a2a-postman/postman.md"
+```
+
+This option copies the source into the temporary fixture; it never edits the
+original. Use `--case rally`, `approval` or `rejected`, with the configured
+`orchestrator`/`worker` or `orchestrator`/`approver` roles respectively.
+
 Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
 transport outcomes, pre-paste rejection, mailbox-lock independence,
 wrong/uncommitted routes, and shell input rejection. No unknown attempt is
