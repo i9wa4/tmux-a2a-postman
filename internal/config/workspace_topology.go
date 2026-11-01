@@ -19,12 +19,15 @@ import (
 // WorkspaceTopology is the bounded Markdown routing input for the file-first
 // command adapters. It carries no daemon context, policy, grant or runtime state.
 type WorkspaceTopology struct {
-	Nodes         []string
-	Edges         map[string][]string
-	Reviewer      string
-	InterfaceNode string
-	Sessions      []WorkspaceSession
-	messageSource string
+	Nodes             []string
+	Edges             map[string][]string
+	Reviewer          string
+	InterfaceNode     string
+	Sessions          []WorkspaceSession
+	ExternalRoot      string
+	ExternalWorkspace string
+	ExternalSession   string
+	messageSource     string
 }
 
 // WorkspaceSession declares one member of an opt-in, direct parent-child
@@ -141,6 +144,14 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	}
 	if value, ok := fm["interface_node"]; ok {
 		iface = strings.TrimSpace(value)
+	}
+	result.ExternalRoot, result.ExternalWorkspace, result.ExternalSession = fm["external_mailbox_root"], fm["external_workspace"], fm["external_session"]
+	if result.ExternalRoot != "" || result.ExternalWorkspace != "" || result.ExternalSession != "" {
+		if !filepath.IsAbs(result.ExternalRoot) || filepath.Clean(result.ExternalRoot) != result.ExternalRoot ||
+			!validWorkspaceSessionName(result.ExternalSession) || iface == "" ||
+			(result.ExternalWorkspace != "~" && !strings.HasPrefix(result.ExternalWorkspace, "~/")) {
+			return result, errors.New("external mailbox requires absolute root, canonical HOME-relative workspace, session and interface_node")
+		}
 	}
 	// Use the same native role grammar as config validation. A class declaration
 	// alone cannot conjure an otherwise unknown node.

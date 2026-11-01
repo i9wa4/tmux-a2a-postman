@@ -59,7 +59,15 @@ def receive():
         target = msg["from_session"] + ":" + msg["from"] if msg.get("from_session") else msg["from"]
         proof["send_kind"] = "request"
     if target:
-        if case in ["approval", "rejected", "approval-burst"]:
+        if case in ["external", "external-blocked", "external-decision"]:
+            state = "blocked" if case == "external-blocked" else "done"
+            options = []
+            if case == "external-decision" and not msg["external"].get("decision_id"):
+                state = "pending"
+                options = ["--scope", hashlib.sha256(b"exact deterministic harmless action and context").hexdigest()]
+                body += "May I record completion of this exact harmless fixture action?\n"
+            proof["send"] = cli(["channel-report-heredoc", "--config", config, "--to", target, "--state", state, *options], body)
+        elif case in ["approval", "rejected", "approval-burst"]:
             action = "decline-execution" if case == "rejected" else "approve-execution"
             proof["send"] = cli([action, "--config", config, "--to", target, "--reason", "deterministic smoke decision"])
             state = pathlib.Path(os.environ["XDG_STATE_HOME"]) / "tmux-a2a-postman"
@@ -76,7 +84,7 @@ def receive():
             raise RuntimeError("reply notification failed: " + json.dumps(proof["send"]))
     (root / (role + ".claim." + msg["id"] + ".json")).write_text(json.dumps(proof))
     print("CLAIMED_AND_READ", role, msg["id"], proof["full_archive_sha256"])
-    state = proof.get("send", pop)["self"]
+    state = proof.get("send", {}).get("self", pop["self"])
     return state.get("unread_count") or 0
 
 

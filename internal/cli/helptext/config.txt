@@ -31,3 +31,11 @@ Example syntax (not a recorded run):
 Only this Markdown topology configures the commands. TOML overlays, daemon
 policy settings, startup and daemon RPC are removed. State uses the absolute
 XDG_STATE_HOME or HOME/.local/state. Receiving agents need no notifier registration.
+
+Optional external filesystem binding (frontmatter scalar strings):
+  external_mailbox_root: /absolute/canonical/private/mailbox
+  external_workspace: ~/canonical/session-root
+  external_session: exact-native-session-name
+It also requires interface_node and the declared top-level interface. Distinct
+bindings use separate private roots. See help channel-sync and
+docs/design/external-filesystem-channel.md for producer activation and recovery.

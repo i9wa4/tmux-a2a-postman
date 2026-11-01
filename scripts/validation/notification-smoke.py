@@ -17,7 +17,8 @@ from codex_smoke_model import ModelFixture
 from mail_fixture import sent_evidence
 from burst_progress import approval_progress
 
-CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "approval-burst"]
+EXTERNAL_CASES = ["external", "external-blocked", "external-decision"]
+CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "approval-burst", *EXTERNAL_CASES]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--agent", choices=["fixture", "codex"], default="fixture")
 parser.add_argument("--terminal", choices=["both", "plain", "bracketed"], default="both")
@@ -87,6 +88,9 @@ def run_case(case, terminal):
             config = ("---\ninterface_node: " + role + "\nworkspace_tree:\n"
                       "  - session_name: work\n    interface_node: orchestrator\n"
                       "  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n---\n" + config)
+        if case in EXTERNAL_CASES:
+            config = ("---\ninterface_node: orchestrator\nexternal_workspace: ~/work\n"
+                      "external_session: work\nexternal_mailbox_root: " + str(root / "external") + "\n---\n" + config)
         if args.postman_md:
             content = args.postman_md.read_text()
             sentinel = "/nonexistent/postman-regression-do-not-open-catalog"
@@ -228,7 +232,69 @@ def run_case(case, terminal):
             tmux("copy-mode", "-t", panes[receiver])
         if case == "busy":
             wait_for("recipient busy in a real Codex tool", lambda: (evidence / "busy").exists())
-        if case == "approval-burst":
+        if case in EXTERNAL_CASES:
+            def channel_sync():
+                result = subprocess.run([postman, "channel-sync", "--config", str(configs[initiator])],
+                                        env=sender_env(initiator), text=True, capture_output=True, timeout=70)
+                if result.returncode:
+                    raise RuntimeError("channel-sync failed: " + result.stdout + result.stderr)
+                return json.loads(result.stdout)["channel"]
+
+            def publish_external(name, text):
+                path = root / "external" / "inbox" / name
+                temporary = path.with_suffix(".tmp")
+                temporary.write_text(text)
+                temporary.chmod(0o600)
+                temporary.replace(path)
+
+            if case == "external":
+                # Verify actual CLI authorization before any external storage exists.
+                denied = subprocess.run([postman, "channel-sync", "--config", str(configs[receiver])],
+                                        env=sender_env(receiver), text=True, capture_output=True, timeout=15)
+                if not denied.returncode or (root / "external").exists():
+                    raise RuntimeError("ordinary worker accessed or provisioned external binding")
+                original = configs[initiator].read_text()
+                child = original.replace("external_session: work\n", "external_session: work\nworkspace_tree:\n"
+                                         "  - session_name: parent\n    interface_node: worker\n"
+                                         "  - session_name: work\n    parent_session_name: parent\n    interface_node: orchestrator\n")
+                try:
+                    configs[initiator].write_text(child)
+                    denied = subprocess.run([postman, "channel-sync", "--config", str(configs[initiator])],
+                                            env=sender_env(initiator), text=True, capture_output=True, timeout=15)
+                    if not denied.returncode or (root / "external").exists():
+                        raise RuntimeError("child interface accessed or provisioned external binding")
+                finally:
+                    configs[initiator].write_text(original)
+            channel_sync()  # Provision only this fixture's configured private binding.
+            publish_external("request.md", "External subject " + uuid.uuid4().hex + "\nEOF_MARKER\n")
+            initial = channel_sync()
+            if len(initial["accepted"]) != 1 or initial["accepted"][0]["notification"]["status"] != "accepted":
+                raise RuntimeError("external input notification not accepted: " + json.dumps(initial))
+            wait_for("external recipient result", lambda: len(list(evidence.glob("*.claim.*.json"))) == 1)
+            if case == "external-decision":
+                pending = channel_sync()["pending"]
+                if len(pending) != 1:
+                    raise RuntimeError("missing exact pending decision")
+                publish_external(pending[0]["approve_filename"], "Approve only the exact stated action/context.\n")
+                channel_sync()
+                wait_for("external exact decision result", lambda: len(list(evidence.glob("*.claim.*.json"))) == 2)
+            proofs = [json.loads(path.read_text()) for path in evidence.glob("*.claim.*.json")]
+            for proof in proofs:
+                if proof["conversation_id"] != ready[initiator]["conversation_id"] or proof["context_nonce"] != nonces[initiator]:
+                    raise RuntimeError("external request changed the agent conversation")
+                if hashlib.sha256(pathlib.Path(proof["archive"]).read_bytes()).hexdigest() != proof["full_archive_sha256"]:
+                    raise RuntimeError("external full-read proof mismatch")
+            recovered = channel_sync()
+            expected = "blocked" if case == "external-blocked" else "done"
+            terminal_reports = [p.read_text() for p in (root / "external" / "outbox").glob("*.md") if "State: " + expected in p.read_text()]
+            if len(terminal_reports) != 1 or recovered["pending"]:
+                raise RuntimeError("external terminal result/catch-up mismatch")
+            if (root / "external" / "inbox" / "request.md").exists() or not (root / "external" / "read" / "request.md").exists():
+                raise RuntimeError("external input not archived")
+            if len(list(evidence.glob("*.claim.*.json"))) != len(proofs):
+                raise RuntimeError("recovery scan repeated recipient execution")
+            report.update(claims=proofs, external=initial, catch_up=recovered, terminal_state=expected)
+        elif case == "approval-burst":
             executions = []
             try:
                 for index in range(8):
@@ -417,7 +483,7 @@ def run_case(case, terminal):
 reports = []
 terminals = ["plain", "bracketed"] if args.terminal == "both" and not codex else ["bracketed" if codex else args.terminal]
 for terminal in terminals:
-    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "approval-burst"]] if args.case == "all" else [args.case]:
+    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "approval-burst", *EXTERNAL_CASES]] if args.case == "all" else [args.case]:
         reports.append(run_case(selected, terminal))
         if reports[-1]["result"] != "pass":
             break

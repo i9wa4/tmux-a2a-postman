@@ -69,14 +69,14 @@ func renderRecipientContext(policy config.RecipientPolicy, topology config.Works
 	if !msg.NeedsReply && msg.Kind == "" {
 		guidance += "\nIf a material response is needed, reply to this message ID; an exact reply creates no new reply obligation:\n\n```sh\ntmux-a2a-postman send-heredoc --to " + msg.ID + " <<'POSTMAN_BODY'\n<your material response>\nPOSTMAN_BODY\n```\n"
 	}
-	for _, command := range []string{"send-heredoc", "approve-execution", "decline-execution"} {
+	for _, command := range []string{"send-heredoc", "approve-execution", "decline-execution", "channel-report-heredoc"} {
 		guidance = strings.ReplaceAll(guidance, "tmux-a2a-postman "+command+" --to", "tmux-a2a-postman "+command+" --config "+contextShellWord(path)+" --to")
 	}
 	text.WriteString(guidance)
 	if msg.NeedsReply && msg.Kind != "execution-request" {
 		text.WriteString("\nThe exact reply closes transport responsibility. Task completion still requires the original acceptance checklist, concrete evidence and remaining blockers. An acknowledgement alone does not complete the task.\n")
 	}
-	if policy.Footer != "" && msg.Kind != "execution-request" {
+	if policy.Footer != "" && msg.Kind != "execution-request" && msg.External == nil {
 		replyArguments := " --to " + msg.ID
 		replyPolicy, replyTo, fills := "none", msg.ReplyTo, msg.FillsInputRequestID
 		if msg.NeedsReply {

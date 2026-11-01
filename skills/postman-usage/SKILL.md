@@ -73,6 +73,10 @@ Missing or failed diagnostics mean unknown.
 
 ## 3. Status and command execution
 
+If configured as the top-level external interface, follow the
+[external channel procedure](references/external-channel.md) for external mail
+and reports. Ordinary mail still uses its existing exact reply guidance.
+
 `tmux-a2a-postman get-status` reads saved files. It does not claim mail,
 capture panes, refresh liveness, or escalate by itself. Use it for a concrete
 status request, workflow boundary, or delivery problem; wait passively

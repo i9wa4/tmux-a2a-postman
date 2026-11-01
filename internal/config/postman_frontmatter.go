@@ -63,7 +63,7 @@ func parsePostmanFrontmatter(content string) (map[string]string, []skillCatalogS
 			// postman.md overlay fail to load and drop interface_node, edges or
 			// skill_path.
 			scalars[key] = ""
-		case "interface_node", "reply_command":
+		case "interface_node", "reply_command", "external_mailbox_root", "external_workspace", "external_session":
 			value, err := parseYAMLScalarString(valueNode)
 			if err != nil {
 				return nil, nil, nil, nil, frontmatterNodeError(valueNode, key+" must be a scalar value")
