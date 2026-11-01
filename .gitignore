@@ -50,6 +50,9 @@ go.work.sum
 # Project-local config (dev override)
 .tmux-a2a-postman/
 
+# Retired tracked task notes; retained evidence is indexed under docs/validation.
+/.task-artifacts/
+
 # Python recipient examples
 __pycache__/
 *.pyc
