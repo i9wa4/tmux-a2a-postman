@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
@@ -95,6 +96,9 @@ func readHeredoc(stdin io.Reader) (string, error) {
 	}
 	if len(body) == 0 || len(body) > 60*1024 {
 		return "", errors.New("quoted heredoc body must contain 1 to 61440 bytes")
+	}
+	if !utf8.Valid(body) {
+		return "", errors.New("heredoc body must be valid UTF-8")
 	}
 	return string(body), nil
 }

@@ -88,6 +88,9 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(source) == "" || strings.ContainsRune(source, 0) {
+		return errors.New("execution source must contain a command and cannot contain NUL")
+	}
 	ctx, cancel := defaultInterruptContext()
 	defer cancel()
 	opened, err := openWorkspaceCommand(ctx, path)

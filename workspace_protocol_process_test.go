@@ -38,6 +38,21 @@ func TestWorkspacePublicCommandInputsRejectRemovedAndAmbiguousForms(t *testing.T
 	if _, err := os.Stat(f.stateRoot()); !os.IsNotExist(err) {
 		t.Fatal("parser failures initialized workspace", err)
 	}
+	for _, tc := range []struct{ command, body string }{
+		{"send-heredoc", string([]byte{0xff})}, {"execute-heredoc", string([]byte{0xff})}, {"execute-heredoc", " \n\t"}, {"execute-heredoc", "printf bad\x00"},
+	} {
+		args := []string{tc.command, "--to", "peer"}
+		if tc.command == "execute-heredoc" {
+			args = []string{tc.command, "--reason", "test source validation"}
+		}
+		got, err := f.run(f.worker, tc.body, args...)
+		if err == nil || got.Success || got.Reason == "" {
+			t.Fatal("invalid source accepted", tc.command, got, err)
+		}
+	}
+	if _, err := os.Stat(f.stateRoot()); !os.IsNotExist(err) {
+		t.Fatal("invalid source initialized workspace", err)
+	}
 	for _, command := range []string{"get-status", "pop", "send-heredoc", "execute-heredoc", "approve-execution", "decline-execution"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		cmd := f.child(ctx, f.worker, command, "--help")
