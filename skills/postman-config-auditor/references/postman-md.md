@@ -4,7 +4,7 @@
 
 Each invocation reads exactly one bounded regular Markdown file. Default:
 `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, falling back to HOME/.config.
-An absolute `--config` or `--postman-md` selects another file. No TOML,
+An absolute `--config` selects another file. No TOML,
 split-node overlays, template injection, catalog loader or daemon defaults
 are involved. Install skills through the agent's ordinary skill mechanism.
 

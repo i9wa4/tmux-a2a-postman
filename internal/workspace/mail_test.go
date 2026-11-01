@@ -50,7 +50,7 @@ func TestMailPublishesSeparateCopiesAndReturnsDurableClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	right, err := os.ReadFile(sent)
-	if err != nil || string(left) != string(right) || !strings.HasSuffix(string(left), msg.Body) {
+	if err != nil || string(left) != string(right) || !strings.Contains(string(left), msg.Body) {
 		t.Fatal("bad publication", err)
 	}
 	li, err := os.Stat(inbox)
@@ -65,7 +65,7 @@ func TestMailPublishesSeparateCopiesAndReturnsDurableClaim(t *testing.T) {
 		t.Fatal("publication used linked copies")
 	}
 	claim, err := m.Claim(context.Background(), mailRuntime("peer"), "")
-	if err != nil || claim == nil || claim.Message != msg || !filepath.IsAbs(claim.Path) {
+	if err != nil || claim == nil || !sameMessage(claim.Message, msg) || !filepath.IsAbs(claim.Path) {
 		t.Fatalf("claim: %+v %v", claim, err)
 	}
 	if _, err := os.Stat(claim.Path); err != nil {

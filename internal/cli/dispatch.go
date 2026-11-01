@@ -7,7 +7,9 @@ type Config struct{ ConfigPath string }
 type Handlers struct {
 	Pop              func([]string) error
 	GetSessionStatus func([]string) error
-	ExecuteBash      func([]string) error
+	ExecuteHeredoc   func([]string) error
+	ApproveExecution func([]string) error
+	DeclineExecution func([]string) error
 	SendHeredoc      func([]string) error
 	Version          func([]string) error
 	Help             func([]string)
@@ -30,8 +32,12 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 		handler = h.Pop
 	case "get-status":
 		handler = h.GetSessionStatus
-	case "execute-bash":
-		handler = h.ExecuteBash
+	case "execute-heredoc":
+		handler = h.ExecuteHeredoc
+	case "approve-execution":
+		handler = h.ApproveExecution
+	case "decline-execution":
+		handler = h.DeclineExecution
 	case "send-heredoc":
 		handler = h.SendHeredoc
 	case "version":

@@ -14,8 +14,9 @@ import time
 import uuid
 
 from codex_smoke_model import ModelFixture
+from mail_fixture import sent_evidence
 
-CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled"]
+CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "approval-burst"]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--agent", choices=["fixture", "codex"], default="fixture")
 parser.add_argument("--terminal", choices=["both", "plain", "bracketed"], default="both")
@@ -38,6 +39,8 @@ postman = str(pathlib.Path(args.postman).resolve())
 codex = shutil.which(args.codex) if args.agent == "codex" else None
 if not shutil.which("tmux") or (args.agent == "codex" and not codex):
     parser.error("tmux is required; --agent codex additionally needs Codex")
+if codex and args.case in ["absorbed-enter", "approval-burst"]:
+    parser.error("this case requires deterministic terminal editors; use --agent fixture")
 if args.baseline and args.case != "rally":
     parser.error("--baseline requires --case rally")
 recipient = str(pathlib.Path(__file__).with_name("notification_recipient.py").resolve())
@@ -58,10 +61,12 @@ def run_case(case, terminal):
     for name, path in {"tmux-a2a-postman": postman, "codex": codex, "tmux": shutil.which("tmux")}.items():
         if path:
             (bin_dir / name).symlink_to(path)
-    cross, approval = case in ["parent-child", "child-parent"], case in ["approval", "rejected"]
+    cross, approval = case in ["parent-child", "child-parent"], case in ["approval", "rejected", "approval-burst"]
     roles = ["orchestrator", "approver" if approval else "worker"]
     initiator = "worker" if case == "child-parent" else "orchestrator"
     receiver = next(role for role in roles if role != initiator)
+    if case == "approval-burst":
+        roles += ["worker-a", "worker-b", "worker-c"]
     dirs = {role: work for role in roles}
     sessions = {role: "work" for role in roles}
     if cross:
@@ -71,6 +76,8 @@ def run_case(case, terminal):
     configs = {role: dirs[role] / "postman.md" for role in roles}
     for role in roles:
         config = "## 1. `edges`\n```mermaid\ngraph LR\norchestrator --- " + roles[1] + "\n"
+        if case == "approval-burst":
+            config += "".join(role + " --- approver\n" for role in roles[2:])
         config += "class approver command_approver_node\n" if approval else ""
         config += "```\n"
         config += ("\n## 2. `common_template`\nShared instructions are not a node.\n"
@@ -142,13 +149,14 @@ def run_case(case, terminal):
     def send():
         to = sessions[receiver] + ":" + receiver if cross else receiver
         began = time.monotonic()
-        initial = subprocess.run([postman, "send-heredoc", "--postman-md", str(configs[initiator]), "--to", to, "--reply-required"],
-                                 input="Smoke ping; full archive read required.\nUnicode 日本語\nEOF_MARKER\n", env=sender_env(initiator),
+        body = "Smoke ping " + uuid.uuid4().hex + "; full archive read required.\nUnicode 日本語\nEOF_MARKER\n"
+        initial = subprocess.run([postman, "send-heredoc", "--config", str(configs[initiator]), "--to", to],
+                                 input=body, env=sender_env(initiator),
                                  text=True, capture_output=True, timeout=15)
         if initial.returncode:
             raise RuntimeError("send-heredoc failed after " + str(time.monotonic() - began) + "s: " +
                                initial.stdout + initial.stderr)
-        return {"seconds": time.monotonic() - began, **json.loads(initial.stdout)}
+        return {"seconds": time.monotonic() - began, **json.loads(initial.stdout), "mail_evidence": sent_evidence(initiator, body, root / "state")}
 
     def verify_proof(proof, ready):
         role = proof["role"]
@@ -158,9 +166,13 @@ def run_case(case, terminal):
         if hashlib.sha256(raw).hexdigest() != proof["full_archive_sha256"]:
             raise RuntimeError("full archive digest mismatch")
         if "send" in proof:
-            msg, reply = proof["message"], proof["send"]["message"]
-            if reply["reply_to"] != msg["id"] or reply["fills_input_request_id"] != msg["input_request_id"]:
-                raise RuntimeError("reply correlation mismatch")
+            msg, reply = proof["message"], proof["send"]["mail_evidence"]
+            if proof.get("send_kind") == "reply":
+                refs = reply.get("replies", [{"message_id": reply.get("reply_to"), "input_request_id": reply.get("fills_input_request_id")}])
+                if not any(ref["message_id"] == msg["id"] and ref.get("input_request_id", "") == msg.get("input_request_id", "") for ref in refs):
+                    raise RuntimeError("reply correlation mismatch")
+            elif not reply["needs_reply"]:
+                raise RuntimeError("follow-up request did not require reply")
 
     try:
         ready = {}
@@ -196,46 +208,99 @@ def run_case(case, terminal):
             tmux("copy-mode", "-t", panes[receiver])
         if case == "busy":
             wait_for("recipient busy in a real Codex tool", lambda: (evidence / "busy").exists())
-        if approval:
+        if case == "approval-burst":
+            executions = []
+            try:
+                for index in range(8):
+                    role = ["orchestrator", "worker-a", "worker-b", "worker-c"][index % 4]
+                    marker = work / ("executed-" + str(index))
+                    command = "printf once >> " + shlex.quote(str(marker))
+                    process = subprocess.Popen([postman, "execute-heredoc", "--config", str(configs[role]), "--reason", "simultaneous execution " + str(index)],
+                                               env=sender_env(role), text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    process.stdin.write(command)
+                    process.stdin.close()
+                    process.stdin = None
+                    executions.append((process, role, marker))
+                outcomes = []
+                for process, role, marker in executions:
+                    stdout, stderr = process.communicate(timeout=args.timeout)
+                    result = json.loads(stderr.splitlines()[-1])
+                    outcomes.append(result)
+                    if process.returncode or not result["success"] or result["executed"] is not True or result.get("notification") or marker.read_text() != "once":
+                        raise RuntimeError("approval burst lost/mixed a decision or notification: " + stderr)
+                wait_for("all burst decisions", lambda: len(list(evidence.glob("approver.claim.*.json"))) == 8)
+                proofs = [json.loads(path.read_text()) for path in evidence.glob("approver.claim.*.json")]
+                if len({proof["message"]["id"] for proof in proofs}) != 8 or len({proof["message"]["from"] for proof in proofs}) != 4:
+                    raise RuntimeError("burst did not contain eight independent requests from four senders")
+                for proof in proofs:
+                    verify_proof(proof, ready)
+                report.update(executions=outcomes, claims=proofs)
+            finally:
+                for process, _, _ in executions:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate()
+        elif approval:
             marker = work / "executed"
             command = "printf approved > " + shlex.quote(str(marker))
-            execution = subprocess.Popen([postman, "execute-bash", "--postman-md", str(configs[initiator]), "--command", command],
-                                         env=sender_env(initiator), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            execution = subprocess.Popen([postman, "execute-heredoc", "--config", str(configs[initiator]), "--reason", "notification-driven smoke test"],
+                                         env=sender_env(initiator), text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
-                stdout, stderr = execution.communicate(timeout=args.timeout)
+                stdout, stderr = execution.communicate(command, timeout=args.timeout)
             except subprocess.TimeoutExpired:
                 execution.kill()
                 execution.communicate()
                 raise RuntimeError("approval did not complete")
-            result = json.JSONDecoder().raw_decode(stderr)[0]["execution"]
+            report.update(command_stdout=stdout, command_stderr=stderr, command_exit=execution.returncode)
+            result = json.loads(stderr.splitlines()[-1])
+            if result.get("reason") and not result.get("approval"):
+                raise RuntimeError("execution did not start approval: " + stderr)
             wait_for("reviewer evidence", lambda: len(list(evidence.glob("approver.claim.*.json"))) == 1)
             proof = json.loads(next(evidence.glob("approver.claim.*.json")).read_text())
             verify_proof(proof, ready)
-            expected = "rejected" if case == "rejected" else "executed"
-            if result["status"] != expected or result["notice"]["status"] != "accepted" or result["reply_id"] != proof["send"]["message"]["id"] or result["request_id"] != proof["message"]["id"]:
-                raise RuntimeError("approval did not use the exact notification-driven decision: " + stderr)
+            expected = "rejected" if case == "rejected" else "approved"
+            if result["approval"]["decision"] != expected or result.get("notification") or result["executed"] != (case == "approval"):
+                raise RuntimeError("approval did not use the notification-driven decision: " + stderr)
+            reply = proof["send"]["mail_evidence"]
+            paths = list((root / "state").glob("**/read/" + reply["id"] + ".md"))
+            if len(paths) != 1 or list((root / "state").glob("**/inbox/" + reply["id"] + ".md")):
+                raise RuntimeError("foreground waiter did not claim exactly its decision")
             if marker.exists() != (case == "approval") or (execution.returncode == 0) != (case == "approval"):
                 raise RuntimeError("approval execution policy mismatch")
             report.update(execution=result, claims=[proof], command_stdout=stdout)
         else:
-            if case == "concurrent":
+            if case == "absorbed-enter":
+                sends = [send(), send()]
+            elif case == "concurrent":
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                     sends = list(pool.map(lambda _: send(), range(2)))
             else:
                 sends = [send()]
             report["sends"] = sends
-            if args.baseline or case == "disabled":
-                if sends[0]["notice"]["status"] != "unavailable":
+            if case == "absorbed-enter":
+                if any(item.get("notification", {}).get("status") != "unknown" for item in sends):
+                    raise RuntimeError("absorbed Enter or pending input was incorrectly accepted")
+                observed = json.loads((evidence / "worker.absorbed.json").read_text())
+                if observed["enter_count"] != 1 or sends[0]["mail_evidence"]["id"] not in observed["draft"] or sends[1]["mail_evidence"]["id"] in observed["draft"]:
+                    raise RuntimeError("uncertain input was pasted/submitted again")
+                if list(evidence.glob("*.claim.*.json")):
+                    raise RuntimeError("absorbed Enter triggered recipient action")
+                for item in sends:
+                    if len(list((root / "state").glob("**/inbox/" + item["mail_evidence"]["id"] + ".md"))) != 1:
+                        raise RuntimeError("unknown notification lost durable mail")
+                report["negative_control"] = "one absorbed Enter; next sender blocked; both messages remain unread"
+            elif args.baseline or case == "disabled":
+                if sends[0].get("notification", {}).get("status") != "unavailable":
                     raise RuntimeError("negative control unexpectedly accepted notification")
                 time.sleep(0.5)  # No event-driven receiver action may occur without terminal input.
                 if list(evidence.glob("*.claim.*.json")):
                     raise RuntimeError("recipient acted without a working notification route")
-                inboxes = list((root / "state").glob("**/inbox/" + sends[0]["message"]["id"] + ".md"))
+                inboxes = list((root / "state").glob("**/inbox/" + sends[0]["mail_evidence"]["id"] + ".md"))
                 if len(inboxes) != 1:
                     raise RuntimeError("notification failure lost durable delivery")
                 report["negative_control"] = "durable unread mail; no recipient action"
             else:
-                if any(s["notice"]["status"] != "accepted" or s["seconds"] > 5 for s in sends):
+                if any(s.get("notification") or s["seconds"] > 5 for s in sends):
                     raise RuntimeError("notification failed or send waited for the recipient: " + json.dumps(sends))
                 if case == "busy":
                     time.sleep(1)
@@ -248,13 +313,13 @@ def run_case(case, terminal):
                 by_id = {proof["message"]["id"]: proof for proof in proofs}
                 visited = set()
                 for sent in sends:
-                    current = sent["message"]
+                    current = sent["mail_evidence"]
                     for _ in range(2 if case == "concurrent" else 4):
                         proof = by_id[current["id"]]
                         verify_proof(proof, ready)
                         visited.add(current["id"])
                         if "send" in proof:
-                            current = proof["send"]["message"]
+                            current = proof["send"]["mail_evidence"]
                 if len(visited) != 4:
                     raise RuntimeError("duplicate or missing notification claim")
                 report["claims"] = proofs
@@ -262,12 +327,12 @@ def run_case(case, terminal):
             # All four claims have finished here. Approval requesters can still
             # be processing an already-claimed decision hint after the wrapper
             # returns; sampling their short-lived lock is not an idle boundary.
-            status = subprocess.run([postman, "get-status", "--postman-md", str(configs[initiator])],
+            status = subprocess.run([postman, "get-status", "--config", str(configs[initiator])],
                                     env=sender_env(initiator), text=True, capture_output=True, timeout=15)
             if status.returncode:
                 raise RuntimeError("final get-status failed: " + status.stdout + status.stderr)
             report["final_status"] = json.loads(status.stdout)
-            if not report["final_status"]["self"]["known"]:
+            if not all(node["unread_count"] is not None for node in report["final_status"]["nodes"]):
                 raise RuntimeError("final mailbox status unavailable")
         report["result"] = "pass"
     except Exception as error:
@@ -295,7 +360,7 @@ def run_case(case, terminal):
 reports = []
 terminals = ["plain", "bracketed"] if args.terminal == "both" and not codex else ["bracketed" if codex else args.terminal]
 for terminal in terminals:
-    for selected in CASES if args.case == "all" else [args.case]:
+    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "approval-burst"]] if args.case == "all" else [args.case]:
         reports.append(run_case(selected, terminal))
         if reports[-1]["result"] != "pass":
             break

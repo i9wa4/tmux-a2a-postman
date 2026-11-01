@@ -2,7 +2,7 @@ help — command documentation
 
   tmux-a2a-postman help [topic]
 
-Core topics: send-heredoc, pop, get-status, execute-bash.
+Core topics: send-heredoc, pop, get-status, execute-heredoc, approve-execution, decline-execution.
 Configuration: config, directories.
 Other topics: commands, messaging, version, help.
 No Postman daemon or startup command is needed.

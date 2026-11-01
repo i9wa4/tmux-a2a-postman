@@ -230,14 +230,6 @@ func (t Tmux) Probe(ctx context.Context, old Owner) (Liveness, error) {
 	return Dead, nil
 }
 
-// CapturePane fails closed until role registration is stable across both pane
-// capture and every role rebind. Pane titles and pane PIDs do not provide that
-// guarantee: a retitle and restoration can occur between endpoint probes.
-// A caller-selected capture must never return potentially unrelated pane text.
-func (t Tmux) CapturePane(ctx context.Context, selected Binding) (string, error) {
-	return "", fmt.Errorf("%w: native pane capture requires stable role registration", ErrUnknown)
-}
-
 func processLiveness(pid int) Liveness {
 	if pid <= 0 {
 		return Unknown

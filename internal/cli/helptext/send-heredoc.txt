@@ -1,39 +1,34 @@
-send-heredoc — publish local workspace mail
+send-heredoc — publish mail and attempt a bounded input notification
 
-Usage:
-  tmux-a2a-postman send-heredoc --to <node> <<'POSTMAN_BODY'
-  literal Markdown body
+  tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
+  Literal Markdown, including $HOME and `code`.
   POSTMAN_BODY
 
-Options:
-  --to <node>                    Configured adjacent recipient (required)
-  --reply-required              Open an exact reply obligation
-  --no-reply                    Do not open a reply obligation
-  --reply-to <message-id>        Exact claimed conversation message
-  --fills-input-request-id <id>  Exact required input to fill
-  --capture-related-panes       Supplemental related-pane evidence
-  --config <absolute-path>      Explicit postman.md override
-  --postman-md <absolute-path>  Alias for --config
+Required: --to <node|session:interface|POP'd-message-id[,POP'd-message-id...]>.
+Optional: --config <absolute-path>. No positional arguments or reply flags.
+The nonterminal stdin body is 1–61440 bytes; JSON escaping and recovery metadata
+must also fit the durable-record limit, so some bodies have a smaller limit.
 
-The body must come from nonterminal stdin and contain 1–61440 bytes. A
-quoted delimiter keeps shell-sensitive Markdown literal. No body argv is
-accepted. Sender identity comes from the native calling tmux pane and
-configured role; the recipient must be a configured outgoing edge.
+Node addresses create requests requiring a reply. A POP'd ID automatically
+selects its sender and exact return route; a reply creates no new obligation.
+At most 16 different POP'd IDs with one sender/return route can receive one
+combined reply. Validate the whole set before delivery. Archives append a
+versioned reply-instruction section without altering the literal user body.
 
-On success, separate private receiver-inbox and sender-sent copies are
-durable. JSON status is sent and includes message, mandatory file-derived
-self, and a separate notice outcome. The sender pastes a mail hint into the
-existing recipient's tmux input and submits C-m, as in the original workflow.
-This path is shared by Codex, Claude Code and local LLM consoles. No model API,
-thread ID, registration or shell hook is needed. accepted means tmux accepted
-paste/key input, not POP or reply. Unavailable/blocked targets report unavailable;
-ambiguous input reports unknown and is not replayed. Mail is never rolled back.
-Send never waits for recipient POP, reply or task completion.
+JSON: workspace, as_of, success, self; optional reason, recovery_message_id,
+notification. A normal accepted notification is omitted. success means durable
+receiver-inbox and sender-sent copies; it does not mean POP or task completion.
+Confirmed non-delivery retains full failed mail; uncertainty retains a draft
+and recovery identity. Do not blindly resend an uncertain operation.
 
-Notifications use the agent's current composer. Postman serializes its own
-writers but does not save/restore drafts or exclude human input. Shell prompts
-and tmux copy/input modes are rejected before paste. Use existing agent panes.
+A destination file lock serializes Postman writers. Generic capture observations
+check settled text and the input area after exactly one C-m; no model names or
+prompt glyph rules are used. Ambiguity retains a pending input guard and blocks
+further paste/Enter until safely observable. Shell prompts and tmux input modes
+are rejected. Human drafts/other input writers are not exclusively controlled.
+Notification failure leaves committed mail intact. A bounded session snapshot
+also runs; it never changes delivery success. Send does not wait for a reply.
 
-The optional capture result cannot change the mail result. Native pane-text
-capture currently reports unknown and no text until stable role attribution
-is resolved.
+Notification lock admission waits at most 5 seconds. After acquisition, input
+settlement/submit observation gets up to 2 seconds; total post-commit work is
+bounded to 8 seconds. Approval waits never hold the notification lock.

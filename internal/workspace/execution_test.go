@@ -23,7 +23,7 @@ func approvalResolver(role string) ApprovalResolver {
 func approvalReply(t *testing.T, m Mail, req Message, hash, decision string) Message {
 	t.Helper()
 	claimStateMessage(t, m, "peer", req.ID)
-	body, _ := json.Marshal(ApprovalDecision{1, hash, decision})
+	body, _ := json.Marshal(ApprovalDecision{Version: 1, Command: hash, Decision: decision})
 	return sendStateMessage(t, m, "peer", "worker", string(body), req.ID, req.InputRequestID, false)
 }
 
@@ -90,9 +90,9 @@ func TestExecutorExactSelectiveReplyAndUnlockedDispatch(t *testing.T) {
 		req := pendingApproval(t, m)
 		hash := requestCommand(t, req)
 		claimStateMessage(t, m, "peer", req.ID)
-		bad, _ := json.Marshal(ApprovalDecision{1, "different command", "approved"})
+		bad, _ := json.Marshal(ApprovalDecision{Version: 1, Command: "different command", Decision: "approved"})
 		wrong = sendStateMessage(t, m, "peer", "worker", string(bad), req.ID, req.InputRequestID, false)
-		good, _ := json.Marshal(ApprovalDecision{1, hash, "approved"})
+		good, _ := json.Marshal(ApprovalDecision{Version: 1, Command: hash, Decision: "approved"})
 		sendStateMessage(t, m, "peer", "worker", string(good), req.ID, req.InputRequestID, false)
 		return nil
 	}
@@ -212,7 +212,7 @@ func TestExecutorEqualConcurrentInvocationsHaveIndependentApprovals(t *testing.T
 		if err != nil || second.Status != "executed" {
 			t.Fatal(second, err)
 		}
-		body, _ := json.Marshal(ApprovalDecision{1, requestCommand(t, firstReq), "approved"})
+		body, _ := json.Marshal(ApprovalDecision{Version: 1, Command: requestCommand(t, firstReq), Decision: "approved"})
 		sendStateMessage(t, m, "peer", "worker", string(body), firstReq.ID, firstReq.InputRequestID, false)
 		return nil
 	}
@@ -243,7 +243,7 @@ func TestExecutorAmbiguousRepliesFailClosedAndStayUnread(t *testing.T) {
 		hash := requestCommand(t, req)
 		claimStateMessage(t, m, "peer", req.ID)
 		for _, decision := range []string{"approved", "rejected"} {
-			body, _ := json.Marshal(ApprovalDecision{1, hash, decision})
+			body, _ := json.Marshal(ApprovalDecision{Version: 1, Command: hash, Decision: decision})
 			replies = append(replies, sendStateMessage(t, m, "peer", "worker", string(body), req.ID, req.InputRequestID, false))
 		}
 		return nil
@@ -439,7 +439,7 @@ func TestExecutorDecisionRequiresLiteralCommandAndRejectsLegacyDigest(t *testing
 		}
 		claimStateMessage(t, m, "peer", req.ID)
 		legacy = sendStateMessage(t, m, "peer", "worker", `{"version":1,"command_hash":"sha256:legacy","decision":"approved"}`, req.ID, req.InputRequestID, false)
-		body, _ := json.Marshal(ApprovalDecision{1, command, "approved"})
+		body, _ := json.Marshal(ApprovalDecision{Version: 1, Command: command, Decision: "approved"})
 		sendStateMessage(t, m, "peer", "worker", string(body), req.ID, req.InputRequestID, false)
 		return nil
 	}
@@ -510,11 +510,11 @@ func TestExecutorCancellationKillsOwnedProcessGroupAndRecordsTerminal(t *testing
 	cancel()
 	select {
 	case out := <-done:
-		if !errors.Is(out.err, context.Canceled) || out.result.Status != "cancelled" || out.result.ExitStatus == nil {
+		if !errors.Is(out.err, context.Canceled) || out.result.Status != "cancelled" || out.result.ExitStatus != nil {
 			t.Fatal(out)
 		}
 		saved := savedExecution(t, m, out.result)
-		if saved.Status != "cancelled" || saved.ExitStatus == nil || saved.Reason == "" {
+		if saved.Status != "cancelled" || saved.ExitStatus != nil || saved.Reason == "" {
 			t.Fatal(saved)
 		}
 	case <-time.After(3 * time.Second):

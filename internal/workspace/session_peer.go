@@ -19,6 +19,7 @@ type NamedRuntime struct {
 	server      string
 	incarnation string
 	sessionID   string
+	panePID     string
 }
 
 func (r NamedRuntime) Snapshot(ctx context.Context) (Snapshot, error) {
@@ -28,7 +29,7 @@ func (r NamedRuntime) Snapshot(ctx context.Context) (Snapshot, error) {
 	}
 	owner := snapshot.Caller.Owner
 	if snapshot.Caller.Role != r.role || owner.Server != r.server ||
-		owner.Incarnation != r.incarnation || owner.Session != r.sessionID {
+		owner.Incarnation != r.incarnation || owner.Session != r.sessionID || snapshot.Caller.PanePID != r.panePID {
 		return Snapshot{}, fmt.Errorf("%w: named runtime binding changed", ErrUnknown)
 	}
 	name, err := nativeSessionName(ctx, r.tmux.Socket, owner.Session)
@@ -54,7 +55,7 @@ func (t Tmux) NamedCaller(ctx context.Context) (NamedRuntime, error) {
 		return NamedRuntime{}, err
 	}
 	owner := snapshot.Caller.Owner
-	runtime := NamedRuntime{t, name, snapshot.Caller.Role, owner.Server, owner.Incarnation, owner.Session}
+	runtime := NamedRuntime{t, name, snapshot.Caller.Role, owner.Server, owner.Incarnation, owner.Session, snapshot.Caller.PanePID}
 	if _, err := runtime.Snapshot(ctx); err != nil {
 		return NamedRuntime{}, err
 	}
@@ -95,14 +96,14 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 		return NamedRuntime{}, errors.New("peer session is absent or is the caller session")
 	}
 	out, err = tmuxOutput(ctx, t.Socket, "list-panes", "-s", "-t", selected,
-		"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}")
+		"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}\t#{pane_pid}")
 	if err != nil {
 		return NamedRuntime{}, err
 	}
-	var pane string
+	var pane, panePID string
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 4 || fields[0] != selected || !nativeID(fields[1], '%') ||
+		if len(fields) != 5 || fields[0] != selected || !nativeID(fields[1], '%') || !positivePID(fields[4]) ||
 			(fields[3] != "0" && fields[3] != "1") {
 			return NamedRuntime{}, ErrUnknown
 		}
@@ -111,6 +112,7 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 				return NamedRuntime{}, errors.New("ambiguous peer role binding")
 			}
 			pane = fields[1]
+			panePID = fields[4]
 		}
 	}
 	if pane == "" {
@@ -119,7 +121,7 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 	peer := t
 	peer.Pane = pane
 	owner := caller.Caller.Owner
-	runtime := NamedRuntime{peer, sessionName, role, owner.Server, owner.Incarnation, selected}
+	runtime := NamedRuntime{peer, sessionName, role, owner.Server, owner.Incarnation, selected, panePID}
 	if _, err := runtime.Snapshot(ctx); err != nil {
 		return NamedRuntime{}, err
 	}

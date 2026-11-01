@@ -4,10 +4,10 @@ license: MIT
 description: |
   USE FOR: Postman mailbox and session work: genuine notifications, POP and
   complete archived-body reads, exact replies, own history, passive waits,
-  bounded file-based status, pane evidence, and execute-bash orientation.
+  bounded file-based status, pane evidence, and execute-heredoc orientation.
   DO NOT USE FOR: Ordinary sending procedure (use postman-send-message),
   configuration/topology audit (use postman-config-auditor), or deciding
-  execute-bash approval as the approver.
+  execute-heredoc approval as the approver.
 ---
 
 # postman-usage
@@ -21,9 +21,9 @@ submits with `C-m`, as in the original workflow. This is common to Codex, Claude
 Code and local LLM consoles; no model API, thread ID, registration or shell hook
 is required.
 
-On that notification, POP the exact notified ID, read the complete archive, and
-follow the existing role contract. Keep the native pane title bound to your
-configured role. See
+On that notification, run POP without arguments, read the actual returned
+archive, and follow the existing role contract. Keep the native pane title bound
+to your configured role. See
 [notification setup](../../README.md#1-install-and-configure).
 
 For manual receipt or an explicit known-mail trigger, use:
@@ -54,9 +54,9 @@ send. Use [Session Flow](references/session-flow.md) after sends and during
 live mailbox work. Read own sent and already-claimed read files directly when
 needed; do not bypass POP by opening unclaimed inbox bodies.
 
-Read mandatory send/POP self-state: own identity and paths, unread mail,
-inbound replies owed, outbound replies awaited, allowed peers, next action,
-and as-of evidence. Missing or failed diagnostics mean unknown.
+Read mandatory send/POP self-state: node, unread/inbound/outbound/draft/failed
+counts, last successful POP/capture/screen-change times and as-of evidence.
+Missing or failed diagnostics mean unknown.
 
 ## 3. Status and command execution
 
@@ -64,8 +64,9 @@ and as-of evidence. Missing or failed diagnostics mean unknown.
 capture panes, refresh liveness, or escalate by itself. Use it for a concrete
 status request, workflow boundary, or delivery problem; wait passively
 otherwise. Pane evidence can be stale or unavailable and is not task state.
-Native `--capture-related-panes` currently records unknown evidence without
-pane text because mutable pane titles cannot prove stable role attribution.
+Every valid send and POP refreshes bounded native snapshots in its own
+session. These are screen observations, not authenticated model history.
+Logs and snapshots remain until the user deletes them.
 
 Filling an input request closes transport, not task acceptance. After an exact
 reply, inspect the returned self-state to confirm the specific obligation was
@@ -75,11 +76,17 @@ checklist: PASS`, evidence, and `Remaining blockers: none`. Use `BLOCKED` with
 checklist status, durable references, evidence, and blockers before relaying,
 approving, or closing work.
 
-`tmux-a2a-postman execute-bash --command '<command>'` coordinates command
-approval; it is not a sandbox. Consult `tmux-a2a-postman help execute-bash`
-for the file-first command contract. A verified present
-configured approver requires blocking approval; an unconfigured or verified
-absent approver permits advisory execution. Probe failure or ambiguity must
-not execute. Once blocking starts, rejection, timeout, interruption, or loss
-of the approver never downgrades to advisory execution. Historical decisions
-do not authorize a new invocation.
+`tmux-a2a-postman execute-heredoc --reason 'why'` with quoted heredoc stdin
+coordinates command approval; it is not a sandbox. Consult
+`tmux-a2a-postman help execute-heredoc` for the file-first command contract. A
+verified present configured approver requires blocking approval; an unconfigured
+or verified absent approver permits advisory execution. Probe failure or
+ambiguity must not execute. Once blocking starts, rejection, timeout,
+interruption, or loss of the approver never downgrades to advisory execution.
+Historical decisions do not authorize a new invocation.
+
+The approver reads its complete POP'd execution request and chooses one fixed
+command, approve-execution or decline-execution, with that request ID and a
+reason. Use the actual generated examples; do not transcribe code or invent a
+decision JSON. The requesting CLI waits for its exact decision and executes;
+the approver does not execute the requested source itself.

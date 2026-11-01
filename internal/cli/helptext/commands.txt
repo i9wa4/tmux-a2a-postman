@@ -1,29 +1,11 @@
-Commands — file-first workspace surface
+Commands
 
-send-heredoc
-  tmux-a2a-postman send-heredoc --to <node> [--reply-required|--no-reply]
-  Accept a quoted heredoc on stdin. Optional: --reply-to <message-id>,
-  --fills-input-request-id <input-id>, --capture-related-panes.
-  Returns JSON with status, message, self, and separate notice outcome.
+get-status: no command-specific options or positional arguments.
+pop: no command-specific options or positional arguments.
+send-heredoc --to <node|session:interface|POP'd-id[,POP'd-id...]>: heredoc stdin.
+execute-heredoc --reason <why>: heredoc stdin, child streams and final JSON on stderr.
+approve-execution --to <one-POP'd-execution-request-id> --reason <why>.
+decline-execution --to <one-POP'd-execution-request-id> --reason <why>.
 
-pop
-  tmux-a2a-postman pop [--capture-related-panes] [exact-message-id]
-  Claims own eligible unread message. Returns JSON with self and, when
-  claimed, absolute archived Markdown and receipt paths.
-
-get-status
-  tmux-a2a-postman get-status
-  Returns file-derived self-state. It does not POP or refresh pane evidence.
-
-execute-bash
-  tmux-a2a-postman execute-bash --command <bash>
-  Streams Bash stdout/stderr. Writes Postman status JSON to stderr.
-  Configured reviewer requires an exact file-mail approval reply.
-
-All four commands accept an absolute --config or --postman-md path; otherwise
-postman.md resolves from XDG_CONFIG_HOME or HOME/.config. No command accepts
-a daemon context ID. Bare tmux-a2a-postman prints usage.
-
-Recipient input:
-  Start the agent in its configured role pane. Notifications use the same
-  tmux text/paste/C-m path for every agent; no registration or model API.
+Common: --config <absolute-postman.md>, --help. Duplicate options fail.
+help [topic] and version are information-only. See help <command> for results.

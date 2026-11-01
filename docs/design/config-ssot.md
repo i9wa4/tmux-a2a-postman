@@ -4,7 +4,7 @@
 
 The active commands read one bounded absolute `postman.md`. Default selection
 is `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or the corresponding
-`HOME/.config` path. `--config` and `--postman-md` are alternative explicit
+`HOME/.config` path. `--config` is the explicit
 selectors; relative or simultaneous selectors fail. Every invocation rereads
 configuration. No TOML overlays, daemon defaults or runtime restart is involved.
 

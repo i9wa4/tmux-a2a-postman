@@ -9,7 +9,7 @@ permissions and input behavior remain with the agent.
 
 | Feature          | Shared contract                                        | Runtime responsibility                                |
 | ---------------- | ------------------------------------------------------ | ----------------------------------------------------- |
-| Foreground mail  | send-heredoc, pop, get-status, execute-bash            | Run CLI tools in the existing role pane               |
+| Foreground mail  | send-heredoc, pop, get-status, execute-heredoc         | Run CLI tools in the existing role pane               |
 | Notification     | Existing pane receives a text hint and C-m             | Accept text and submit; handle queued input when busy |
 | Complete reading | POP returns an archive path                            | Read through EOF before acting or replying            |
 | Role identity    | Verified native tmux binding and configured pane title | Preserve the role title                               |

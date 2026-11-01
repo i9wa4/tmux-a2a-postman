@@ -1,38 +1,62 @@
 # Foreground command approval
 
-## 1. Contract
+The exact public contract is in
+[CLI specification](cli-spec.md#7-execute-heredoc). This wrapper coordinates
+review; it is not an OS sandbox.
 
-`execute-bash --command '<exact Bash>'` resolves `command_approver_node` from
-current Markdown topology. An unconfigured or positively verified absent
-reviewer permits advisory execution. Unknown configuration, probe failure, or
-ambiguous identity fails closed. This is operational coordination, not a
-sandbox or unbypassable security boundary.
+## 1. Request and decision
 
-A present reviewer receives a fresh reply-required mail through ordinary
-durable send and the common tmux input notification transport. Set up the
-reviewer as described in [README](../README.md#1-install-and-configure).
-The request body is `{"version":1,"command":"<exact command>"}`. The reviewer
-POPs, reads the whole archive and sends ordinary mail addressing the requester,
-with the exact `--reply-to` and `--fills-input-request-id` from that request.
-Its body is `{"version":1,"command":"<exact command>","decision":"approved"}`
-or the same envelope with `rejected`.
+`execute-heredoc --reason 'why'` reads exact source from quoted heredoc stdin.
+The request records source, reason, invocation cwd and tmux's default shell.
+A present configured `command_approver_node` receives a typed, reply-required
+message through ordinary durable mail and the common terminal notification.
+
+The approver POPs without arguments, reads the complete returned archive, and
+chooses `approve-execution` or `decline-execution` with the actual request ID
+and an explicit reason. Generated archive guidance shows both alternatives. The
+CLI obtains exact source and correlation from the archive and claim receipt. No
+hand-written JSON, code copy, boolean or decision literal is accepted.
+Duplicate/conflicting choices reserve no second decision, including concurrent
+helpers. Decision-delivery success does not assert execution success.
+
+Only an unconfigured or positively absent reviewer permits advisory execution.
+Unknown configuration or identity fails without execution.
 
 ## 2. Waiting and execution
 
-Only the foreground wrapper waits, at most 300 seconds. It claims only this
-invocation's exact decision from the pinned reviewer, leaving unrelated mail
-unread. The blocked requester model never needs to POP. Rejection, timeout,
-interruption, changed command/configuration or reviewer loss does not downgrade
-to advisory. Notification failure never grants approval or resubmits a request.
+The requesting foreground CLI waits up to 300 seconds and claims only its own
+exact decision from its pinned approver. Other mail stays unread. An active
+waiter is proven by a matching private file record plus its held OS lock;
+a stale unlocked record does not suppress ordinary notification. An already
+claimed decision also needs no extra hint. The blocked requester model does
+not need to POP. Rejection, timeout, interruption or reviewer loss never
+converts waiting into advisory execution.
 
-The immutable original command runs once after approval. Short workspace locks
-protect mail and audit transitions, never the wait or Bash execution. Command
-stdout/stderr stream normally; protocol JSON is on stderr. The wrapper forwards
-Bash's exit status. Distinct intentional invocations remain independent.
+After authorization, a fresh interactive/login shell initializes normal
+startup files and first-prompt hooks in the approved cwd. A private PTY handles
+initialization and command stdin; there is no input forwarding. Separate pipes
+stream command stdout and stderr. Exported environment is inherited; a different
+live shell's private variables, aliases and functions are not copied. Startup
+loads those from normal configuration. Project loaders obey their usual trust
+and hook behavior; Postman does not approve an untrusted `.envrc` for the user.
 
-Audit records document request, decision, pre-dispatch and terminal result.
-They are not reusable grants, persistent waiters, or a durable scheduler. A
-crash after dispatch can leave an unknown outcome; no recovery path repeats
-Bash. Late, wrong, duplicate or historical decisions cannot authorize a new
-invocation. No old daemon policy, TTL, command digest, thread override,
-reconciliation, deduplication or resume mode is retained.
+Final JSON is a distinct last stderr line, with an inserted newline if needed.
+Human review reason and wrapper failure reason have separate fields. Nonzero
+child exits are forwarded. Approval waiting has a deadline; approved command
+runtime has no imposed 300-second limit. Cancellation kills the owned shell
+process group, including ordinary descendants. Deliberately detached descendants
+are not an OS sandbox guarantee.
+
+## 3. Recovery and retention
+
+A fresh operation ID and request correlation identify every invocation.
+Pre-dispatch and terminal audits are never a durable scheduler or reusable
+grant. An interrupted possibly started execution is unknown and never replayed.
+Late, wrong, duplicate or historical decisions cannot authorize a fresh call.
+Two intentionally repeated calls may execute twice.
+
+Audit retains exact invocation and minimal decision/outcome facts, without
+saving complete stdout/stderr. User-requested redirection can be part of the
+approved source. Saved records remain until user deletion; no automatic expiry
+or rotation is installed. No daemon policy, command digest, reconciliation,
+cross-invocation deduplication or resume engine remains.

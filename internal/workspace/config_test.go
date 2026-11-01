@@ -128,7 +128,7 @@ func TestConfiguredApprovalNativeWorkspaceAndRealBash(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	e := Executor{Mail: m, Resolve: ConfiguredApprovalResolver(path), Stdout: &stdout, Stderr: &stderr}
 	e.wait = func(ctx context.Context) error {
-		state := m.State(ctx, reviewer, nil)
+		state := stateForTest(ctx, m, reviewer)
 		if !state.Known || len(state.Inbound) != 1 {
 			t.Fatal(state)
 		}
@@ -153,7 +153,7 @@ func TestConfiguredApprovalNativeWorkspaceAndRealBash(t *testing.T) {
 		if err := json.Unmarshal([]byte(request.Body), &payload); err != nil {
 			t.Fatal(err)
 		}
-		body, _ := json.Marshal(ApprovalDecision{1, payload.Command, "approved"})
+		body, _ := json.Marshal(ApprovalDecision{Version: 1, Command: payload.Command, Decision: "approved"})
 		_, err = m.SendWithReply(ctx, reviewer, "worker", string(body), request.ID, request.InputRequestID, false)
 		return err
 	}
@@ -165,7 +165,7 @@ func TestConfiguredApprovalNativeWorkspaceAndRealBash(t *testing.T) {
 	if got.RequestID == "" || got.InputRequestID == "" || got.ReplyID == "" {
 		t.Fatal(got)
 	}
-	state := m.State(context.Background(), requester, nil)
+	state := stateForTest(context.Background(), m, requester)
 	if !state.Known || state.Unread == nil || *state.Unread != 0 || len(state.Outbound) != 0 {
 		t.Fatal(state)
 	}

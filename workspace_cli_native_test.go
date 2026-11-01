@@ -17,122 +17,103 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
-// The internal/cli test harness deliberately poisons tmux on PATH (#845).
-// This root-package test uses only its own private tmux socket and sleep panes.
-func TestWorkspaceCLILocalSendAndPopKeepVerifiedSessionPeers(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("tmux unavailable")
-	}
-	socketDir, err := os.MkdirTemp("/tmp", "pm937-cli-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	socket := filepath.Join(socketDir, "s")
-	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
-	runTmux := func(args ...string) string {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "tmux", append([]string{"-S", socket}, args...)...)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("owned tmux %v: %v: %s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	home := t.TempDir()
-	for _, name := range []string{"parent", "child", "grandchild"} {
-		if err := os.Mkdir(filepath.Join(home, name), 0o700); err != nil {
+func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	childRoot := filepath.Join(f.home, "child")
+	grandRoot := filepath.Join(f.home, "grandchild")
+	for _, dir := range []string{childRoot, grandRoot} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	parent := runTmux("-f", "/dev/null", "new-session", "-d", "-s", "parent", "-c", filepath.Join(home, "parent"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(ctx, "tmux", "-S", socket, "kill-server").Run()
-	})
-	runTmux("select-pane", "-t", parent, "-T", "worker")
-	local := runTmux("new-window", "-d", "-t", "parent", "-c", filepath.Join(home, "parent"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", local, "-T", "local")
-	child := runTmux("new-session", "-d", "-s", "child", "-c", filepath.Join(home, "child"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", child, "-T", "worker")
-	grandchild := runTmux("new-session", "-d", "-s", "grandchild", "-c", filepath.Join(home, "grandchild"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", grandchild, "-T", "worker")
-
-	config := filepath.Join(t.TempDir(), "postman.md")
-	content := "---\ninterface_node: worker\nworkspace_tree:\n  - session_name: parent\n    interface_node: worker\n  - session_name: child\n    parent_session_name: parent\n    interface_node: worker\n  - session_name: stale\n    parent_session_name: parent\n    interface_node: worker\n  - session_name: grandchild\n    parent_session_name: child\n    interface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- local\n```\n## `worker`\nWorker\n## `local`\nLocal\n"
-	if err := os.WriteFile(config, []byte(content), 0o600); err != nil {
+	child := f.tmux("new-session", "-d", "-s", "child", "-c", childRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", child, "-T", "worker")
+	grand := f.tmux("new-session", "-d", "-s", "grandchild", "-c", grandRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", grand, "-T", "worker")
+	content := "---\ninterface_node: worker\nworkspace_tree:\n  - session_name: work\n    interface_node: worker\n  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n  - session_name: missing\n    parent_session_name: work\n    interface_node: worker\n  - session_name: grandchild\n    parent_session_name: child\n    interface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stateHome := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	t.Setenv("TMUX", socket+",0,0")
-	t.Setenv("TMUX_PANE", parent)
-	decode := func(fn func() error) struct {
-		Status  string              `json:"status"`
-		Message *workspace.Message  `json:"message"`
-		Self    workspace.SelfState `json:"self"`
-	} {
-		t.Helper()
-		read, write, err := os.Pipe()
-		if err != nil {
-			t.Fatal(err)
+	for _, pane := range []string{f.worker, child, grand} {
+		if got, err := f.run(pane, "", "pop", "--config", f.config); err != nil || !got.Success {
+			t.Fatal(got, err)
 		}
-		previous := os.Stdout
-		os.Stdout = write
-		runErr := fn()
-		os.Stdout = previous
-		_ = write.Close()
-		out, readErr := io.ReadAll(read)
-		_ = read.Close()
-		if runErr != nil || readErr != nil {
-			t.Fatalf("CLI failed: %v, read: %v, output: %s", runErr, readErr, out)
-		}
-		var result struct {
-			Status  string              `json:"status"`
-			Message *workspace.Message  `json:"message"`
-			Self    workspace.SelfState `json:"self"`
-		}
-		if err := json.Unmarshal(out, &result); err != nil {
-			t.Fatalf("CLI JSON: %v, output: %s", err, out)
-		}
-		return result
 	}
-	readStdin, writeStdin, err := os.Pipe()
+	status, err := f.run(f.worker, "", "get-status", "--config", f.config)
+	if err != nil || string(status.Parent) != "null" || len(status.Children) != 2 {
+		t.Fatal(status, err)
+	}
+	var live, missing map[string]any
+	if json.Unmarshal(status.Children[0], &live) != nil || json.Unmarshal(status.Children[1], &missing) != nil {
+		t.Fatal(status.Children)
+	}
+	rows := map[string]map[string]any{live["session"].(string): live, missing["session"].(string): missing}
+	if rows["child"]["workspace"] != "~/child" || rows["child"]["unread_count"] != float64(0) || rows["missing"]["workspace"] != nil || rows["missing"]["unread_count"] != nil {
+		t.Fatal(rows)
+	}
+	failed, sendErr := f.run(f.worker, "preserve unavailable peer body", "send-heredoc", "--config", f.config, "--to", "missing:worker")
+	if sendErr == nil || failed.Success || failed.RecoveryMessageID == "" || failed.Self.DraftCount == nil || *failed.Self.DraftCount != 1 || failed.Self.FailedCount == nil || *failed.Self.FailedCount != 0 {
+		t.Fatal("unavailable peer lost draft or invented confirmed failure", failed, sendErr)
+	}
+	draft := readProtocolArchive(t, filepath.Join(f.box("worker", "draft"), failed.RecoveryMessageID+".md"))
+	if draft.Body != "preserve unavailable peer body" || draft.ToSession != "missing" {
+		t.Fatal(draft)
+	}
+	nested, err := f.run(child, "", "get-status", "--config", f.config)
+	if err != nil || len(nested.Children) != 1 || len(nested.Parent) == 0 {
+		t.Fatal(nested, err)
+	}
+	normal, err := f.run(f.peer, "", "pop", "--config", f.config)
+	if err != nil || !normal.Success {
+		t.Fatal(normal, err)
+	}
+	normal, err = f.run(f.peer, "", "get-status", "--config", f.config)
+	if err != nil || len(normal.Parent) != 0 || normal.Children != nil {
+		t.Fatal("ordinary node got cross-workspace status", normal, err)
+	}
+}
+
+func TestWorkspaceCLIRespawnBeforeSendCannotAdoptReplacement(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	realTmux, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeStdin.WriteString("local message\n"); err != nil {
+	proxyDir := t.TempDir()
+	counter := filepath.Join(proxyDir, "counter")
+	proxy := fmt.Sprintf(`#!/bin/sh
+"%s" "$@"
+result=$?
+case "$*" in
+ *'#{socket_path}'*)
+ count=0
+ if [ -f "%s" ]; then count=$(cat "%s"); fi
+ count=$((count+1)); printf '%%s' "$count" > "%s"
+ if [ "$count" -eq 2 ]; then
+  "%s" -S "%s" respawn-pane -k -t "%s" 'exec sleep 120' || exit 98
+  "%s" -S "%s" select-pane -t "%s" -T worker || exit 98
+ fi ;;
+esac
+exit "$result"
+`, realTmux, counter, counter, counter, realTmux, f.socket, f.worker, realTmux, f.socket, f.worker)
+	if err := os.WriteFile(filepath.Join(proxyDir, "tmux"), []byte(proxy), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_ = writeStdin.Close()
-	previousStdin := os.Stdin
-	os.Stdin = readStdin
-	t.Cleanup(func() { os.Stdin = previousStdin; _ = readStdin.Close() })
-	sent := decode(func() error {
-		return cli.RunWorkspaceSendHeredoc([]string{"--postman-md", config, "--to", "local", "--reply-required"})
-	})
-	if sent.Status != "sent" || !sent.Self.Known || sent.Self.Unread == nil || *sent.Self.Unread != 0 || len(sent.Self.Inbound) != 0 || len(sent.Self.Outbound) != 1 ||
-		strings.Join(sent.Self.Peers, ",") != "child:worker,local" {
-		t.Fatalf("local send lost verified peers or obligations: %+v", sent)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := f.child(ctx, f.worker, "send-heredoc", "--config", f.config, "--to", "peer")
+	cmd.Env = append(cmd.Env, "PATH="+proxyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Stdin = strings.NewReader("old caller must not publish")
+	raw, err := cmd.Output()
+	if err == nil {
+		t.Fatal("old invocation adopted replacement", string(raw))
 	}
-
-	root, err := workspace.DefaultStateRoot(home, stateHome)
-	if err != nil {
-		t.Fatal(err)
+	var result protocolOutput
+	if json.Unmarshal(raw, &result) != nil || result.Success {
+		t.Fatal("invalid failure result", string(raw))
 	}
-	mail := workspace.Mail{Store: workspace.Store{StateRoot: root}}
-	localRuntime := workspace.Tmux{Socket: socket, Pane: local, Home: home, Roles: []string{"worker", "local"}}
-	if _, err := mail.SendWithState(context.Background(), localRuntime, "worker", "incoming", "", "", false, []string{"worker"}); err != nil {
-		t.Fatal(err)
-	}
-	claimed := decode(func() error { return cli.RunWorkspacePop([]string{"--postman-md", config}) })
-	if claimed.Status != "message" || claimed.Message == nil || claimed.Message.From != "local" || !claimed.Self.Known ||
-		claimed.Self.Unread == nil || *claimed.Self.Unread != 0 || len(claimed.Self.Inbound) != 0 || len(claimed.Self.Outbound) != 1 ||
-		strings.Join(claimed.Self.Peers, ",") != "child:worker,local" {
-		t.Fatalf("local POP lost verified peers or obligations: %+v", claimed)
+	if _, err := os.Stat(f.stateRoot()); !os.IsNotExist(err) {
+		t.Fatal("stale invocation initialized replacement state", err)
 	}
 }
 
@@ -235,7 +216,7 @@ exit "$status"
 			}
 			previousOut := os.Stdout
 			os.Stdout = writeOut
-			sendErr := cli.RunWorkspaceSendHeredoc([]string{"--postman-md", config, "--to", tc.to})
+			sendErr := cli.RunWorkspaceSendHeredoc([]string{"--config", config, "--to", tc.to})
 			os.Stdout = previousOut
 			_ = writeOut.Close()
 			out, readErr := io.ReadAll(readOut)
@@ -243,14 +224,11 @@ exit "$status"
 			if sendErr == nil || readErr != nil {
 				t.Fatalf("retitled send: %v, output read: %v", sendErr, readErr)
 			}
-			var result struct {
-				Status  string              `json:"status"`
-				Self    workspace.SelfState `json:"self"`
-				Message *workspace.Message  `json:"message"`
+			var result protocolOutput
+			if err := json.Unmarshal(out, &result); err != nil || result.Success || result.Self.UnreadCount != nil {
+				t.Fatalf("retitle leaked successful send: %+v decode=%v raw=%s", result, err, out)
 			}
-			if err := json.Unmarshal(out, &result); err != nil || result.Status != "unavailable" || result.Self.Known || len(result.Self.Peers) != 0 || result.Message != nil {
-				t.Fatalf("retitle leaked status or stale peers: %+v, decode: %v, raw: %s", result, err, out)
-			}
+
 			if title := runTmux("display-message", "-p", "-t", parent, "#{pane_title}"); title != "alt" {
 				count, _ := os.ReadFile(counter)
 				t.Fatalf("controlled retitle did not occur: title=%q, count=%q, output=%s, error=%v", title, count, out, sendErr)
@@ -329,7 +307,7 @@ func TestWorkspaceCLIAlternatingRetitlesClearSessionPeers(t *testing.T) {
 	}
 	mail := workspace.Mail{Store: workspace.Store{StateRoot: root}}
 	runtime := workspace.Tmux{Socket: socket, Pane: parent, Home: home, Roles: []string{"worker", "local", "alt"}}
-	if _, err := mail.SendWithState(context.Background(), runtime, "local", "fixture", "", "", false, []string{"local"}); err != nil {
+	if _, err := mail.Send(context.Background(), runtime, "local", "fixture", "", false); err != nil {
 		t.Fatal(err)
 	}
 	proxyDir := t.TempDir()
@@ -372,7 +350,7 @@ exit "$status"
 	}
 	previousOut := os.Stdout
 	os.Stdout = writeOut
-	statusErr := cli.RunWorkspaceGetStatus([]string{"--postman-md", config})
+	statusErr := cli.RunWorkspaceGetStatus([]string{"--config", config})
 	os.Stdout = previousOut
 	_ = writeOut.Close()
 	out, readErr := io.ReadAll(readOut)
@@ -380,17 +358,16 @@ exit "$status"
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
-	var result struct {
-		Status string              `json:"status"`
-		Self   workspace.SelfState `json:"self"`
-	}
+	var result protocolOutput
 	if err := json.Unmarshal(out, &result); err != nil {
-		t.Fatalf("CLI JSON: %v, output: %s", err, out)
+		t.Fatal(err)
 	}
-	count, _ := os.ReadFile(counter)
-	if statusErr == nil || result.Status != "unavailable" || result.Self.Known || result.Self.Unread != nil ||
-		len(result.Self.Inbound) != 0 || len(result.Self.Outbound) != 0 || len(result.Self.Peers) != 0 ||
-		strings.TrimSpace(string(count)) != "14" || runTmux("display-message", "-p", "-t", parent, "#{pane_title}") != "worker" {
-		t.Fatalf("alternating retitle leaked peer guidance: %+v, error: %v, count: %q, raw: %s", result, statusErr, count, out)
+	if statusErr == nil || result.Reason == "" {
+		t.Fatalf("alternating caller change not reported: %+v error=%v raw=%s", result, statusErr, out)
+	}
+	for _, node := range result.Nodes {
+		if node.UnreadCount != nil {
+			t.Fatal("changed caller leaked counts", node)
+		}
 	}
 }

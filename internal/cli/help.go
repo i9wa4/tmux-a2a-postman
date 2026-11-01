@@ -15,7 +15,8 @@ var helpTopicFiles = map[string]string{
 	"": "helptext/overview.txt", "commands": "helptext/commands.txt", "config": "helptext/config.txt",
 	"directories": "helptext/directories.txt", "help": "helptext/help.txt", "messaging": "helptext/messaging.txt",
 	"send-heredoc": "helptext/send-heredoc.txt", "pop": "helptext/pop.txt", "get-status": "helptext/get-status.txt",
-	"execute-bash": "helptext/execute-bash.txt", "version": "helptext/version.txt",
+	"execute-heredoc": "helptext/execute-heredoc.txt", "version": "helptext/version.txt",
+	"approve-execution": "helptext/approve-execution.txt", "decline-execution": "helptext/decline-execution.txt",
 }
 
 func RunHelp(args []string) {
@@ -29,6 +30,10 @@ func WriteHelp(stdout, stderr io.Writer, args []string) error {
 }
 
 func runHelp(stdout, stderr io.Writer, args []string) error {
+	if len(args) > 1 {
+		_, _ = fmt.Fprintln(stderr, "help takes at most one topic")
+		return fmt.Errorf("help takes at most one topic")
+	}
 	topic := ""
 	if len(args) > 0 {
 		topic = args[0]

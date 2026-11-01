@@ -1,22 +1,22 @@
-tmux-a2a-postman — file-first tmux workspace mail
+tmux-a2a-postman — daemonless mail for tmux agents
 
-The four active workspace commands use private files and native tmux identity;
-no Postman daemon is required. A configured postman.md supplies roles, edges,
-and an optional command reviewer. Missing or ambiguous identity fails closed.
+  get-status         Read this workspace and authorized interface-node status
+  pop                Claim one own unread message; return its archive path
+  send-heredoc       Send a new request or reply to claimed message IDs
+  execute-heredoc    Run source in an initialized shell after needed approval
+  approve-execution  Approve one own POP'd execution request, with a reason
+  decline-execution  Decline one own POP'd execution request, with a reason
+  help [topic]       Show syntax, options and output semantics
+  version            Print build version JSON
 
-  send-heredoc  Publish separate receiver inbox and sender sent copies
-  pop           Claim one own unread message and return its archive path
-  get-status    Read own saved-file state without claiming mail
-  execute-bash  Run Bash after the configured exact approval protocol
-  version       Print build version JSON
-  help [topic]  Show command help
+Each workspace command accepts one absolute --config override. Default:
+$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or
+$HOME/.config/tmux-a2a-postman/postman.md. No daemon startup is needed.
+Send and execute accept quoted heredoc stdin. POP takes no message ID.
+Generic tmux paste and one C-m notify existing agent consoles. No model API,
+registration or provider-specific parser is used. Notification uncertainty
+never reverses durable mail. Read the complete POP archive before acting.
 
-Default topology: $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or
-~/.config/tmux-a2a-postman/postman.md when XDG_CONFIG_HOME is unset.
-The four workspace commands accept an absolute --config or --postman-md.
-Use quoted heredoc stdin for send-heredoc. Read a complete archived body
-after every successful pop. Bare tmux-a2a-postman prints usage.
+Use help <command> or <command> --help for details. Help/version need no tmux.
 
-After commit, notifications paste a mail hint into the existing recipient
-agent's tmux input and submit C-m. Codex, Claude Code and local LLM consoles
-share this transport. No model API, thread ID or registration is needed.
+Bare tmux-a2a-postman prints usage.

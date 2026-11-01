@@ -1,9 +1,8 @@
 # Herdr Security And Licensing Gates
 
-> Research/reference material. Historical daemon/runtime API descriptions below
-> are not current operational instructions. Current behavior is specified in
-> [file-first architecture](file-first-architecture.md) and
-> [notification](notification.md).
+> Archived research. Herdr support is discontinued under #937. The gates,
+> configuration, code paths and future dependencies described below are
+> historical; they are not current setup instructions or support commitments.
 
 Issue: #660.
 
