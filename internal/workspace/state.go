@@ -29,6 +29,57 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	if err != nil {
 		return err
 	}
+	return s.withReadWorkspace(ctx, first.Root, func(ws *os.Root) error {
+		fresh, err := rt.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		freshName, err := validateSnapshot(fresh)
+		if err != nil || name != freshName || first.Root != fresh.Root || first.Caller != fresh.Caller {
+			return ErrUnknown
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		runtimeDir, err := privateDir(ws, "runtime", false)
+		if err != nil {
+			return err
+		}
+		defer func(closeFn func() error) { _ = closeFn() }(runtimeDir.Close)
+		var saved runtimeRecord
+		if readJSON(runtimeDir, "binding.json", &saved) != nil || saved.Version != 1 || !saved.Owner.valid() ||
+			ValidateBindings(saved.Bindings) != nil || !sameRuntime(saved.Owner, fresh.Caller.Owner) {
+			return ErrUnknown
+		}
+		bound := false
+		for _, b := range saved.Bindings {
+			if !sameRuntime(saved.Owner, b.Owner) {
+				return ErrUnknown
+			}
+			if b == fresh.Caller {
+				bound = true
+			}
+		}
+		if !bound {
+			return ErrUnknown
+		}
+		return fn(ws, fresh)
+	})
+}
+
+// withReadWorkspace opens only existing private files and a shared existing lock.
+// Agent views and the explicit operator overview supply separate native checks.
+func (s Store) withReadWorkspace(ctx context.Context, root string, fn func(*os.Root) error) error {
+	if fn == nil || !filepath.IsAbs(s.StateRoot) {
+		return ErrUnknown
+	}
+	name, err := Name(root)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info, err := os.Lstat(s.StateRoot)
 	if err != nil {
 		return err
@@ -70,14 +121,6 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(li, pathInfo) {
 		return ErrUnknown
 	}
-	fresh, err := rt.Snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	freshName, err := validateSnapshot(fresh)
-	if err != nil || name != freshName || first.Root != fresh.Root || first.Caller != fresh.Caller {
-		return ErrUnknown
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -87,32 +130,10 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 	}
 	defer func(closeFn func() error) { _ = closeFn() }(ws.Close)
 	var identity workspaceRecord
-	if readJSON(ws, "workspace.json", &identity) != nil || identity != (workspaceRecord{1, fresh.Root, name}) {
+	if readJSON(ws, "workspace.json", &identity) != nil || identity != (workspaceRecord{1, root, name}) {
 		return ErrUnknown
 	}
-	runtimeDir, err := privateDir(ws, "runtime", false)
-	if err != nil {
-		return err
-	}
-	defer func(closeFn func() error) { _ = closeFn() }(runtimeDir.Close)
-	var saved runtimeRecord
-	if readJSON(runtimeDir, "binding.json", &saved) != nil || saved.Version != 1 || !saved.Owner.valid() ||
-		ValidateBindings(saved.Bindings) != nil || !sameRuntime(saved.Owner, fresh.Caller.Owner) {
-		return ErrUnknown
-	}
-	bound := false
-	for _, b := range saved.Bindings {
-		if !sameRuntime(saved.Owner, b.Owner) {
-			return ErrUnknown
-		}
-		if b == fresh.Caller {
-			bound = true
-		}
-	}
-	if !bound {
-		return ErrUnknown
-	}
-	return fn(ws, fresh)
+	return fn(ws)
 }
 
 func openOwnBox(ws *os.Root, role, box string) (*os.Root, error) {

@@ -107,6 +107,15 @@ child interface nodes. Counts come from mailbox files. Unknown values are null.
 Reply arrival closes an exact outbound wait before POP. Status reads saved
 facts without initialization, POP, capture, notification or deletion.
 
+For the human tmux status bar, `get-status-oneline` gives one line such as
+`[0]🟩💛:🟢 [1]⬛🟥` across the explicitly selected native server. Shapes show
+unread/inbound work (square), only outbound waits (heart), or zero counts
+(circle); unknown counts use `?`. Green/yellow/orange/red show observed
+screen-change age, with black for missing or stale captures. This read-only
+view needs no agent pane and leaves ordinary `get-status` scope unchanged.
+See the [CLI contract](docs/cli-spec.md#31-get-status-oneline) for the palette,
+capture freshness and an explicit-socket `#()` invocation.
+
 ## 3. Notification and pane observations
 
 Postman pastes a short hint into the existing recipient input and submits one

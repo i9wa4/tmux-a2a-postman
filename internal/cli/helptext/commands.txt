@@ -1,6 +1,7 @@
 Commands
 
 get-status: no command-specific options or positional arguments.
+get-status-oneline: read-only operator overview; no command-specific arguments.
 pop: no command-specific options or positional arguments.
 send-heredoc --to <node|session:interface|POP'd-id[,POP'd-id...]>: heredoc stdin.
 execute-heredoc --reason <why>: heredoc stdin, child streams and final JSON on stderr.

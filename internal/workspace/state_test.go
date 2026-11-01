@@ -40,15 +40,15 @@ func stateForTest(ctx context.Context, m Mail, rt Runtime) testMailView {
 		return view
 	}
 	_ = m.Store.withView(ctx, rt, func(ws *os.Root, s Snapshot) error {
-		inbox, err := readSummaryBox(ws, s.Caller.Role, "inbox")
+		inbox, err := readSummaryBox(ctx, ws, s.Caller.Role, "inbox")
 		if err != nil {
 			return err
 		}
-		read, err := readSummaryBox(ws, s.Caller.Role, "read")
+		read, err := readSummaryBox(ctx, ws, s.Caller.Role, "read")
 		if err != nil {
 			return err
 		}
-		sent, err := readSummaryBox(ws, s.Caller.Role, "sent")
+		sent, err := readSummaryBox(ctx, ws, s.Caller.Role, "sent")
 		if err != nil {
 			return err
 		}

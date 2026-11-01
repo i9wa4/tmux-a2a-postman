@@ -1,6 +1,7 @@
 tmux-a2a-postman — daemonless mail for tmux agents
 
   get-status         Read this workspace and authorized interface-node status
+  get-status-oneline Read a compact human overview of the selected tmux server
   pop                Claim one own unread message; return its archive path
   send-heredoc       Send a new request or reply to claimed message IDs
   execute-heredoc    Run source in an initialized shell after needed approval

@@ -60,7 +60,8 @@ func main() {
 
 	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath}, cli.Handlers{
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
-		ExecuteHeredoc: cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		GetStatusOneline: cli.RunWorkspaceGetStatusOneline,
+		ExecuteHeredoc:   cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
 		ApproveExecution: cli.RunWorkspaceApproveExecution, DeclineExecution: cli.RunWorkspaceDeclineExecution,
 		Version: func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
 	})
