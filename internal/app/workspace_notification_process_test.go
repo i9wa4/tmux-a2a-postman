@@ -16,6 +16,11 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 		t.Skip("python3 unavailable")
 	}
 	f := newRebuiltCLIFixture(t)
+	progressCheck := exec.Command(python, "scripts/validation/test-burst-progress.py")
+	progressCheck.Dir = repositorySource(t)
+	if out, err := progressCheck.CombinedOutput(); err != nil {
+		t.Fatalf("approval burst progress regression: %v\n%s", err, out)
+	}
 	// Twenty terminal cases plus six existing-config regressions share this
 	// deadline. Native tmux/file operations are slower on macOS; each driver's
 	// individual wait remains bounded rather than exhausting this batch early.
