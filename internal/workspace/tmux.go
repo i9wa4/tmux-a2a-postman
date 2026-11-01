@@ -288,6 +288,9 @@ func tmuxOutputLimited(ctx context.Context, limit int, socket string, args ...st
 	stdout, stderr := tmuxBuffer{limit: limit}, tmuxBuffer{limit: 8 * 1024}
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", err
 	}
 	if stdout.exceeded || stderr.exceeded || stdout.Len() >= limit {

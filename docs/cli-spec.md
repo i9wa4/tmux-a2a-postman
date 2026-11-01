@@ -195,19 +195,21 @@ Postman processes one target pane's input at a time, with an OS file lock shared
 by all senders to that destination. It pastes one short hint, observes the full
 hint at the cursor, allows a short settling period and sends one real C-m.
 Observe after submission before admitting another hint. Lock waiting is bounded
-to five seconds; input confirmation gets a fresh two seconds after acquisition,
-with an eight-second total post-commit bound. Waiting does not repeatedly
-refresh native bindings. No fixed Codex/Claude
-prompt symbols or model APIs determine acceptance. Unknown results are retained
-and do not cause blind re-paste or repeated Enter. A lock released by process
-exit does not erase a pending/unknown input record. Human drafts and unrelated
-writers remain outside this Postman-only serialization contract. Issue #901's
-former coordinator roadmap was withdrawn; the limitation remains.
+to five seconds; paste/settlement/submit get a fresh two seconds after
+acquisition, with an eight-second total post-commit bound. Waiting does not
+repeatedly refresh native bindings. No fixed Codex/Claude prompt symbols or
+model APIs determine acceptance. Unknown results are retained and do not cause
+blind re-paste or repeated Enter. A lock released by process exit does not erase
+a pending/unknown input record. Human drafts and unrelated writers remain
+outside this Postman-only serialization contract. Issue #901's former
+coordinator roadmap was withdrawn; the limitation remains.
 
 The two-second input budget begins after the pending guard is durably written.
-It covers paste, settlement, C-m and post-submit observations. Native ownership
-checks and guard/receipt persistence share the outer eight-second deadline;
-the input deadline does not prematurely cancel a verified submission's record.
+It covers paste, settlement and C-m. After the single C-m, read-only submission
+observations, native ownership checks and guard/receipt persistence share the
+outer eight-second deadline. A shorter native read timeout may retry only the
+read; no retry pastes input or repeats Enter. Actual identity/geometry failures
+stop immediately. The input deadline never cancels post-submit evidence.
 
 Valid send and POP, including empty POP, trigger a bounded saved-text snapshot
 of every eligible pane across the caller's verified session windows. Parent or

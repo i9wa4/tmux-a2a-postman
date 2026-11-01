@@ -135,7 +135,7 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 		return err
 	}
 	if prior != nil && prior.Recipient == target && prior.Status == "pending" {
-		frame, err := transport.noticeFrame(ctx, target)
+		frame, err := noticeObservation(ctx, transport, target)
 		if err != nil || !inputAccepted(prior.Baseline, frame, prior.Text) {
 			return errors.New("previous notification input remains uncertain; no additional paste or Enter")
 		}
@@ -144,7 +144,7 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 			return err
 		}
 	}
-	base, err := transport.noticeFrame(ctx, target)
+	base, err := noticeObservation(ctx, transport, target)
 	if err != nil {
 		return err
 	}
@@ -162,9 +162,8 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 	if _, err = s.inputGuard(ctx, rt, target, &guard); err != nil {
 		return err
 	}
-	// The input budget belongs to actual paste/settlement/submit observations.
-	// Native ownership checks and durable receipts use the outer bounded notice
-	// context; slow persistence must not consume or inherit the editor deadline.
+	// The input budget bounds paste/settlement/submit. Read-only confirmation
+	// after the one Enter and durable receipts use the outer notice deadline.
 	inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
 	defer inputCancel()
 	if err = transport.pasteNotice(inputCtx, target, guard.Text); err != nil {
@@ -176,7 +175,7 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 		if err = noticePause(inputCtx); err != nil {
 			return errors.New("notification paste was not observed settling; no Enter sent")
 		}
-		frame, err := transport.noticeFrame(inputCtx, target)
+		frame, err := noticeObservation(inputCtx, transport, target)
 		if err != nil || !base.sameGeometry(frame) {
 			return errors.New("recipient changed during notification paste")
 		}
@@ -200,17 +199,33 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 	if err = transport.enterNotice(inputCtx, target); err != nil {
 		return err
 	}
+	inputCancel()
 	for {
-		if err = noticePause(inputCtx); err != nil {
+		if err = noticePause(ctx); err != nil {
 			return errors.New("notification submit is uncertain; no repeat Enter or paste")
 		}
-		frame, err := transport.noticeFrame(inputCtx, target)
+		frame, err := noticeObservation(ctx, transport, target)
 		if err != nil {
 			return err
 		}
 		if inputAccepted(base, frame, guard.Text) {
 			guard.Status = "accepted"
 			return s.acceptInputGuard(ctx, rt, target, &guard)
+		}
+	}
+}
+
+// A native frame has its own short read deadline. A slow read may be repeated
+// within the caller's existing budget, but actual identity/geometry failures
+// stop immediately. This helper cannot paste or submit input.
+func noticeObservation(ctx context.Context, transport observedNotifier, target Binding) (paneFrame, error) {
+	for {
+		frame, err := transport.noticeFrame(ctx, target)
+		if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return frame, err
+		}
+		if err := noticePause(ctx); err != nil {
+			return paneFrame{}, err
 		}
 	}
 }
