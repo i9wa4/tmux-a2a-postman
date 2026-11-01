@@ -62,9 +62,9 @@ class TriggerGateTests(unittest.TestCase):
         self.rejected_before_executor()
 
     def test_new_skill_requires_coverage(self):
-        directory = self.root / "skills/postman-recall"
+        directory = self.root / "skills/postman-uncovered-fixture"
         directory.mkdir()
-        (directory / "SKILL.md").write_text("---\nname: postman-recall\n---\nRecall\n")
+        (directory / "SKILL.md").write_text("---\nname: postman-uncovered-fixture\n---\nUncovered\n")
         self.rejected_before_executor()
 
     def test_missing_default_or_model_executor(self):

@@ -96,6 +96,7 @@ Agent workflows remain separate from CLI help:
 gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-recall --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code. For Codex, setting
@@ -130,6 +131,13 @@ shows the exact reply command. Reply using `send-heredoc --to <POP'd-id>`;
 correlation and the return route are automatic. A reply creates no new reply
 obligation. Up to 16 different claimed IDs with one sender/return route can
 receive one combined reply with comma-separated `--to` IDs.
+
+After restart, compaction or an explicit recall request, use
+[postman-recall](skills/postman-recall/SKILL.md) to recover the verified
+caller's latest recorded UTC day's read and sent together, then read every
+selected archive completely. It uses `created_at`, not mtime or today's date;
+recall does not POP, send, edit mail or replace current status with old
+narrative.
 
 `get-status` lists all configured nodes in this workspace using the same fields
 as `self`. Only the interface caller also sees its declared direct parent and

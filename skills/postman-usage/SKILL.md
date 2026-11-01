@@ -3,11 +3,12 @@ name: postman-usage
 license: MIT
 description: |
   USE FOR: Postman mailbox and session work: genuine notifications, POP and
-  complete archived-body reads, exact replies, own history, passive waits,
+  complete archived-body reads, exact replies, passive waits,
   bounded file-based status, pane evidence, and execute-heredoc orientation.
   DO NOT USE FOR: Ordinary sending procedure (use postman-send-message),
   configuration/topology audit (use postman-config-auditor), or deciding
-  execute-heredoc approval as the approver.
+  execute-heredoc approval as the approver, or restart/compaction recovery
+  (use postman-recall).
 ---
 
 # postman-usage
@@ -63,6 +64,8 @@ Use [postman-send-message](../postman-send-message/SKILL.md) for every ordinary
 send. Use [Session Flow](references/session-flow.md) after sends and during
 live mailbox work. Read own sent and already-claimed read files directly when
 needed; do not bypass POP by opening unclaimed inbox bodies.
+For restart/compaction recovery, use
+[postman-recall](../postman-recall/SKILL.md) before resuming live mail work.
 
 Read mandatory send/POP self-state: node, unread/inbound/outbound/draft/failed
 counts, last successful POP/capture/screen-change times and as-of evidence.
