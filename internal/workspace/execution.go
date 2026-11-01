@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -15,6 +16,11 @@ import (
 // ApprovalResolver must distinguish positively verified absence ("", nil)
 // from unknown/error. It must be bounded, read only and never capture panes.
 type ApprovalResolver func(context.Context, Snapshot) (string, error)
+
+// Several approved invocations can contend with receiver POPs and session
+// snapshot persistence. Admission waits outside the workspace lock, and remains
+// bounded by both this budget and the original approval/caller deadline.
+const executionAuditAdmissionBudget = 10 * time.Second
 
 type ApprovalRequest struct {
 	Version     int    `json:"version"`
@@ -449,7 +455,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	// Audit is durable BEFORE execution. No recovery path replays this dispatch.
 	// A missing reviewer leaves dispatchCtx without a deadline, so bound lock
 	// acquisition separately. The reviewer deadline remains the tighter limit.
-	auditCtx, auditCancel := context.WithTimeout(dispatchCtx, 2*time.Second)
+	auditCtx, auditCancel := context.WithTimeout(dispatchCtx, executionAuditAdmissionBudget)
 	for {
 		err = e.save(auditCtx, pinned, result, true)
 		if !errors.Is(err, ErrBusy) {
@@ -466,7 +472,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		// Do not retry a failed dispatch audit write; a partial record may exist.
 		audit = nil
 		result.Executed = &no
-		return fail("unavailable", err)
+		return fail("unavailable", fmt.Errorf("execution dispatch audit: %w", err))
 	}
 	dispatched = true
 	if err = ctx.Err(); err != nil {

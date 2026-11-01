@@ -25,6 +25,8 @@ active waiter claims only its own decision without an extra TUI notification.
 Only an unconfigured or positively absent approver permits advisory execution.
 Rejection, interruption, timeout, unknown identity or reviewer loss never
 downgrades an already waiting request. Approval wait is not a runtime limit.
+Dispatch-audit lock admission waits at most 10 seconds, within the caller's
+and original approval deadline, without holding a workspace lock while waiting.
 
 Command stdout and stderr stream unchanged. The final stderr line is JSON:
 workspace, as_of, success, executed (true/false/null), exit_code (number/null),

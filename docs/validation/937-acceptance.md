@@ -43,7 +43,12 @@ its exact recovery audit, and capture persistence retries only pre-mutation
 workspace-lock admission within its existing budget. A concurrent capture test
 reproduced the latter failure before the fix. The audit also retained the pure
 compaction helper required by criterion 16 and repaired stale documentation and
-manual behavioral fixtures.
+manual behavioral fixtures. macOS CI additionally exposed the old two-second
+dispatch-audit admission timeout under eight approved concurrent requests.
+Admission now waits up to ten seconds outside the workspace lock, within the
+original caller/approval deadline; a longer-contention regression verifies
+exactly one audited execution. Unknown ownership and failed audit writes still
+prevent dispatch.
 
 ## 2. Notification evidence and limits
 

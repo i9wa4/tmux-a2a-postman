@@ -252,7 +252,7 @@ def run_case(case, terminal):
                     result = json.loads(stderr.splitlines()[-1])
                     outcomes.append(result)
                     if process.returncode or not result["success"] or result["executed"] is not True or result.get("notification", {}).get("status") == "unknown" or marker.read_text() != "once":
-                        raise RuntimeError("approval burst lost/mixed a decision or notification: " + stderr)
+                        raise RuntimeError("approval burst request did not finish successfully: " + stderr)
                 wait_for("all burst decisions", lambda: len(list(evidence.glob("approver.claim.*.json"))) == 8)
                 proofs = [json.loads(path.read_text()) for path in evidence.glob("approver.claim.*.json")]
                 if len({proof["message"]["id"] for proof in proofs}) != 8 or len({proof["message"]["from"] for proof in proofs}) != 4:

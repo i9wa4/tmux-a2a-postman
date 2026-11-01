@@ -363,6 +363,27 @@ func TestExecutorReleasedAuditContentionDispatchesOnce(t *testing.T) {
 	}
 }
 
+func TestExecutorDispatchSurvivesLongerConcurrentCaptureAdmission(t *testing.T) {
+	m := mailFixture(t)
+	release := holdExecutionMutationLock(t, m)
+	// Reproduce the old two-second dispatch timeout after an otherwise valid
+	// invocation. The held lock represents other finite POP/capture mutations.
+	timer := time.AfterFunc(2250*time.Millisecond, release)
+	defer timer.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+	runs := 0
+	e := Executor{Mail: m, Resolve: approvalResolver("")}
+	e.run = func(context.Context, string, io.Writer, io.Writer) (int, error) { runs++; return 0, nil }
+	result, err := e.Execute(ctx, mailRuntime("worker"), "once after admission")
+	if err != nil || result.Status != "executed" || runs != 1 {
+		t.Fatal("finite contention discarded a valid execution", result, err, runs)
+	}
+	if saved := savedExecution(t, m, result); saved.Status != "executed" {
+		t.Fatal("execution was not audited", saved)
+	}
+}
+
 func savedExecution(t *testing.T, m Mail, result ExecutionResult) ExecutionResult {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(m.Store.StateRoot, "repo", "agents", "worker", "executions", result.OperationID+".json"))

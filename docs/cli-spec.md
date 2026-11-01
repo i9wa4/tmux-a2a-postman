@@ -222,6 +222,10 @@ The CLI waits up to 300 seconds for its exact decision; the blocked caller AI
 does not need to POP. Rejection, timeout, cancellation or approver loss never
 converts a waiting call to advisory. No mailbox/notification lock spans waiting
 or execution. The 300 seconds bound approval waiting, not approved runtime.
+Dispatch-audit lock admission waits at most ten seconds outside the lock, also
+bounded by the original approval/caller deadline. A finite wave of concurrent
+POP/capture mutations must not discard an otherwise approved invocation after
+only two seconds. Admission failure still prevents execution.
 
 Stdout/stderr are streamed, not permanently logged by Postman. The final JSON is
 a distinct last stderr line with common workspace/as_of/self, success, executed,

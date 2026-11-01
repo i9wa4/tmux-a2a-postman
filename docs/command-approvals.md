@@ -31,6 +31,9 @@ a stale unlocked record does not suppress ordinary notification. An already
 claimed decision also needs no extra hint. The blocked requester model does
 not need to POP. Rejection, timeout, interruption or reviewer loss never
 converts waiting into advisory execution.
+Dispatch-audit lock admission waits up to ten seconds, also bounded by the
+original caller/approval deadline. It holds no workspace lock while waiting;
+failed admission or an audit write prevents execution.
 
 After authorization, a fresh interactive/login shell initializes normal
 startup files and first-prompt hooks in the approved cwd. A private PTY handles
