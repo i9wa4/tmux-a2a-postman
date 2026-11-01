@@ -149,6 +149,51 @@ command creates a tag and GitHub Release itself. The repository release flow
 uses the pushed `v*` tag plus GoReleaser, while `gh skill install` resolves
 skills from the published repository tag or release.
 
+### 3.1. Deterministic trigger expectations
+
+Every `skills/<name>/SKILL.md` needs a corresponding
+`evals/<name>/trigger/eval.yaml` and positive/negative YAML tasks under that
+suite's `tasks/` directory. CI enforces this through `nix flake check`;
+the local hook responds to both skill and trigger-fixture changes.
+
+```sh
+nix run .#skill-trigger-check
+# In nix develop, inspect metadata without starting an evaluator:
+python3 scripts/validation/validate-skill-triggers.py --preflight-only
+python3 scripts/validation/test-skill-triggers.py
+```
+
+The repository provisions Waza CLI v0.39.1 with fixed release hashes for
+Linux x86_64/aarch64 and macOS aarch64. All suites explicitly select its
+`mock` executor and `offline-mock` model label, one serial trial and bounded
+timeouts. Waza's update check is disabled. No model SDK, credentials or model
+API is needed. The selected release's trigger grader scores local skill
+keywords and USE FOR phrases, including the skill body. It does not simulate
+real-model routing or prove task success/comprehension. Overlapping vocabulary
+can produce heuristic false positives; use concrete responsibility boundaries
+and inspect feedback rather than flipping an authored expectation to pass.
+
+The validator preflights **all** discovered trigger suites before starting any
+executor. It rejects zero/missing/orphan coverage, empty tasks, implicit or
+model-backed executors, missing/non-boolean expectations, unsupported graders,
+incorrect skill references, unknown fields, duplicate YAML keys, aliases and
+ambiguous/symlinked paths. Each task owns exactly one supported trigger grader;
+suite graders/resources/hooks cannot introduce model work. A valid but wrong
+expectation reaches the real grader and fails the command. Any failure stops
+the check with the skill/case and a nonzero exit.
+
+The negative controls exercise missing and zero discovery, a newly added
+uncovered skill, malformed metadata, forbidden executors/graders and an
+intentionally incorrect expectation under the actual evaluator. Fix the
+reported metadata or intended routing case, then rerun the command. Adding
+`postman-recall` also requires its own trigger suite; retired skill names do
+not become coverage requirements.
+
+Existing `evals/<name>/eval.yaml` and `evals/<name>/tasks/` remain manual
+behavioral suites. The automated gate selects only `evals/*/trigger/eval.yaml`
+and never implicitly executes or rewrites the behavioral lane. Skill metadata
+and publishing dry-runs remain separate required checks.
+
 ## 4. Releases
 
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset

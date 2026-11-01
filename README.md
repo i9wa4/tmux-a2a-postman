@@ -196,6 +196,11 @@ owned-fixture cleanup. No real model or account is needed. Optional real Codex
 TUI checks use fixed local Responses API decisions through the same terminal
 path. See [Contributing](CONTRIBUTING.md) for the test matrix and its limits.
 
+`nix flake check` also validates every shipped skill's deterministic positive
+and negative trigger expectations with the pinned offline Waza evaluator.
+Run it separately with `nix run .#skill-trigger-check`. These authored heuristic
+checks require no model account; manual behavioral suites remain separate.
+
 The [#937 acceptance audit](docs/validation/937-acceptance.md) maps the
 implemented core contract to process tests, capture measurements and explicit
 remaining integration work.
