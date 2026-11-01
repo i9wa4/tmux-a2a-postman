@@ -7,16 +7,17 @@ workflows separately from this reference.
 
 ## 1. Commands and common rules
 
-| Command             | Purpose                                                     |
-| ------------------- | ----------------------------------------------------------- |
-| `get-status`        | Read the current workspace's node summaries                 |
-| `pop`               | Claim one own unread mail and return its final archive path |
-| `send-heredoc`      | Send a request or reply to claimed message IDs              |
-| `execute-heredoc`   | Review and execute source in the caller's shell environment |
-| `approve-execution` | Send approval for one claimed execution request             |
-| `decline-execution` | Send rejection for one claimed execution request            |
-| `help [topic]`      | Explain commands without initializing workspace state       |
-| `version`           | Print name, version and commit as JSON                      |
+| Command              | Purpose                                                     |
+| -------------------- | ----------------------------------------------------------- |
+| `get-status`         | Read the current workspace's node summaries                 |
+| `get-status-oneline` | Render a human overview of the selected native tmux server  |
+| `pop`                | Claim one own unread mail and return its final archive path |
+| `send-heredoc`       | Send a request or reply to claimed message IDs              |
+| `execute-heredoc`    | Review and execute source in the caller's shell environment |
+| `approve-execution`  | Send approval for one claimed execution request             |
+| `decline-execution`  | Send rejection for one claimed execution request            |
+| `help [topic]`       | Explain commands without initializing workspace state       |
+| `version`            | Print name, version and commit as JSON                      |
 
 Operational commands accept `--config <absolute-postman.md>` and `--help`.
 The default is `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or
@@ -33,7 +34,8 @@ captured cwd. Runtime replacement preserves durable mail. Unknown ownership
 never grants permission to mutate or execute. No daemon startup, registration,
 model API or recurring POP loop is required.
 
-Except for execution's child streams, outputs are JSON. Times are UTC RFC3339.
+Except for execution's child streams and the human `get-status-oneline` view,
+outputs are JSON. Times are UTC RFC3339.
 `as_of` is when mail facts were aggregated; it is not a capture timestamp.
 Missing or unverifiable values are `null` with a useful reason, never invented
 zero counts. A failed supplemental observation does not undo a committed send,
@@ -96,6 +98,60 @@ sibling, grandchild or directory-ancestry inference is allowed.
 
 This command reads saved files only. It does not initialize storage, claim mail,
 recover transactions, send notifications, capture panes or delete observations.
+
+### 3.1. get-status-oneline
+
+This is a human operator view of all sessions on the explicit native `TMUX`
+server. It has no positional arguments or command-specific options. It needs
+no agent caller or `TMUX_PANE`; ordinary `get-status` stays workspace-scoped.
+Use the actual status job's socket rather than an inherited agent environment:
+
+```tmux
+set-option -g status-format[1] "#[align=right]#(env -u TMUX_PANE TMUX='#{socket_path},#{pid},0' tmux-a2a-postman get-status-oneline 2>/dev/null)"
+```
+
+Example: `[0]🟩💛:🟢 [1]⬛🟥`. Each `[N]` is native session `$N`, sorted
+numerically. Colons separate included windows in window-index order; panes
+within each window follow physical top, then left position. Each included
+role pane produces exactly one complete glyph. Unrelated panes, empty windows
+and absent panes produce no placeholder.
+
+Shape uses the shared node summary: unread or inbound work produces a square,
+including when outbound waits also exist; otherwise an outbound wait produces
+a heart; otherwise all three zero counts produce a circle. All three counts
+must be known and nonnegative; otherwise the glyph is `?`. Draft and failed
+counts do not affect the palette. A circle does not assert task completion.
+
+| Last observed screen-change age | Circle | Square | Heart |
+| ------------------------------- | ------ | ------ | ----- |
+| 0–<60 seconds                   | 🟢      | 🟩      | 💚     |
+| 60–<300 seconds                 | 🟡      | 🟨      | 💛     |
+| 300–<900 seconds                | 🟠      | 🟧      | 🧡     |
+| 900 seconds or more             | 🔴      | 🟥      | ❤️    |
+| Unknown activity                | ⚫      | ⬛      | 🖤     |
+
+Color requires a capture less than 120 seconds old, independently of those
+age bands. At exactly 120 seconds it becomes black. A missing comparison
+baseline, invalid/future/inconsistent timestamps or a changed native pane
+also makes activity unknown. A fresh unchanged capture can retain a red
+screen-change age. Red describes old observed movement, not failure or a
+stopped process. Equal samples do not prove continuous inactivity; changed
+screens may be spinners or pasted input. Last POP is never an activity fallback.
+
+Configured role titles only select candidates. Known mail counts additionally
+require the exact saved binding and native server incarnation, session, pane
+and process identity. Unbound, dead, linked, duplicate or renamed role panes
+remain unknown; an exactly identified live saved-role pane stays visible after
+renaming. No title, cwd or directory ancestry grants agent identity.
+
+The command uses existing private mail and observation readers with a
+three-second foreground deadline, a 256-KiB/1024-pane native frame bound and
+at most 256 included candidates. No capture, initialization, binding update,
+POP, recovery, notification, pruning or resident process runs. Partial state
+failures retain safe rows and report reasons on stderr. No candidates gives
+an empty line. Fatal configuration/native enumeration errors emit an empty
+line and exit nonzero. The CLI does not truncate UTF-8 or remove the red heart's
+variation selector; terminal/font/tmux width policy still affects rendering.
 
 ## 4. pop
 
@@ -387,7 +443,7 @@ its archive. A notification never exposes the body.
 
 | Destination                                                                    | Purpose, audience and decision                                                                                                          |
 | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| stdout, operational CLI                                                        | One compact JSON result for agents; no banners, raw mail or debug prose                                                                 |
+| stdout, operational CLI                                                        | One compact JSON result for agents, except the human get-status-oneline view; no banners, raw mail or debug prose                       |
 | stdout, execution child                                                        | Exact child stream for user pipelines; no Postman prose                                                                                 |
 | stderr, execution                                                              | Exact child stream plus short waiting notice and final JSON line; add only a necessary line boundary                                    |
 | stderr, global/help/output errors                                              | One human diagnostic when structured output cannot be emitted or parsing is global; no duplicate emoji/error line after JSON            |

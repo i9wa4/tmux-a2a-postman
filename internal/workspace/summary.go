@@ -27,7 +27,7 @@ type NodeStatus struct {
 
 func countPointer(n int) *int { return &n }
 
-func readSummaryBox(ws *os.Root, role, box string) ([]Message, error) {
+func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Message, error) {
 	root, err := openOwnBox(ws, role, box)
 	if errors.Is(err, os.ErrNotExist) {
 		return []Message{}, nil
@@ -42,6 +42,9 @@ func readSummaryBox(ws *os.Root, role, box string) ([]Message, error) {
 	}
 	var messages []Message
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		name := entry.Name()
 		if strings.HasSuffix(name, ".unknown.json") && box == "draft" {
 			id := strings.TrimSuffix(name, ".unknown.json")
@@ -99,11 +102,11 @@ func readSummaryBox(ws *os.Root, role, box string) ([]Message, error) {
 	return messages, nil
 }
 
-func nodeSummary(ws *os.Root, role string) NodeStatus {
+func nodeSummary(ctx context.Context, ws *os.Root, role string) NodeStatus {
 	node := NodeStatus{Node: role}
 	boxes := map[string][]Message{}
 	for _, box := range []string{"inbox", "read", "sent", "draft", "failed"} {
-		messages, err := readSummaryBox(ws, role, box)
+		messages, err := readSummaryBox(ctx, ws, role, box)
 		if err != nil {
 			node.Reason = err.Error()
 			continue
@@ -170,6 +173,10 @@ func nodeSummary(ws *os.Root, role string) NodeStatus {
 		if err == nil {
 			var latest time.Time
 			for _, entry := range entries {
+				if err := ctx.Err(); err != nil {
+					node.Reason = err.Error()
+					break
+				}
 				if !strings.HasSuffix(entry.Name(), ".pop.json") {
 					continue
 				}
@@ -214,7 +221,7 @@ func (m Mail) Summaries(ctx context.Context, rt Runtime, roles []string) (string
 				if !binding.ValidateNodeName(role) {
 					return errors.New("invalid status node")
 				}
-				node := nodeSummary(ws, role)
+				node := nodeSummary(ctx, ws, role)
 				node.LastCaptureAt, node.LastScreenChangeAt = readPaneTimes(ws, s, role)
 				nodes = append(nodes, node)
 			}

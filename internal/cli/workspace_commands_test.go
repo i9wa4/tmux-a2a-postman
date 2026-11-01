@@ -10,7 +10,7 @@ func TestWorkspaceDefaultTopologyPathIsStableAcrossCWD(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	want := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.md")
-	for _, command := range []string{"send-heredoc", "pop", "get-status", "execute-heredoc", "approve-execution", "decline-execution"} {
+	for _, command := range []string{"send-heredoc", "pop", "get-status", "get-status-oneline", "execute-heredoc", "approve-execution", "decline-execution"} {
 		first, err := newWorkspaceFlags(command).parse(nil)
 		if err != nil || first != want {
 			t.Fatalf("%s default path: %q %v", command, first, err)
@@ -53,10 +53,20 @@ func TestWorkspaceTopologyPathXDGAndExplicitOverride(t *testing.T) {
 }
 
 func TestRemovedDaemonCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"execute-bash", "reply-approval", "approve", "decline", "start", "stop", "send", "inspect-daemon-submit", "inspect-command-approvals", "get-status-oneline", "capture-profile", "reconcile-command-approval-reply-slot", "backfill-verdict-events"} {
+	for _, command := range []string{"execute-bash", "reply-approval", "approve", "decline", "start", "stop", "send", "inspect-daemon-submit", "inspect-command-approvals", "capture-profile", "reconcile-command-approval-reply-slot", "backfill-verdict-events"} {
 		got := Dispatch(command, nil, Config{}, Handlers{})
 		if got.Err == nil || !got.ShowUsage {
 			t.Fatalf("retired command %s still dispatches: %+v", command, got)
 		}
+	}
+}
+
+func TestStatusOnelineDispatchUsesCommonConfigAndOwnHandler(t *testing.T) {
+	var got []string
+	result := Dispatch("get-status-oneline", nil, Config{ConfigPath: "/private/postman.md"}, Handlers{
+		GetStatusOneline: func(args []string) error { got = args; return nil },
+	})
+	if result.Err != nil || result.ShowUsage || len(got) != 2 || got[0] != "--config" || got[1] != "/private/postman.md" {
+		t.Fatal(result, got)
 	}
 }
