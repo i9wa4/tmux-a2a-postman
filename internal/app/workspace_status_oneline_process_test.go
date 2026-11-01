@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -157,6 +157,7 @@ func TestStatusOnelineActualTmuxStatusJobAndEmojiPresentation(t *testing.T) {
 		"--postman", rebuilt.bin, "--socket", f.socket, "--wrong-socket", wrong.socket,
 		"--config", f.config, "--home", f.home, "--state", f.stateHome,
 		"--output", filepath.Join(rebuilt.dir, "tmux-status-terminal.log"))
+	command.Dir = repositorySource(t)
 	if out, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("real status job: %v\n%s", err, out)
 	}

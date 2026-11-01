@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -31,6 +31,20 @@ type rebuiltCLIFixture struct {
 	peer            string
 	stateRoot       string
 	modCacheCleaned bool
+}
+
+// go test runs this package from internal/app. Standalone CLI rebuilds and
+// repository-owned Python fixtures must still run from the module root.
+func repositorySource(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Join(root, "go.mod")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("cannot locate module root from integration package: %s: %v", root, err)
+	}
+	return root
 }
 
 func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
@@ -69,6 +83,7 @@ func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
 	buildCtx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", f.bin, ".")
+	build.Dir = repositorySource(t)
 	build.Env = f.buildEnv()
 	if out, err := build.CombinedOutput(); err != nil || buildCtx.Err() != nil {
 		t.Fatalf("rebuild public CLI: %v, context=%v: %s", err, buildCtx.Err(), out)
@@ -217,6 +232,7 @@ func (f *rebuiltCLIFixture) replaceCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	build := exec.CommandContext(ctx, "go", "build", "-o", replacement, ".")
+	build.Dir = repositorySource(t)
 	build.Env = f.buildEnv()
 	if out, err := build.CombinedOutput(); err != nil || ctx.Err() != nil {
 		t.Fatalf("rebuild replacement CLI: %v, context=%v: %s", err, ctx.Err(), out)

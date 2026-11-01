@@ -11,6 +11,12 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
+The root `main.go` keeps the existing `go install`/`go build .` entrypoint.
+CLI process handling and its unit/integration tests live in `internal/app/`;
+reusable command, configuration and mail code remain in their existing
+`internal/` packages. Design and verification documents live under `docs/`,
+and deterministic terminal drivers under `scripts/validation/`.
+
 Transport tests use isolated real tmux servers and private HOME/state. The
 controller performs only the initial send or execute request; deterministic
 agent consoles receive the actual pasted notification and `C-m`, then own POP,

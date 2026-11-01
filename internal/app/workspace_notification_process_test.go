@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -22,6 +22,7 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "scripts/validation/notification-smoke.py", "--postman", f.bin, "--agent", "fixture", "--case", "all", "--terminal", "both", "--timeout", "10", "--output", filepath.Join(f.dir, "notification-report.json"))
+	cmd.Dir = repositorySource(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("terminal-driven notification matrix: %v\n%s", err, out)
@@ -34,6 +35,7 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 			cmd := exec.CommandContext(ctx, python, "scripts/validation/notification-smoke.py", "--postman", f.bin,
 				"--case", scenario, "--terminal", "both", "--timeout", "10", "--postman-md",
 				"internal/config/testdata/postman-with-templates.md", "--output", filepath.Join(f.dir, scenario+"-existing-config.json"))
+			cmd.Dir = repositorySource(t)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("existing configuration %s: %v\n%s", scenario, err, out)
 			}
