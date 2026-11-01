@@ -38,9 +38,17 @@ type Snapshot struct {
 // Snapshot uses tmux's session creation directory rather than pane_current_path.
 // Rechecking both native identity and socket identity rejects an intervening
 // server/session replacement. All probes have a shared two-second deadline.
-func (t Tmux) Snapshot(ctx context.Context) (Snapshot, error) {
+func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	defer func() {
+		// Preserve an exhausted probe budget instead of reporting a runtime
+		// replacement. Receipt-only recovery can retry a timed-out read while
+		// continuing to reject actual native identity changes.
+		if retErr != nil && ctx.Err() != nil {
+			retErr = ctx.Err()
+		}
+	}()
 	if !filepath.IsAbs(t.Socket) || !nativeID(t.Pane, '%') {
 		return Snapshot{}, fmt.Errorf("%w: explicit tmux socket and native pane required", ErrUnknown)
 	}

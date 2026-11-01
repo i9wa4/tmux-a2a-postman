@@ -327,8 +327,8 @@ func (s Store) noticeTransition(ctx context.Context, rt Runtime, msg Message, ta
 					prior = &old
 					return nil
 				}
-				if old.Status != "unknown" {
-					return ErrUnknown
+				if old.Status == "accepted" {
+					return nil
 				}
 			} else if accept || !errors.Is(err, os.ErrNotExist) {
 				return err
@@ -348,8 +348,32 @@ func (s Store) reserveNotice(ctx context.Context, rt Runtime, msg Message, targe
 }
 
 func (s Store) acceptNotice(ctx context.Context, rt Runtime, msg Message, target Binding) error {
-	_, err := s.noticeTransition(ctx, rt, msg, target, true)
-	return err
+	return retryAcceptedNoticeState(ctx, func() error {
+		_, err := s.noticeTransition(ctx, rt, msg, target, true)
+		return err
+	})
+}
+
+// Only idempotent accepted-state persistence belongs here. Input paste/Enter,
+// pending admission and arbitrary mail mutations must never be retried here.
+func retryAcceptedNoticeState(ctx context.Context, operation func() error) error {
+	for {
+		err := operation()
+		if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			return err
+		}
+		// The input has already been accepted. Retry only this idempotent
+		// receipt transition after a shorter native probe times out; every
+		// attempt revalidates the same sender, message and target. No input is
+		// pasted or submitted here, and actual identity errors stop immediately.
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func retryNoticeAdmission(ctx context.Context, op func() error) error {

@@ -140,7 +140,7 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 			return errors.New("previous notification input remains uncertain; no additional paste or Enter")
 		}
 		prior.Status = "accepted"
-		if _, err = s.inputGuard(ctx, rt, target, prior); err != nil {
+		if err = s.acceptInputGuard(ctx, rt, target, prior); err != nil {
 			return err
 		}
 	}
@@ -210,8 +210,17 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 		}
 		if inputAccepted(base, frame, guard.Text) {
 			guard.Status = "accepted"
-			_, err = s.inputGuard(ctx, rt, target, &guard)
-			return err
+			return s.acceptInputGuard(ctx, rt, target, &guard)
 		}
 	}
+}
+
+func (s Store) acceptInputGuard(ctx context.Context, rt Runtime, target Binding, guard *inputGuard) error {
+	if guard == nil || guard.Status != "accepted" {
+		return ErrUnknown
+	}
+	return retryAcceptedNoticeState(ctx, func() error {
+		_, err := s.inputGuard(ctx, rt, target, guard)
+		return err
+	})
 }
