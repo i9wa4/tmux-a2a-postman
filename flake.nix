@@ -228,6 +228,13 @@
           # nix develop
           checks = {
             notification = config.packages.default;
+            retired-task-artifacts = pkgs.runCommand "retired-task-artifacts" { } ''
+              if test -e ${./.}/.task-artifacts; then
+                echo 'Retired task artifacts must not be tracked; see docs/validation/740-retired-task-artifacts.md' >&2
+                exit 1
+              fi
+              touch "$out"
+            '';
             skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
               export POSTMAN_RECALL_SKILL_ROOT=${./skills/postman-recall}
               python3 ${./scripts/validation/test-skill-recall.py}

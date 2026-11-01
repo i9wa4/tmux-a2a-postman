@@ -17,6 +17,10 @@ reusable command, configuration and mail code remain in their existing
 `internal/` packages. Design and verification documents live under `docs/`,
 and deterministic terminal drivers under `scripts/validation/`.
 
+Historical tracked task notes are indexed in the
+[retained evidence map](docs/validation/740-retired-task-artifacts.md).
+Record new public verification with its owning issue/PR or relevant document.
+
 Transport tests use isolated real tmux servers and private HOME/state. The
 controller performs only the initial send or execute request; deterministic
 agent consoles receive the actual pasted notification and `C-m`, then own POP,
