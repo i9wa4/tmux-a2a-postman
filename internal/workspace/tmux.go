@@ -38,9 +38,17 @@ type Snapshot struct {
 // Snapshot uses tmux's session creation directory rather than pane_current_path.
 // Rechecking both native identity and socket identity rejects an intervening
 // server/session replacement. All probes have a shared two-second deadline.
-func (t Tmux) Snapshot(ctx context.Context) (Snapshot, error) {
+func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	defer func() {
+		// Preserve an exhausted probe budget instead of reporting a runtime
+		// replacement. Receipt-only recovery can retry a timed-out read while
+		// continuing to reject actual native identity changes.
+		if retErr != nil && ctx.Err() != nil {
+			retErr = ctx.Err()
+		}
+	}()
 	if !filepath.IsAbs(t.Socket) || !nativeID(t.Pane, '%') {
 		return Snapshot{}, fmt.Errorf("%w: explicit tmux socket and native pane required", ErrUnknown)
 	}
@@ -230,14 +238,6 @@ func (t Tmux) Probe(ctx context.Context, old Owner) (Liveness, error) {
 	return Dead, nil
 }
 
-// CapturePane fails closed until role registration is stable across both pane
-// capture and every role rebind. Pane titles and pane PIDs do not provide that
-// guarantee: a retitle and restoration can occur between endpoint probes.
-// A caller-selected capture must never return potentially unrelated pane text.
-func (t Tmux) CapturePane(ctx context.Context, selected Binding) (string, error) {
-	return "", fmt.Errorf("%w: native pane capture requires stable role registration", ErrUnknown)
-}
-
 func processLiveness(pid int) Liveness {
 	if pid <= 0 {
 		return Unknown
@@ -288,6 +288,9 @@ func tmuxOutputLimited(ctx context.Context, limit int, socket string, args ...st
 	stdout, stderr := tmuxBuffer{limit: limit}, tmuxBuffer{limit: 8 * 1024}
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", err
 	}
 	if stdout.exceeded || stderr.exceeded || stdout.Len() >= limit {

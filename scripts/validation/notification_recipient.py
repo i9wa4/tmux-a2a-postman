@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+from mail_fixture import read_archive, sent_evidence
+
 os.environ["PATH"] = os.environ["POSTMAN_SMOKE_BIN_DIR"] + ":" + os.environ["PATH"]
 phase, nonce = sys.argv[1:]
 role = os.environ["POSTMAN_SMOKE_ROLE"]
@@ -33,6 +35,51 @@ def cli(args, body=None):
     return json.loads(result.stdout)
 
 
+def receive():
+    pop = cli(["pop", "--config", config])
+    if not pop["success"]:
+        raise RuntimeError("POP failed: " + json.dumps(pop))
+    if pop["markdown_absolute_path"] is None:
+        # Another genuine hint may already have caused the known batch to be
+        # consumed. An empty successful POP is not permission to start polling.
+        print("NO_UNREAD_MAIL", role)
+        return 0
+    archive = pathlib.Path(pop["markdown_absolute_path"])
+    full = archive.read_bytes()
+    msg = read_archive(archive)
+    proof = {"role": role, "conversation_id": thread_id, "context_nonce": nonce, "message": msg,
+             "full_archive_sha256": hashlib.sha256(full).hexdigest(), "archive": str(archive)}
+    count = len(list(root.glob(role + ".claim.*.json"))) + 1
+    body = "Smoke response role=" + role + " nonce=" + nonce + " full-read=" + proof["full_archive_sha256"] + "\n"
+    target = None
+    if msg["needs_reply"]:
+        target = msg["id"]
+        proof["send_kind"] = "reply"
+    elif role == os.environ["POSTMAN_SMOKE_INITIATOR"] and count == 1 and case != "concurrent":
+        target = msg["from_session"] + ":" + msg["from"] if msg.get("from_session") else msg["from"]
+        proof["send_kind"] = "request"
+    if target:
+        if case in ["approval", "rejected", "approval-burst"]:
+            action = "decline-execution" if case == "rejected" else "approve-execution"
+            proof["send"] = cli([action, "--config", config, "--to", target, "--reason", "deterministic smoke decision"])
+            state = pathlib.Path(os.environ["XDG_STATE_HOME"]) / "tmux-a2a-postman"
+            decisions = [read_archive(path) for path in state.glob("*/agents/" + role + "/sent/*.md")]
+            decisions = [item for item in decisions if any(ref["message_id"] == target for ref in item.get("replies", []))]
+            if len(decisions) != 1:
+                raise RuntimeError("exact decision evidence unavailable")
+            proof["send"]["mail_evidence"] = decisions[0]
+            proof["decision"] = json.loads(decisions[0]["body"])
+        else:
+            proof["send"] = cli(["send-heredoc", "--config", config, "--to", target], body)
+            proof["send"]["mail_evidence"] = sent_evidence(role, body)
+        if proof["send"].get("notification"):
+            raise RuntimeError("reply notification failed: " + json.dumps(proof["send"]))
+    (root / (role + ".claim." + msg["id"] + ".json")).write_text(json.dumps(proof))
+    print("CLAIMED_AND_READ", role, msg["id"], proof["full_archive_sha256"])
+    state = proof.get("send", pop)["self"]
+    return state.get("unread_count") or 0
+
+
 if phase == "setup":
     (root / (role + ".ready.json")).write_text(json.dumps({"conversation_id": thread_id, "nonce": nonce}))
     if case == "busy" and role == "worker":
@@ -44,32 +91,10 @@ if phase == "setup":
             time.sleep(0.05)
     print("RECIPIENT_READY", role, thread_id)
 else:
-    pop = cli(["pop", "--postman-md", config, phase])
-    if pop["status"] == "empty" and case in ["approval", "rejected"]:
-        print("DECISION_ALREADY_CLAIMED_BY_WRAPPER")
-        sys.exit(0)
-    if pop["status"] != "message":
-        raise RuntimeError("notification did not produce a claim: " + json.dumps(pop))
-    archive = pathlib.Path(pop["markdown_absolute_path"])
-    full = archive.read_bytes()
-    msg = pop["message"]
-    proof = {"role": role, "conversation_id": thread_id, "context_nonce": nonce, "message": msg,
-             "full_archive_sha256": hashlib.sha256(full).hexdigest(), "archive": str(archive)}
-    count = len(list(root.glob(role + ".claim.*.json"))) + 1
-    if msg["needs_reply"]:
-        to = msg["from_session"] + ":" + msg["from"] if msg.get("from_session") else msg["from"]
-        # Three response legs after the controller's single initial send.
-        required = case not in ["concurrent", "approval", "rejected"] and (role == os.environ["POSTMAN_SMOKE_INITIATOR"] or count == 1)
-        args = ["send-heredoc", "--postman-md", config, "--to", to,
-                "--reply-to", msg["id"], "--fills-input-request-id", msg["input_request_id"],
-                "--reply-required" if required else "--no-reply"]
-        body = "Smoke response role=" + role + " nonce=" + nonce + " full-read=" + proof["full_archive_sha256"] + "\n"
-        if case in ["approval", "rejected"]:
-            request = json.loads(full.decode().split("-->\n", 1)[1])
-            proof["decision"] = {"version": 1, "command": request["command"], "decision": "rejected" if case == "rejected" else "approved"}
-            body = json.dumps(proof["decision"])
-        proof["send"] = cli(args, body)
-        if proof["send"]["notice"]["status"] != "accepted":
-            raise RuntimeError("reply notification failed: " + json.dumps(proof["send"]))
-    (root / (role + ".claim." + msg["id"] + ".json")).write_text(json.dumps(proof))
-    print("CLAIMED_AND_READ", role, msg["id"], proof["full_archive_sha256"])
+    remaining = 1  # One genuine notification authorizes the initial POP.
+    for _ in range(32):
+        if remaining <= 0:
+            break
+        remaining = receive()  # Continue only from a known positive count.
+    if remaining > 0:
+        raise RuntimeError("fixture known-mail batch exceeded its finite bound")

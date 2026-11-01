@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
@@ -21,22 +23,35 @@ import (
 // configured routing before Send; notification and Bash run only after return.
 type Mail struct {
 	Store     Store
+	Context   MessageContextBuilder
 	afterStep func(string) error
 }
 
 type Message struct {
-	InputRequestID      string `json:"input_request_id,omitempty"`
-	FillsInputRequestID string `json:"fills_input_request_id,omitempty"`
-	ID                  string `json:"id"`
-	From                string `json:"from"`
-	FromSession         string `json:"from_session,omitempty"`
-	To                  string `json:"to"`
-	ToSession           string `json:"to_session,omitempty"`
-	ReplyTo             string `json:"reply_to,omitempty"`
-	NeedsReply          bool   `json:"needs_reply"`
-	CreatedAt           string `json:"created_at"`
-	Body                string `json:"-"`
+	Context             *ArchiveContext  `json:"context,omitempty"`
+	Kind                string           `json:"kind,omitempty"`
+	Replies             []ReplyReference `json:"replies,omitempty"`
+	GuidanceVersion     int              `json:"guidance_version,omitempty"`
+	InputRequestID      string           `json:"input_request_id,omitempty"`
+	FillsInputRequestID string           `json:"fills_input_request_id,omitempty"`
+	ID                  string           `json:"id"`
+	From                string           `json:"from"`
+	FromSession         string           `json:"from_session,omitempty"`
+	To                  string           `json:"to"`
+	ToSession           string           `json:"to_session,omitempty"`
+	ReplyTo             string           `json:"reply_to,omitempty"`
+	NeedsReply          bool             `json:"needs_reply"`
+	CreatedAt           string           `json:"created_at"`
+	Body                string           `json:"-"`
 }
+
+// ReplyReference closes one exact request in a single combined reply.
+type ReplyReference struct {
+	MessageID      string `json:"message_id"`
+	InputRequestID string `json:"input_request_id,omitempty"`
+}
+
+const MaxCombinedReplies = 16
 
 type mailTransaction struct {
 	Version         int     `json:"version"`
@@ -46,6 +61,7 @@ type mailTransaction struct {
 	ClaimedAt       string  `json:"claimed_at,omitempty"`
 	SourceRoot      string  `json:"source_root,omitempty"`
 	DestinationRoot string  `json:"destination_root,omitempty"`
+	FailureReason   string  `json:"failure_reason,omitempty"`
 }
 
 type ClaimReceipt struct {
@@ -74,6 +90,25 @@ func messageID(id string) bool {
 }
 
 func validateMessage(msg Message) error {
+	if err := validateMessageContext(msg); err != nil {
+		return err
+	}
+	if msg.Kind != "" && msg.Kind != "execution-request" && msg.Kind != "execution-decision" {
+		return errors.New("invalid message kind")
+	}
+	if !utf8.ValidString(msg.Body) || (msg.GuidanceVersion != 0 && msg.GuidanceVersion != 1) {
+		return errors.New("invalid message text or guidance version")
+	}
+	if len(msg.Replies) > MaxCombinedReplies || (len(msg.Replies) > 0 && (msg.ReplyTo != "" || msg.FillsInputRequestID != "")) {
+		return errors.New("ambiguous reply references")
+	}
+	seenReplies := map[string]bool{}
+	for _, ref := range msg.Replies {
+		if !messageID(ref.MessageID) || seenReplies[ref.MessageID] || (ref.InputRequestID != "" && !requestID(ref.InputRequestID)) {
+			return errors.New("invalid or duplicate reply reference")
+		}
+		seenReplies[ref.MessageID] = true
+	}
 	if !messageID(msg.ID) || !binding.ValidateNodeName(msg.From) || !binding.ValidateNodeName(msg.To) ||
 		(msg.ReplyTo != "" && !messageID(msg.ReplyTo)) {
 		return errors.New("invalid message identity")
@@ -96,6 +131,10 @@ func validateMessage(msg Message) error {
 	if err != nil || len(raw)+1 > 60*1024 {
 		return errors.New("message exceeds durable record limit")
 	}
+	wire, err := marshalMessage(msg)
+	if err != nil || len(wire) > 64*1024 {
+		return errors.New("message with generated recipient context exceeds archive limit")
+	}
 	return nil
 }
 
@@ -103,12 +142,7 @@ func encodeMessage(msg Message) ([]byte, error) {
 	if err := validateMessage(msg); err != nil {
 		return nil, err
 	}
-	header, err := json.Marshal(msg)
-	if err != nil {
-		return nil, err
-	}
-	// Header is a single machine-readable HTML comment; body stays Markdown.
-	return append(append([]byte("<!-- postman "), header...), []byte(" -->\n\n"+msg.Body)...), nil
+	return marshalMessage(msg)
 }
 
 func readMessage(root *os.Root, name string) (Message, error) {
@@ -126,6 +160,16 @@ func readMessage(root *os.Root, name string) (Message, error) {
 	if err != nil || len(data) > 64*1024 {
 		return msg, errors.New("cannot read bounded mail file")
 	}
+	return DecodeArchive(data)
+}
+
+// DecodeArchive validates one complete legacy or context-bearing Markdown
+// archive and returns literal sender text separately from generated context.
+func DecodeArchive(data []byte) (Message, error) {
+	var msg Message
+	if len(data) > 64*1024 {
+		return msg, errors.New("mail archive exceeds bound")
+	}
 	prefix := []byte("<!-- postman ")
 	split := bytes.Index(data, []byte(" -->\n\n"))
 	if !bytes.HasPrefix(data, prefix) || split < len(prefix) {
@@ -137,6 +181,17 @@ func readMessage(root *os.Root, name string) (Message, error) {
 		return msg, err
 	}
 	msg.Body = string(data[split+len(" -->\n\n"):])
+	if c := msg.Context; c != nil {
+		if c.Version != 1 || c.Markdown != "" || c.Bytes <= 0 || c.Bytes > len(msg.Body) {
+			return msg, errors.New("invalid generated recipient context boundary")
+		}
+		c.Markdown, msg.Body = msg.Body[:c.Bytes], msg.Body[c.Bytes:]
+	} else if footer := messageGuidance(msg); footer != "" {
+		if !strings.HasSuffix(msg.Body, footer) {
+			return msg, errors.New("saved message lacks its generated reply guidance")
+		}
+		msg.Body = strings.TrimSuffix(msg.Body, footer)
+	}
 	canonical, err := encodeMessage(msg)
 	if err != nil || !bytes.Equal(canonical, data) {
 		return msg, errors.New("noncanonical mail file")
@@ -210,12 +265,14 @@ func mailBox(ws *os.Root, role, box string) (*os.Root, error) {
 
 func (m Mail) step(name string) error {
 	if m.afterStep != nil {
-		return m.afterStep(name)
+		if err := m.afterStep(name); err != nil {
+			return &mailStepError{err}
+		}
 	}
 	return nil
 }
 
-func sameMessage(a, b Message) bool { return a == b }
+func sameMessage(a, b Message) bool { return reflect.DeepEqual(a, b) }
 
 // Send gives every independent call a fresh operation identity, even for equal
 // bodies. Interrupted publication is recovered from its exact immutable intent.
@@ -225,6 +282,10 @@ func (m Mail) Send(ctx context.Context, rt Runtime, to, body, replyTo string, ne
 
 // SendWithReply fills only a request that this caller has already claimed.
 func (m Mail) SendWithReply(ctx context.Context, rt Runtime, to, body, replyTo, fills string, needsReply bool) (Message, error) {
+	return m.sendWithKind(ctx, rt, to, body, replyTo, fills, needsReply, "")
+}
+
+func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, fills string, needsReply bool, kind string) (Message, error) {
 	var msg Message
 	err := m.Store.WithVerified(ctx, rt, func(ws *os.Root, s Snapshot) error {
 		bound := false
@@ -232,9 +293,6 @@ func (m Mail) SendWithReply(ctx context.Context, rt Runtime, to, body, replyTo, 
 			if b.Role == to {
 				bound = true
 			}
-		}
-		if !bound {
-			return errors.New("recipient has no verified local binding")
 		}
 		if err := m.recover(ws); err != nil {
 			return err
@@ -263,17 +321,25 @@ func (m Mail) SendWithReply(ctx context.Context, rt Runtime, to, body, replyTo, 
 			return err
 		}
 		msg = Message{
-			ID: "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, To: to,
+			Kind: kind,
+			ID:   "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, To: to,
 			ReplyTo: replyTo, NeedsReply: needsReply, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body,
+			GuidanceVersion: 1,
 		}
 		msg.FillsInputRequestID = fills
 		if needsReply {
 			msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
 		}
+		if err := m.addMessageContext(ctx, s, &msg); err != nil {
+			return err
+		}
 		if err := validateMessage(msg); err != nil {
 			return err
 		}
 		tx := mailTransaction{Version: 1, Kind: "send", Message: msg, Body: body}
+		if !bound {
+			return m.failUnpublished(ws, msg, errors.New("recipient has no verified local binding"))
+		}
 		return m.begin(ws, tx)
 	})
 	return msg, err
@@ -285,6 +351,11 @@ func (m Mail) Recover(ctx context.Context, rt Runtime) error {
 }
 
 func (m Mail) begin(ws *os.Root, tx mailTransaction) error {
+	if tx.Kind == "send" {
+		if err := m.stage(ws, tx.Message); err != nil {
+			return err
+		}
+	}
 	journal, err := privateDir(ws, "transactions", true)
 	if err != nil {
 		return err
@@ -367,13 +438,35 @@ func (m Mail) recover(ws *os.Root) error {
 
 func (m Mail) finish(ws, journal *os.Root, tx mailTransaction) error {
 	var err error
-	if tx.Kind == "send" {
+	switch {
+	case tx.FailureReason != "":
+		if tx.Kind != "send" {
+			return errors.New("invalid terminal mail failure")
+		}
+		err = saveFailed(ws, tx.Message, tx.FailureReason)
+	case tx.Kind == "send":
 		err = m.publish(ws, tx.Message)
-	} else {
+	default:
 		err = m.archive(ws, tx)
 	}
 	if err != nil {
+		var interrupted *mailStepError
+		if tx.Kind == "send" && tx.FailureReason == "" && !errors.As(err, &interrupted) && deliveryProvenAbsent(ws, tx.Message) {
+			tx.FailureReason = err.Error()
+			if saveErr := replaceJSON(journal, tx.Kind+"-"+tx.Message.ID+".json", tx); saveErr == nil {
+				if finishErr := m.finish(ws, journal, tx); finishErr == nil {
+					return &DeliveryFailure{Cause: err, MessageID: tx.Message.ID}
+				} else {
+					return errors.Join(err, finishErr)
+				}
+			}
+		}
 		return err
+	}
+	if tx.Kind == "send" {
+		if err := clearDraft(ws, tx.Message); err != nil {
+			return err
+		}
 	}
 	if err := journal.Remove(tx.Kind + "-" + tx.Message.ID + ".json"); err != nil {
 		return err

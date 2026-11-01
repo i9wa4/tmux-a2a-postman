@@ -4,9 +4,11 @@
 
 Each invocation reads exactly one bounded regular Markdown file. Default:
 `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, falling back to HOME/.config.
-An absolute `--config` or `--postman-md` selects another file. No TOML,
-split-node overlays, template injection, catalog loader or daemon defaults
-are involved. Install skills through the agent's ordinary skill mechanism.
+An absolute `--config` selects another file. Common/role text and configured
+ordinary skill catalogs are included in each generated recipient archive.
+Install skill files through the agent's ordinary skill mechanism; Postman
+injects their discovery metadata and does not install or execute them. Routing
+uses this file directly, without TOML, split-node overlays or daemon defaults.
 
 ````markdown
 ## `edges`
@@ -42,15 +44,31 @@ reviewer/interface is allowed. An absent interface has no implicit default.
 The existing `common_template` and `message_footer` H2 sections are reserved
 alongside `edges`; numbered headings are accepted. They never become topology
 nodes or grant routes/reviewer authority.
-Their contents remain presentation/setup prose; the topology reader does not
-render templates or load skill catalogs. Other node headings still require
-valid, unique role names.
+The send/execution adapters include their applicable presentation text in the
+recipient Markdown. Read-only topology/status paths do not render instructions
+or open catalogs. Other node headings still require valid, unique role names.
 
 `command_approver_node` belongs in Mermaid; legacy frontmatter approval keys
 are rejected. YAML `interface_node` can explicitly designate the local role.
-Unknown frontmatter does not install hooks or inject instructions. Role prose
-is available to the agent's setup; Postman does not automatically render it
-into mail or launch an agent.
+Unknown frontmatter does not install hooks. The configured common contract,
+selected recipient role, catalog and contact summaries are rendered into every
+new archive, including replies, before the exact sender-authored Markdown.
+Postman does not launch an agent or evaluate shell substitutions in policy.
+
+`skill_path` retains ordinary catalog syntax: a path string, a list of paths,
+or path entries with `skills: all` / a selected name list. Relative paths use
+the config directory; `~/` uses HOME. Catalogs contain configured source paths
+and sorted name/description bullets, not complete skill bodies. Missing roots
+or selected metadata are rendering errors. PING-only catalog declarations do
+not become ordinary-mail catalogs. Legacy notification cadences are not started.
+Catalog reads and final archives are bounded; oversized policy fails explicitly.
+
+`message_footer` preserves applicable ordinary guidance. Known contact/reply
+placeholders use the actual recipient and current message ID. Typed execution
+requests use the fixed approve-execution/decline-execution examples, instead
+of a generic configured reply example. Instructions are saved with the mail;
+recovery does not rewrite them using a later config revision. See the
+[Markdown compatibility contract](../../../docs/design/recipient-markdown-parity.md).
 
 ## 2. Direct parent/child interfaces
 

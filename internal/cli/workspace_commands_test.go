@@ -10,7 +10,7 @@ func TestWorkspaceDefaultTopologyPathIsStableAcrossCWD(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	want := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.md")
-	for _, command := range []string{"send-heredoc", "pop", "get-status", "execute-bash"} {
+	for _, command := range []string{"send-heredoc", "pop", "get-status", "execute-heredoc", "approve-execution", "decline-execution"} {
 		first, err := newWorkspaceFlags(command).parse(nil)
 		if err != nil || first != want {
 			t.Fatalf("%s default path: %q %v", command, first, err)
@@ -31,11 +31,14 @@ func TestWorkspaceTopologyPathXDGAndExplicitOverride(t *testing.T) {
 		t.Fatalf("XDG default path: %q %v", got, err)
 	}
 	explicit := filepath.Join(t.TempDir(), "other.md")
-	if got, err := newWorkspaceFlags("pop").parse([]string{"--postman-md", explicit}); err != nil || got != explicit {
+	if got, err := newWorkspaceFlags("pop").parse([]string{"--config", explicit}); err != nil || got != explicit {
 		t.Fatalf("explicit path: %q %v", got, err)
 	}
 	if _, err := newWorkspaceFlags("pop").parse([]string{"--config", explicit, "--postman-md", explicit}); err == nil {
-		t.Fatal("ambiguous explicit paths accepted")
+		t.Fatal("removed alias accepted")
+	}
+	if _, err := newWorkspaceFlags("pop").parse([]string{"--config", explicit, "--config", explicit}); err == nil {
+		t.Fatal("duplicate config accepted")
 	}
 	if _, err := newWorkspaceFlags("pop").parse([]string{"--config", "relative.md"}); err == nil {
 		t.Fatal("relative explicit path accepted")
@@ -50,7 +53,7 @@ func TestWorkspaceTopologyPathXDGAndExplicitOverride(t *testing.T) {
 }
 
 func TestRemovedDaemonCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"start", "stop", "send", "inspect-daemon-submit", "inspect-command-approvals", "get-status-oneline", "capture-profile", "reconcile-command-approval-reply-slot", "backfill-verdict-events"} {
+	for _, command := range []string{"execute-bash", "reply-approval", "approve", "decline", "start", "stop", "send", "inspect-daemon-submit", "inspect-command-approvals", "get-status-oneline", "capture-profile", "reconcile-command-approval-reply-slot", "backfill-verdict-events"} {
 		got := Dispatch(command, nil, Config{}, Handlers{})
 		if got.Err == nil || !got.ShowUsage {
 			t.Fatalf("retired command %s still dispatches: %+v", command, got)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,42 +17,59 @@ import (
 // from unknown/error. It must be bounded, read only and never capture panes.
 type ApprovalResolver func(context.Context, Snapshot) (string, error)
 
+// Several approved invocations can contend with receiver POPs and session
+// snapshot persistence. Admission waits outside the workspace lock, and remains
+// bounded by both this budget and the original approval/caller deadline.
+const executionAuditAdmissionBudget = 10 * time.Second
+
 type ApprovalRequest struct {
-	Version int    `json:"version"`
-	Command string `json:"command"`
+	Version     int    `json:"version"`
+	Command     string `json:"command"`
+	OperationID string `json:"operation_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	CWD         string `json:"cwd,omitempty"`
+	Shell       string `json:"shell,omitempty"`
 }
 type ApprovalDecision struct {
-	Version  int    `json:"version"`
-	Command  string `json:"command"`
-	Decision string `json:"decision"`
+	Version     int    `json:"version"`
+	Command     string `json:"command"`
+	Decision    string `json:"decision"`
+	OperationID string `json:"operation_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 type ExecutionResult struct {
-	Version        int           `json:"version"`
-	OperationID    string        `json:"operation_id"`
-	RequestID      string        `json:"request_id,omitempty"`
-	InputRequestID string        `json:"input_request_id,omitempty"`
-	ReplyID        string        `json:"reply_id,omitempty"`
-	Command        string        `json:"command"`
-	Requester      string        `json:"requester"`
-	Reviewer       string        `json:"reviewer,omitempty"`
-	Notice         *NoticeResult `json:"notice,omitempty"`
-	Status         string        `json:"status"`
-	ExitStatus     *int          `json:"exit_status"`
-	AsOf           string        `json:"as_of"`
-	Reason         string        `json:"reason,omitempty"`
+	Invocation       *ShellInvocation `json:"invocation,omitempty"`
+	Executed         *bool            `json:"executed"`
+	ApprovalDecision string           `json:"approval_decision,omitempty"`
+	ApprovalReason   string           `json:"approval_reason,omitempty"`
+	Version          int              `json:"version"`
+	OperationID      string           `json:"operation_id"`
+	RequestID        string           `json:"request_id,omitempty"`
+	InputRequestID   string           `json:"input_request_id,omitempty"`
+	ReplyID          string           `json:"reply_id,omitempty"`
+	Command          string           `json:"command,omitempty"`
+	Requester        string           `json:"requester"`
+	Reviewer         string           `json:"reviewer,omitempty"`
+	Notice           *NoticeResult    `json:"notice,omitempty"`
+	Status           string           `json:"status"`
+	ExitStatus       *int             `json:"exit_status"`
+	AsOf             string           `json:"as_of"`
+	Reason           string           `json:"reason,omitempty"`
 }
 
 // Executor has no resume/thread/grant API. Each call is independent.
 // Requests and decisions carry the exact immutable command, without a digest.
 // Its result files are audit records, never authorizations for another caller.
 type Executor struct {
-	Mail    Mail
-	Resolve ApprovalResolver
-	Stdout  io.Writer
-	Stderr  io.Writer
-	now     func() time.Time
-	wait    func(context.Context) error
-	run     func(context.Context, string, io.Writer, io.Writer) (int, error)
+	Invocation *ShellInvocation
+	Notifier   Runtime
+	Mail       Mail
+	Resolve    ApprovalResolver
+	Stdout     io.Writer
+	Stderr     io.Writer
+	now        func() time.Time
+	wait       func(context.Context) error
+	run        func(context.Context, string, io.Writer, io.Writer) (int, error)
 }
 type executionRuntime struct {
 	Runtime
@@ -98,7 +116,7 @@ func (e Executor) pause(ctx context.Context) error {
 	if e.wait != nil {
 		return e.wait(ctx)
 	}
-	timer := time.NewTimer(100 * time.Millisecond)
+	timer := time.NewTimer(250 * time.Millisecond)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
@@ -152,7 +170,7 @@ func decodeDecision(body string) (ApprovalDecision, error) {
 		return d, err
 	}
 	var extra any
-	if decoder.Decode(&extra) != io.EOF || d.Version != 1 || (d.Decision != "approved" && d.Decision != "rejected") {
+	if decoder.Decode(&extra) != io.EOF || (d.Version != 1 && d.Version != 2) || (d.Decision != "approved" && d.Decision != "rejected") {
 		return d, ErrUnknown
 	}
 	return d, nil
@@ -210,7 +228,7 @@ func (e Executor) save(ctx context.Context, rt Runtime, result ExecutionResult, 
 		if readJSON(box, result.OperationID+".json", &prior) != nil || prior.Status != "dispatched" ||
 			prior.Command != result.Command || prior.RequestID != result.RequestID ||
 			prior.InputRequestID != result.InputRequestID || prior.ReplyID != result.ReplyID ||
-			prior.Requester != result.Requester || prior.Reviewer != result.Reviewer {
+			prior.Requester != result.Requester || prior.Reviewer != result.Reviewer || !sameInvocation(prior.Invocation, result.Invocation) {
 			return ErrUnknown
 		}
 		return replaceJSON(box, result.OperationID+".json", result)
@@ -262,6 +280,12 @@ func (e Executor) claimDecision(ctx context.Context, rt Runtime, req Message, co
 			if err != nil || d.Command != command {
 				continue
 			}
+			if e.Invocation != nil {
+				var request ApprovalRequest
+				if json.Unmarshal([]byte(req.Body), &request) != nil || req.Kind != "execution-request" || msg.Kind != "execution-decision" || d.Version != 2 || d.OperationID != request.OperationID || strings.TrimSpace(d.Reason) == "" {
+					continue
+				}
+			}
 			if answer != nil {
 				return errors.New("ambiguous approval replies")
 			}
@@ -282,6 +306,16 @@ func (e Executor) claimDecision(ctx context.Context, rt Runtime, req Message, co
 // Waiting and Bash always happen outside the workspace mutation lock.
 func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (ExecutionResult, error) {
 	result := ExecutionResult{Version: 1, Command: command, Status: "unavailable", AsOf: e.clock().UTC().Format(time.RFC3339Nano)}
+	no := false
+	result.Executed = &no
+	result.Invocation = e.Invocation
+	if e.Invocation != nil {
+		result.Version = 2
+		result.Command = ""
+		if e.Invocation.Source != command || strings.TrimSpace(e.Invocation.Reason) == "" {
+			return result, errors.New("execution source/reason does not match invocation")
+		}
+	}
 	var audit Runtime
 	dispatched := false
 	fail := func(status string, err error) (ExecutionResult, error) {
@@ -341,15 +375,43 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		waiting, cancel := context.WithDeadline(ctx, deadline)
 		defer cancel()
 		dispatchCtx = waiting
-		requestBody, _ := json.Marshal(ApprovalRequest{1, command})
-		req, err := e.Mail.Send(waiting, pinned, role, string(requestBody), "", true)
+		request := ApprovalRequest{Version: 1, Command: command}
+		kind := ""
+		if e.Invocation != nil {
+			request = ApprovalRequest{Version: 2, Command: command, OperationID: result.OperationID, Reason: e.Invocation.Reason, CWD: e.Invocation.CWD, Shell: e.Invocation.Shell}
+			kind = "execution-request"
+		}
+		requestBody, _ := json.Marshal(request)
+		var req Message
+		err = retryNoticeAdmission(waiting, func() error {
+			var sendErr error
+			req, sendErr = e.Mail.sendWithKind(waiting, pinned, role, string(requestBody), "", "", true, kind)
+			if req.ID != "" && errors.Is(sendErr, ErrBusy) {
+				return errors.New("approval request partially recorded: " + sendErr.Error())
+			}
+			return sendErr
+		})
+		result.RequestID, result.InputRequestID = req.ID, req.InputRequestID
 		if err != nil {
 			return fail("delivery_failed", err)
 		}
-		result.RequestID, result.InputRequestID = req.ID, req.InputRequestID
+		if e.Invocation != nil {
+			waiter, err := e.Mail.executionWaiter(waiting, pinned, req)
+			if err != nil {
+				return fail("unavailable", err)
+			}
+			defer func() { _ = waiter.Close() }()
+			if e.Stderr != nil {
+				_, _ = io.WriteString(e.Stderr, "Waiting for execution approval (up to 300 seconds).\n")
+			}
+		}
 		// The request is already durable. A hint failure cannot undo it or
 		// authorize a second approval request for this invocation.
-		notice := e.Mail.Store.NotifyCommittedAfterCommit(waiting, rt, rt, req)
+		notifier := rt
+		if e.Notifier != nil {
+			notifier = e.Notifier
+		}
+		notice := e.Mail.Store.NotifyCommittedAfterCommit(waiting, rt, notifier, req)
 		result.Notice = &notice
 		for {
 			if err = waiting.Err(); err != nil || !e.clock().Before(deadline) {
@@ -366,6 +428,9 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 			}
 			if answer != nil {
 				result.ReplyID = answer.ID
+				result.ApprovalDecision = decision
+				parsed, _ := decodeDecision(answer.Body)
+				result.ApprovalReason = parsed.Reason
 				if decision == "rejected" {
 					return fail("rejected", errors.New("approval rejected"))
 				}
@@ -383,11 +448,14 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		return fail("cancelled", err)
 	}
 	result.Status = "dispatched"
+	// If the process dies after this durable boundary, execution may have
+	// started. The audit must not promise executed=false in that interval.
+	result.Executed = nil
 	result.AsOf = e.clock().UTC().Format(time.RFC3339Nano)
 	// Audit is durable BEFORE execution. No recovery path replays this dispatch.
 	// A missing reviewer leaves dispatchCtx without a deadline, so bound lock
 	// acquisition separately. The reviewer deadline remains the tighter limit.
-	auditCtx, auditCancel := context.WithTimeout(dispatchCtx, 2*time.Second)
+	auditCtx, auditCancel := context.WithTimeout(dispatchCtx, executionAuditAdmissionBudget)
 	for {
 		err = e.save(auditCtx, pinned, result, true)
 		if !errors.Is(err, ErrBusy) {
@@ -403,13 +471,16 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if err != nil {
 		// Do not retry a failed dispatch audit write; a partial record may exist.
 		audit = nil
-		return fail("unavailable", err)
+		result.Executed = &no
+		return fail("unavailable", fmt.Errorf("execution dispatch audit: %w", err))
 	}
 	dispatched = true
 	if err = ctx.Err(); err != nil {
+		result.Executed = &no
 		return fail("cancelled", err)
 	}
 	if role != "" && (!e.clock().Before(deadline) || dispatchCtx.Err() != nil) {
+		result.Executed = &no
 		return fail("wait_timeout", context.DeadlineExceeded)
 	}
 	stdout, stderr := e.Stdout, e.Stderr
@@ -423,8 +494,22 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if run == nil {
 		run = runExecution
 	}
-	code, runErr := run(ctx, command, stdout, stderr)
+	var code int
+	var runErr error
+	started := true
+	if e.Invocation != nil && e.run == nil {
+		code, started, runErr = runInteractive(ctx, *e.Invocation, stdout, stderr)
+	} else {
+		code, runErr = run(ctx, command, stdout, stderr)
+	}
+	result.Executed = &started
+	if started && runErr != nil {
+		result.Executed = nil
+	}
 	result.ExitStatus = &code
+	if runErr != nil {
+		result.ExitStatus = nil
+	}
 	result.Status = "executed"
 	result.AsOf = e.clock().UTC().Format(time.RFC3339Nano)
 	switch {
@@ -443,4 +528,11 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		result.Reason = strings.TrimSpace(result.Reason + " audit completion unavailable: " + saveErr.Error())
 	}
 	return result, runErr
+}
+
+func sameInvocation(a, b *ShellInvocation) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }

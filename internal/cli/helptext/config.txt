@@ -1,19 +1,19 @@
 config — file-first workspace topology
 
-The active send-heredoc, pop, get-status, and execute-bash commands read one
+The active workspace commands read one
 postman.md. Default path:
 
   $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md
   ~/.config/tmux-a2a-postman/postman.md when XDG_CONFIG_HOME is unset
 
-Each command accepts exactly one absolute --config or --postman-md override.
+Each command accepts exactly one absolute --config override.
 Relative paths and a relative XDG_CONFIG_HOME fail closed. Configuration is
 reread by each invocation; no daemon restart is needed for these commands.
 
 The file-first reader uses a bounded regular Markdown file and a strict
 Mermaid subset in the `edges` section. `---` declares a bidirectional local
 edge. Role headings with backtick names and nodes in the graph define roles.
-One `command_approver_node` class may select an execute-bash reviewer;
+One `command_approver_node` class may select an execution reviewer;
 `interface_node` marks an interface role. Missing or ambiguous configuration
 does not authorize mail or command execution.
 

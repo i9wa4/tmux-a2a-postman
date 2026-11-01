@@ -1,0 +1,179 @@
+{
+  "method": "paired complete empty-POP subprocess runs; control omits only CaptureSession using a Go build overlay; warm startup excluded; elapsed includes JSON and stdout EOF",
+  "samples_per_variant": 12,
+  "platform": "Linux x86_64",
+  "cases": [
+    {
+      "panes": 2,
+      "windows": 2,
+      "control": {
+        "p50_ms": 46.07,
+        "p95_ms": 54.97,
+        "max_ms": 54.97
+      },
+      "candidate": {
+        "p50_ms": 100.16,
+        "p95_ms": 106.24,
+        "max_ms": 106.24
+      },
+      "paired_added": {
+        "p50_ms": 53.34,
+        "p95_ms": 60.59,
+        "max_ms": 60.59
+      },
+      "coverage": [
+        {
+          "discovered": 2,
+          "captured": 2,
+          "skipped": 0,
+          "complete": true
+        }
+      ]
+    },
+    {
+      "panes": 8,
+      "windows": 8,
+      "control": {
+        "p50_ms": 46.15,
+        "p95_ms": 47.9,
+        "max_ms": 47.9
+      },
+      "candidate": {
+        "p50_ms": 114.8,
+        "p95_ms": 124.53,
+        "max_ms": 124.53
+      },
+      "paired_added": {
+        "p50_ms": 69.1,
+        "p95_ms": 76.64,
+        "max_ms": 76.64
+      },
+      "coverage": [
+        {
+          "discovered": 8,
+          "captured": 8,
+          "skipped": 0,
+          "complete": true
+        }
+      ],
+      "concurrent_8": {
+        "wall_ms": 536.81,
+        "p50_ms": 379.11,
+        "p95_ms": 531.14,
+        "max_ms": 531.14,
+        "attempts": 8,
+        "complete": 3,
+        "reasons": [
+          "workspace mutation is busy",
+          "workspace mutation is busy",
+          "workspace mutation is busy",
+          "workspace mutation is busy",
+          "workspace mutation is busy"
+        ]
+      },
+      "slow_capture": {
+        "elapsed_ms": 1177.59,
+        "observations": [
+          {
+            "version": 1,
+            "discovered": 8,
+            "captured": 0,
+            "skipped": 8,
+            "complete": false,
+            "enumerated": true,
+            "panes": [
+              {
+                "pane": "%0",
+                "reason": "signal: killed"
+              },
+              {
+                "pane": "%1",
+                "reason": "signal: killed"
+              },
+              {
+                "pane": "%2",
+                "reason": "signal: killed"
+              },
+              {
+                "pane": "%3",
+                "reason": "signal: killed"
+              },
+              {
+                "pane": "%4",
+                "reason": "session capture deadline"
+              },
+              {
+                "pane": "%5",
+                "reason": "session capture deadline"
+              },
+              {
+                "pane": "%6",
+                "reason": "session capture deadline"
+              },
+              {
+                "pane": "%7",
+                "reason": "session capture deadline"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "panes": 24,
+      "windows": 24,
+      "control": {
+        "p50_ms": 47.94,
+        "p95_ms": 51.94,
+        "max_ms": 51.94
+      },
+      "candidate": {
+        "p50_ms": 164.69,
+        "p95_ms": 178.83,
+        "max_ms": 178.83
+      },
+      "paired_added": {
+        "p50_ms": 115.73,
+        "p95_ms": 133.02,
+        "max_ms": 133.02
+      },
+      "coverage": [
+        {
+          "discovered": 24,
+          "captured": 24,
+          "skipped": 0,
+          "complete": true
+        }
+      ]
+    },
+    {
+      "panes": 66,
+      "windows": 66,
+      "control": {
+        "p50_ms": 50.12,
+        "p95_ms": 71.75,
+        "max_ms": 71.75
+      },
+      "candidate": {
+        "p50_ms": 310.99,
+        "p95_ms": 338.88,
+        "max_ms": 338.88
+      },
+      "paired_added": {
+        "p50_ms": 261.66,
+        "p95_ms": 288.57,
+        "max_ms": 288.57
+      },
+      "coverage": [
+        {
+          "discovered": 66,
+          "captured": 64,
+          "skipped": 2,
+          "complete": false
+        }
+      ]
+    }
+  ],
+  "measured_capture_source_sha256_before_gofmt": "0e71f9c4e78ad0c5debb06168a68f6f4ac66d5a9eda71bd7384478a5a23731db",
+  "capture_source_sha256": "319cfb5173fb5662bf77d86b7ceaeee6ba3c7687fe973780b7a58c8a319a5cd2"
+}

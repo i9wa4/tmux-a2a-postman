@@ -11,7 +11,7 @@ type commandExitError struct {
 }
 
 func (e commandExitError) Error() string {
-	return fmt.Sprintf("bash command exited with status %d", e.code)
+	return fmt.Sprintf("command exited with status %d", e.code)
 }
 
 func (e commandExitError) ExitCode() int {

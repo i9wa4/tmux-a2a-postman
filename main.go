@@ -31,6 +31,10 @@ func main() {
 		printUsage(os.Stderr)
 	}
 
+	if err := cli.ValidateFlagDuplicates(fs, os.Args[1:]); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			return
@@ -56,11 +60,14 @@ func main() {
 
 	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath}, cli.Handlers{
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
-		ExecuteBash: cli.RunWorkspaceExecuteBash, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		ExecuteHeredoc: cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		ApproveExecution: cli.RunWorkspaceApproveExecution, DeclineExecution: cli.RunWorkspaceDeclineExecution,
 		Version: func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
 	})
 	if result.Err != nil {
-		fmt.Fprintf(os.Stderr, "❌ %s: %v\n", result.Label, result.Err)
+		if reported, ok := result.Err.(interface{ Reported() bool }); !ok || !reported.Reported() {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", result.Label, result.Err)
+		}
 		if result.ShowUsage {
 			fs.Usage()
 		}

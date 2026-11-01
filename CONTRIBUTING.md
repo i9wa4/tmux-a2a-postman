@@ -24,12 +24,14 @@ python3 scripts/validation/notification-smoke.py \
   --postman "$(command -v tmux-a2a-postman)" --agent fixture --terminal both
 ```
 
-The default matrix has sixteen cases: plain line input and bracketed-paste
+The default matrix has twenty cases: plain editor input and bracketed-paste
 input, each covering rally, busy recipient, concurrent independent messages,
-parent-to-child, child-to-parent, approval, rejection and blocked notification.
-`TestNotificationDrivenTerminalAgents` runs it during `go test` and `nix build`.
-Nix flake checks also build this package. Default checks require no AI client
-or model server. `--case` selects a single case.
+parent-to-child, child-to-parent, approval, rejection, blocked notification,
+an Enter absorbed as newline, and an eight-request approval burst.
+`TestNotificationDrivenTerminalAgents` runs it
+during `go test` and `nix build`. Nix flake checks also build this package.
+Default checks require no AI client or model server. `--case` selects a single
+case.
 
 Generated test topologies include numbered `common_template` and
 `message_footer` sections. Additional regression cases use a production-shaped
@@ -47,6 +49,14 @@ nix run .#notification-smoke -- --case rally \
 This option copies the source into the temporary fixture; it never edits the
 original. Use `--case rally`, `approval` or `rejected`, with the configured
 `orchestrator`/`worker` or `orchestrator`/`approver` roles respectively.
+
+The burst receiver drains only known positive unread counts after its first
+notification. It does not require one hint per message. The controller waits
+on claim/completion progress with a bounded idle and batch deadline, since
+concurrent requests have no FIFO guarantee. Every request still needs its
+own full-read evidence, exact decision and exactly-once execution marker.
+Unavailable hints can coexist with successful batch processing; uncertain
+input remains a separate guarded outcome.
 
 Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
 transport outcomes, pre-paste rejection, mailbox-lock independence,
@@ -70,10 +80,10 @@ the common terminal protocol also used by local consoles and Claude Code.
 
 Reports include submitted terminal text, conversation/context identifiers,
 archive digests, exact request/reply IDs and pane transcripts. Temporary
-evidence stays at the printed path. The old-main `--case rally --baseline`
-control must commit mail but produce no recipient actions. The blocked case
-enters only fixture tmux copy mode; delivery remains unread. Tests never provide
-receiver POP/reply actions from the controller.
+evidence stays at the printed path. The `--baseline` control is a historical
+comparison against pre-notification main, not an acceptance test of the current
+CLI. The blocked case enters only fixture tmux copy mode; delivery remains
+unread. Tests never provide receiver POP/reply actions from the controller.
 
 Containers must reap orphan processes (for example Docker `--init`). Remove
 only owned fixtures; never kill unrelated tmux servers. Stage new files before
