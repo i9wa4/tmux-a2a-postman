@@ -119,7 +119,8 @@ func runInteractive(ctx context.Context, invocation ShellInvocation, stdout, std
 	defer func() {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		select {
-		case <-done:
+		case waitErr := <-done:
+			_ = waitErr // A nonzero result is expected after cleanup's kill.
 		case <-time.After(time.Second):
 		}
 	}()

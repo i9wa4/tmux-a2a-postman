@@ -417,7 +417,8 @@ func stopFixtureProcess(p *fixtureProcess) error {
 		return nil
 	}
 	select {
-	case <-p.done:
+	case waitErr := <-p.done:
+		_ = waitErr // Cleanup permits a nonzero exit while reaping.
 		p.exited = true
 		return nil
 	default:
@@ -426,7 +427,8 @@ func stopFixtureProcess(p *fixtureProcess) error {
 		return err
 	}
 	select {
-	case <-p.done:
+	case waitErr := <-p.done:
+		_ = waitErr
 		p.exited = true
 		return nil
 	case <-time.After(2 * time.Second):
@@ -435,7 +437,8 @@ func stopFixtureProcess(p *fixtureProcess) error {
 		return err
 	}
 	select {
-	case <-p.done:
+	case waitErr := <-p.done:
+		_ = waitErr
 		p.exited = true
 		return nil
 	case <-time.After(2 * time.Second):

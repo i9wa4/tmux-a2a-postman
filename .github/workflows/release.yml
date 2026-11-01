@@ -38,6 +38,9 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
+      - name: Check selected release Go toolchain
+        run: nix develop .#cd --command bash scripts/validation/check-go-toolchain.sh
+
       - name: Validate agent skills
         env:
           GH_TOKEN: ${{ github.token }}
