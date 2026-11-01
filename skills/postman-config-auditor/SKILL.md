@@ -14,8 +14,9 @@ description: |
 Read [the audit guide](references/audit-guide.md) and
 [format reference](references/postman-md.md). Inspect the single absolute
 `postman.md` used by the invocation, its Mermaid edges and native role bindings.
-Check direct parent/child interface declarations and Bash recipient setup.
-No daemon configuration, TOML overlays or migration gate is involved.
+Check direct parent/child interface declarations and recipient runtime
+registration. No daemon configuration, TOML overlays or migration gate is
+involved.
 
 ## 2. Apply requested fixes
 

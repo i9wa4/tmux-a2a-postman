@@ -1,26 +1,31 @@
 # Agent Runtime Feature Differences
 
-## 1. Current surfaces
+## 1. Shared Postman surface
 
-| Feature                             | Claude Code                                 | Codex CLI                                                       | Postman responsibility                                       |
-| ----------------------------------- | ------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| Foreground mail commands            | Agent can invoke CLI                        | Agent can invoke CLI                                            | Durable files, native identity, routing, exact replies       |
-| Bash-hosted notification            | Supply an executable noninteractive handler | Supplied example invokes `codex exec --sandbox workspace-write` | Readline hook, recipient registration, bounded key enqueue   |
-| Existing interactive TUI activation | Unsupported                                 | Unsupported                                                     | Never submit Enter into a TUI composer                       |
-| Runtime approval/sandbox            | Claude-owned settings/hooks                 | Codex-owned policy/sandbox                                      | `execute-bash` is coordination, not sandbox enforcement      |
-| Compaction                          | Reusable Claude marker detector             | Reusable Codex marker detector                                  | No resident observer or automatic recovery injection         |
-| Skills                              | Install with `--agent claude-code`          | Install with `--agent codex`                                    | Three packaged instruction skills; skills do not wake agents |
+Codex, Claude Code and local LLM consoles receive the same tmux text/paste/C-m
+notification in their existing input editor. Postman does not call model APIs,
+register conversations or start another agent. Agent-specific authentication,
+permissions and input behavior remain with the agent.
 
-## 2. Updating this record
+| Feature          | Shared contract                                        | Runtime responsibility                                |
+| ---------------- | ------------------------------------------------------ | ----------------------------------------------------- |
+| Foreground mail  | send-heredoc, pop, get-status, execute-bash            | Run CLI tools in the existing role pane               |
+| Notification     | Existing pane receives a text hint and C-m             | Accept text and submit; handle queued input when busy |
+| Complete reading | POP returns an archive path                            | Read through EOF before acting or replying            |
+| Role identity    | Verified native tmux binding and configured pane title | Preserve the role title                               |
+| Command review   | Exact mail-based approval correlation                  | Reviewer decides; tool policy remains agent-owned     |
+| Compaction       | Isolated Claude/Codex marker detectors retained        | No mandatory resident observer                        |
 
-Runtime behavior is owned by the installed agent version. Consult
-[Claude Code documentation](https://code.claude.com/docs/en/overview) and
-[Codex documentation](https://developers.openai.com/codex/cli/) before changing
-handlers or claiming runtime parity. Temporary discoveries belong here once
-verified; unsupported interactive activation must remain explicit.
+## 2. Verification and changes
 
-The Bash/Readline integration is smoke-tested without a paid model. The Codex
-handler's model response depends on installed Codex configuration and access;
-transport acceptance does not establish a model action. Last integration
-review: 2026-10-31. See [notification](design/notification.md) and
-[README](../README.md) for the canonical setup.
+Deterministic real-terminal tests cover plain and bracketed-paste consoles.
+An additional real Codex TUI run uses a fixed local Responses API model fixture,
+without authentication. This tests the same generic terminal transport, not a
+Codex-specific input API. Actual paid-model reasoning and a real Claude model
+run are not established by those fixtures.
+
+Consult [Claude Code documentation](https://code.claude.com/docs/en/overview)
+and [Codex documentation](https://developers.openai.com/codex/cli/) when
+changing runtime launch/settings. Keep the shared transport independent of those
+APIs. See [notification](design/notification.md) and [README](../README.md) for
+the canonical behavior. Last integration review: 2026-10-31.

@@ -100,7 +100,7 @@ func TestTmuxSendLeavesPendingRecipientInputUntouched(t *testing.T) {
 	}
 	notice := m.Store.NotifyCommittedAfterCommit(context.Background(), adapter, adapter, sent.Message)
 	if notice.Status != "unavailable" {
-		t.Fatalf("native pane notification was not disabled: %+v", notice)
+		t.Fatalf("shell input was not rejected: %+v", notice)
 	}
 	after := f.run(t, "capture-pane", "-p", "-t", peer)
 	if after != before {

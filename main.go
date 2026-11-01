@@ -57,9 +57,7 @@ func main() {
 	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath}, cli.Handlers{
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
 		ExecuteBash: cli.RunWorkspaceExecuteBash, SendHeredoc: cli.RunWorkspaceSendHeredoc,
-		RegisterNotifier: cli.RunWorkspaceRegisterNotifier,
-		NotifierScript:   func(args []string) error { return cli.RunNotifierScript(os.Stdout, args) },
-		Version:          func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
+		Version: func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
 	})
 	if result.Err != nil {
 		fmt.Fprintf(os.Stderr, "❌ %s: %v\n", result.Label, result.Err)

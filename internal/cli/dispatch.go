@@ -9,8 +9,6 @@ type Handlers struct {
 	GetSessionStatus func([]string) error
 	ExecuteBash      func([]string) error
 	SendHeredoc      func([]string) error
-	RegisterNotifier func([]string) error
-	NotifierScript   func([]string) error
 	Version          func([]string) error
 	Help             func([]string)
 }
@@ -36,10 +34,6 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 		handler = h.ExecuteBash
 	case "send-heredoc":
 		handler = h.SendHeredoc
-	case "register-notifier":
-		handler = h.RegisterNotifier
-	case "notifier-script":
-		return Result{Label: "postman notifier-script", Err: h.NotifierScript(args)}
 	case "version":
 		return Result{Label: "postman version", Err: h.Version(args)}
 	case "help":

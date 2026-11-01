@@ -1,4 +1,7 @@
-# Issue 952: recipient smoke evidence
+# Issue 952: historical Bash recipient smoke evidence
+
+This records the earlier Bash-only implementation, now removed. Current
+verification is [the generic tmux smoke](952-tmux-notification-smoke.md).
 
 ## 1. Setup and scope
 

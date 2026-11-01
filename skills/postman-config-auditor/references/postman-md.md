@@ -39,6 +39,13 @@ start alphanumeric, and are at most 64 characters. Unique pane titles bind
 roles. A class cannot invent an otherwise unknown node. Only one designated
 reviewer/interface is allowed. An absent interface has no implicit default.
 
+The existing `common_template` and `message_footer` H2 sections are reserved
+alongside `edges`; numbered headings are accepted. They never become topology
+nodes or grant routes/reviewer authority.
+Their contents remain presentation/setup prose; the topology reader does not
+render templates or load skill catalogs. Other node headings still require
+valid, unique role names.
+
 `command_approver_node` belongs in Mermaid; legacy frontmatter approval keys
 are rejected. YAML `interface_node` can explicitly designate the local role.
 Unknown frontmatter does not install hooks or inject instructions. Role prose
@@ -72,11 +79,13 @@ The sessions need different workspace roots below HOME.
 
 ## 3. Recipient setup
 
-Every receiving role needs the Bash/Readline integration emitted by
-`notifier-script`, sourced in its own dedicated Bash pane. See
-[README](../../../README.md#1-install-and-configure). A fresh shell must
-register itself again. Missing/stale notification setup does not prevent
-durable mail publication and does not grant command approval.
+Receiving roles, reply recipients and reviewers must be existing agent consoles
+in their configured tmux panes. Notifications paste text and submit `C-m`
+through the same transport for every agent type. No thread ID or notifier
+registration is used. Preserve role pane titles in the agent configuration;
+Codex uses `tui.terminal_title = []`. See
+[README](../../../README.md#1-install-and-configure). Missing/blocked input
+leaves mail durable and never grants command approval.
 
 [Agent Runtime Feature Differences](../../../docs/agent-runtime-feature-differences.md)
 is the long-term runtime comparison; do not duplicate it here.

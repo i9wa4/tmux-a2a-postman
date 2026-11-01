@@ -3,6 +3,6 @@ help — command documentation
   tmux-a2a-postman help [topic]
 
 Core topics: send-heredoc, pop, get-status, execute-bash.
-Setup: register-notifier, notifier-script, config, directories.
+Configuration: config, directories.
 Other topics: commands, messaging, version, help.
 No Postman daemon or startup command is needed.

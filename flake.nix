@@ -111,6 +111,25 @@
         in
         {
           apps = {
+            notification-smoke = {
+              type = "app";
+              program = "${
+                pkgs.writeShellApplication {
+                  name = "notification-smoke";
+                  runtimeInputs = [
+                    pkgs.python3
+                    pkgs.tmux
+                  ];
+                  text = ''
+                    exec python3 ${./scripts/validation}/notification-smoke.py \
+                      --postman ${config.packages.default}/bin/tmux-a2a-postman \
+                      "$@"
+                  '';
+                }
+              }/bin/notification-smoke";
+              meta.description = "Test generic tmux input notifications with deterministic terminal agents.";
+            };
+
             update = {
               type = "app";
               program = "${pkgs.writeShellScriptBin "update" ''
@@ -236,14 +255,9 @@
             vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
             nativeCheckInputs = [
               pkgs.tmux
-              pkgs.bashInteractive
+              pkgs.bash
               pkgs.python3
             ];
-            env.POSTMAN_TEST_BASH = "${pkgs.bashInteractive}/bin/bash";
-            postInstall = ''
-              mkdir -p $out/share/tmux-a2a-postman
-              cp integrations/bash/*.py $out/share/tmux-a2a-postman/
-            '';
             ldflags = [
               "-s"
               "-w"
@@ -253,6 +267,7 @@
           };
 
           # nix develop
+          checks.notification = config.packages.default;
           devShells = {
             default = pkgs.mkShell {
               buildInputs = commonDevPackages ++ goDevPackages;

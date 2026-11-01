@@ -30,4 +30,4 @@ Example syntax (not a recorded run):
 
 Only this Markdown topology configures the commands. TOML overlays, daemon
 policy settings, startup and daemon RPC are removed. State uses the absolute
-XDG_STATE_HOME or HOME/.local/state. See help register-notifier for setup.
+XDG_STATE_HOME or HOME/.local/state. Receiving agents need no notifier registration.
