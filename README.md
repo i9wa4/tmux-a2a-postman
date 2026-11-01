@@ -121,7 +121,8 @@ an uncertain delivery or lost output. Confirmed non-delivery retains complete
 `failed` mail; uncertainty preserves draft/recovery evidence.
 
 This controls Postman writers. It does not save/restore unsent human drafts or
-exclude unrelated input writers. Their stronger arbitration remains #901.
+exclude unrelated input writers. The former #901 coordinator roadmap was
+withdrawn; these limitations remain.
 
 Every valid send and POP, including an empty POP, also saves native pane text
 across all windows of its verified session. Shared windows are excluded.
@@ -182,3 +183,7 @@ real input notifications, receiver-owned POP/full reading/replies, evidence and
 owned-fixture cleanup. No real model or account is needed. Optional real Codex
 TUI checks use fixed local Responses API decisions through the same terminal
 path. See [Contributing](CONTRIBUTING.md) for the test matrix and its limits.
+
+The [#937 acceptance audit](docs/validation/937-acceptance.md) maps the
+implemented core contract to process tests, capture measurements and explicit
+remaining integration work.

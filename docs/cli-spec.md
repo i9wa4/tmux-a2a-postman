@@ -179,7 +179,8 @@ refresh native bindings. No fixed Codex/Claude
 prompt symbols or model APIs determine acceptance. Unknown results are retained
 and do not cause blind re-paste or repeated Enter. A lock released by process
 exit does not erase a pending/unknown input record. Human drafts and unrelated
-writers remain outside this Postman-only serialization contract (#901).
+writers remain outside this Postman-only serialization contract. Issue #901's
+former coordinator roadmap was withdrawn; the limitation remains.
 
 Valid send and POP, including empty POP, trigger a bounded saved-text snapshot
 of every eligible pane across the caller's verified session windows. Parent or
@@ -231,6 +232,12 @@ distinguishable. Approval reason and system failure reason are separate. Never
 automatically repeat an interrupted possibly started execution. Audit is minimal
 outcome and correlation evidence, not a reusable grant or full output-retention
 platform.
+
+An unknown execution outcome includes `recovery_operation_id`, identifying
+`agents/<self.node>/executions/<id>.json` under this workspace's state
+directory. Use that exact audit and the command's own evidence to investigate;
+this is not permission to run it again. Normal completed results omit this
+diagnostic ID.
 
 ## 8. approve-execution and decline-execution
 
@@ -315,7 +322,8 @@ main interface before this change; removed syntax is intentionally rejected.
 | tmux default-shell, cwd and exported caller environment               | Keep explicit execution environment                                | Fresh shell configuration and first-prompt hooks run after authorization                 |
 | Legacy TOML, POSTMAN_HOME, context/root/daemon overrides              | Remove/ignore as authority                                         | They must not gate or redirect current mail                                              |
 | Daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                             | No resident process, retry service or second state engine                                |
-| Model-specific idle/compaction and unused capture-registration ledger | Remove dormant code                                                | Deferred state-machine work must not masquerade as current authority                     |
+| Unused related capture-registration ledger                            | Remove dormant code                                                | Deferred state-machine work must not masquerade as current authority                     |
+| Pure compaction-marker helper                                         | Keep isolated, without automatic observation or action             | Preserve reusable parsing without coupling mail/notification to a model                  |
 | `nix run .#notification-smoke` and Python smoke options               | Keep development-only                                              | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing |
 | Nix update-toolchain, skill-check/publish and release helpers         | Keep explicit development/release tools                            | They do not add Postman operational commands; publishing remains user/release-owned      |
 
@@ -335,6 +343,7 @@ its archive. A notification never exposes the body.
 | Metadata/body/receipt echo, old status labels, next-action/activity | Remove redundant or inferred fields; archives and file facts are authoritative                          |
 | `notification`                                                      | Show only unavailable/unknown; never reverse delivery success                                           |
 | `reason`, `recovery_message_id`                                     | Keep failure diagnosis and stable recovery identity without a resend instruction                        |
+| `recovery_operation_id`                                             | Show for unknown execution outcomes to locate the exact audit without authorizing a retry               |
 | Null counts/times                                                   | Keep unknown distinct from zero; diagnostics cannot change operation success                            |
 | Child stdout/stderr and exit                                        | Keep distinct streams; only final execution JSON/progress uses stderr                                   |
 | `executed`, `exit_code`, `approval`                                 | Separate run/no-run/uncertain outcome and reviewer's reason from system failure                         |
@@ -392,3 +401,236 @@ the user. Initialized command stdin is a private PTY without input forwarding;
 stdout/stderr are non-TTY streams. Bash and Zsh are verified; POSIX-compatible
 shells use compatible source/control syntax. Fish/Nu and arbitrary shell
 grammars fail explicitly rather than silently running source in another shell.
+
+## 11. Result examples
+
+The values below are illustrative; paths, IDs and timestamps depend on the
+invocation. Each block is a complete JSON object. Node/self fields have the
+same meaning in every command; no field is a working/idle classification.
+
+### 11.1. Saved status from an ordinary caller
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "nodes": [
+    {
+      "node": "worker",
+      "unread_count": 0,
+      "inbound_count": 0,
+      "outbound_count": 0,
+      "draft_count": 0,
+      "failed_count": 0,
+      "last_pop_at": null,
+      "last_capture_at": null,
+      "last_screen_change_at": null
+    }
+  ]
+}
+```
+
+### 11.2. Successful POP of a request
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": true,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 1,
+    "outbound_count": 0,
+    "draft_count": 0,
+    "failed_count": 0,
+    "last_pop_at": "2026-11-01T10:00:00Z",
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "markdown_absolute_path": "/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md"
+}
+```
+
+### 11.3. Successful empty POP
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": true,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 0,
+    "outbound_count": 0,
+    "draft_count": 0,
+    "failed_count": 0,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "markdown_absolute_path": null
+}
+```
+
+### 11.4. Delivered request with an uncertain input notification
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": true,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 0,
+    "outbound_count": 1,
+    "draft_count": 0,
+    "failed_count": 0,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "notification": {
+    "status": "unknown",
+    "pane": "%2",
+    "reason": "notification submit is uncertain; no repeat Enter or paste"
+  }
+}
+```
+
+### 11.5. Confirmed non-delivery with a preserved failed message
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": false,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 0,
+    "outbound_count": 0,
+    "draft_count": 0,
+    "failed_count": 1,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "reason": "recipient binding unavailable",
+  "recovery_message_id": "m-0123456789abcdef0123456789abcdef"
+}
+```
+
+### 11.6. Completed execution with command exit 7
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": false,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 0,
+    "outbound_count": 0,
+    "draft_count": 0,
+    "failed_count": 0,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "executed": true,
+  "exit_code": 7,
+  "approval": null
+}
+```
+
+### 11.7. Declined execution
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": false,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 0,
+    "outbound_count": 0,
+    "draft_count": 0,
+    "failed_count": 0,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "executed": false,
+  "exit_code": null,
+  "approval": {
+    "approver": "reviewer",
+    "decision": "rejected",
+    "reason": "The proposed operation needs a narrower scope."
+  },
+  "reason": "approval rejected"
+}
+```
+
+### 11.8. Interrupted execution with an unknown outcome
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": false,
+  "self": {
+    "node": "worker",
+    "unread_count": 0,
+    "inbound_count": 0,
+    "outbound_count": 0,
+    "draft_count": 0,
+    "failed_count": 0,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null
+  },
+  "executed": null,
+  "exit_code": null,
+  "approval": null,
+  "reason": "context canceled",
+  "recovery_operation_id": "m-0123456789abcdef0123456789abcdef"
+}
+```
+
+### 11.9. Successful POP with unavailable supplemental mail facts
+
+```json
+{
+  "workspace": "/home/example/work",
+  "as_of": "2026-11-01T10:00:00Z",
+  "success": true,
+  "self": {
+    "node": "worker",
+    "unread_count": null,
+    "inbound_count": null,
+    "outbound_count": null,
+    "draft_count": null,
+    "failed_count": null,
+    "last_pop_at": null,
+    "last_capture_at": null,
+    "last_screen_change_at": null,
+    "reason": "context deadline exceeded"
+  },
+  "markdown_absolute_path": null
+}
+```
+
+Normal send and decision-helper success uses workspace/as_of/success/self
+without the POP path or execution fields. A normal accepted notification is
+omitted. Supplemental uncertainty does not reverse a confirmed operation.
+Execution objects are the final independent stderr line; the exit-7 example
+also exits with status 7 and preserves command stdout. A wrapper refusal or
+unknown outcome exits nonzero without inventing a child exit code.
+
+The implementation-to-acceptance map and measured capture costs are recorded in
+[the completion audit](validation/937-acceptance.md).

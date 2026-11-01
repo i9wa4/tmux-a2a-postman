@@ -2,7 +2,10 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -81,6 +84,100 @@ func TestSessionCaptureCoversWindowsUnconfiguredPanesAndRetainsHistory(t *testin
 	_, _, status = m.Summary(context.Background(), adapter, "worker")
 	if status.LastCaptureAt != nil || status.LastScreenChangeAt != nil {
 		t.Fatal("replacement inherited old evidence", status)
+	}
+}
+
+func TestSessionCaptureConcurrentAttemptsKeepOneCoherentLatestIndex(t *testing.T) {
+	f := newTmuxFixture(t)
+	adapter, m := f.adapter(), mailFixture(t)
+	if _, err := m.Claim(context.Background(), adapter, ""); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := adapter.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, results := make(chan struct{}), make(chan SessionSnapshot, 8)
+	for range 8 {
+		go func() { <-start; results <- m.CaptureSession(context.Background(), adapter, snapshot.Caller) }()
+	}
+	close(start)
+	complete := 0
+	for range 8 {
+		r := <-results
+		if r.Complete {
+			complete++
+		} else if r.Reason == "" {
+			t.Fatal("partial capture omitted its reason", r)
+		}
+	}
+	if complete == 0 {
+		t.Fatal("all concurrent captures were lost")
+	}
+	dir := filepath.Join(m.Store.StateRoot, "repo", "runtime", "observations")
+	raw, err := os.ReadFile(filepath.Join(dir, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index snapshotIndex
+	if json.Unmarshal(raw, &index) != nil || len(index.Panes) != 1 {
+		t.Fatal("corrupted concurrent index", string(raw))
+	}
+	for _, clock := range index.Panes {
+		raw, err := os.ReadFile(filepath.Join(dir, clock.File))
+		var saved savedPane
+		if err != nil || json.Unmarshal(raw, &saved) != nil || saved.CapturedAt != clock.CapturedAt || saved.Owner != clock.Owner || saved.Fingerprint != clock.Fingerprint {
+			t.Fatal("latest clock refers to a partial or unrelated record", clock, err)
+		}
+	}
+}
+
+func TestSessionCapturePaneLimitRecordsIncompleteCoverage(t *testing.T) {
+	f := newTmuxFixture(t)
+	for range SnapshotPaneLimit + 1 {
+		f.run(t, "new-window", "-d", "-t", "one", "-c", f.repo, "exec sleep 120")
+	}
+	adapter, m := f.adapter(), mailFixture(t)
+	snapshot, err := adapter.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := m.CaptureSession(context.Background(), adapter, snapshot.Caller)
+	if r.Complete || !r.Enumerated || r.Discovered != SnapshotPaneLimit+2 || r.Captured > SnapshotPaneLimit || r.Captured+r.Skipped != r.Discovered || len(r.Panes) > SnapshotPaneLimit {
+		t.Fatal("oversized session was presented as complete", r)
+	}
+}
+
+func TestSessionCaptureSlowNativeCallsPreserveThePreviousClock(t *testing.T) {
+	f := newTmuxFixture(t)
+	adapter, m := f.adapter(), mailFixture(t)
+	snapshot, err := adapter.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := m.CaptureSession(context.Background(), adapter, snapshot.Caller)
+	if !first.Complete {
+		t.Fatal(first)
+	}
+	_, _, before := m.Summary(context.Background(), adapter, "worker")
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyDir := t.TempDir()
+	proxy := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in *capture-pane*) sleep 1 ;; esac\nexec %s \"$@\"\n", shellQuote(realTmux))
+	if err := os.WriteFile(filepath.Join(proxyDir, "tmux"), []byte(proxy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", proxyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	start := time.Now()
+	r := m.CaptureSession(context.Background(), adapter, snapshot.Caller)
+	if time.Since(start) > 4*time.Second || r.Complete || r.Captured != 0 || r.Skipped != 1 || r.Panes[0].Reason == "" {
+		t.Fatal("slow capture was not bounded or looked complete", r)
+	}
+	_, _, after := m.Summary(context.Background(), adapter, "worker")
+	if before.LastCaptureAt == nil || after.LastCaptureAt == nil || *before.LastCaptureAt != *after.LastCaptureAt {
+		t.Fatal("failed capture advanced the successful observation time", before, after)
 	}
 }
 

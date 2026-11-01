@@ -60,11 +60,10 @@ approval. Use known unread counts as a POP trigger; do not poll an empty inbox.
 ## 3. Limits and verification
 
 Postman controls its own writers, without saving/restoring human drafts or
-excluding unrelated key senders. Stronger shared-input arbitration remains
-
-## 4. Native pane text does not authenticate model continuity or its historical
-
-author. Session snapshots remain separate from this target-only input check.
+excluding unrelated key senders. The former #901 coordinator roadmap was
+withdrawn; these limitations remain. Native pane text does not authenticate
+model continuity or its historical author. Session snapshots remain separate
+from this target-only input check.
 
 The Go test and `nix run .#notification-smoke` share deterministic terminal
 editors with and without bracketed paste. Only actual submitted terminal bytes

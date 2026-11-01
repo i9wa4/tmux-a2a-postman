@@ -1,10 +1,10 @@
 id: session-trigger-positive-002
 name: Session Positive Trigger 2
-description: Status interpretation should trigger session operator guidance.
+description: Saved mailbox counts and observation times should trigger usage guidance.
 tags:
   - positive-trigger
 inputs:
-  prompt: "Interpret a get-status result where one node is waiting, another is stale, and dead-letter files exist."
+  prompt: "Interpret get-status with outbound_count=2, failed_count=1, and an old last_capture_at. Explain which facts are known and which are unknown."
 expected:
   should_trigger: true
 graders:
@@ -12,6 +12,6 @@ graders:
     name: contains-keywords
     config:
       contains:
-        - "waiting"
-        - "stale"
-        - "dead-letter"
+        - "outbound_count"
+        - "failed_count"
+        - "last_capture_at"

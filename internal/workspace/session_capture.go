@@ -300,54 +300,62 @@ func (m Mail) CaptureSession(ctx context.Context, rt Tmux, expected Binding) Ses
 	// not silently discard a completed observation or claim mail success failed.
 	saveCtx, saveCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer saveCancel()
-	err = m.Store.WithVerified(saveCtx, pinned, func(ws *os.Root, current Snapshot) error {
-		if current.Caller != expected {
-			return ErrUnknown
-		}
-		dir, err := observationDir(ws, false)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = dir.Close() }()
-		var fresh snapshotIndex
-		if readJSON(dir, "index.json", &fresh) != nil || fresh.Version != 1 || fresh.Generation != index.Generation || !sameRuntime(fresh.Owner, expected.Owner) {
-			return errors.New("capture superseded by newer native evidence")
-		}
-		next := snapshotIndex{Version: 1, Owner: expected.Owner, Generation: index.Generation, Panes: map[string]paneClock{}}
-		for i, pane := range panes {
-			if i >= SnapshotPaneLimit {
-				break
+	// ErrBusy is returned before the workspace lock and before any record
+	// writes. Retry that admission within the existing persistence budget.
+	err = retryNoticeAdmission(saveCtx, func() error {
+		return m.Store.WithVerified(saveCtx, pinned, func(ws *os.Root, current Snapshot) error {
+			if current.Caller != expected {
+				return ErrUnknown
 			}
-			if prior, ok := index.Panes[pane.Owner.Pane]; ok && prior.Owner == pane.Owner && prior.PanePID == pane.PID {
-				next.Panes[pane.Owner.Pane] = prior
-			}
-		}
-		for file, record := range saved {
-			if err := createObservation(dir, file, record); err != nil {
+			dir, err := observationDir(ws, false)
+			if err != nil {
 				return err
 			}
-			clock := paneClock{Owner: record.Owner, PanePID: record.PanePID, CapturedAt: record.CapturedAt, Fingerprint: record.Fingerprint, File: file}
-			prior, ok := next.Panes[record.Owner.Pane]
-			before, beforeErr := time.Parse(time.RFC3339Nano, prior.CapturedAt)
-			current, currentErr := time.Parse(time.RFC3339Nano, record.CapturedAt)
-			if ok && beforeErr == nil && currentErr == nil && !before.After(current) {
-				clock.ScreenChangedAt = prior.ScreenChangedAt
-				if prior.Fingerprint != record.Fingerprint {
-					when := record.CapturedAt
-					clock.ScreenChangedAt = &when
+			defer func() { _ = dir.Close() }()
+			var fresh snapshotIndex
+			if readJSON(dir, "index.json", &fresh) != nil || fresh.Version != 1 || fresh.Generation != index.Generation || !sameRuntime(fresh.Owner, expected.Owner) {
+				return errors.New("capture superseded by newer native evidence")
+			}
+			next := snapshotIndex{Version: 1, Owner: expected.Owner, Generation: index.Generation, Panes: map[string]paneClock{}}
+			for i, pane := range panes {
+				if i >= SnapshotPaneLimit {
+					break
+				}
+				if prior, ok := index.Panes[pane.Owner.Pane]; ok && prior.Owner == pane.Owner && prior.PanePID == pane.PID {
+					next.Panes[pane.Owner.Pane] = prior
 				}
 			}
-			next.Panes[record.Owner.Pane] = clock
-		}
-		if err := createObservation(dir, result.ID+".json", result); err != nil {
-			return err
-		}
-		if err := syncDirectory(dir); err != nil {
-			return err
-		}
-		return replaceJSON(dir, "index.json", next)
+			for file, record := range saved {
+				if err := saveCtx.Err(); err != nil {
+					return err
+				}
+				if err := createObservation(dir, file, record); err != nil {
+					return err
+				}
+				clock := paneClock{Owner: record.Owner, PanePID: record.PanePID, CapturedAt: record.CapturedAt, Fingerprint: record.Fingerprint, File: file}
+				prior, ok := next.Panes[record.Owner.Pane]
+				before, beforeErr := time.Parse(time.RFC3339Nano, prior.CapturedAt)
+				current, currentErr := time.Parse(time.RFC3339Nano, record.CapturedAt)
+				if ok && beforeErr == nil && currentErr == nil && !before.After(current) {
+					clock.ScreenChangedAt = prior.ScreenChangedAt
+					if prior.Fingerprint != record.Fingerprint {
+						when := record.CapturedAt
+						clock.ScreenChangedAt = &when
+					}
+				}
+				next.Panes[record.Owner.Pane] = clock
+			}
+			if err := createObservation(dir, result.ID+".json", result); err != nil {
+				return err
+			}
+			if err := syncDirectory(dir); err != nil {
+				return err
+			}
+			return replaceJSON(dir, "index.json", next)
+		})
 	})
 	if err != nil {
+		result.Complete = false
 		result.Reason = err.Error()
 	}
 	return result

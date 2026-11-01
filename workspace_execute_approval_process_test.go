@@ -20,20 +20,21 @@ type publicApprovalFixture struct {
 	socket, home, stateHome, config, worker, peer, self string
 }
 type protocolOutput struct {
-	Workspace         string                  `json:"workspace"`
-	AsOf              string                  `json:"as_of"`
-	Success           bool                    `json:"success"`
-	MarkdownPath      *string                 `json:"markdown_absolute_path"`
-	Self              workspace.NodeStatus    `json:"self"`
-	Nodes             []workspace.NodeStatus  `json:"nodes"`
-	Parent            json.RawMessage         `json:"parent"`
-	Children          []json.RawMessage       `json:"children"`
-	Notification      *workspace.NoticeResult `json:"notification"`
-	RecoveryMessageID string                  `json:"recovery_message_id"`
-	Reason            string                  `json:"reason"`
-	Executed          *bool                   `json:"executed"`
-	ExitCode          *int                    `json:"exit_code"`
-	Approval          *struct {
+	Workspace           string                  `json:"workspace"`
+	AsOf                string                  `json:"as_of"`
+	Success             bool                    `json:"success"`
+	MarkdownPath        *string                 `json:"markdown_absolute_path"`
+	Self                workspace.NodeStatus    `json:"self"`
+	Nodes               []workspace.NodeStatus  `json:"nodes"`
+	Parent              json.RawMessage         `json:"parent"`
+	Children            []json.RawMessage       `json:"children"`
+	Notification        *workspace.NoticeResult `json:"notification"`
+	RecoveryMessageID   string                  `json:"recovery_message_id"`
+	RecoveryOperationID string                  `json:"recovery_operation_id"`
+	Reason              string                  `json:"reason"`
+	Executed            *bool                   `json:"executed"`
+	ExitCode            *int                    `json:"exit_code"`
+	Approval            *struct {
 		Approver string  `json:"approver"`
 		Decision *string `json:"decision"`
 		Reason   *string `json:"reason"`

@@ -90,6 +90,9 @@ or verified absent approver permits advisory execution. Probe failure or
 ambiguity must not execute. Once blocking starts, rejection, timeout,
 interruption, or loss of the approver never downgrades to advisory execution.
 Historical decisions do not authorize a new invocation.
+If executed is null, inspect the exact audit identified by
+recovery_operation_id and the command's own evidence; do not repeat the source
+to discover whether it ran.
 
 The approver reads its complete POP'd execution request and chooses one fixed
 command, approve-execution or decline-execution, with that request ID and a

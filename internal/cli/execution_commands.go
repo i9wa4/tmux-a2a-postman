@@ -19,16 +19,17 @@ type approvalOutput struct {
 }
 
 type executionOutput struct {
-	Workspace         string                  `json:"workspace"`
-	AsOf              string                  `json:"as_of"`
-	Success           bool                    `json:"success"`
-	Executed          *bool                   `json:"executed"`
-	ExitCode          *int                    `json:"exit_code"`
-	Approval          *approvalOutput         `json:"approval"`
-	Self              workspace.NodeStatus    `json:"self"`
-	Reason            string                  `json:"reason,omitempty"`
-	Notification      *workspace.NoticeResult `json:"notification,omitempty"`
-	RecoveryMessageID string                  `json:"recovery_message_id,omitempty"`
+	Workspace           string                  `json:"workspace"`
+	AsOf                string                  `json:"as_of"`
+	Success             bool                    `json:"success"`
+	Executed            *bool                   `json:"executed"`
+	ExitCode            *int                    `json:"exit_code"`
+	Approval            *approvalOutput         `json:"approval"`
+	Self                workspace.NodeStatus    `json:"self"`
+	Reason              string                  `json:"reason,omitempty"`
+	Notification        *workspace.NoticeResult `json:"notification,omitempty"`
+	RecoveryMessageID   string                  `json:"recovery_message_id,omitempty"`
+	RecoveryOperationID string                  `json:"recovery_operation_id,omitempty"`
 }
 
 type lineBoundaryWriter struct {
@@ -110,6 +111,9 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 	executor := workspace.Executor{Mail: c.mail, Resolve: workspace.ConfiguredApprovalResolver(path), Stdout: os.Stdout, Stderr: boundary, Invocation: &invocation, Notifier: c.runtime}
 	result, err := executor.Execute(ctx, c.boundRuntime(), source)
 	out.Executed, out.ExitCode, out.Reason = result.Executed, result.ExitStatus, result.Reason
+	if result.Executed == nil {
+		out.RecoveryOperationID = result.OperationID
+	}
 	if result.Notice != nil && result.Notice.Status != "accepted" {
 		out.Notification = result.Notice
 	}

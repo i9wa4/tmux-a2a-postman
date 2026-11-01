@@ -26,8 +26,9 @@ python3 scripts/validation/notification-smoke.py \
 
 The default matrix has twenty cases: plain editor input and bracketed-paste
 input, each covering rally, busy recipient, concurrent independent messages,
-parent-to-child, child-to-parent, approval, rejection, blocked notification and
-an Enter absorbed as newline. `TestNotificationDrivenTerminalAgents` runs it
+parent-to-child, child-to-parent, approval, rejection, blocked notification,
+an Enter absorbed as newline, and an eight-request approval burst.
+`TestNotificationDrivenTerminalAgents` runs it
 during `go test` and `nix build`. Nix flake checks also build this package.
 Default checks require no AI client or model server. `--case` selects a single
 case.

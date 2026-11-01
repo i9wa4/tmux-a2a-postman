@@ -76,10 +76,10 @@ native identity. Immutable history plus a small latest-sample index prevents
 unbounded history scans. Capture errors never undo mail. All saved logs and
 observations remain until user deletion; there is no expiry or rotation.
 
-Timestamps record successful POP, capture and observed screen differences.
-No activity state machine, compaction detector, persistent observer, auto-PING,
-TUI, background delivery or daemon startup surface remains. The CLI reports
-file-derived counts using a common node/self shape. Native text does not
+Timestamps record successful POP, capture and observed screen differences. No
+activity state machine, automatic compaction observer, persistent observer,
+auto-PING, TUI, background delivery or daemon startup surface remains. The CLI
+reports file-derived counts using a common node/self shape. Native text does not
 establish model identity or continuous work.
 
 Herdr support is discontinued. Historical research is not a current setup gate

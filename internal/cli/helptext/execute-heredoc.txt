@@ -32,4 +32,6 @@ approval (approver, decision, reason; or null), self, and optional reason.
 A separating newline is added if child stderr has no final newline. Waiting
 progress also goes to stderr. A nonzero command exit is forwarded. An uncertain
 possibly started command has executed=null and must not be blindly repeated.
+That result includes recovery_operation_id, the exact ID in this workspace's
+agents/<node>/executions/<id>.json audit record, for investigation.
 Postman saves minimal execution audit, not complete stdout/stderr logs.
