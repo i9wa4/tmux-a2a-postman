@@ -311,23 +311,30 @@
           };
 
           # nix develop
-          checks.notification = config.packages.default;
-          checks.skill-triggers =
-            pkgs.runCommand "skill-triggers"
-              {
-                nativeBuildInputs = [
-                  triggerPython
-                  waza
-                ];
-              }
-              ''
-                export HOME="$TMPDIR/home"
-                mkdir -p "$HOME"
-                export WAZA_BIN=${waza}/bin/waza
-                python3 ${triggerSource}/scripts/validation/test-skill-triggers.py
-                python3 ${triggerSource}/scripts/validation/validate-skill-triggers.py --root ${triggerSource}
-                touch "$out"
-              '';
+          checks = {
+            notification = config.packages.default;
+            skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+              export POSTMAN_RECALL_SKILL_ROOT=${./skills/postman-recall}
+              python3 ${./scripts/validation/test-skill-recall.py}
+              touch "$out"
+            '';
+            skill-triggers =
+              pkgs.runCommand "skill-triggers"
+                {
+                  nativeBuildInputs = [
+                    triggerPython
+                    waza
+                  ];
+                }
+                ''
+                  export HOME="$TMPDIR/home"
+                  mkdir -p "$HOME"
+                  export WAZA_BIN=${waza}/bin/waza
+                  python3 ${triggerSource}/scripts/validation/test-skill-triggers.py
+                  python3 ${triggerSource}/scripts/validation/validate-skill-triggers.py --root ${triggerSource}
+                  touch "$out"
+                '';
+          };
           devShells = {
             default = pkgs.mkShell {
               buildInputs = commonDevPackages ++ goDevPackages;

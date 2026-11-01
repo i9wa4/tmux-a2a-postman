@@ -1,0 +1,12 @@
+id: postman-recall-6
+name: unrelated SQL
+inputs:
+  prompt: Optimize SQLite indexes for query latency.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/postman-recall/SKILL.md
+    mode: negative
