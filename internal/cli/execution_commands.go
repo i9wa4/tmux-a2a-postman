@@ -99,6 +99,9 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		return err
 	}
 	c = &opened
+	if err := c.prepareRecipientContext(ctx); err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -186,6 +189,9 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	}
 	if !c.permits(sources[0].From) {
 		return errors.New("requester is not a configured outgoing edge")
+	}
+	if err := c.prepareRecipientContext(ctx); err != nil {
+		return err
 	}
 	var msg workspace.Message
 	err = retryWorkspaceAdmission(ctx, func() (bool, error) {

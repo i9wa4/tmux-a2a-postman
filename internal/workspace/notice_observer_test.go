@@ -178,3 +178,43 @@ func TestObservedNoticeStopsBeforeEnterWhenFrameIsUntrustworthy(t *testing.T) {
 		t.Fatal("unknown input prefix permitted paste", err)
 	}
 }
+
+type slowFrameProbe struct {
+	*editorProbe
+	timeoutBeforeEnter, timeoutAfterEnter, delayed bool
+}
+
+func (p *slowFrameProbe) noticeFrame(ctx context.Context, target Binding) (paneFrame, error) {
+	if p.pastes > 0 && !p.entered && !p.timeoutBeforeEnter {
+		p.timeoutBeforeEnter = true
+		return paneFrame{}, context.DeadlineExceeded
+	}
+	if p.entered && !p.timeoutAfterEnter {
+		p.timeoutAfterEnter = true
+		return paneFrame{}, context.DeadlineExceeded
+	}
+	if p.entered && !p.delayed {
+		p.delayed = true
+		timer := time.NewTimer(2100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return paneFrame{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return p.editorProbe.noticeFrame(ctx, target)
+}
+
+func TestObservedNoticeRetriesOnlyTimedOutReadsAndKeepsPostSubmitEvidence(t *testing.T) {
+	m, rt, msg := committedNotice(t)
+	p := &slowFrameProbe{editorProbe: &editorProbe{target: rt.snapshot.Bindings[1], prefix: "input> "}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.Store.observedNotice(ctx, rt, p, p.target, msg); err != nil {
+		t.Fatal(err)
+	}
+	if !p.timeoutBeforeEnter || !p.timeoutAfterEnter || !p.delayed || p.pastes != 1 || p.enters != 1 {
+		t.Fatal("short read retries/post-submit deadline repeated input or lost evidence", p)
+	}
+}

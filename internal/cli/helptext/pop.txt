@@ -4,6 +4,10 @@ pop — claim one own unread message
 
 No message ID, capture toggle or other positional argument is accepted.
 JSON: workspace, as_of, success, markdown_absolute_path, self; optional reason.
+A non-null archive path also includes instruction: read that entire Markdown
+through EOF before processing, replying or deciding no action is needed.
+No truncated view, summary, notification or metadata substitutes for the file.
+A successful empty POP omits instruction because there is no file to read.
 A successful empty POP has markdown_absolute_path=null. A claimed message has
 an existing absolute read path and a durable matching .pop.json receipt.
 The path remains valid after claim; failed stdout cannot resurrect delivery.

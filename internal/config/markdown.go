@@ -379,8 +379,12 @@ func extractH2Sections(content string) ([]string, map[string]string) {
 		start int
 	}
 	var found []section
+	var fence markdownFence
 
 	for i, line := range lines {
+		if fence.skip(line) {
+			continue
+		}
 		if !strings.HasPrefix(line, "## ") {
 			continue
 		}

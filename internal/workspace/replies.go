@@ -115,6 +115,9 @@ func (m Mail) SendReply(ctx context.Context, rt Runtime, ids []string, body stri
 			return err
 		}
 		msg = Message{ID: "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, To: first.From, Replies: replyReferences(sources), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body, GuidanceVersion: 1}
+		if err := m.addMessageContext(ctx, s, &msg); err != nil {
+			return err
+		}
 		if err := validateMessage(msg); err != nil {
 			return err
 		}

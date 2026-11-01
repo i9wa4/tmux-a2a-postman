@@ -24,6 +24,7 @@ type protocolOutput struct {
 	AsOf                string                  `json:"as_of"`
 	Success             bool                    `json:"success"`
 	MarkdownPath        *string                 `json:"markdown_absolute_path"`
+	Instruction         string                  `json:"instruction"`
 	Self                workspace.NodeStatus    `json:"self"`
 	Nodes               []workspace.NodeStatus  `json:"nodes"`
 	Parent              json.RawMessage         `json:"parent"`
@@ -160,22 +161,10 @@ func readProtocolArchive(t *testing.T, path string) workspace.Message {
 	if err != nil {
 		t.Fatal(err)
 	}
-	header, body, ok := strings.Cut(string(raw), " -->\n\n")
-	if !ok || !strings.HasPrefix(header, "<!-- postman ") {
-		t.Fatalf("invalid mail archive %s", path)
-	}
-	var msg workspace.Message
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(header, "<!-- postman ")), &msg); err != nil {
+	msg, err := workspace.DecodeArchive(raw)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if msg.GuidanceVersion == 1 {
-		index := strings.LastIndex(body, "\n\n---\n<!-- postman reply guidance v1 -->\n")
-		if index < 0 || !strings.HasSuffix(body, "<!-- end postman reply guidance v1 -->\n") {
-			t.Fatal("missing versioned guidance")
-		}
-		body = body[:index]
-	}
-	msg.Body = body
 	return msg
 }
 

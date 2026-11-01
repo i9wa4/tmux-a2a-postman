@@ -93,6 +93,9 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 			if needsReply {
 				msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
 			}
+			if err := m.addMessageContext(ctx, to, &msg); err != nil {
+				return err
+			}
 			if err := validateMessage(msg); err != nil {
 				return err
 			}

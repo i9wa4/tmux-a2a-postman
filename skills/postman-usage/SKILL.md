@@ -42,6 +42,10 @@ its receipt, and returns the final openable archive path. Prefer the absolute
 path. Read the complete archived Markdown through EOF before any handling,
 routing, reply, status decision, or no-action decision. Truncated output,
 frontmatter, reply policy, and notification text never substitute for this.
+POP includes this full-read requirement in its `instruction` field when it
+returns a path. The file includes common/recipient policy, configured skill
+metadata, contact roles, exact reply guidance and the literal sender body;
+read all regions, including the body's final line.
 
 After each operation, a known positive `self.unread_count` is enough to POP
 and handle the next message without waiting for another hint. Continue that
