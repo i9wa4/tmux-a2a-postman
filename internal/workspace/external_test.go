@@ -92,6 +92,13 @@ func TestExternalDurableRoundTripRestartAndPublicationGap(t *testing.T) {
 			if next, err := m2.Claim(ctx, rt, ""); err != nil || next != nil {
 				t.Fatal("duplicate action", err)
 			}
+			publishExternal(t, b, "Request-1.md", "literal request\nEOF\n")
+			if _, err := m2.SyncExternal(ctx, rt, b); err == nil {
+				t.Fatal("case-alias filename was accepted as a second identity")
+			}
+			if err := os.Remove(filepath.Join(b.Root, "inbox", "Request-1.md")); err != nil {
+				t.Fatal(err)
+			}
 			publishExternal(t, b, "request-1.md", "changed request")
 			if _, err := m2.SyncExternal(ctx, rt, b); err == nil {
 				t.Fatal("changed-payload retry accepted")
@@ -165,6 +172,9 @@ func TestExternalExactDecisionsAndSupersededScopes(t *testing.T) {
 	if _, err := m.SyncExternal(ctx, rt, b); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := m.ReportExternal(ctx, rt, b, request.Message.ID, "done", "", "premature result before reading answer"); err == nil {
+		t.Fatal("terminal result bypassed unread exchange mail")
+	}
 	answer := claimExternal(t, m, rt)
 	if answer.Message.External.DecisionID != second.ID || answer.Message.External.Choice != "approve" {
 		t.Fatal("wrong decision correlation")
@@ -226,6 +236,40 @@ func TestExternalReportCrashBeforeMailCommit(t *testing.T) {
 				t.Fatal("duplicate/missing output", err)
 			}
 		})
+	}
+}
+
+func TestExternalRevisedDecisionClosesAllClaimedExchangeMail(t *testing.T) {
+	ctx := context.Background()
+	m, rt, b := externalFixture(t)
+	publishExternal(t, b, "request.md", "request")
+	if _, err := m.SyncExternal(ctx, rt, b); err != nil {
+		t.Fatal(err)
+	}
+	request := claimExternal(t, m, rt)
+	var previousAnswer *Claimed
+	for _, revision := range []string{"first action", "revised action"} {
+		pending, err := m.ReportExternal(ctx, rt, b, request.Message.ID, "pending", externalHash(revision), revision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if previousAnswer != nil {
+			if _, err := m.ReportExternal(ctx, rt, b, previousAnswer.Message.ID, "done", "", "stale decision result"); err == nil {
+				t.Fatal("stale answer authorized revised action")
+			}
+		}
+		publishExternal(t, b, decisionFilename(pending.ID, pending.External.Scope, "approve"), "approve only "+revision)
+		if _, err := m.SyncExternal(ctx, rt, b); err != nil {
+			t.Fatal(err)
+		}
+		previousAnswer = claimExternal(t, m, rt)
+	}
+	if _, err := m.ReportExternal(ctx, rt, b, previousAnswer.Message.ID, "done", "", "revised action done; earlier answer superseded"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, summary := m.Summary(ctx, rt, b.Node)
+	if summary.InboundCount == nil || *summary.InboundCount != 0 {
+		t.Fatalf("terminal exchange left claimed mail unanswered: %#v", summary)
 	}
 }
 

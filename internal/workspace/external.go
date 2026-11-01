@@ -167,7 +167,7 @@ func decisionFilename(id, scope, choice string) string {
 }
 
 func externalInput(b ExternalBinding, name, body string, reports []Message) (Message, error) {
-	id := "m-" + externalHash(b.key() + "\x00" + name)[:32]
+	id := "m-" + externalHash(b.key() + "\x00" + strings.ToLower(name))[:32]
 	x := &ExternalMessage{Binding: b.key(), Filename: name, ExchangeID: id, Direction: "in"}
 	if strings.HasPrefix(name, "answer--") {
 		parts := strings.Split(strings.TrimSuffix(name, ".md"), "--")
@@ -367,7 +367,7 @@ func (m Mail) SyncExternal(ctx context.Context, rt ExternalRuntime, b ExternalBi
 }
 
 func (m Mail) acceptExternal(ctx context.Context, ws *os.Root, s Snapshot, b ExternalBinding, name, body string, reports []Message, published bool) (Message, error) {
-	id := "m-" + externalHash(b.key() + "\x00" + name)[:32]
+	id := "m-" + externalHash(b.key() + "\x00" + strings.ToLower(name))[:32]
 	sent, err := mailBox(ws, externalRole(b.key()), "sent")
 	if err != nil {
 		return Message{}, err
@@ -486,13 +486,9 @@ func (m Mail) ReportExternal(ctx context.Context, rt ExternalRuntime, b External
 		id := "m-" + externalHash(b.key() + "\x00" + to + "\x00" + state + "\x00" + scope + "\x00" + body)[:32]
 		result = Message{ID: id, From: b.Node, To: source.From, External: x, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body}
 		if state != "pending" {
-			result.Replies = replyReferences(sources)
-			if source.ID != x.ExchangeID {
-				originals, err := claimedReplySources(ws, b.Node, []string{x.ExchangeID})
-				if err != nil {
-					return err
-				}
-				result.Replies = append(result.Replies, replyReferences(originals)...)
+			result.Replies, err = externalTerminalReferences(ctx, ws, b, x.ExchangeID)
+			if err != nil {
+				return err
 			}
 		}
 		if err := validateMessage(result); err != nil {
@@ -535,6 +531,46 @@ func (m Mail) ReportExternal(ctx context.Context, rt ExternalRuntime, b External
 	}
 	defer func() { _ = outbox.Close() }()
 	return result, ensureExternalText(outbox, result.ID+".md", []byte(externalReportText(result)))
+}
+
+// Completion answers every already-claimed transport obligation in this exact
+// exchange, including superseded answers, without treating them as authority.
+// Unclaimed mail must still pass POP/full-read handling before a terminal result.
+func externalTerminalReferences(ctx context.Context, ws *os.Root, b ExternalBinding, exchange string) ([]ReplyReference, error) {
+	incoming, err := readSummaryBox(ctx, ws, b.Node, "inbox")
+	if err != nil {
+		return nil, err
+	}
+	for _, msg := range incoming {
+		if msg.External != nil && msg.External.Binding == b.key() && msg.External.ExchangeID == exchange {
+			return nil, errors.New("external exchange has unread mail; POP and read it before reporting a terminal result")
+		}
+	}
+	read, err := readSummaryBox(ctx, ws, b.Node, "read")
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, msg := range read {
+		if msg.External != nil && msg.External.Binding == b.key() && msg.External.Direction == "in" && msg.External.ExchangeID == exchange {
+			ids = append(ids, msg.ID)
+		}
+	}
+	sort.Strings(ids)
+	sources, err := claimedReplySources(ws, b.Node, ids)
+	if err != nil {
+		return nil, err
+	}
+	foundOriginal := false
+	for _, msg := range sources {
+		if msg.ID == exchange {
+			foundOriginal = true
+		}
+	}
+	if !foundOriginal {
+		return nil, errors.New("external terminal result lacks the original claimed request")
+	}
+	return replyReferences(sources), nil
 }
 
 func (m Mail) separateExternalRoot(b ExternalBinding) error {

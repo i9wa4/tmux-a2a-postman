@@ -52,6 +52,11 @@ is 1..32768 bytes without NUL. Published identities are immutable: retries use
 the same name and exact text. Non-Markdown staging files and dot-prefixed
 temporaries are ignored.
 
+Transport identity folds ASCII filename case so case aliases cannot create a
+second request on case-insensitive macOS filesystems. The original spelling is
+preserved; changing only its case conflicts rather than importing another
+request.
+
 After publication, invoke the foreground command with the configured interface's
 actual native context:
 
@@ -138,6 +143,12 @@ execution-review approval.
 Report on the claimed answer ID after handling it. The terminal report preserves
 the exchange and exact references to both the answer and original request. A
 pending report does not close the original terminal obligation.
+
+A terminal report closes all already-claimed mail in that exact exchange,
+including superseded answers, without granting them authority over a revised
+action. Unread exchange mail must be POP'd and fully read first. The existing
+combined-reply bound of 16 claimed messages applies; beyond it the command fails
+explicitly instead of claiming the whole exchange is closed.
 
 ## 6. Outbox, catch-up and retention
 
