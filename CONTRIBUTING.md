@@ -101,26 +101,34 @@ Nix checks so the flake source includes the complete runtime tests.
 
 Go version policy:
 
-- Keep `go.mod` at major.minor (for example `go 1.26`)
-- Keep `flake.nix` on the same major.minor (`pkgs.go_1_26`)
-- Keep the `flake.nix` Go override on the latest stable same-minor patch release
-  published by go.dev
-- To update the Go patch override, run:
-
-  ```sh
-  nix run .#update-go-toolchain
-  ```
-
-- The command reads the current Go major.minor from the `go126` override in
-  `flake.nix`, queries go.dev for the latest stable patch release for that same
-  major.minor, and updates only the override version/hash in `flake.nix` when a
-  newer patch exists.
-- If the override is already current, the command exits 0 with
-  `status=up_to_date` and leaves the repository unchanged.
-- After the command updates `flake.nix`, run `nix flake check` and `nix build`
-  before opening the update PR.
-- Minor-version migrations still require manually updating the hard-coded
-  `go126` / `go_1_26` names and then rerunning the alignment checks
+- Keep `go.mod` at the intended language major.minor (`go 1.26`).
+- `goToolchain = pkgs.go_1_26` is the single selection for development,
+  CI, the Nix package builder and GoReleaser's release shell. Release targets
+  use that compiler with CGO disabled. Tools such as the linter may themselves
+  be compiled by another Go version; that is not this program's compiler.
+- Use the patch supplied by the pinned nixpkgs revision. Update normally with
+  `nix flake update nixpkgs`, inspect the selected patch, then run the normal
+  flake/build/skill and vulnerability checks. A lock update can change other
+  Nix packages, so review and validate the complete result.
+- `nix develop .#ci --command bash scripts/validation/check-go-toolchain.sh`
+  checks the actual selected compiler against `go.mod`, with automatic
+  toolchain downloading disabled for the probe. CI, pre-commit/Nix checks and
+  the release workflow use the same check. Do not infer the compiler from an
+  override-rewriting regex or the runner's preinstalled Go.
+- Check current Go support and security at update time using the
+  [release policy](https://go.dev/doc/devel/release#policy),
+  [official stable downloads](https://go.dev/dl/?mode=json) and `govulncheck`
+  against the actual selected build. The implementation-time check found
+  Go 1.26.10 and 1.27.3 as the two current stable release lines; this repository
+  intentionally retains language/compiler minor 1.26 and selects 1.26.10.
+- For an urgent patch missing from the usual nixpkgs branch, first pin a
+  reviewed public nixpkgs commit that supplies it. If none exists yet, use
+  one temporary source override at `goToolchain`, with the official source
+  hash, so all consumers stay aligned. Run tidy, the no-substitution package
+  build, vulnerability checks and CI; remove the temporary override when
+  nixpkgs supplies the patch. There is no override-coupled updater app.
+- A minor migration updates `go.mod` and the `go_1_26` selection together,
+  then validates development, CI, package and release builds.
 
 When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 `vendorHash`:
