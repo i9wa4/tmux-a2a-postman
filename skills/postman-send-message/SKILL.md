@@ -24,14 +24,14 @@ description: |
    POSTMAN_BODY
    ```
 
-3. Use a reply-required policy for work needing a resolving answer. A reply
-   must address the exact original message and required-input identifier
-   supplied by the current output. Never fill a different request because the
-   text or recipient looks similar. Use the installed command's help for
-   supported metadata flags.
-4. Send terminal or informational reports with no new reply obligation unless
-   a response is actually needed. Task completion requires the workflow's
-   evidence and acceptance checks; transport closure does not satisfy them.
+3. Address a configured node for a new request; every new request requires a
+   reply. Address your actual POP'd message ID to reply. The tool recovers its
+   exact correlation and authorized return route; never copy another request's
+   ID because its text looks similar. The generated archive footer shows the
+   exact command. A reply does not open another reply obligation.
+4. Combine IDs only when they are all your claimed mail from the same sender
+   and return route, and one response actually resolves all of them. Otherwise
+   reply separately. Consult installed help for syntax and limits.
 
 ## 2. Read the result
 
@@ -44,13 +44,15 @@ blind resend; retain its identifiers and inspect the recorded operation.
 The foreground sender pastes the notification into the existing recipient
 agent's tmux input and submits it with `C-m`. This transport is shared by all
 agent runtimes, including the sender receiving a reply and the command reviewer.
-No notifier registration, model-specific API or Postman daemon is needed.
-`notice.status=accepted` proves tmux paste/key acceptance, never POP or
-response. Unavailable targets report `unavailable`; an ambiguous attempt reports
-`unknown` and is never replayed. Delivery remains committed in both cases.
+No notifier registration, model-specific API or Postman daemon is needed. A
+normally accepted notification is omitted from JSON. A separate `notification`
+reports uncertainty or unavailability, never POP or response. Unavailable
+targets report `unavailable`; an ambiguous attempt reports `unknown` and is
+never replayed. Delivery remains committed in both cases.
 
-Unrelated sends and POP do not close required replies. Verify exact fill or
-unresolved state in the returned output; missing state is unknown.
+Unrelated sends and POP do not close required replies. Use file-derived
+inbound/outbound counts to assess remaining obligations; missing state is
+unknown. Read the archives when exact historical IDs matter.
 
 ## 3. After sending
 
@@ -61,6 +63,6 @@ POP, sleep/POP, or status loops as a wait mechanism. Use
 known mail, stale evidence, and escalation.
 
 For cross-session mail use `session:node` only across a declared direct
-parent/child interface route with verified native peers. Reply to the original
-`from_session:from`; local replies use `from`. Do not infer eligibility from
-directory ancestry or matching local node names.
+parent/child interface route with verified native peers. Reply to the actual POP
+message ID; its saved return route is selected automatically. Do not infer
+eligibility from directory ancestry or matching local node names.

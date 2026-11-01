@@ -42,7 +42,7 @@ func TestPrintUsage_ShowsReducedPublicSurface(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Bare tmux-a2a-postman prints usage.",
-		"send-heredoc", "pop", "get-status", "execute-bash", "version",
+		"send-heredoc", "pop", "get-status", "execute-heredoc", "approve-execution", "decline-execution", "version",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("usage missing active command guidance %q: %q", want, got)

@@ -16,6 +16,17 @@ import (
 // before invoking this method; both runtimes are reverified under their own
 // workspace locks before any durable intent is written.
 func (m Mail) SendCrossWithReply(ctx context.Context, source, destination NamedRuntime, body, replyTo, fills string, needsReply bool) (Message, error) {
+	return m.sendCross(ctx, source, destination, body, replyTo, fills, needsReply, nil)
+}
+
+func (m Mail) SendCrossReply(ctx context.Context, source, destination NamedRuntime, ids []string, body string) (Message, error) {
+	if _, err := m.ReplySources(ctx, source, ids); err != nil {
+		return Message{}, err
+	}
+	return m.sendCross(ctx, source, destination, body, "", "", false, ids)
+}
+
+func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, body, replyTo, fills string, needsReply bool, replyIDs []string) (Message, error) {
 	var msg Message
 	if source.Name() == destination.Name() || source.server != destination.server ||
 		source.incarnation != destination.incarnation || source.sessionID == destination.sessionID {
@@ -33,6 +44,18 @@ func (m Mail) SendCrossWithReply(ctx context.Context, source, destination NamedR
 			}
 			if err := m.recoverCross(sourceWS, destinationWS, from, to, source.Name(), destination.Name()); err != nil {
 				return err
+			}
+			var refs []ReplyReference
+			if len(replyIDs) > 0 {
+				sources, err := claimedReplySources(sourceWS, from.Caller.Role, replyIDs)
+				if err != nil {
+					return err
+				}
+				original := sources[0]
+				if original.From != to.Caller.Role || original.FromSession != destination.Name() || original.ToSession != source.Name() {
+					return errors.New("reply does not identify the verified return route")
+				}
+				refs = replyReferences(sources)
 			}
 			if replyTo != "" {
 				read, err := openOwnBox(sourceWS, from.Caller.Role, "read")
@@ -64,11 +87,16 @@ func (m Mail) SendCrossWithReply(ctx context.Context, source, destination NamedR
 				To: to.Caller.Role, ToSession: destination.Name(),
 				ReplyTo: replyTo, FillsInputRequestID: fills,
 				NeedsReply: needsReply, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body,
+				GuidanceVersion: 1,
+				Replies:         refs,
 			}
 			if needsReply {
 				msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
 			}
 			if err := validateMessage(msg); err != nil {
+				return err
+			}
+			if err := m.stage(sourceWS, msg); err != nil {
 				return err
 			}
 			tx := mailTransaction{
@@ -164,7 +192,7 @@ func (m Mail) recoverCross(sourceWS, destinationWS *os.Root, from, to Snapshot, 
 }
 
 func validCrossIntent(tx mailTransaction) bool {
-	if tx.Kind != "cross_send" || tx.ClaimedAt != "" || tx.SourceRoot == "" ||
+	if tx.Kind != "cross_send" || tx.FailureReason != "" || tx.ClaimedAt != "" || tx.SourceRoot == "" ||
 		tx.DestinationRoot == "" || tx.SourceRoot == tx.DestinationRoot ||
 		tx.Message.FromSession == "" || tx.Message.ToSession == "" {
 		return false
@@ -214,6 +242,9 @@ func (m Mail) finishCross(sourceWS, destinationWS, journal *os.Root, tx mailTran
 		return err
 	}
 	if err := m.step("cross-sent"); err != nil {
+		return err
+	}
+	if err := clearDraft(sourceWS, msg); err != nil {
 		return err
 	}
 	if err := journal.Remove(tx.Kind + "-" + msg.ID + ".json"); err != nil {

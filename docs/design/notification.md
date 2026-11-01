@@ -1,86 +1,86 @@
 # Recipient notification
 
-## 1. Original pane-input workflow
+## 1. Generic terminal input
 
-Notifications are independent of the agent/model runtime. After durable mail
-commits, the foreground CLI finds the verified recipient tmux pane, pastes a
-mail hint into its existing input editor and submits it with `C-m`. The agent
-POPs the notified ID, reads the complete archive and sends any exact reply.
-Codex, Claude Code and local LLM consoles use the same path.
+After durable mail commits, the foreground sender verifies its sent copy and
+recipient binding, then uses tmux text paste and one real `C-m` in the existing
+agent console. The greeting, `You've got mail:` filename hint and HTML protocol
+sentinels remain. The hint asks for argument-free POP and a complete archive
+read; the actual POP result selects the message. No mail body or executable
+source is pasted. No model API, client registration, shell hook, model name or
+hardcoded prompt glyph selects behavior.
 
-This preserves the original `set-buffer` → `paste-buffer` → `C-m` behavior.
-The greeting, `You've got mail:` filename hint and HTML protocol sentinels are
-retained. The hint is one line for compatibility with plain line-oriented input;
-it includes the exact POP ID and full-read instruction, never the mail body.
-There is no model API, thread ID, notifier registration or Readline hook.
-Existing agents are started by the user's launcher, such as vde-layout.
+A unique tmux buffer is deleted after consumption. A private destination file
+lock serializes all Postman processes targeting that recipient, including
+cross-workspace senders. No mailbox lock spans input or screen observation.
+Native server/session/pane/process evidence is checked around captures and
+before input. Ordinary shell prompts and tmux copy/input modes are rejected.
 
-A unique named buffer prevents collisions with unrelated tmux buffers. One
-command list creates the buffer, pastes it with bracketed-paste support when
-the terminal enables it, deletes the consumed buffer, waits 150 ms for the UI,
-and sends a real `C-m`. A separate per-recipient file lock serializes Postman
-writers. No mailbox lock spans terminal input. Failed attempts clean up only
-their own buffer and never repeat a paste or Enter on an uncertain outcome.
+## 2. Settlement, submit and uncertainty
 
-## 2. Binding, commit and evidence
+The sender learns the current cursor prefix and screen geometry. It pastes once,
+observes the complete hint at the cursor, and waits for 180 milliseconds of
+settled input. Then it sends one `C-m`. Post-submit observations look for the
+input prefix returning and the hint leaving the current input area while being
+visible elsewhere on screen. Output changes alone do not count as acceptance.
+Lock admission has a five-second bound. After acquisition the input phase has
+its own two-second budget; a one-second margin covers initial verification
+within the eight-second post-commit bound. Waiting on an already opened lock
+does not repeatedly probe tmux or rewrite workspace state.
+The two-second input budget starts after the durable pending guard, and covers
+paste, settling, C-m and post-submit screen evidence. Ownership verification
+and guard/receipt persistence share the outer eight-second bound rather than
+inheriting an almost-expired input deadline. The recipient lock still covers
+the entire sequence; persistence failure remains unknown and never replays.
 
-Before input, the CLI verifies its exact committed sent copy, authorized
-same-session or direct parent/child destination and current native target
-binding. It rechecks server/session/pane/PID and role before sending. Native
-identity and ownership checks remain; model-specific gates do not apply.
-An ordinary shell prompt or tmux input/copy mode is rejected before paste.
-A fresh two-second post-commit budget bounds notification work independently
-of sender cancellation. Sending never waits for POP, a reply or completion.
+These are generic terminal observations, not proof of model processing. A screen
+cannot always distinguish submission from a newline or editor redraw. When
+evidence is insufficient, status is unknown. Do not add a second Enter or repeat
+the text. A pending destination input guard is durable before the first paste,
+so process exit releasing the OS lock does not admit another paste over an
+unresolved draft. A later sender may resolve it from sufficient fresh input
+evidence; otherwise it leaves both committed messages unread and reports
+unknown.
 
-The source reserves `runtime/notices/<id>.json` as `unknown` immediately before
-the attempt and marks it accepted after tmux success. Concurrent/repeated
-attempts for the same committed message never submit twice. A pre-paste
-rejection does not reserve an attempt, so the exact committed message can be
-notified later. Ambiguous input or receipt persistence remains unknown and is
-never replayed. This is bounded foreground evidence, not a background
-delivery/retry queue.
+The source notice record prevents replay of accepted or uncertain attempts for
+the same message. A pre-input shell/mode rejection can be attempted later for
+that exact committed message; a new send always has its own mail identity.
+This is bounded foreground work, without a retry queue or permanent observer.
 
-| Outcome              | Evidence                                                 |
-| -------------------- | -------------------------------------------------------- |
-| Durable delivery     | Independent sent and inbox/read files                    |
-| `accepted` notice    | tmux accepted paste and C-m                              |
-| `unavailable` notice | Binding/target/input could not be admitted before paste  |
-| `unknown` notice     | Paste/submit or receipt persistence may be ambiguous     |
-| POP claim            | Final read archive and `.pop.json` receipt               |
-| Full read            | Recipient evidence such as a complete-file SHA256 digest |
-| Response             | Exactly correlated reply and claim receipt               |
+| Fact             | Evidence                                                      |
+| ---------------- | ------------------------------------------------------------- |
+| Delivery         | Independent sent and receiver inbox/read copies               |
+| Accepted hint    | Bounded input-area observations after one C-m                 |
+| Unavailable hint | Binding/transport rejected before input admission             |
+| Unknown hint     | Input, submit or persistence remains uncertain                |
+| POP claim        | Final read archive and durable receipt                        |
+| Full read        | Receiver's complete-file evidence, such as its archive digest |
+| Response         | Exact correlated reply                                        |
 
-Acceptance does not prove POP, full reading, understanding or response. Failed
-notifications leave durable unread mail and never undo a committed send or
-permit an approval command. Known unread self-state is an explicit POP trigger;
-idle polling and automatic replay are unnecessary.
+Normally accepted hints are omitted from compact CLI JSON. Other outcomes are
+reported in `notification`. Capture, claim, full reading, response and task
+acceptance are separate. Notification failure never undoes mail or grants
+approval. Use known unread counts as a POP trigger; do not poll an empty inbox.
 
-## 3. Agent input contract
+## 3. Limits and verification
 
-Receiving panes must host agents accepting pasted text and `C-m`, with stable
-configured role titles. The agent controls its model access, tool permissions,
-input handling while busy, and draft editing. As with the original transport,
-Postman writes into the current composer; it does not snapshot/restore human
-drafts or infer an empty composer from screen captures. The per-recipient lock
-serializes Postman writers, not human input or arbitrary external key senders.
-These limits apply uniformly to every agent type.
+Postman controls its own writers, without saving/restoring human drafts or
+excluding unrelated key senders. The former #901 coordinator roadmap was
+withdrawn; these limitations remain. Native pane text does not authenticate
+model continuity or its historical author. Session snapshots remain separate
+from this target-only input check.
 
-## 4. Verification
+The Go test and `nix run .#notification-smoke` share deterministic terminal
+editors with and without bracketed paste. Only actual submitted terminal bytes
+trigger receiver-owned POP, full archive reading and replies. Busy work runs
+independently of the editor. Twenty cases cover rally, concurrent senders,
+busy receivers, both interface directions, approval/rejection, copy-mode
+blocking and absorbed Enter. The absorbed-Enter control verifies one submit, no
+next paste and durable unread mail. Controllers never supply receiver
+POP/replies.
 
-`nix run .#notification-smoke -- --case all` uses real tmux and deterministic
-terminal agents without any AI model or runtime API. Both canonical line input
-and raw bracketed-paste input receive the actual notification bytes and submit
-key. Only that submitted input triggers the agent's POP/read/reply helper.
-The sixteen-case matrix covers rally, busy, concurrent arrivals, parent/child
-both directions, approval/rejection and blocked notification. Conversation
-context, exact IDs, archive hashes, distinct claims and bounded sends are
-verified. Copy-mode blocking and old-main controls commit mail but produce no
-receiver action. The controller never POPs or replies.
-
-An additional eight-case real Codex TUI matrix uses fixed local model responses,
-matching vde-layout's launch, through the same tmux input path. It exercises no
-Codex app-server/queue adapter. Claude/local-console compatibility rests on this
-common terminal protocol; terminal fixtures do not claim a paid Claude/model
-run. Go tests cover transport ambiguity, no replay, concurrency, lock
-independence and shell input rejection. See
-[Contributing](../../CONTRIBUTING.md).
+Optional real Codex TUI tests use fixed local model decisions over the same tmux
+input path. That test provider belongs only to validation. Actual Claude/model
+execution is not inferred from deterministic terminal tests. See
+[Contributing](../../CONTRIBUTING.md) and the
+[CLI specification](../cli-spec.md).

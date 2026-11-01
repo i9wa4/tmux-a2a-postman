@@ -87,7 +87,14 @@
             goreleaser
           ];
           markdownFormatter = "${inputs.markdown-formatter.packages.${system}.default}/bin/mdfmt";
-          skillMetadataCheck = "${pkgs.bash}/bin/bash scripts/validation/validate-skill-metadata.sh skills";
+          skillMetadataCheck = "${pkgs.coreutils}/bin/env PATH=${
+            pkgs.lib.makeBinPath [
+              pkgs.gawk
+              pkgs.coreutils
+              pkgs.findutils
+              pkgs.gnugrep
+            ]
+          } ${pkgs.bash}/bin/bash scripts/validation/validate-skill-metadata.sh skills";
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
             [MD013]
             code-blocks = false
@@ -117,6 +124,7 @@
                 pkgs.writeShellApplication {
                   name = "notification-smoke";
                   runtimeInputs = [
+                    pkgs.bash
                     pkgs.python3
                     pkgs.tmux
                   ];
@@ -252,10 +260,12 @@
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-g+yaVIx4jxpAQ/+WrGKxhVeliYx7nLQe/zsGpxV4Fn4=";
+            vendorHash = "sha256-wkLAGzVge9WOZdLKPB0cuW1cpzy/rXKTTmqj29uqFv0=";
             nativeCheckInputs = [
               pkgs.tmux
               pkgs.bash
+              pkgs.zsh
+              pkgs.direnv
               pkgs.python3
             ];
             ldflags = [

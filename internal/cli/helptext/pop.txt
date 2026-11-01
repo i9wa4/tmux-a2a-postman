@@ -1,23 +1,15 @@
-pop — claim and archive one own unread message
+pop — claim one own unread message
 
-Usage:
-  tmux-a2a-postman pop [--capture-related-panes] [exact-message-id]
+  tmux-a2a-postman pop [--config <absolute-path>]
 
-Options:
-  --capture-related-panes       Supplemental sender/receiver evidence
-  --config <absolute-path>      Explicit postman.md override
-  --postman-md <absolute-path>  Alias for --config
+No message ID, capture toggle or other positional argument is accepted.
+JSON: workspace, as_of, success, markdown_absolute_path, self; optional reason.
+A successful empty POP has markdown_absolute_path=null. A claimed message has
+an existing absolute read path and a durable matching .pop.json receipt.
+The path remains valid after claim; failed stdout cannot resurrect delivery.
 
-Returns JSON. status=message includes message metadata,
-markdown_absolute_path, pop_receipt_absolute_path, and mandatory self-state.
-status=empty still includes self-state. The selected ID, if supplied, must
-identify an eligible own unread message; POP never drains another role.
-The archive path is openable on return and the .pop.json receipt is durable.
-
-Read the complete archived Markdown body through EOF before handling,
-routing, replying, deciding status, or deciding no action. The JSON does not
-embed the body. A successful claim is not replayed on retry. An output failure
-after a committed claim cannot recreate the inbox entry.
-
-Native --capture-related-panes currently reports unknown/no text. It is
-supplemental and cannot reverse a successful claim.
+Read that complete Markdown through EOF, including its generated reply
+instructions. The hinted notification ID does not select the POP result.
+No FIFO ordering is promised. POP does not close reply obligations. Both a
+claim and a valid empty POP trigger a bounded snapshot of the caller session.
+Missing diagnostics are null and never change the claim's success.

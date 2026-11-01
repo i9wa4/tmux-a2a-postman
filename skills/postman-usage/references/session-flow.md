@@ -18,10 +18,10 @@ automatic timeout follow-up occurs.
 ## 2. Preserve exact obligations
 
 For each required request retain the original sender, recipient, message
-identifier, required-input identifier, and authorized return route. Send an
-exact resolving reply using supported metadata from current help. Inspect the
-send result for exact closure; an unrelated send, POP, or generic ACK does not
-fill it.
+identifier, required-input identifier, and authorized return route. Reply to the
+actual POP message ID; the tool derives correlation and the return route.
+Inspect remaining inbound/outbound counts and relevant archives; an unrelated
+send, POP, or generic ACK does not fill it.
 
 Each relay answers its own source request. A question to a different node
 opens a separate exchange and leaves the original obligation unresolved.

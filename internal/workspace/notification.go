@@ -3,10 +3,8 @@ package workspace
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -18,11 +16,14 @@ type NoticeResult struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-const PostCommitNoticeBudget = 2 * time.Second
+const (
+	NoticeLockBudget       = 5 * time.Second
+	NoticeInputBudget      = 2 * time.Second
+	PostCommitNoticeBudget = NoticeLockBudget + NoticeInputBudget + time.Second
+)
 
 type paneNotifier interface {
 	prepareNotice(context.Context, Binding) error
-	sendNotice(context.Context, Binding, string) error
 }
 
 func (s Store) NotifyCommittedAfterCommit(ctx context.Context, source, destination Runtime, msg Message) NoticeResult {
@@ -96,7 +97,9 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 		return result
 	}
 	// Serialize only this recipient's paste/submit, without a mailbox lock.
-	lock, err := s.lockNotice(ctx, destination, target)
+	lockCtx, lockCancel := context.WithTimeout(ctx, NoticeLockBudget)
+	lock, err := s.lockNotice(lockCtx, destination, target)
+	lockCancel()
 	if err != nil {
 		result.Reason = err.Error()
 		return result
@@ -117,8 +120,20 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 		return result
 	}
 	result.Status = "unknown"
-	if err := notifier.sendNotice(ctx, target, noticePrompt(msg)); err != nil {
-		result.Reason = err.Error()
+	var inputErr error
+	if observed, ok := destination.(observedNotifier); ok {
+		inputErr = s.observedNotice(ctx, destination, observed, target, msg)
+	} else if transport, ok := destination.(interface {
+		sendNotice(context.Context, Binding, string) error
+	}); ok {
+		inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
+		defer inputCancel()
+		inputErr = transport.sendNotice(inputCtx, target, noticePrompt(msg))
+	} else {
+		inputErr = errors.New("recipient runtime cannot observe terminal input")
+	}
+	if inputErr != nil {
+		result.Reason = inputErr.Error()
 		return result
 	}
 	if err := s.acceptNotice(ctx, source, msg, target); err != nil {
@@ -126,7 +141,7 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 		return result
 	}
 	result.Status = "accepted"
-	result.Reason = "tmux accepted notification text and C-m; recipient POP/response not observed"
+	result.Reason = "notification left the observed input area after one C-m; recipient processing is not implied"
 	return result
 }
 
@@ -134,7 +149,7 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 // works in both plain line-oriented consoles and bracketed-paste TUIs. No mail
 // body, model runtime API, or executable shell source is delivered here.
 func noticePrompt(msg Message) string {
-	return "<!-- message start --> Hello, " + msg.To + "! You've got mail: " + msg.ID + ".md. Run `tmux-a2a-postman pop " + msg.ID + "` to claim it and get the archived body path. Read the complete archived Markdown through EOF before handling or replying. <!-- end of message -->"
+	return "<!-- message start --> Hello, " + msg.To + "! You've got mail: " + msg.ID + ".md. Run `tmux-a2a-postman pop` to claim the next unread message and get its archived path. Read that complete Markdown through EOF and follow its reply guidance. <!-- end of message -->"
 }
 
 func (t Tmux) prepareNotice(ctx context.Context, target Binding) error {
@@ -161,34 +176,8 @@ func (t Tmux) prepareNotice(ctx context.Context, target Binding) error {
 	return nil
 }
 
-var noticeBufferSeq atomic.Uint64
-
-func (t Tmux) sendNotice(ctx context.Context, target Binding, text string) error {
-	if err := t.prepareNotice(ctx, target); err != nil {
-		return err
-	}
-	buffer := fmt.Sprintf("postman-notify-%d-%d", os.Getpid(), noticeBufferSeq.Add(1))
-	// As in the original transport: named buffer, paste, a short UI processing
-	// delay, and a real C-m in one tmux command list. -p uses bracketed paste when
-	// supported. Unique buffers and the recipient lock prevent cross-send mixing.
-	_, err := tmuxOutput(ctx, t.Socket, "set-buffer", "-b", buffer, text,
-		";", "paste-buffer", "-b", buffer, "-d", "-p", "-t", target.Owner.Pane,
-		";", "run-shell", "sleep 0.15",
-		";", "send-keys", "-t", target.Owner.Pane, "C-m")
-	if err != nil {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
-		defer cancel()
-		_, _ = tmuxOutput(cleanupCtx, t.Socket, "delete-buffer", "-b", buffer)
-	}
-	return err
-}
-
 func (r NamedRuntime) prepareNotice(ctx context.Context, target Binding) error {
 	return r.tmux.prepareNotice(ctx, target)
-}
-
-func (r NamedRuntime) sendNotice(ctx context.Context, target Binding, text string) error {
-	return r.tmux.sendNotice(ctx, target, text)
 }
 
 func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.File, error) {
@@ -204,45 +193,101 @@ func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.
 			if !found {
 				return ErrUnknown
 			}
-			runtimeDir, err := privateDir(ws, "runtime", false)
+			runtime, err := privateDir(ws, "runtime", false)
 			if err != nil {
 				return err
 			}
-			defer func() { _ = runtimeDir.Close() }()
-			dir, err := privateDir(runtimeDir, "notice-locks", true)
+			defer func() { _ = runtime.Close() }()
+			dir, err := privateDir(runtime, "notice-locks", true)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = dir.Close() }()
-			f, err := dir.OpenFile(target.Role+".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+			f, err := dir.OpenFile(target.Role+".lock", os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
+			if errors.Is(err, os.ErrExist) {
+				f, err = dir.OpenFile(target.Role+".lock", os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+			}
 			if err != nil {
 				return err
 			}
-			keep := false
-			defer func() {
-				if !keep {
-					_ = f.Close()
-				}
-			}()
 			info, err := f.Stat()
 			if err != nil || !privateInfo(info, false) {
+				_ = f.Close()
 				return errors.New("unsafe notification lock")
-			}
-			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-				if errors.Is(err, syscall.EWOULDBLOCK) {
-					return ErrBusy
-				}
-				return err
 			}
 			pathInfo, err := dir.Lstat(target.Role + ".lock")
 			if err != nil || !os.SameFile(info, pathInfo) {
+				_ = f.Close()
 				return ErrUnknown
 			}
-			lock, keep = f, true
+			lock = f
 			return nil
 		})
 	})
-	return lock, err
+	if err != nil {
+		return nil, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = lock.Close()
+		}
+	}()
+	// Wait on the already opened OS lock. Re-probing tmux and rewriting runtime
+	// state on every contention tick would flood the server when many execution
+	// requesters target one approver. Fresh native checks follow acquisition.
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, err
+		}
+		if err := noticePause(ctx); err != nil {
+			return nil, err
+		}
+	}
+	err = retryNoticeAdmission(ctx, func() error {
+		return s.withView(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
+			found := false
+			for _, b := range snapshot.Bindings {
+				if b == target {
+					found = true
+				}
+			}
+			if !found {
+				return ErrUnknown
+			}
+			runtime, err := privateDir(ws, "runtime", false)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = runtime.Close() }()
+			dir, err := privateDir(runtime, "notice-locks", false)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = dir.Close() }()
+			info, err := lock.Stat()
+			if err != nil {
+				return err
+			}
+			path, err := dir.Lstat(target.Role + ".lock")
+			if err != nil || !os.SameFile(info, path) {
+				return ErrUnknown
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	keep = true
+	return lock, nil
 }
 
 type noticeRecord struct {

@@ -14,8 +14,8 @@
    tmux transport applies to Codex, Claude Code and local LLMs. No per-agent
    notifier registration, model API or shell hook is needed. Shell prompts and
    tmux copy mode are not receiving agent consoles.
-5. Check send result `notice` separately from mail delivery. Acceptance is not
-   POP, full reading or a response. Never repair a notice failure by blind
+5. Check send result `notification` separately from mail delivery. Acceptance is
+   not POP, full reading or a response. Never repair a notice failure by blind
    resend, bypassing ownership, editing mailbox files or adding idle polling.
 6. Prefer installed `help` for CLI syntax. If authorized to fix configuration,
    edit its source directly. An audit-only request returns concrete findings.

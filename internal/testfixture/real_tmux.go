@@ -144,6 +144,7 @@ func (f *RealTmux) envLocked() []string {
 	blocked := map[string]bool{
 		"HOME": true, "POSTMAN_HOME": true, "XDG_CONFIG_HOME": true,
 		"XDG_STATE_HOME": true, "XDG_CACHE_HOME": true,
+		"XDG_DATA_HOME": true, "ZDOTDIR": true, "BASH_ENV": true, "ENV": true, "HISTFILE": true, "INPUTRC": true,
 		"TMUX": true, "TMUX_PANE": true, "TMUX_TMPDIR": true,
 	}
 	env := make([]string, 0, len(os.Environ())+8)
@@ -159,6 +160,9 @@ func (f *RealTmux) envLocked() []string {
 		"XDG_CONFIG_HOME="+filepath.Join(f.root, "config"),
 		"XDG_STATE_HOME="+filepath.Join(f.root, "state"),
 		"XDG_CACHE_HOME="+filepath.Join(f.root, "cache"),
+		"XDG_DATA_HOME="+filepath.Join(f.root, "home", ".local", "share"),
+		"ZDOTDIR="+filepath.Join(f.root, "home"), "BASH_ENV=", "ENV=",
+		"HISTFILE="+filepath.Join(f.root, "home", ".history"), "INPUTRC="+filepath.Join(f.root, "home", ".inputrc"),
 	)
 	if f.serverPID > 0 {
 		env = append(env, fmt.Sprintf("TMUX=%s,%d,0", f.socket, f.serverPID))

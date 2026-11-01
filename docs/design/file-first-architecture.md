@@ -15,10 +15,11 @@ locks/<workspace>.lock
 <workspace>/runtime/binding.json
 <workspace>/runtime/notice-locks/<role>.lock
 <workspace>/runtime/notices/<message-id>.json
+<workspace>/runtime/input-guards/<role>.json
 <workspace>/agents/<role>/{draft,inbox,read,sent,failed}/
 <workspace>/agents/<role>/read/<message-id>.pop.json
 <workspace>/agents/<role>/executions/<operation-id>.json
-<workspace>/agents/<role>/pane/
+<workspace>/runtime/observations/
 <workspace>/transactions/
 ```
 
@@ -34,16 +35,18 @@ First mutation creates only needed private directories (0700) and files
 
 ## 2. Mail and exact replies
 
-One send publishes independent receiver-inbox and sender-sent Markdown copies.
-A minimal transaction record recovers interrupted multi-file publication.
-The envelope is a one-line JSON HTML comment followed by literal Markdown.
-POP claims only the caller's mail, moves it to its final read path, and writes
-a claim receipt. Concurrent POP cannot claim it twice. Output failure never
-makes a claimed message eligible again; read history is directly recoverable.
-Read the complete archive through EOF before interpreting or replying.
+One send stages a complete stable-ID draft, then publishes independent
+receiver-inbox and sender-sent Markdown copies. A minimal transaction record
+recovers interrupted multi-file publication. The envelope is a one-line JSON
+HTML comment followed by literal Markdown. POP claims only the caller's mail,
+moves it to its final read path, and writes a claim receipt. Concurrent POP
+cannot claim it twice. Output failure never makes a claimed message eligible
+again; read history is directly recoverable. Read the complete archive through
+EOF before interpreting or replying.
 
-A reply identifies the claimed original message. Required replies also fill
-its exact input-request ID, sender and recipient. Generic ACKs and unrelated
+A reply addresses its actual claimed original ID. The tool supplies exact
+request correlation, sender and recipient; one combined reply may fill several
+claimed requests sharing one return route. Generic ACKs and unrelated
 sends do not discharge obligations. Mail-derived self-state separates unread
 attention, inbound replies owed and outbound replies awaited.
 
@@ -67,12 +70,19 @@ path. The synchronous wrapper consumes only its own exactly matched decision.
 No mailbox lock spans approval waiting or Bash execution. Audit records never
 become a resumable execution queue or reusable authority.
 
-Optional pane observations are bounded and timestamped. Native positive
-capture remains unsupported because mutable role titles cannot prove stable
-attribution through a capture. Missing/stale evidence stays unknown. Saved
-screen text never proves ongoing work or task completion.
+Send and POP always trigger bounded native snapshots across their verified
+session's windows. Shared windows are excluded; unconfigured panes retain only
+native identity. Immutable history plus a small latest-sample index prevents
+unbounded history scans. Capture errors never undo mail. All saved logs and
+observations remain until user deletion; there is no expiry or rotation.
 
-Reusable compaction-marker detection remains isolated in `internal/idle`.
-No observer, auto-PING, TUI, background delivery, daemon RPC, or daemon startup
-surface is retained. Old histories are not migrated, deleted, or interpreted
-as new command authority. Future observer work is a separate decision.
+Timestamps record successful POP, capture and observed screen differences. No
+activity state machine, automatic compaction observer, persistent observer,
+auto-PING, TUI, background delivery or daemon startup surface remains. The CLI
+reports file-derived counts using a common node/self shape. Native text does not
+establish model identity or continuous work.
+
+Herdr support is discontinued. Historical research is not a current setup gate
+or a future support commitment. Old histories are not migrated, deleted or used
+as execution authority. See the [CLI specification](../cli-spec.md) for the
+complete current interface and keep/simplify/remove inventory.

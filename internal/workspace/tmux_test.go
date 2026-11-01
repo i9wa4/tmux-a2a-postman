@@ -32,6 +32,11 @@ func newTmuxFixture(t *testing.T) tmuxFixture {
 		t.Fatal(err)
 	}
 	f := tmuxFixture{socket: filepath.Join(dir, "s"), home: t.TempDir()}
+	// Interactive shell fixtures must not load the caller's Zsh/Readline
+	// configuration or append to its history when running locally.
+	for key, value := range map[string]string{"HOME": f.home, "ZDOTDIR": f.home, "XDG_CONFIG_HOME": filepath.Join(f.home, "config"), "XDG_DATA_HOME": filepath.Join(f.home, "data"), "XDG_CACHE_HOME": filepath.Join(f.home, "cache"), "BASH_ENV": "", "ENV": "", "HISTFILE": filepath.Join(f.home, "history"), "INPUTRC": filepath.Join(f.home, "inputrc")} {
+		t.Setenv(key, value)
+	}
 	f.repo = filepath.Join(f.home, "repo")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -94,11 +99,11 @@ func TestTmuxSendLeavesPendingRecipientInputUntouched(t *testing.T) {
 		t.Fatal("owned recipient fixture never showed pending input")
 	}
 	m := mailFixture(t)
-	sent, err := m.SendWithState(context.Background(), adapter, "peer", "body", "", "", false, []string{"peer"})
+	sent, err := m.Send(context.Background(), adapter, "peer", "body", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	notice := m.Store.NotifyCommittedAfterCommit(context.Background(), adapter, adapter, sent.Message)
+	notice := m.Store.NotifyCommittedAfterCommit(context.Background(), adapter, adapter, sent)
 	if notice.Status != "unavailable" {
 		t.Fatalf("shell input was not rejected: %+v", notice)
 	}
@@ -109,7 +114,7 @@ func TestTmuxSendLeavesPendingRecipientInputUntouched(t *testing.T) {
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("ordinary send submitted pending command: %v", err)
 	}
-	if _, err := os.Stat(mailPath(m, "peer", "inbox", sent.Message.ID)); err != nil {
+	if _, err := os.Stat(mailPath(m, "peer", "inbox", sent.ID)); err != nil {
 		t.Fatalf("safe notification lost committed mail: %v", err)
 	}
 }
@@ -144,6 +149,23 @@ func TestTmuxSnapshotUsesNativeIdentityAndStableSessionRoot(t *testing.T) {
 	adapter.Home = t.TempDir()
 	if _, err := adapter.Snapshot(context.Background()); err == nil {
 		t.Fatal("outside-HOME session root accepted")
+	}
+}
+
+func TestNamedRuntimeRejectsRespawnWithSamePaneAndTitle(t *testing.T) {
+	f := newTmuxFixture(t)
+	adapter := f.adapter()
+	named, err := adapter.NamedCaller(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run(t, "respawn-pane", "-k", "-t", f.pane, "exec sleep 120")
+	f.run(t, "select-pane", "-t", f.pane, "-T", "worker")
+	if _, err := named.Snapshot(context.Background()); !errors.Is(err, ErrUnknown) {
+		t.Fatal("old selected caller accepted replacement", err)
+	}
+	if _, err := adapter.NamedCaller(context.Background()); err != nil {
+		t.Fatal("fresh caller could not bind replacement", err)
 	}
 }
 
@@ -218,21 +240,21 @@ func TestTmuxCrossSessionMailSendPopReplyAndState(t *testing.T) {
 		request.From != "worker" || request.To != "worker" || !request.NeedsReply {
 		t.Fatalf("wrong cross-session request identity: %+v", request)
 	}
-	parentState := m.State(ctx, parent, nil)
-	childState := m.State(ctx, child, nil)
+	parentState := stateForTest(ctx, m, parent)
+	childState := stateForTest(ctx, m, child)
 	if !parentState.Known || len(parentState.Outbound) != 1 || parentState.Outbound[0].Peer != "child:worker" ||
 		!childState.Known || childState.Unread == nil || *childState.Unread != 1 ||
 		len(childState.Inbound) != 1 || childState.Inbound[0].Peer != "one:worker" {
 		t.Fatalf("cross-session request state: parent=%+v child=%+v", parentState, childState)
 	}
 	claimed, err := m.Claim(ctx, child, request.ID)
-	if err != nil || claimed == nil || claimed.Message != request {
+	if err != nil || claimed == nil || !sameMessage(claimed.Message, request) {
 		t.Fatalf("child POP: %+v %v", claimed, err)
 	}
 	if _, err := os.Stat(claimed.Path); err != nil {
 		t.Fatalf("child read archive absent: %v", err)
 	}
-	childState = m.State(ctx, child, nil)
+	childState = stateForTest(ctx, m, child)
 	if !childState.Known || len(childState.Inbound) != 1 || !childState.Inbound[0].Claimed {
 		t.Fatalf("child claimed obligation: %+v", childState)
 	}
@@ -243,14 +265,14 @@ func TestTmuxCrossSessionMailSendPopReplyAndState(t *testing.T) {
 	if !exactAnswer(request, reply) || reply.FromSession != "child" || reply.ToSession != "one" {
 		t.Fatalf("cross-session reply correlation: %+v", reply)
 	}
-	parentState = m.State(ctx, parent, nil)
-	childState = m.State(ctx, child, nil)
+	parentState = stateForTest(ctx, m, parent)
+	childState = stateForTest(ctx, m, child)
 	if !parentState.Known || parentState.Unread == nil || *parentState.Unread != 1 ||
 		len(parentState.Outbound) != 0 || !childState.Known || len(childState.Inbound) != 0 {
 		t.Fatalf("cross-session reply state: parent=%+v child=%+v", parentState, childState)
 	}
 	answer, err := m.Claim(ctx, parent, reply.ID)
-	if err != nil || answer == nil || answer.Message != reply {
+	if err != nil || answer == nil || !sameMessage(answer.Message, reply) {
 		t.Fatalf("parent POP: %+v %v", answer, err)
 	}
 	for _, item := range []struct {
@@ -303,17 +325,17 @@ func TestTmuxCrossSessionRecoveryAfterRecipientClaim(t *testing.T) {
 		t.Fatalf("expected interrupted first publication with candidate ID: %+v %v", first, err)
 	}
 	claimed, err := m.Claim(ctx, child, first.ID)
-	if err != nil || claimed == nil || claimed.Message != first {
+	if err != nil || claimed == nil || !sameMessage(claimed.Message, first) {
 		t.Fatalf("recipient could not claim interrupted publication: %+v %v", claimed, err)
 	}
-	if state := m.State(ctx, parent, nil); state.Known {
-		t.Fatalf("pending sender intent reported as settled: %+v", state)
+	if _, _, state := m.Summary(ctx, parent, "worker"); state.DraftCount == nil || *state.DraftCount != 1 {
+		t.Fatalf("pending sender draft missing: %+v", state)
 	}
 	second, err := m.SendCrossWithReply(ctx, parent, child, "second", "", "", false)
 	if err != nil || second.ID == first.ID {
 		t.Fatalf("recovery and next publication: %+v %v", second, err)
 	}
-	if state := m.State(ctx, parent, nil); !state.Known {
+	if state := stateForTest(ctx, m, parent); !state.Known {
 		t.Fatalf("source state did not recover: %+v", state)
 	}
 	parentSnapshot, err := parent.Snapshot(ctx)
@@ -407,11 +429,11 @@ func TestTmuxInterruptedCrossSendDoesNotBlockOtherRoutes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if state := m.State(ctx, parent, nil); state.Known {
-				t.Fatalf("pending source intent reported settled: %+v", state)
+			if _, _, state := m.Summary(ctx, parent, "worker"); state.DraftCount == nil || *state.DraftCount != 1 {
+				t.Fatalf("pending source draft missing: %+v", state)
 			}
 			if step == "cross-inbox" {
-				if claimed, err := m.Claim(ctx, child, pending.ID); err != nil || claimed == nil || claimed.Message != pending {
+				if claimed, err := m.Claim(ctx, child, pending.ID); err != nil || claimed == nil || !sameMessage(claimed.Message, pending) {
 					t.Fatalf("child POP before source recovery: %+v %v", claimed, err)
 				}
 			}
@@ -420,43 +442,43 @@ func TestTmuxInterruptedCrossSendDoesNotBlockOtherRoutes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("A to C blocked by B intent: %v", err)
 			}
-			if claimed, err := m.Claim(ctx, sibling, other.ID); err != nil || claimed == nil || claimed.Message != other {
+			if claimed, err := m.Claim(ctx, sibling, other.ID); err != nil || claimed == nil || !sameMessage(claimed.Message, other) {
 				t.Fatalf("C POP: %+v %v", claimed, err)
 			}
 			reply, err := m.SendCrossWithReply(ctx, child, parent, "answer", request.ID, request.InputRequestID, false)
 			if err != nil || !exactAnswer(request, reply) {
 				t.Fatalf("B to A exact reply blocked: %+v %v", reply, err)
 			}
-			if claimed, err := m.Claim(ctx, parent, reply.ID); err != nil || claimed == nil || claimed.Message != reply {
+			if claimed, err := m.Claim(ctx, parent, reply.ID); err != nil || claimed == nil || !sameMessage(claimed.Message, reply) {
 				t.Fatalf("A reply POP: %+v %v", claimed, err)
 			}
 			outgoing, err := m.Send(ctx, parent, "approver", "local outgoing", "", false)
 			if err != nil {
 				t.Fatalf("local A send blocked: %v", err)
 			}
-			if claimed, err := m.Claim(ctx, local, outgoing.ID); err != nil || claimed == nil || claimed.Message != outgoing {
+			if claimed, err := m.Claim(ctx, local, outgoing.ID); err != nil || claimed == nil || !sameMessage(claimed.Message, outgoing) {
 				t.Fatalf("local recipient POP: %+v %v", claimed, err)
 			}
 			incoming, err := m.Send(ctx, local, "worker", "local incoming", "", false)
 			if err != nil {
 				t.Fatalf("local A inbound send blocked: %v", err)
 			}
-			if claimed, err := m.Claim(ctx, parent, incoming.ID); err != nil || claimed == nil || claimed.Message != incoming {
+			if claimed, err := m.Claim(ctx, parent, incoming.ID); err != nil || claimed == nil || !sameMessage(claimed.Message, incoming) {
 				t.Fatalf("local A POP: %+v %v", claimed, err)
 			}
 			intentAfter, err := os.ReadFile(intentPath)
 			if err != nil || string(intentAfter) != string(intentBefore) {
 				t.Fatalf("unrelated traffic altered B intent: %v", err)
 			}
-			if state := m.State(ctx, parent, nil); state.Known {
-				t.Fatalf("unrecovered B intent reported settled: %+v", state)
+			if _, _, state := m.Summary(ctx, parent, "worker"); state.DraftCount == nil || *state.DraftCount != 1 {
+				t.Fatalf("unrecovered B draft missing: %+v", state)
 			}
 
 			if _, err := m.SendCrossWithReply(ctx, parent, child, "resume exact peer", "", "", false); err != nil {
 				t.Fatalf("exact B recovery: %v", err)
 			}
 			if step == "cross-intent" {
-				if claimed, err := m.Claim(ctx, child, pending.ID); err != nil || claimed == nil || claimed.Message != pending {
+				if claimed, err := m.Claim(ctx, child, pending.ID); err != nil || claimed == nil || !sameMessage(claimed.Message, pending) {
 					t.Fatalf("B delivery after recovery: %+v %v", claimed, err)
 				}
 			}
@@ -481,7 +503,7 @@ func TestTmuxInterruptedCrossSendDoesNotBlockOtherRoutes(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(m.Store.StateRoot, parentName, "agents", "worker", "sent", pending.ID+".md")); err != nil {
 				t.Fatalf("one sender copy absent: %v", err)
 			}
-			if state := m.State(ctx, parent, nil); !state.Known {
+			if state := stateForTest(ctx, m, parent); !state.Known {
 				t.Fatalf("source state did not settle: %+v", state)
 			}
 		})
@@ -602,92 +624,4 @@ func TestTmuxCLocaleWithoutParentPreservesIdentity(t *testing.T) {
 		snapshot.Caller.Role != "worker" || len(snapshot.Bindings) != 1 {
 		t.Fatalf("C locale corrupted native identity: %#v", snapshot)
 	}
-}
-
-func TestTmuxCapturePaneRequiresExactNativeIncarnation(t *testing.T) {
-	f := newTmuxFixture(t)
-	adapter := f.adapter()
-	snapshot, err := adapter.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if text, err := adapter.CapturePane(context.Background(), snapshot.Caller); !errors.Is(err, ErrUnknown) || text != "" {
-		t.Fatalf("unregistered native capture returned text: %q %v", text, err)
-	}
-	old := snapshot.Caller
-	old.Owner.Incarnation = "different"
-	if _, err := adapter.CapturePane(context.Background(), old); !errors.Is(err, ErrUnknown) {
-		t.Fatalf("wrong incarnation read pane: %v", err)
-	}
-}
-
-func TestTmuxCaptureRejectsRetitleAndRespawnAfterSelection(t *testing.T) {
-	f := newTmuxFixture(t)
-	adapter := f.adapter()
-	selected, err := adapter.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.run(t, "select-pane", "-t", f.pane, "-T", "unrelated")
-	if text, err := adapter.CapturePane(context.Background(), selected.Caller); !errors.Is(err, ErrUnknown) || text != "" {
-		t.Fatalf("retitled pane content escaped: %q %v", text, err)
-	}
-	f.run(t, "select-pane", "-t", f.pane, "-T", "worker")
-	f.run(t, "respawn-pane", "-k", "-t", f.pane, "exec sleep 120")
-	if text, err := adapter.CapturePane(context.Background(), selected.Caller); !errors.Is(err, ErrUnknown) || text != "" {
-		t.Fatalf("respawned pane content escaped: %q %v", text, err)
-	}
-}
-
-func TestTmuxCaptureFailsClosedOnRecentVisibleLines(t *testing.T) {
-	f := newTmuxFixture(t)
-	f.run(t, "respawn-pane", "-k", "-t", f.pane, `sh -c 'i=1; while [ $i -le 120 ]; do printf "line-%03d\n" $i; i=$((i+1)); done; exec sleep 120'`)
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		visible := f.run(t, "capture-pane", "-p", "-t", f.pane, "-S", "-80")
-		if strings.Contains(visible, "line-120") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("fixture never produced its unrelated visible marker")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	adapter := f.adapter()
-	snapshot, err := adapter.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if captured, err := adapter.CapturePane(context.Background(), snapshot.Caller); !errors.Is(err, ErrUnknown) || captured != "" {
-		t.Fatalf("visible pane text escaped fail-closed capture: %q %v", captured, err)
-	}
-}
-
-func TestTmuxCaptureRejectsOversizedNativeOutput(t *testing.T) {
-	f := newTmuxFixture(t)
-	f.run(t, "resize-window", "-t", "one", "-x", "400", "-y", "24")
-	f.run(t, "respawn-pane", "-k", "-t", f.pane, `sh -c 'i=1; while [ $i -le 120 ]; do printf "%0300d\n" $i; i=$((i+1)); done; exec sleep 120'`)
-	adapter := f.adapter()
-	snapshot, err := adapter.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		out, err := tmuxOutput(context.Background(), f.socket, "capture-pane", "-p", "-t", f.pane, "-S", "-80")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(out) > 16*1024 {
-			if _, err := tmuxOutputLimited(context.Background(), 16*1024, f.socket, "capture-pane", "-p", "-t", f.pane, "-S", "-80"); err == nil {
-				t.Fatal("oversized native output bypassed limit")
-			}
-			if captured, err := adapter.CapturePane(context.Background(), snapshot.Caller); !errors.Is(err, ErrUnknown) || captured != "" {
-				t.Fatalf("oversized native read escaped: %d bytes, %v", len(captured), err)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("fixture never produced oversized native output")
 }

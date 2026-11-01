@@ -150,62 +150,61 @@ func (f *rebuiltCLIFixture) runWithEnv(pane, body string, extraEnv []string, arg
 	return result
 }
 
-func (f *rebuiltCLIFixture) jsonResult(t *testing.T, got rebuiltCLIResult) struct {
-	Status       string                  `json:"status"`
-	Message      *workspace.Message      `json:"message"`
-	MarkdownPath string                  `json:"markdown_absolute_path"`
-	ReceiptPath  string                  `json:"pop_receipt_absolute_path"`
-	Self         workspace.SelfState     `json:"self"`
-	Notice       *workspace.NoticeResult `json:"notice"`
-} {
+func (f *rebuiltCLIFixture) jsonResult(t *testing.T, got rebuiltCLIResult) protocolOutput {
 	t.Helper()
-	var result struct {
-		Status       string                  `json:"status"`
-		Message      *workspace.Message      `json:"message"`
-		MarkdownPath string                  `json:"markdown_absolute_path"`
-		ReceiptPath  string                  `json:"pop_receipt_absolute_path"`
-		Self         workspace.SelfState     `json:"self"`
-		Notice       *workspace.NoticeResult `json:"notice"`
-	}
+	var result protocolOutput
 	if err := json.Unmarshal(got.stdout, &result); err != nil {
-		t.Fatalf("rebuilt CLI invalid JSON: %v; stdout=%q stderr=%q", err, got.stdout, got.stderr)
+		t.Fatalf("CLI invalid JSON: %v stdout=%q stderr=%q", err, got.stdout, got.stderr)
 	}
 	return result
 }
 
 func (f *rebuiltCLIFixture) exerciseFourCommands(t *testing.T, phase string) {
-	body := "rebuilt CLI mail payload 937-1-" + phase + "\n"
-	send := f.run(f.peer, body, "send-heredoc", "--postman-md", f.config, "--to", "worker", "--no-reply")
+	body := "rebuilt CLI payload " + phase + "\n"
+	send := f.run(f.peer, body, "send-heredoc", "--config", f.config, "--to", "worker")
 	sent := f.jsonResult(t, send)
-	if send.exit != 0 || sent.Status != "sent" || sent.Message == nil || sent.Message.ID == "" {
-		t.Fatalf("send-heredoc exit=%d result=%+v stderr=%q", send.exit, sent, send.stderr)
+	if send.exit != 0 || !sent.Success {
+		t.Fatal(send, sent)
 	}
-	status := f.run(f.worker, "", "get-status", "--postman-md", f.config)
+	status := f.run(f.worker, "", "get-status", "--config", f.config)
 	known := f.jsonResult(t, status)
-	if status.exit != 0 || known.Status != "ok" || !known.Self.Known || known.Self.Unread == nil || *known.Self.Unread != 1 {
-		t.Fatalf("get-status exit=%d result=%+v stderr=%q", status.exit, known, status.stderr)
+	worker := findProtocolNode(t, known.Nodes, "worker")
+	if status.exit != 0 || worker.UnreadCount == nil || *worker.UnreadCount != 1 {
+		t.Fatal(status, known)
 	}
-	pop := f.run(f.worker, "", "pop", "--postman-md", f.config, sent.Message.ID)
+	pop := f.run(f.worker, "", "pop", "--config", f.config)
 	claimed := f.jsonResult(t, pop)
-	if pop.exit != 0 || claimed.Status != "message" || claimed.Message == nil || claimed.Message.ID != sent.Message.ID || claimed.MarkdownPath == "" || claimed.ReceiptPath == "" {
-		t.Fatalf("pop exit=%d result=%+v stderr=%q", pop.exit, claimed, pop.stderr)
+	if pop.exit != 0 || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal(pop, claimed)
 	}
-	archive, err := os.ReadFile(claimed.MarkdownPath)
-	if err != nil || !strings.Contains(string(archive), body) {
-		t.Fatalf("pop archive does not hold sent body: %v", err)
+	msg := readProtocolArchive(t, *claimed.MarkdownPath)
+	if msg.Body != body {
+		t.Fatal("body was rewritten", msg.Body)
 	}
-	if _, err := os.Stat(claimed.ReceiptPath); err != nil {
-		t.Fatalf("pop receipt missing: %v", err)
+	receipt := strings.TrimSuffix(*claimed.MarkdownPath, ".md") + ".pop.json"
+	if _, err := os.Stat(receipt); err != nil {
+		t.Fatal(err)
 	}
 	marker := filepath.Join(f.dir, phase+"-executed")
-	execute := f.run(f.worker, "", "execute-bash", "--postman-md", f.config,
-		"--command", "printf executed > "+marker)
-	if execute.exit != 0 || !bytes.Contains(execute.stderr, []byte(`"status":"executed"`)) {
-		t.Fatalf("execute-bash exit=%d stdout=%q stderr=%q", execute.exit, execute.stdout, execute.stderr)
+	execution := f.run(f.worker, "printf executed > "+marker, "execute-heredoc", "--config", f.config, "--reason", "rebuild test")
+	result := decodeExecutionOutput(t, execution.stderr)
+	if execution.exit != 0 || !result.Success || result.Executed == nil || !*result.Executed {
+		t.Fatalf("execution: %+v %q", result, execution.stderr)
 	}
-	if got, err := os.ReadFile(marker); err != nil || string(got) != "executed" {
-		t.Fatalf("execute-bash durable marker: %q, %v", got, err)
+	if raw, err := os.ReadFile(marker); err != nil || string(raw) != "executed" {
+		t.Fatal(string(raw), err)
 	}
+}
+
+func findProtocolNode(t *testing.T, nodes []workspace.NodeStatus, name string) workspace.NodeStatus {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Node == name {
+			return node
+		}
+	}
+	t.Fatalf("node %s missing from %+v", name, nodes)
+	return workspace.NodeStatus{}
 }
 
 func (f *rebuiltCLIFixture) replaceCLI(t *testing.T) {

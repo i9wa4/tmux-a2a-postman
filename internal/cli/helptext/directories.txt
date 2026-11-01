@@ -1,18 +1,21 @@
-Directories — private workspace mail
+Directories — private mail and event-triggered observations
 
 ${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman/
-  locks/<workspace>.lock           short interprocess workspace lock
-  <workspace>/workspace.json      canonical original HOME-relative identity
-  <workspace>/runtime/binding.json   replaceable native tmux binding
-  <workspace>/runtime/notice-locks/<role>.lock   short paste/submit serialization
-  <workspace>/runtime/notices/<id>.json        bounded notice attempt/receipt
-  <workspace>/agents/<role>/
-    draft/ inbox/ read/ sent/ failed/   independent private Markdown copies
-    read/<message-id>.pop.json     durable POP claim receipt
-    executions/                   command audit, never reusable authorization
-    pane/                         optional bounded observations
-  <workspace>/transactions/        interrupted mail operation recovery
+  locks/<workspace>.lock
+  <workspace>/workspace.json
+  <workspace>/runtime/binding.json
+  <workspace>/runtime/notice-locks/<role>.lock
+  <workspace>/runtime/notices/<message-id>.json
+  <workspace>/runtime/input-guards/<role>.json
+  <workspace>/runtime/observations/       native session captures and index
+  <workspace>/agents/<role>/draft/ inbox/ read/ sent/ failed/
+  <workspace>/agents/<role>/read/<id>.pop.json
+  <workspace>/agents/<role>/failed/<id>.failure.json
+  <workspace>/agents/<role>/executions/   audit, decisions and active waiter records
+  <workspace>/transactions/              interrupted file-operation recovery
 
-Workspace names flatten the escaped HOME-relative root, not the session name.
-A live independent session cannot mutate another session's workspace.
-Commands create required directories on first use; get-status never initializes.
+Workspace keys escape the HOME-relative path, independent of branch/session name.
+Directories are private (0700); mail and records are private (0600). Saved logs
+and captures remain until the user deletes them; no automatic expiry/rotation.
+Temporary publication files and completed recovery intents are operational
+state, not retained logs. get-status never initializes or deletes anything.

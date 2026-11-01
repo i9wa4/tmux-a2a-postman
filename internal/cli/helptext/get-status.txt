@@ -1,15 +1,19 @@
-get-status — read own saved-file state
+get-status — read saved workspace facts
 
-Usage:
   tmux-a2a-postman get-status [--config <absolute-path>]
-  tmux-a2a-postman get-status [--postman-md <absolute-path>]
 
-Returns JSON status=ok with self when saved evidence is sound. self includes
-known, workspace, node, mailbox, as_of, unread, inbound and outbound exact
-reply obligations, verified local peers, and next_action. Missing, damaged,
-ambiguous, or busy state is unavailable, with a reason; unknown is never
-reported as zero obligations.
+No command-specific options or positional arguments. JSON contains workspace,
+as_of and nodes (all configured nodes in this workspace). Only the verified
+interface caller also gets parent and children, restricted to declared direct
+interface routes. Unavailable relatives remain visible with null workspace
+and unknown counts. Other callers omit parent/children.
 
-This command reads saved files under a shared lock. It does not register
-the caller, claim mail, notify panes, capture pane text, run Bash, or call
-a daemon. It takes no positional arguments.
+Each node uses the same fields as send/POP self:
+node, unread_count, inbound_count, outbound_count, draft_count, failed_count,
+last_pop_at, last_capture_at, last_screen_change_at; optional reason.
+Counts are derived from inbox/read/sent/draft/failed files. Unknown is null,
+never zero. A reply arriving in inbox closes its exact outbound wait before
+POP. Failed counts contain confirmed non-delivery; uncertain drafts stay draft.
+Times are UTC RFC3339 observations, not continuous liveness or work progress.
+
+This command does not initialize, recover, claim, capture, notify, or delete.

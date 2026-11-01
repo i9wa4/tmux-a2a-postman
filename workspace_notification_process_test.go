@@ -16,14 +16,17 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 		t.Skip("python3 unavailable")
 	}
 	f := newRebuiltCLIFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Twenty terminal cases plus six existing-config regressions share this
+	// deadline. Native tmux/file operations are slower on macOS; each driver's
+	// individual wait remains bounded rather than exhausting this batch early.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "scripts/validation/notification-smoke.py", "--postman", f.bin, "--agent", "fixture", "--case", "all", "--terminal", "both", "--timeout", "10", "--output", filepath.Join(f.dir, "notification-report.json"))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("terminal-driven notification matrix: %v\n%s", err, out)
 	}
-	t.Log("16 real-tmux cases passed: plain/bracketed input, rally, busy, concurrent, parent/child, approval/rejection and disabled notification")
+	t.Log("20 real-tmux cases passed: plain/bracketed input, rally, busy, concurrent, parent/child, approval/rejection, disabled notification, absorbed Enter and 8-request approval bursts")
 	// Exercise a production-shaped, numbered postman.md rather than replacing
 	// the user's established template sections with an edges-only topology.
 	for _, scenario := range []string{"rally", "approval", "rejected"} {
