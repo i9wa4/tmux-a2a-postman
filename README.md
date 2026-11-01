@@ -5,6 +5,21 @@ Each CLI invocation delivers its own mail and attempts an input notification;
 no resident Postman process is needed. Codex, Claude Code and local consoles
 use the same terminal transport, without model APIs or registration.
 
+```mermaid
+flowchart LR
+    sender["Sender pane"] -->|send-heredoc| cli["Foreground CLI"]
+    config["postman.md: roles and allowed routes"] -.-> cli
+    cli -->|draft → inbox + sent| mail[("Private workspace mail files")]
+    cli -->|paste hint + one C-m| recipient["Recipient pane"]
+    recipient -->|pop| cli
+    cli -->|archive path + full-read instruction| recipient
+    recipient -->|read complete Markdown| mail
+    recipient -->|exact reply to claimed ID| cli
+```
+
+Each command runs a finite foreground process. Mail delivery, input
+notification, full reading and task completion are separate facts.
+
 ## 1. Install and configure
 
 Prerequisites: Linux or macOS and tmux. Execution supports Bash and Zsh;
@@ -21,6 +36,19 @@ The default is independent of the current directory.
 
 Illustrative topology:
 
+```mermaid
+graph LR
+    orchestrator --- worker
+    orchestrator --- reviewer
+    class orchestrator interface_node
+    class reviewer command_approver_node
+    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    classDef command_approver_node fill:#fef3c7,stroke:#92400e,color:#0f172a
+```
+
+The rendered graph and the copyable configuration below use the same roles
+and edges:
+
 ````markdown
 ## `edges`
 
@@ -30,6 +58,8 @@ graph LR
     orchestrator --- reviewer
     class orchestrator interface_node
     class reviewer command_approver_node
+    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
+    classDef command_approver_node fill:#fef3c7,stroke:#92400e,color:#0f172a
 ```
 
 ## `orchestrator`

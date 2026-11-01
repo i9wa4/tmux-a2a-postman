@@ -11,6 +11,12 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
+The root `main.go` keeps the existing `go install`/`go build .` entrypoint.
+CLI process handling and its unit/integration tests live in `internal/app/`;
+reusable command, configuration and mail code remain in their existing
+`internal/` packages. Design and verification documents live under `docs/`,
+and deterministic terminal drivers under `scripts/validation/`.
+
 Transport tests use isolated real tmux servers and private HOME/state. The
 controller performs only the initial send or execute request; deterministic
 agent consoles receive the actual pasted notification and `C-m`, then own POP,
@@ -55,6 +61,10 @@ notification. It does not require one hint per message. The controller waits
 on claim/completion progress with a bounded idle and batch deadline, since
 concurrent requests have no FIFO guarantee. Every request still needs its
 own full-read evidence, exact decision and exactly-once execution marker.
+Durable claim receipts and saved decisions count as progress before the final
+tool proof exists. Burst idle admission allows at least 20 seconds for bounded
+post-commit/dispatch phases; it still has a finite overall batch deadline and
+requires every final proof and execution marker.
 Unavailable hints can coexist with successful batch processing; uncertain
 input remains a separate guarded outcome.
 

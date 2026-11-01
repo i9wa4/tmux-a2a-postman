@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -24,7 +24,7 @@ func TestIssue937PublicCLIChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Args = append([]string{"postman"}, args...)
-	main()
+	Main()
 	os.Exit(0)
 }
 

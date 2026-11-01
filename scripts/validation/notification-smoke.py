@@ -15,6 +15,7 @@ import uuid
 
 from codex_smoke_model import ModelFixture
 from mail_fixture import sent_evidence
+from burst_progress import approval_progress
 
 CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "approval-burst"]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -243,20 +244,25 @@ def run_case(case, terminal):
                 # The first started request may be the last one approved:
                 # neither file order nor OS lock admission promises FIFO.
                 began = time.monotonic()
-                idle_deadline = began + args.timeout
-                batch_deadline = began + len(executions) * args.timeout
-                progress = (-1, -1)
+                # A finite post-commit notice/capture can overlap the next
+                # dispatch's ten-second admission wait. Count durable progress
+                # before final proofs, with a minimum20s idle allowance for
+                # those bounded phases; this is not a product timeout change.
+                idle_budget = max(args.timeout, 20)
+                idle_deadline = began + idle_budget
+                batch_deadline = began + len(executions) * idle_budget
+                progress = (-1, -1, -1, -1)
                 while any(process.poll() is None for process, _, _ in executions):
                     errors = list(evidence.glob("*.error.txt"))
                     if errors:
                         raise RuntimeError(errors[0].read_text())
-                    current = (len(list(evidence.glob("approver.claim.*.json"))),
-                               sum(process.poll() is not None for process, _, _ in executions))
+                    current = approval_progress(evidence, root / "state" / "tmux-a2a-postman",
+                                                sum(process.poll() is not None for process, _, _ in executions))
                     if current != progress:
                         progress = current
-                        idle_deadline = time.monotonic() + args.timeout
+                        idle_deadline = time.monotonic() + idle_budget
                     if time.monotonic() > min(idle_deadline, batch_deadline):
-                        raise RuntimeError("approval burst stopped progressing: claims/completions=" + repr(progress))
+                        raise RuntimeError("approval burst stopped progressing: durable-claims/decisions/proofs/completions=" + repr(progress))
                     time.sleep(0.05)
                 outcomes = []
                 for process, role, marker in executions:
