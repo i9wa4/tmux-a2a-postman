@@ -162,16 +162,21 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 	if _, err = s.inputGuard(ctx, rt, target, &guard); err != nil {
 		return err
 	}
-	if err = transport.pasteNotice(ctx, target, guard.Text); err != nil {
+	// The input budget belongs to actual paste/settlement/submit observations.
+	// Native ownership checks and durable receipts use the outer bounded notice
+	// context; slow persistence must not consume or inherit the editor deadline.
+	inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
+	defer inputCancel()
+	if err = transport.pasteNotice(inputCtx, target, guard.Text); err != nil {
 		return err
 	}
 	var stable string
 	var since time.Time
 	for {
-		if err = noticePause(ctx); err != nil {
+		if err = noticePause(inputCtx); err != nil {
 			return errors.New("notification paste was not observed settling; no Enter sent")
 		}
-		frame, err := transport.noticeFrame(ctx, target)
+		frame, err := transport.noticeFrame(inputCtx, target)
 		if err != nil || !base.sameGeometry(frame) {
 			return errors.New("recipient changed during notification paste")
 		}
@@ -192,14 +197,14 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 	}
 	// One submit only. Repeating Enter after a visual change is unsafe: it can
 	// either insert a newline or submit a different, already accepted input.
-	if err = transport.enterNotice(ctx, target); err != nil {
+	if err = transport.enterNotice(inputCtx, target); err != nil {
 		return err
 	}
 	for {
-		if err = noticePause(ctx); err != nil {
+		if err = noticePause(inputCtx); err != nil {
 			return errors.New("notification submit is uncertain; no repeat Enter or paste")
 		}
-		frame, err := transport.noticeFrame(ctx, target)
+		frame, err := transport.noticeFrame(inputCtx, target)
 		if err != nil {
 			return err
 		}

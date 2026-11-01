@@ -105,9 +105,6 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 		return result
 	}
 	defer func() { _ = lock.Close() }()
-	inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
-	defer inputCancel()
-	ctx = inputCtx
 	if err := notifier.prepareNotice(ctx, target); err != nil {
 		result.Reason = err.Error()
 		return result
@@ -129,7 +126,9 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 	} else if transport, ok := destination.(interface {
 		sendNotice(context.Context, Binding, string) error
 	}); ok {
-		inputErr = transport.sendNotice(ctx, target, noticePrompt(msg))
+		inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
+		defer inputCancel()
+		inputErr = transport.sendNotice(inputCtx, target, noticePrompt(msg))
 	} else {
 		inputErr = errors.New("recipient runtime cannot observe terminal input")
 	}

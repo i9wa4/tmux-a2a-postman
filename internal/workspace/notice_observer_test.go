@@ -18,6 +18,53 @@ type editorProbe struct {
 	pastedAt, fullAt, enteredAt time.Time
 }
 
+type slowReceiptRuntime struct {
+	*storedRuntime
+	probe   *editorProbe
+	delayed bool
+}
+
+func (r *slowReceiptRuntime) Snapshot(ctx context.Context) (Snapshot, error) {
+	if r.probe.entered && !r.delayed {
+		r.delayed = true
+		timer := time.NewTimer(2100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return Snapshot{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return r.storedRuntime.Snapshot(ctx)
+}
+
+func (r *slowReceiptRuntime) prepareNotice(context.Context, Binding) error { return nil }
+func (r *slowReceiptRuntime) noticeFrame(ctx context.Context, b Binding) (paneFrame, error) {
+	return r.probe.noticeFrame(ctx, b)
+}
+
+func (r *slowReceiptRuntime) pasteNotice(ctx context.Context, b Binding, text string) error {
+	return r.probe.pasteNotice(ctx, b, text)
+}
+
+func (r *slowReceiptRuntime) enterNotice(ctx context.Context, b Binding) error {
+	return r.probe.enterNotice(ctx, b)
+}
+
+func TestObservedNoticeReceiptPersistenceHasTheOuterBudget(t *testing.T) {
+	m, original, msg := committedNotice(t)
+	p := &editorProbe{target: original.snapshot.Bindings[1], prefix: "input> "}
+	rt := &slowReceiptRuntime{storedRuntime: original.storedRuntime, probe: p}
+	got := m.Store.NotifyCommittedAfterCommit(context.Background(), rt, rt, msg)
+	if got.Status != "accepted" || !rt.delayed || p.pastes != 1 || p.enters != 1 {
+		t.Fatal("accepted input inherited an expired editor deadline during receipt persistence", got, p.pastes, p.enters)
+	}
+	again := m.Store.NotifyCommittedAfterCommit(context.Background(), rt, rt, msg)
+	if again.Status != "accepted" || p.pastes != 1 || p.enters != 1 {
+		t.Fatal("receipt recovery repeated input", again)
+	}
+}
+
 func (p *editorProbe) noticeFrame(context.Context, Binding) (paneFrame, error) {
 	p.samples++
 	f := paneFrame{Pane: nativePane{Owner: p.target.Owner, PID: p.target.PanePID}, Width: 240, Height: 24, CursorVisible: true}

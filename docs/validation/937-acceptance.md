@@ -49,6 +49,13 @@ Admission now waits up to ten seconds outside the workspace lock, within the
 original caller/approval deadline; a longer-contention regression verifies
 exactly one audited execution. Unknown ownership and failed audit writes still
 prevent dispatch.
+macOS also caught post-submit receipt writes inheriting the two-second input
+deadline after the TUI had already received and POP'd the mail. The input budget
+now starts after the pending guard and covers the actual editor observations;
+ownership/receipt persistence uses the outer eight-second bound. A 2.1-second
+post-submit persistence regression verifies acceptance without another paste or
+Enter. The full matrix has a five-minute batch deadline; its individual waits
+remain bounded.
 
 ## 2. Notification evidence and limits
 

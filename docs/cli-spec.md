@@ -182,6 +182,11 @@ exit does not erase a pending/unknown input record. Human drafts and unrelated
 writers remain outside this Postman-only serialization contract. Issue #901's
 former coordinator roadmap was withdrawn; the limitation remains.
 
+The two-second input budget begins after the pending guard is durably written.
+It covers paste, settlement, C-m and post-submit observations. Native ownership
+checks and guard/receipt persistence share the outer eight-second deadline;
+the input deadline does not prematurely cancel a verified submission's record.
+
 Valid send and POP, including empty POP, trigger a bounded saved-text snapshot
 of every eligible pane across the caller's verified session windows. Parent or
 child sessions refresh their own snapshots; get-status does not refresh them.

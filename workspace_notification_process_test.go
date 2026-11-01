@@ -16,7 +16,10 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 		t.Skip("python3 unavailable")
 	}
 	f := newRebuiltCLIFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Twenty terminal cases plus six existing-config regressions share this
+	// deadline. Native tmux/file operations are slower on macOS; each driver's
+	// individual wait remains bounded rather than exhausting this batch early.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "scripts/validation/notification-smoke.py", "--postman", f.bin, "--agent", "fixture", "--case", "all", "--terminal", "both", "--timeout", "10", "--output", filepath.Join(f.dir, "notification-report.json"))
 	out, err := cmd.CombinedOutput()

@@ -27,6 +27,11 @@ Lock admission has a five-second bound. After acquisition the input phase has
 its own two-second budget; a one-second margin covers initial verification
 within the eight-second post-commit bound. Waiting on an already opened lock
 does not repeatedly probe tmux or rewrite workspace state.
+The two-second input budget starts after the durable pending guard, and covers
+paste, settling, C-m and post-submit screen evidence. Ownership verification
+and guard/receipt persistence share the outer eight-second bound rather than
+inheriting an almost-expired input deadline. The recipient lock still covers
+the entire sequence; persistence failure remains unknown and never replays.
 
 These are generic terminal observations, not proof of model processing. A screen
 cannot always distinguish submission from a newline or editor redraw. When
