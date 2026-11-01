@@ -32,6 +32,11 @@ func newTmuxFixture(t *testing.T) tmuxFixture {
 		t.Fatal(err)
 	}
 	f := tmuxFixture{socket: filepath.Join(dir, "s"), home: t.TempDir()}
+	// Interactive shell fixtures must not load the caller's Zsh/Readline
+	// configuration or append to its history when running locally.
+	for key, value := range map[string]string{"HOME": f.home, "ZDOTDIR": f.home, "XDG_CONFIG_HOME": filepath.Join(f.home, "config"), "XDG_DATA_HOME": filepath.Join(f.home, "data"), "XDG_CACHE_HOME": filepath.Join(f.home, "cache"), "BASH_ENV": "", "ENV": "", "HISTFILE": filepath.Join(f.home, "history"), "INPUTRC": filepath.Join(f.home, "inputrc")} {
+		t.Setenv(key, value)
+	}
 	f.repo = filepath.Join(f.home, "repo")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

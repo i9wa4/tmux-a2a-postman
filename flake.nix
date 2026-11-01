@@ -124,6 +124,7 @@
                 pkgs.writeShellApplication {
                   name = "notification-smoke";
                   runtimeInputs = [
+                    pkgs.bash
                     pkgs.python3
                     pkgs.tmux
                   ];

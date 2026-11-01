@@ -94,6 +94,8 @@ def run_case(case, terminal):
     model = ModelFixture(recipient, trace) if codex and args.mode == "mock" else None
     socket = root / "tmux.sock"
     env = dict(os.environ, HOME=str(home), CODEX_HOME=str(ch), XDG_STATE_HOME=str(root / "state"),
+               ZDOTDIR=str(home), XDG_CONFIG_HOME=str(home / ".config"), XDG_CACHE_HOME=str(home / ".cache"),
+               XDG_DATA_HOME=str(home / ".local" / "share"), BASH_ENV="", ENV="", HISTFILE=str(home / ".history"), INPUTRC=str(home / ".inputrc"),
                PATH=str(bin_dir) + ":" + os.environ["PATH"], TERM="tmux-256color",
                POSTMAN_SMOKE_BIN_DIR=str(bin_dir), POSTMAN_BIN=postman, POSTMAN_SMOKE_EVIDENCE=str(evidence),
                POSTMAN_SMOKE_BASELINE="1" if args.baseline else "0", POSTMAN_SMOKE_CASE=case,
@@ -182,6 +184,11 @@ def run_case(case, terminal):
             options = ["-s", sessions[role]] if command == "new-session" else ["-t", panes[roles[0]]]
             pane = tmux("-f", "/dev/null", command, "-d", *options, "-c", str(dirs[role]), "-P", "-F", "#{pane_id}", "exec sleep 600")
             started = True
+            if len(panes) == 0:
+                shell = shutil.which("bash")
+                if not shell:
+                    raise RuntimeError("deterministic execution fixture requires Bash")
+                tmux("set-option", "-g", "default-shell", shell)
             panes[role] = pane
             tmux("set-option", "-t", sessions[role], "remain-on-exit", "on")
             tmux("resize-window", "-t", pane, "-x", "240", "-y", "60")
