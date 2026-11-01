@@ -49,6 +49,14 @@ This option copies the source into the temporary fixture; it never edits the
 original. Use `--case rally`, `approval` or `rejected`, with the configured
 `orchestrator`/`worker` or `orchestrator`/`approver` roles respectively.
 
+The burst receiver drains only known positive unread counts after its first
+notification. It does not require one hint per message. The controller waits
+on claim/completion progress with a bounded idle and batch deadline, since
+concurrent requests have no FIFO guarantee. Every request still needs its
+own full-read evidence, exact decision and exactly-once execution marker.
+Unavailable hints can coexist with successful batch processing; uncertain
+input remains a separate guarded outcome.
+
 Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
 transport outcomes, pre-paste rejection, mailbox-lock independence,
 wrong/uncommitted routes, and shell input rejection. No unknown attempt is

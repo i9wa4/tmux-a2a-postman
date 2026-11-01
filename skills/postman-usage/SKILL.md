@@ -43,6 +43,12 @@ path. Read the complete archived Markdown through EOF before any handling,
 routing, reply, status decision, or no-action decision. Truncated output,
 frontmatter, reply policy, and notification text never substitute for this.
 
+After each operation, a known positive `self.unread_count` is enough to POP
+and handle the next message without waiting for another hint. Continue that
+known batch until the count is zero or unknown. Multiple notifications can
+refer to mail already consumed by an earlier batch; an empty successful POP
+ends handling and never starts a polling loop.
+
 Claiming mail clears unread attention; it does not prove understanding, accept
 a task, or fill a required reply. Empty POP still reports self-state. Never
 manually move or edit runtime mailbox files.

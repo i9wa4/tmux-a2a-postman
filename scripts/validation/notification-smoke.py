@@ -228,12 +228,30 @@ def run_case(case, terminal):
                     process.stdin.close()
                     process.stdin = None
                     executions.append((process, role, marker))
+                # The first started request may be the last one approved:
+                # neither file order nor OS lock admission promises FIFO.
+                began = time.monotonic()
+                idle_deadline = began + args.timeout
+                batch_deadline = began + len(executions) * args.timeout
+                progress = (-1, -1)
+                while any(process.poll() is None for process, _, _ in executions):
+                    errors = list(evidence.glob("*.error.txt"))
+                    if errors:
+                        raise RuntimeError(errors[0].read_text())
+                    current = (len(list(evidence.glob("approver.claim.*.json"))),
+                               sum(process.poll() is not None for process, _, _ in executions))
+                    if current != progress:
+                        progress = current
+                        idle_deadline = time.monotonic() + args.timeout
+                    if time.monotonic() > min(idle_deadline, batch_deadline):
+                        raise RuntimeError("approval burst stopped progressing: claims/completions=" + repr(progress))
+                    time.sleep(0.05)
                 outcomes = []
                 for process, role, marker in executions:
-                    stdout, stderr = process.communicate(timeout=args.timeout)
+                    stdout, stderr = process.communicate(timeout=2)
                     result = json.loads(stderr.splitlines()[-1])
                     outcomes.append(result)
-                    if process.returncode or not result["success"] or result["executed"] is not True or result.get("notification") or marker.read_text() != "once":
+                    if process.returncode or not result["success"] or result["executed"] is not True or result.get("notification", {}).get("status") == "unknown" or marker.read_text() != "once":
                         raise RuntimeError("approval burst lost/mixed a decision or notification: " + stderr)
                 wait_for("all burst decisions", lambda: len(list(evidence.glob("approver.claim.*.json"))) == 8)
                 proofs = [json.loads(path.read_text()) for path in evidence.glob("approver.claim.*.json")]
@@ -241,7 +259,9 @@ def run_case(case, terminal):
                     raise RuntimeError("burst did not contain eight independent requests from four senders")
                 for proof in proofs:
                     verify_proof(proof, ready)
-                report.update(executions=outcomes, claims=proofs)
+                if all(result.get("notification") for result in outcomes):
+                    raise RuntimeError("burst did not demonstrate a working input notification")
+                report.update(executions=outcomes, claims=proofs, batch_seconds=time.monotonic() - began)
             finally:
                 for process, _, _ in executions:
                     if process.poll() is None:
@@ -345,6 +365,17 @@ def run_case(case, terminal):
     except Exception as error:
         report["result"], report["error"] = "failed", str(error)
     finally:
+        if report.get("result") != "pass":
+            for category, pattern in [("notification_records", "**/runtime/notices/*.json"), ("input_guards", "**/runtime/input-guards/*.json")]:
+                records = {}
+                for path in (root / "state").glob(pattern):
+                    try:
+                        records[str(path.relative_to(root / "state"))] = json.loads(path.read_text())
+                    except Exception as error:
+                        records[str(path)] = {"unreadable": str(error)}
+                report[category] = records
+            report["mailbox_counts"] = {str(path.relative_to(root / "state")): len(list(path.glob("*.md")))
+                                        for path in (root / "state").glob("**/agents/*/*") if path.is_dir() and path.name in ["inbox", "read", "sent", "draft", "failed"]}
         if started:
             try:
                 report["screens"] = {role: tmux("capture-pane", "-p", "-S", "-", "-t", pane) for role, pane in panes.items()}
@@ -360,7 +391,8 @@ def run_case(case, terminal):
         print(json.dumps({"case": case, "result": report["result"], "report": str(root / "report.json")}), flush=True)
         if report["result"] != "pass":
             print(json.dumps({"error": report.get("error"), "screens": {r: s[-4000:] for r, s in report.get("screens", {}).items()},
-                              "runtime_logs": report.get("runtime_logs", {})}), flush=True)
+                              "runtime_logs": report.get("runtime_logs", {}), "notification_records": report.get("notification_records", {}),
+                              "input_guards": report.get("input_guards", {}), "mailbox_counts": report.get("mailbox_counts", {})}), flush=True)
     return report
 
 

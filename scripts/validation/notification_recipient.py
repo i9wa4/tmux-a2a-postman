@@ -35,23 +35,15 @@ def cli(args, body=None):
     return json.loads(result.stdout)
 
 
-if phase == "setup":
-    (root / (role + ".ready.json")).write_text(json.dumps({"conversation_id": thread_id, "nonce": nonce}))
-    if case == "busy" and role == "worker":
-        (root / "busy").touch()
-        deadline = time.monotonic() + 30
-        while not (root / "release").exists():
-            if time.monotonic() > deadline:
-                raise RuntimeError("controller did not release busy fixture")
-            time.sleep(0.05)
-    print("RECIPIENT_READY", role, thread_id)
-else:
+def receive():
     pop = cli(["pop", "--config", config])
-    if not pop["success"] or pop["markdown_absolute_path"] is None:
-        if case in ["approval", "rejected", "approval-burst"]:
-            print("DECISION_ALREADY_CLAIMED_BY_WRAPPER")
-            sys.exit(0)
-        raise RuntimeError("notification did not produce a claim: " + json.dumps(pop))
+    if not pop["success"]:
+        raise RuntimeError("POP failed: " + json.dumps(pop))
+    if pop["markdown_absolute_path"] is None:
+        # Another genuine hint may already have caused the known batch to be
+        # consumed. An empty successful POP is not permission to start polling.
+        print("NO_UNREAD_MAIL", role)
+        return 0
     archive = pathlib.Path(pop["markdown_absolute_path"])
     full = archive.read_bytes()
     msg = read_archive(archive)
@@ -84,3 +76,25 @@ else:
             raise RuntimeError("reply notification failed: " + json.dumps(proof["send"]))
     (root / (role + ".claim." + msg["id"] + ".json")).write_text(json.dumps(proof))
     print("CLAIMED_AND_READ", role, msg["id"], proof["full_archive_sha256"])
+    state = proof.get("send", pop)["self"]
+    return state.get("unread_count") or 0
+
+
+if phase == "setup":
+    (root / (role + ".ready.json")).write_text(json.dumps({"conversation_id": thread_id, "nonce": nonce}))
+    if case == "busy" and role == "worker":
+        (root / "busy").touch()
+        deadline = time.monotonic() + 30
+        while not (root / "release").exists():
+            if time.monotonic() > deadline:
+                raise RuntimeError("controller did not release busy fixture")
+            time.sleep(0.05)
+    print("RECIPIENT_READY", role, thread_id)
+else:
+    remaining = 1  # One genuine notification authorizes the initial POP.
+    for _ in range(32):
+        if remaining <= 0:
+            break
+        remaining = receive()  # Continue only from a known positive count.
+    if remaining > 0:
+        raise RuntimeError("fixture known-mail batch exceeded its finite bound")
