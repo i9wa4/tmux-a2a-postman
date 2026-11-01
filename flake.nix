@@ -69,10 +69,38 @@
             };
           });
           buildGo126Module = pkgs.buildGoModule.override { go = go126; };
-          commonDevPackages = with pkgs; [
-            gh
-            go126
-          ];
+          waza = pkgs.callPackage ./nix/packages/waza.nix { inherit system; };
+          triggerPython = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
+          triggerSource = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./skills
+              ./evals
+              ./scripts/validation/validate-skill-triggers.py
+              ./scripts/validation/test-skill-triggers.py
+            ];
+          };
+          skillTriggerCheck = pkgs.writeShellApplication {
+            name = "skill-trigger-check";
+            runtimeInputs = [
+              triggerPython
+              waza
+            ];
+            text = ''
+              exec python3 ${./scripts/validation/validate-skill-triggers.py} \
+                --root "$PWD" --waza ${waza}/bin/waza "$@"
+            '';
+          };
+          commonDevPackages =
+            with pkgs;
+            [
+              gh
+              go126
+            ]
+            ++ [
+              waza
+              triggerPython
+            ];
           goDevPackages = with pkgs; [
             gopls
             golangci-lint
@@ -118,6 +146,11 @@
         in
         {
           apps = {
+            skill-trigger-check = {
+              type = "app";
+              program = "${skillTriggerCheck}/bin/skill-trigger-check";
+              meta.description = "Validate and run all offline mock skill-trigger suites.";
+            };
             notification-smoke = {
               type = "app";
               program = "${
@@ -256,6 +289,7 @@
           };
 
           # nix build
+          packages.waza = waza;
           packages.default = buildGo126Module {
             pname = "tmux-a2a-postman";
             inherit version;
@@ -278,6 +312,22 @@
 
           # nix develop
           checks.notification = config.packages.default;
+          checks.skill-triggers =
+            pkgs.runCommand "skill-triggers"
+              {
+                nativeBuildInputs = [
+                  triggerPython
+                  waza
+                ];
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                mkdir -p "$HOME"
+                export WAZA_BIN=${waza}/bin/waza
+                python3 ${triggerSource}/scripts/validation/test-skill-triggers.py
+                python3 ${triggerSource}/scripts/validation/validate-skill-triggers.py --root ${triggerSource}
+                touch "$out"
+              '';
           devShells = {
             default = pkgs.mkShell {
               buildInputs = commonDevPackages ++ goDevPackages;
@@ -404,6 +454,14 @@
                 entry = skillMetadataCheck;
                 files = "^skills/[^/]+/SKILL\\.md$";
                 pass_filenames = false;
+              };
+              skill-triggers = {
+                enable = true;
+                name = "deterministic skill triggers";
+                entry = "${skillTriggerCheck}/bin/skill-trigger-check";
+                files = "^(skills/|evals/[^/]+/trigger/)";
+                pass_filenames = false;
+                require_serial = true;
               };
 
               # === Shell ===
