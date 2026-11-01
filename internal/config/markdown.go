@@ -358,14 +358,16 @@ func extractBacktickName(text string) string {
 // reservedH2Names maps backtick-wrapped h2 names to their canonical section keys.
 // These names are NOT treated as node definitions.
 var reservedH2Names = map[string]string{
-	"edges": "edges",
+	"edges":           "edges",
+	"common_template": "common_template",
+	"message_footer":  "message_footer",
 }
 
 // extractH2Sections parses Markdown content into a map of section key -> body.
 //
 // Backtick-wrapped names are extracted from h2 headings. Reserved names
-// (edges) become special sections; all others become node
-// sections.
+// (edges, common_template, message_footer) become special sections; all other
+// names become node sections.
 // Section body is the text from the heading line (exclusive) until the next
 // h2 heading or end of content.
 func extractH2Sections(content string) ([]string, map[string]string) {

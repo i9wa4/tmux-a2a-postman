@@ -24,4 +24,16 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 		t.Fatalf("terminal-driven notification matrix: %v\n%s", err, out)
 	}
 	t.Log("16 real-tmux cases passed: plain/bracketed input, rally, busy, concurrent, parent/child, approval/rejection and disabled notification")
+	// Exercise a production-shaped, numbered postman.md rather than replacing
+	// the user's established template sections with an edges-only topology.
+	for _, scenario := range []string{"rally", "approval", "rejected"} {
+		t.Run("existing-config/"+scenario, func(t *testing.T) {
+			cmd := exec.CommandContext(ctx, python, "scripts/validation/notification-smoke.py", "--postman", f.bin,
+				"--case", scenario, "--terminal", "both", "--timeout", "10", "--postman-md",
+				"internal/config/testdata/postman-with-templates.md", "--output", filepath.Join(f.dir, scenario+"-existing-config.json"))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("existing configuration %s: %v\n%s", scenario, err, out)
+			}
+		})
+	}
 }
