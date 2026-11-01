@@ -19,6 +19,7 @@ type mailOutput struct {
 	AsOf              string                  `json:"as_of"`
 	Success           bool                    `json:"success"`
 	MarkdownPath      **string                `json:"markdown_absolute_path,omitempty"`
+	Instruction       string                  `json:"instruction,omitempty"`
 	Self              workspace.NodeStatus    `json:"self"`
 	Notification      *workspace.NoticeResult `json:"notification,omitempty"`
 	RecoveryMessageID string                  `json:"recovery_message_id,omitempty"`
@@ -82,6 +83,7 @@ func RunWorkspacePop(args []string) (retErr error) {
 	})
 	if claim != nil {
 		path = &claim.Path
+		out.Instruction = "Read the entire Markdown file at markdown_absolute_path through EOF before processing, replying, or deciding no action is needed. Do not substitute a truncated view, summary, notification, metadata, or reply guidance for the full file."
 	}
 	return err
 }
@@ -164,6 +166,9 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		if first.FromSession != "" {
 			*to = first.FromSession + ":" + first.From
 		}
+	}
+	if err := c.prepareRecipientContext(ctx); err != nil {
+		return err
 	}
 	var msg workspace.Message
 	if strings.Contains(*to, ":") {

@@ -40,6 +40,9 @@ func (m Mail) StageUnavailableCross(ctx context.Context, source NamedRuntime, to
 			if msg.NeedsReply {
 				msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
 			}
+			if err := m.addMessageContext(ctx, s, &msg); err != nil {
+				return err
+			}
 			if err := validateMessage(msg); err != nil {
 				return err
 			}

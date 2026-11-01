@@ -87,7 +87,19 @@ def run_case(case, terminal):
                       "  - session_name: work\n    interface_node: orchestrator\n"
                       "  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n---\n" + config)
         if args.postman_md:
-            configs[role].write_bytes(args.postman_md.read_bytes())
+            content = args.postman_md.read_text()
+            sentinel = "/nonexistent/postman-regression-do-not-open-catalog"
+            if sentinel in content:
+                # Only the repository's explicit regression-fixture marker is
+                # substituted. Supply private metadata now that sends restore
+                # ordinary catalogs; topology/status still never open them.
+                skill_root = root / "fixture-skills"
+                for name in ["postman-usage", "postman-send-message"]:
+                    directory = skill_root / name
+                    directory.mkdir(parents=True, exist_ok=True)
+                    (directory / "SKILL.md").write_text("---\nname: " + name + "\ndescription: Fixed metadata for deterministic notification fixtures.\n---\n")
+                content = content.replace(sentinel, str(skill_root))
+            configs[role].write_text(content)
         else:
             configs[role].write_text(config)
     trace = []

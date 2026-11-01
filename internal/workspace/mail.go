@@ -23,10 +23,12 @@ import (
 // configured routing before Send; notification and Bash run only after return.
 type Mail struct {
 	Store     Store
+	Context   MessageContextBuilder
 	afterStep func(string) error
 }
 
 type Message struct {
+	Context             *ArchiveContext  `json:"context,omitempty"`
 	Kind                string           `json:"kind,omitempty"`
 	Replies             []ReplyReference `json:"replies,omitempty"`
 	GuidanceVersion     int              `json:"guidance_version,omitempty"`
@@ -88,6 +90,9 @@ func messageID(id string) bool {
 }
 
 func validateMessage(msg Message) error {
+	if err := validateMessageContext(msg); err != nil {
+		return err
+	}
 	if msg.Kind != "" && msg.Kind != "execution-request" && msg.Kind != "execution-decision" {
 		return errors.New("invalid message kind")
 	}
@@ -126,6 +131,10 @@ func validateMessage(msg Message) error {
 	if err != nil || len(raw)+1 > 60*1024 {
 		return errors.New("message exceeds durable record limit")
 	}
+	wire, err := marshalMessage(msg)
+	if err != nil || len(wire) > 64*1024 {
+		return errors.New("message with generated recipient context exceeds archive limit")
+	}
 	return nil
 }
 
@@ -133,12 +142,7 @@ func encodeMessage(msg Message) ([]byte, error) {
 	if err := validateMessage(msg); err != nil {
 		return nil, err
 	}
-	header, err := json.Marshal(msg)
-	if err != nil {
-		return nil, err
-	}
-	// Header is a single machine-readable HTML comment; body stays Markdown.
-	return append(append([]byte("<!-- postman "), header...), []byte(" -->\n\n"+msg.Body+messageGuidance(msg))...), nil
+	return marshalMessage(msg)
 }
 
 func readMessage(root *os.Root, name string) (Message, error) {
@@ -156,6 +160,16 @@ func readMessage(root *os.Root, name string) (Message, error) {
 	if err != nil || len(data) > 64*1024 {
 		return msg, errors.New("cannot read bounded mail file")
 	}
+	return DecodeArchive(data)
+}
+
+// DecodeArchive validates one complete legacy or context-bearing Markdown
+// archive and returns literal sender text separately from generated context.
+func DecodeArchive(data []byte) (Message, error) {
+	var msg Message
+	if len(data) > 64*1024 {
+		return msg, errors.New("mail archive exceeds bound")
+	}
 	prefix := []byte("<!-- postman ")
 	split := bytes.Index(data, []byte(" -->\n\n"))
 	if !bytes.HasPrefix(data, prefix) || split < len(prefix) {
@@ -167,7 +181,12 @@ func readMessage(root *os.Root, name string) (Message, error) {
 		return msg, err
 	}
 	msg.Body = string(data[split+len(" -->\n\n"):])
-	if footer := messageGuidance(msg); footer != "" {
+	if c := msg.Context; c != nil {
+		if c.Version != 1 || c.Markdown != "" || c.Bytes <= 0 || c.Bytes > len(msg.Body) {
+			return msg, errors.New("invalid generated recipient context boundary")
+		}
+		c.Markdown, msg.Body = msg.Body[:c.Bytes], msg.Body[c.Bytes:]
+	} else if footer := messageGuidance(msg); footer != "" {
 		if !strings.HasSuffix(msg.Body, footer) {
 			return msg, errors.New("saved message lacks its generated reply guidance")
 		}
@@ -310,6 +329,9 @@ func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, f
 		msg.FillsInputRequestID = fills
 		if needsReply {
 			msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
+		}
+		if err := m.addMessageContext(ctx, s, &msg); err != nil {
+			return err
 		}
 		if err := validateMessage(msg); err != nil {
 			return err

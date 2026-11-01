@@ -53,8 +53,11 @@ replacement preserves mail; unknown ownership does not silently transfer.
 
 `---` declares a bidirectional edge. `interface_node` and an explicit
 `workspace_tree` allow direct parent/child interface routes. Numbered
-`common_template` and `message_footer` sections remain reserved; Postman reads
-routing without rendering those templates or loading skill catalogs. See the
+`common_template` and `message_footer` sections remain reserved. Every generated
+mail includes recipient-specific common/role instructions, configured ordinary
+skill catalogs, `You can talk to` role summaries and exact reply guidance before
+the literal sender body. POP explicitly instructs a complete read through EOF.
+Topology/status reads do not open catalogs. See the
 [configuration reference](skills/postman-config-auditor/references/postman-md.md).
 
 Agent workflows remain separate from CLI help:

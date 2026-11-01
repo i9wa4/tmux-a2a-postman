@@ -95,6 +95,9 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 			return err
 		}
 		result = Message{Kind: "execution-decision", ID: "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, To: original.From, Replies: replyReferences(sources), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: string(raw), GuidanceVersion: 1}
+		if err := m.addMessageContext(ctx, s, &result); err != nil {
+			return err
+		}
 		if err := validateMessage(result); err != nil {
 			return err
 		}

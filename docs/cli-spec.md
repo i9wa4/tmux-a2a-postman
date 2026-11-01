@@ -109,6 +109,11 @@ The existing selection order is preserved; random message IDs are not a FIFO
 timestamp contract. Output fields are `workspace`, `as_of`, `success`,
 `markdown_absolute_path` and common `self`.
 
+A non-null path also returns `instruction`, explicitly requiring a complete
+read of that Markdown through EOF before processing, replying or deciding that
+no action is needed. A truncated view, summary, notification, metadata or reply
+guidance does not substitute for the full file. Empty POP omits this field.
+
 A successful claim returns the absolute existing final Markdown path. Empty
 POP succeeds with a null path and unchanged last_pop_at. Read the complete
 Markdown through EOF: sender, identity and reply guidance come from that file,
@@ -121,6 +126,22 @@ approval wrapper has internal exact-response selection; that is not a public
 POP argument.
 
 ## 5. send-heredoc
+
+Each new archive retains generated recipient context before the literal sender
+body: identity/correlation, complete common/role policy, ordinary configured
+skill catalog metadata, recipient-viewpoint contacts with concise role
+summaries, and exact current reply actions. A visible Sender Message boundary
+separates the generated content from unchanged sender bytes. Exact replies
+retain the same context but create no new obligation; typed execution requests
+use fixed decision actions. Ordinary configured footer guidance is preserved
+where applicable. See
+[the Markdown contract](design/recipient-markdown-parity.md).
+
+The archive header stores a versioned context byte count and SHA256 descriptor;
+durable intents retain the full generated text. Recovery keeps that exact
+context. Legacy archives remain readable. Context is at most 48 KiB, catalogs at
+most 256 entries/32 KiB, durable intents at most 60 KiB and complete archives at
+most 64 KiB. Exceeding a bound fails rather than truncating role instructions.
 
 ```sh
 tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
@@ -469,7 +490,8 @@ same meaning in every command; no field is a working/idle classification.
     "last_capture_at": null,
     "last_screen_change_at": null
   },
-  "markdown_absolute_path": "/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md"
+  "markdown_absolute_path": "/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md",
+  "instruction": "Read the entire Markdown file at markdown_absolute_path through EOF before processing, replying, or deciding no action is needed. Do not substitute a truncated view, summary, notification, metadata, or reply guidance for the full file."
 }
 ```
 

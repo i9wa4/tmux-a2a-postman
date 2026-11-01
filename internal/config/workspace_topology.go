@@ -24,6 +24,7 @@ type WorkspaceTopology struct {
 	Reviewer      string
 	InterfaceNode string
 	Sessions      []WorkspaceSession
+	messageSource string
 }
 
 // WorkspaceSession declares one member of an opt-in, direct parent-child
@@ -80,12 +81,16 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	}
 	order, sections := extractH2Sections(stripFrontmatter(content))
 	seenSections := map[string]bool{}
+	var headingFence markdownFence
 	for _, line := range strings.Split(stripFrontmatter(content), "\n") {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
 		if len(line) > 64*1024 {
 			return result, errors.New("topology line exceeds bound")
+		}
+		if headingFence.skip(line) {
+			continue
 		}
 		if !strings.HasPrefix(line, "## ") {
 			continue
@@ -163,6 +168,7 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	}
 	sort.Strings(result.Nodes)
 	result.Edges, result.Reviewer, result.InterfaceNode, result.Sessions = adjacency, reviewer, iface, sessions
+	result.messageSource = content
 	return result, nil
 }
 

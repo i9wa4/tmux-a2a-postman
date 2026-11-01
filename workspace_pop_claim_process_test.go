@@ -26,6 +26,10 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	if *got.MarkdownPath != expected || !filepath.IsAbs(expected) {
 		t.Fatal(got.MarkdownPath, expected)
 	}
+	if !strings.Contains(got.Instruction, "markdown_absolute_path through EOF") ||
+		!strings.Contains(got.Instruction, "deciding no action") || !strings.Contains(got.Instruction, "truncated view") {
+		t.Fatal("POP must require a complete archive read before any handling decision", got.Instruction)
+	}
 	archived := readProtocolArchive(t, expected)
 	if archived.ID != sent.ID || archived.Body != body || archived.CreatedAt != sent.CreatedAt {
 		t.Fatal(archived)
@@ -39,7 +43,7 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 		t.Fatal("claimed inbox remains", err)
 	}
 	second, err := f.run(f.worker, "", "pop", "--config", f.config)
-	if err != nil || !second.Success || second.MarkdownPath != nil || second.Self.LastPopAt == nil || *second.Self.LastPopAt != receipt.ClaimedAt {
+	if err != nil || !second.Success || second.MarkdownPath != nil || second.Instruction != "" || second.Self.LastPopAt == nil || *second.Self.LastPopAt != receipt.ClaimedAt {
 		t.Fatal("empty POP changed receipt/time", second, err)
 	}
 }
