@@ -1,0 +1,12 @@
+id: postman-config-auditor-3
+name: negative 3
+inputs:
+  prompt: Preserve literal message bodies for ordinary sends.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/postman-config-auditor/SKILL.md
+    mode: negative
