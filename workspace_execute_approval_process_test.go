@@ -49,6 +49,12 @@ func newPublicApprovalFixture(t *testing.T) *publicApprovalFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// macOS exposes /tmp through /private/tmp. Match the actual invocation cwd
+	// recorded by the CLI, rather than comparing its canonical path to an alias.
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	f := &publicApprovalFixture{t: t, socket: filepath.Join(dir, "s"), home: filepath.Join(dir, "home"), stateHome: filepath.Join(dir, "state"), config: filepath.Join(dir, "postman.md")}
 	work := filepath.Join(f.home, "work")
