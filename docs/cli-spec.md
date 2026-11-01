@@ -26,6 +26,7 @@ options, unexpected positional arguments and removed options are errors.
 `--postman-md` is removed from the product CLI. The notification test driver's
 similarly named fixture-copy option is a separate development interface.
 
+The workspace value is the canonical HOME-relative identity (`~` or `~/path`).
 The caller comes from verified native tmux identity. Mail remains bound to the
 original HOME-relative workspace across `cd`; execution uses its explicit,
 captured cwd. Runtime replacement preserves durable mail. Unknown ownership
@@ -421,11 +422,22 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "nodes": [
     {
       "node": "worker",
+      "unread_count": 0,
+      "inbound_count": 0,
+      "outbound_count": 0,
+      "draft_count": 0,
+      "failed_count": 0,
+      "last_pop_at": null,
+      "last_capture_at": null,
+      "last_screen_change_at": null
+    },
+    {
+      "node": "peer",
       "unread_count": 0,
       "inbound_count": 0,
       "outbound_count": 0,
@@ -443,7 +455,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": true,
   "self": {
@@ -465,7 +477,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": true,
   "self": {
@@ -487,7 +499,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": true,
   "self": {
@@ -513,7 +525,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": false,
   "self": {
@@ -527,7 +539,7 @@ same meaning in every command; no field is a working/idle classification.
     "last_capture_at": null,
     "last_screen_change_at": null
   },
-  "reason": "recipient binding unavailable",
+  "reason": "recipient has no verified local binding",
   "recovery_message_id": "m-0123456789abcdef0123456789abcdef"
 }
 ```
@@ -536,7 +548,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": false,
   "self": {
@@ -552,7 +564,8 @@ same meaning in every command; no field is a working/idle classification.
   },
   "executed": true,
   "exit_code": 7,
-  "approval": null
+  "approval": null,
+  "reason": "command exited with status 7"
 }
 ```
 
@@ -560,7 +573,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": false,
   "self": {
@@ -589,7 +602,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": false,
   "self": {
@@ -615,7 +628,7 @@ same meaning in every command; no field is a working/idle classification.
 
 ```json
 {
-  "workspace": "/home/example/work",
+  "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
   "success": true,
   "self": {
