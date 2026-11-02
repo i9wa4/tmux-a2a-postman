@@ -21,6 +21,22 @@ For AI-led environment preparation, hypothesis selection, pane/log inspection
 and iterative debugging in a cloud environment, follow the
 [cloud development runbook](docs/development/cloud-tmux-debugging.md).
 
+README is the product entry point; [quickstart](docs/quickstart.md),
+[configuration reference](skills/postman-config-auditor/references/postman-md.md)
+and [CLI specification](docs/cli-spec.md) own current user contracts. Keep
+developer check commands, fixture matrices and evidence limits here or in the
+linked development/validation documents. Shipped Skills retain their required
+operating references inside `skills/` so installation does not require this
+checkout. `CLAUDE.md` points to the one repository instruction owner, AGENTS;
+runtime `postman.md` is a separate user configuration surface.
+
+Validate maintained example configurations and their first exchange with
+`go test ./internal/config ./internal/cli ./internal/app -run 'TestDocumented'`.
+These checks use the real parser, installed catalog metadata and isolated native
+mail flow. Mermaid presentation rendering is a separate check; explanatory
+README arrows are not valid routing configuration. See the dated
+[documentation validation note](docs/validation/982-documentation.md).
+
 Historical tracked task notes are indexed in the
 [retained evidence map](docs/validation/740-retired-task-artifacts.md).
 Record new public verification with its owning issue/PR or relevant document.
@@ -270,5 +286,13 @@ never relaxes required execution audits.
 
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset
 expectations.
+
+Current contract documents are distinct from dated validation reports and
+historical designs. The [agent-environment research snapshot][agent-research]
+compares wider workflows and proposes experiments; it is not a shipped task
+platform or an installation prerequisite. DeepWiki is supplementary, not the
+source of runtime contracts or test evidence.
+
+[agent-research]: docs/research/891-agent-environment-comparison.md
 
 Canonical agent instructions live in [AGENTS.md](AGENTS.md).
