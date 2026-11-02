@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-//go:generate go run ./generate -root ../..
+//go:generate go run ./generate/main.go -root ../..
 
 //go:embed topics/*.md entries/*/SKILL.md assets asset-modes.json
 var content embed.FS

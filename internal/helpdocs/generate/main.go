@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Regenerate checked public entry points and readable documentation mirrors.
 package main
 
