@@ -22,6 +22,18 @@ history, draft = [], bytearray()
 absorbed_enters = 0
 draft_enters = 0
 last_enter_at = 0
+submitted_buffers, completed_buffers = 0, 0
+
+
+def save_progress():
+    # A full-read proof can precede helper exit, or another genuine hint's
+    # queued empty POP. Publish actual terminal-work completion atomically.
+    with lock:
+        path = evidence / (role + ".terminal-progress.json")
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"nonce": nonce, "submitted": submitted_buffers,
+                                         "completed": completed_buffers}))
+        temporary.replace(path)
 
 
 def render():
@@ -41,8 +53,10 @@ def action(phase):
 
 
 def process():
+    global completed_buffers
     try:
         action("setup")
+        save_progress()
         while True:
             line = submitted.get()
             if line is None:
@@ -65,6 +79,9 @@ def process():
                 raise RuntimeError("duplicate notification body pasted")
             for identifier in identifiers:
                 action(identifier)
+            with lock:
+                completed_buffers += 1
+                save_progress()
     except Exception as error:
         (evidence / (role + ".error.txt")).write_text(str(error))
         os._exit(1)
@@ -125,6 +142,8 @@ try:
                                             "[stdin ready]", "[waiting for next input]"])
                         with (evidence / (role + ".input.jsonl")).open("a") as trace:
                             trace.write(json.dumps({"text": line, "conversation": os.environ["POSTMAN_SMOKE_CONVERSATION"]}) + "\n")
+                        submitted_buffers += 1
+                        save_progress()
                         submitted.put(line)
                 else:
                     draft.append(value)

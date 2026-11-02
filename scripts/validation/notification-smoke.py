@@ -480,8 +480,22 @@ def run_case(case, terminal):
                     if any(b["at"] - a["at"] < 0.59 for a, b in zip(keys, keys[1:])):
                         raise RuntimeError("Enter presses were too close together")
                     report["newline_recovery"] = "two hints, each pasted once and submitted after its first Enter became a newline"
+        if not codex:
+            def recipients_idle():
+                for role in roles:
+                    path = evidence / (role + ".terminal-progress.json")
+                    if not path.exists():
+                        return False
+                    progress = json.loads(path.read_text())
+                    if progress["nonce"] != nonces[role] or progress["submitted"] != progress["completed"]:
+                        return False
+                return True
+            wait_for("recipient terminal tools completed", recipients_idle)
+            report["terminal_progress"] = {role: json.loads((evidence / (role + ".terminal-progress.json")).read_text()) for role in roles}
         if case == "rally":
-            # All four recipient tools have finished here. Their overlapping
+            # Actual queued terminal tools have finished here. A claim proof
+            # alone can precede another genuine hint's empty POP/summary.
+            # Overlapping
             # supplemental refreshes may have saved a partial snapshot while
             # another tool held the mailbox lock. The getter deliberately
             # cannot repair that cache: collect once at this idle boundary.

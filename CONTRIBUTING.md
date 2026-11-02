@@ -136,7 +136,11 @@ The default terminal actor makes a substantial redraw after a genuine submitted
 buffer; `minimal-redraw` retains the one-row echo of a minimal line editor.
 Both must complete receiver-owned full reads and exact replies. The latter may
 report an uncertain hint and receive bounded extra Enter. No fixture renders a
-submission or queues a helper merely because the screen changed.
+submission or queues a helper merely because the screen changed. Terminal work
+publishes queued/completed buffer counts after actual helper exit. The
+controller waits for that completion barrier before final diagnostic refresh;
+a full-read proof alone may precede a later genuine hint's empty POP. The
+controller never supplies that POP or treats partial status as complete.
 
 Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
 transport outcomes, pre-paste rejection, mailbox-lock independence,
