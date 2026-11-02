@@ -5,6 +5,19 @@ This is the canonical input/output contract for the daemonless CLI agreed in
 This document describes the implementation in this change. Skills describe
 workflows separately from this reference.
 
+The optional external binding adds `channel-sync` (no command arguments) and
+`channel-report-heredoc --to <one-claimed-external-id> --state <done|blocked|pending>`
+(quoted heredoc stdin). Pending requires `--scope <action-context-SHA256>`;
+terminal states forbid scope. Both accept common `--config`/help and reject
+duplicate options. Their
+[filesystem contract](design/external-filesystem-channel.md) defines
+provisioning, literal file input, exact decision filenames, bounded foreground
+activation, idempotency and catch-up. JSON returns success/as_of and reason on
+failure; sync includes accepted/published/pending/more, while report includes
+message_id/exchange_id and the local-publication boundary. Partial durable
+results survive errors. These commands require the configured top-level
+interface; ordinary send/POP/get-status shapes and scope remain unchanged.
+
 ## 1. Commands and common rules
 
 | Command              | Purpose                                                     |

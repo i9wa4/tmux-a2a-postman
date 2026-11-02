@@ -18,11 +18,13 @@ func workspaceFrontmatter(content string) (map[string]string, error) {
 	if err := yaml.Unmarshal([]byte(strings.Join(lines[start+1:end], "\n")), &values); err != nil {
 		return nil, err
 	}
-	if v, ok := values["interface_node"]; ok {
-		if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
-			return nil, fmt.Errorf("interface_node must be a string")
+	for _, key := range []string{"interface_node", "external_mailbox_root", "external_workspace", "external_session"} {
+		if v, ok := values[key]; ok {
+			if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
+				return nil, fmt.Errorf("%s must be a string", key)
+			}
+			result[key] = v.Value
 		}
-		result["interface_node"] = v.Value
 	}
 	return result, nil
 }

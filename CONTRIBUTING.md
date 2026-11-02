@@ -34,14 +34,22 @@ python3 scripts/validation/notification-smoke.py \
   --postman "$(command -v tmux-a2a-postman)" --agent fixture --terminal both
 ```
 
-The default matrix has twenty cases: plain editor input and bracketed-paste
+The default matrix has twenty-six cases: plain editor input and bracketed-paste
 input, each covering rally, busy recipient, concurrent independent messages,
 parent-to-child, child-to-parent, approval, rejection, blocked notification,
-an Enter absorbed as newline, and an eight-request approval burst.
+an Enter absorbed as newline, an eight-request approval burst, and external
+done/blocked/exact-decision round trips.
 `TestNotificationDrivenTerminalAgents` runs it
 during `go test` and `nix build`. Nix flake checks also build this package.
 Default checks require no AI client or model server. `--case` selects a single
 case.
+
+Sends retain a 15-second subprocess deadline and record elapsed time. The busy
+case withholds recipient processing until the sender returns, then verifies
+the full round trip. This proves sending does not wait for a response without
+adding a shorter wall-clock threshold that can reject healthy concurrent sends
+on a loaded CI runner. Notification acceptance, exact claims/replies and
+complete-file digests remain mandatory.
 
 Generated test topologies include numbered `common_template` and
 `message_footer` sections. Additional regression cases use a production-shaped

@@ -41,7 +41,7 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 	var from Snapshot
 	err := retryNoticeAdmission(ctx, func() error {
 		return s.withView(ctx, source, func(ws *os.Root, snapshot Snapshot) error {
-			if snapshot.Caller.Role != msg.From {
+			if !noticeSource(snapshot, msg) {
 				return ErrUnknown
 			}
 			sent, err := openOwnBox(ws, msg.From, "sent")
@@ -301,7 +301,7 @@ func (s Store) noticeTransition(ctx context.Context, rt Runtime, msg Message, ta
 	var prior *noticeRecord
 	err := retryNoticeAdmission(ctx, func() error {
 		return s.WithVerified(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
-			if snapshot.Caller.Role != msg.From {
+			if !noticeSource(snapshot, msg) {
 				return ErrUnknown
 			}
 			runtimeDir, err := privateDir(ws, "runtime", false)

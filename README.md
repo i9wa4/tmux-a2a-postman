@@ -242,3 +242,10 @@ checks require no model account; manual behavioral suites remain separate.
 The [#937 acceptance audit](docs/validation/937-acceptance.md) maps the
 implemented core contract to process tests, capture measurements and explicit
 remaining integration work.
+
+An optional
+[external filesystem channel](docs/design/external-filesystem-channel.md)
+connects a provisioned inbox/outbox/read binding to the top-level interface. The
+producer invokes `channel-sync` after publication and on reconnect; the
+interface POPs normally and uses `channel-report-heredoc` for actual results or
+exact pending decisions. No resident Postman service is required.

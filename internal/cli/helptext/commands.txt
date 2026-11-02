@@ -1,5 +1,9 @@
 Commands
 
+channel-sync: bounded external inbox intake and report/decision catch-up.
+channel-report-heredoc --to <external-POP'd-id> --state <done|blocked|pending>:
+  heredoc stdin; pending additionally requires --scope <action-context-SHA256>.
+
 get-status: no command-specific options or positional arguments.
 get-status-oneline: read-only operator overview; no command-specific arguments.
 pop: no command-specific options or positional arguments.

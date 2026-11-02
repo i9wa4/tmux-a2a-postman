@@ -28,6 +28,7 @@ type Mail struct {
 }
 
 type Message struct {
+	External            *ExternalMessage `json:"external,omitempty"`
 	Context             *ArchiveContext  `json:"context,omitempty"`
 	Kind                string           `json:"kind,omitempty"`
 	Replies             []ReplyReference `json:"replies,omitempty"`
@@ -90,6 +91,9 @@ func messageID(id string) bool {
 }
 
 func validateMessage(msg Message) error {
+	if err := validateExternalMessage(msg); err != nil {
+		return err
+	}
 	if err := validateMessageContext(msg); err != nil {
 		return err
 	}

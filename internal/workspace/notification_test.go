@@ -114,6 +114,13 @@ func TestNoticeRejectsUncommittedAndCrossSessionTargets(t *testing.T) {
 func TestConcurrentDuplicateNoticeSubmitsOnce(t *testing.T) {
 	m, _, msg := committedNotice(t)
 	entered, release := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
 	var calls atomic.Int32
 	notify := func(context.Context, Binding, string) error {
 		if calls.Add(1) == 1 {
@@ -131,8 +138,21 @@ func TestConcurrentDuplicateNoticeSubmitsOnce(t *testing.T) {
 	<-entered
 	go run()
 	// The transport lock must not keep another mail operation from publishing.
-	if _, err := m.Send(context.Background(), mailRuntime("worker"), "peer", "independent", "", false); err != nil {
-		t.Fatal(err)
+	// Another notifier may briefly own the mailbox lock during its preflight.
+	// Retry only rejected admission; an assigned ID may already be a mutation.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for {
+		sent, err := m.Send(ctx, mailRuntime("worker"), "peer", "independent", "", false)
+		if sent.ID != "" || !errors.Is(err, ErrBusy) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+		if err := noticePause(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	close(release)
 	for range 2 {

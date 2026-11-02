@@ -5,6 +5,8 @@ import "fmt"
 type Config struct{ ConfigPath string }
 
 type Handlers struct {
+	ChannelSync      func([]string) error
+	ChannelReport    func([]string) error
 	Pop              func([]string) error
 	GetSessionStatus func([]string) error
 	GetStatusOneline func([]string) error
@@ -29,6 +31,10 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 	}
 	var handler func([]string) error
 	switch command {
+	case "channel-sync":
+		handler = h.ChannelSync
+	case "channel-report-heredoc":
+		handler = h.ChannelReport
 	case "pop":
 		handler = h.Pop
 	case "get-status":
