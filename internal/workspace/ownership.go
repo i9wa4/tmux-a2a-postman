@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 var ErrBusy = errors.New("workspace mutation is busy")
@@ -61,6 +62,9 @@ func DefaultStateRoot(home, xdg string) (string, error) {
 // and fn's short file mutation. Never wait for a reply, notify, or execute Bash
 // inside fn. The workspace handle is valid only during fn.
 func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, Snapshot) error) error {
+	trace := diagnostic.From(ctx)
+	resume := trace.Pause()
+	defer resume()
 	if rt == nil || fn == nil {
 		return ErrUnknown
 	}
@@ -111,13 +115,17 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 	if err != nil || !privateInfo(lockInfo, false) {
 		return errors.New("unsafe workspace lock")
 	}
+	lockStart := trace.Now()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		trace.Measure("mutation_lock_wait", lockStart)
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return ErrBusy
 		}
 		return err
 	}
-	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN) }(int(lock.Fd()))
+	trace.Measure("mutation_lock_wait", lockStart)
+	holdStart := trace.Now()
+	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN); trace.Measure("mutation_lock_held", holdStart) }(int(lock.Fd()))
 	pathInfo, err := locks.Lstat(name + ".lock")
 	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(lockInfo, pathInfo) {
 		return ErrUnknown

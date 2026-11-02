@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 func requestID(id string) bool {
@@ -70,6 +72,9 @@ func (s Store) withView(ctx context.Context, rt Runtime, fn func(*os.Root, Snaps
 // withReadWorkspace opens only existing private files and a shared existing lock.
 // Agent views and the explicit operator overview supply separate native checks.
 func (s Store) withReadWorkspace(ctx context.Context, root string, fn func(*os.Root) error) error {
+	trace := diagnostic.From(ctx)
+	resume := trace.Pause()
+	defer resume()
 	if fn == nil || !filepath.IsAbs(s.StateRoot) {
 		return ErrUnknown
 	}
@@ -110,13 +115,17 @@ func (s Store) withReadWorkspace(ctx context.Context, root string, fn func(*os.R
 	if err != nil || !privateInfo(li, false) {
 		return ErrUnknown
 	}
+	lockStart := trace.Now()
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		trace.Measure("view_lock_wait", lockStart)
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return ErrBusy
 		}
 		return err
 	}
-	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN) }(int(lock.Fd()))
+	trace.Measure("view_lock_wait", lockStart)
+	holdStart := trace.Now()
+	defer func(fd int) { _ = syscall.Flock(fd, syscall.LOCK_UN); trace.Measure("view_lock_held", holdStart) }(int(lock.Fd()))
 	pathInfo, err := locks.Lstat(name + ".lock")
 	if err != nil || !privateInfo(pathInfo, false) || !os.SameFile(li, pathInfo) {
 		return ErrUnknown

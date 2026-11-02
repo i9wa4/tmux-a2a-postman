@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 // ApprovalResolver must distinguish positively verified absence ("", nil)
@@ -305,6 +307,7 @@ func (e Executor) claimDecision(ctx context.Context, rt Runtime, req Message, co
 // verified absence is advisory. Unknown configuration/runtime never runs Bash.
 // Waiting and Bash always happen outside the workspace mutation lock.
 func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (ExecutionResult, error) {
+	trace := diagnostic.From(ctx)
 	result := ExecutionResult{Version: 1, Command: command, Status: "unavailable", AsOf: e.clock().UTC().Format(time.RFC3339Nano)}
 	no := false
 	result.Executed = &no
@@ -367,6 +370,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		return fail("unavailable", err)
 	}
 	result.OperationID = "m-" + strings.TrimPrefix(nonce, ".new-")
+	trace.Note(diagnostic.Facts{OperationID: result.OperationID, Counterparty: role})
 	audit = pinned
 	dispatchCtx := ctx
 	var deadline time.Time
@@ -392,6 +396,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 			return sendErr
 		})
 		result.RequestID, result.InputRequestID = req.ID, req.InputRequestID
+		trace.Note(diagnostic.Facts{OperationID: result.OperationID, RequestID: req.ID, InputRequestID: req.InputRequestID, Counterparty: role, Approval: "pending"})
 		if err != nil {
 			return fail("delivery_failed", err)
 		}
@@ -413,6 +418,8 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		}
 		notice := e.Mail.Store.NotifyCommittedAfterCommit(waiting, rt, notifier, req)
 		result.Notice = &notice
+		approvalSpan := trace.Start("approval_wait")
+		defer func() { approvalSpan.End(result.Status) }()
 		for {
 			if err = waiting.Err(); err != nil || !e.clock().Before(deadline) {
 				if ctx.Err() != nil {
@@ -420,6 +427,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 				}
 				return fail("wait_timeout", context.DeadlineExceeded)
 			}
+			trace.Add("approval_observations", 1, 0)
 			answer, decision, err := e.claimDecision(waiting, pinned, req, command)
 			if errors.Is(err, ErrBusy) {
 				answer = nil
@@ -428,6 +436,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 			}
 			if answer != nil {
 				result.ReplyID = answer.ID
+				approvalSpan.End(decision)
 				result.ApprovalDecision = decision
 				parsed, _ := decodeDecision(answer.Body)
 				result.ApprovalReason = parsed.Reason

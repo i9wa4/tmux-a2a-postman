@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 // NodeStatus is the common get-status row and post-operation self shape. Null
@@ -40,6 +41,7 @@ func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Messa
 	if err != nil {
 		return nil, err
 	}
+	diagnostic.From(ctx).Add("summary_files_scanned", int64(len(entries)), 0)
 	var messages []Message
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -97,6 +99,7 @@ func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Messa
 				return nil, errors.New("failed mail lacks its failure evidence")
 			}
 		}
+		diagnostic.From(ctx).Add("summary_body_bytes_decoded", int64(len(msg.Body)), 0)
 		messages = append(messages, msg)
 	}
 	return messages, nil

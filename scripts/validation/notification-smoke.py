@@ -463,6 +463,21 @@ def run_case(case, terminal):
                     except Exception as error:
                         records[str(path)] = {"unreadable": str(error)}
                 report[category] = records
+            diagnostics = {}
+            paths = sorted((root / "state").glob("**/agents/*/logs/*/inv-*.jsonl"))
+            for path in paths[:32]:
+                events = []
+                for line in path.read_bytes()[:128 * 1024].splitlines():
+                    try:
+                        events.append(json.loads(line))
+                    except (ValueError, UnicodeError):
+                        break
+                diagnostics[str(path.relative_to(root / "state"))] = {
+                    "identity": events[0].get("identity") if events else None,
+                    "last_events": events[-6:],
+                    "incomplete": not events or events[-1].get("event") != "end"}
+            report["invocation_diagnostics"] = diagnostics
+            report["omitted_diagnostic_files"] = max(0, len(paths) - 32)
             report["mailbox_counts"] = {str(path.relative_to(root / "state")): len(list(path.glob("*.md")))
                                         for path in (root / "state").glob("**/agents/*/*") if path.is_dir() and path.name in ["inbox", "read", "sent", "draft", "failed"]}
         if started:
@@ -480,6 +495,7 @@ def run_case(case, terminal):
         print(json.dumps({"case": case, "result": report["result"], "report": str(root / "report.json")}), flush=True)
         if report["result"] != "pass":
             print(json.dumps({"error": report.get("error"), "screens": {r: s[-4000:] for r, s in report.get("screens", {}).items()},
+                              "invocation_diagnostics": report.get("invocation_diagnostics", {}),
                               "runtime_logs": report.get("runtime_logs", {}), "notification_records": report.get("notification_records", {}),
                               "input_guards": report.get("input_guards", {}), "mailbox_counts": report.get("mailbox_counts", {})}), flush=True)
     return report

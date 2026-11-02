@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 const (
@@ -210,6 +212,9 @@ func snapshotText(frame paneFrame) (string, bool) {
 // the mailbox lock while asking tmux for text. History is immutable and never
 // pruned automatically; the small index is only a pointer to current facts.
 func (m Mail) CaptureSession(ctx context.Context, rt Tmux, expected Binding) SessionSnapshot {
+	trace := diagnostic.From(ctx)
+	resume := trace.Pause()
+	defer resume()
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), SnapshotBudget)
 	defer cancel()
 	result := SessionSnapshot{Version: 1, Owner: expected.Owner, StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Panes: []snapshotPaneResult{}}
@@ -253,7 +258,8 @@ func (m Mail) CaptureSession(ctx context.Context, rt Tmux, expected Binding) Ses
 		result.Reason = err.Error()
 		return recordFailure()
 	}
-	defer func() { _ = lock.Close() }()
+	holdStart := trace.Now()
+	defer func() { _ = lock.Close(); trace.Measure("capture_lock_held", holdStart) }()
 	panes, err := rt.sessionPanes(ctx, snapshot)
 	if err != nil {
 		result.Reason = err.Error()
