@@ -252,6 +252,13 @@ The [#937 acceptance audit](docs/validation/937-acceptance.md) maps the
 implemented core contract to process tests, capture measurements and explicit
 remaining integration work.
 
+The [agent-environment research snapshot][agent-research]
+compares the wider workflow with external systems, separates measured behavior
+from open questions, and proposes bounded experiments without expanding the
+transport into a task platform.
+
+[agent-research]: docs/research/891-agent-environment-comparison.md
+
 An optional
 [external filesystem channel](docs/design/external-filesystem-channel.md)
 connects a provisioned inbox/outbox/read binding to the top-level interface. The
