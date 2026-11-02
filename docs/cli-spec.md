@@ -16,14 +16,15 @@ activation, idempotency and catch-up. JSON returns success/as_of and reason on
 failure; sync includes accepted/published/pending/more, while report includes
 message_id/exchange_id and the local-publication boundary. Partial durable
 results survive errors. These commands require the configured top-level
-interface; ordinary send/POP/get-status shapes and scope remain unchanged.
+interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 
 ## 1. Commands and common rules
 
 | Command              | Purpose                                                     |
 | -------------------- | ----------------------------------------------------------- |
-| `get-status`         | Read the current workspace's node summaries                 |
-| `get-status-oneline` | Render a human overview of the selected native tmux server  |
+| `refresh-status`     | Collect one finite shared server snapshot                   |
+| `get-status`         | Read the saved explicit-server JSON snapshot                |
+| `get-status-oneline` | Render the same saved server snapshot as one human line     |
 | `pop`                | Claim one own unread mail and return its final archive path |
 | `send-heredoc`       | Send a request or reply to claimed message IDs              |
 | `execute-heredoc`    | Review and execute source in the caller's shell environment |
@@ -66,7 +67,7 @@ claim, decision or completed command.
 
 ## 2. Common node summary
 
-Both a get-status row and operation `self` use these fields:
+Both an attributed saved pane `status` and operation `self` use these fields:
 
 ```json
 {
@@ -110,34 +111,46 @@ each explicitly referenced request once and adds only one unread message.
 tmux-a2a-postman get-status
 ```
 
-There are no command-specific options or positional arguments. The normal result
-has `workspace`, `as_of` and `nodes`, listing every configured local node. Only
-a verified local interface caller additionally receives `parent` and `children`:
-the directly related workspaces' interface nodes, not all their agents. A
-configured unavailable relation is retained with null counts, its session
-selector and a reason. A verified interface with no parent has `parent: null`;
-one with no children has `children: []`. Ordinary callers omit both keys. No
-sibling, grandchild or directory-ancestry inference is allowed.
+Both getters read one saved whole-server snapshot. `get-status` returns the
+exact JSON bytes, preserving saved `as_of`; `get-status-oneline` renders that
+same document with the current clock for glyph aging. No native tmux query,
+configuration load, mailbox scan, mkdir, lock or persistent diagnostic write
+occurs. Missing/malformed/incompatible cache is explicitly unavailable/nonzero;
+valid stale evidence remains dated. A read never verifies live incarnation.
 
-This command reads saved files only. It does not initialize storage, claim mail,
-recover transactions, send notifications, capture panes or delete observations.
+`refresh-status` explicitly collects one finite snapshot across native sessions,
+windows and panes. It is also reused in process after eligible normal
+operations. One nonblocking advisory lock returns `skipped_busy` immediately;
+partial/error outcomes are nonzero, retain actual capture times and explain
+failure. No daemon, timer or hidden refresh occurs. External status integration
+must refresh then render even when refresh fails; preserve stderr diagnostics
+outside the bar.
+
+All three commands require explicit `TMUX=absolute-socket,PID,index`; PID 0 is
+unknown. Split at the last two commas. A known PID mismatch is rejected. They
+need no role/TMUX_PANE. `--config` is accepted but not read and cannot select
+server membership. Configuration attribution comes from provenance saved in
+verified normal operations, with conflicting/changed inputs explicitly unknown.
+
+The versioned document has `server`, `started_at`, `as_of`, `coverage` and
+`sessions[].windows[].panes[]`. Native IDs/names/layout/processes are retained.
+Each pane has capture/status/scope (nullable); status uses §2's node fields,
+scope records configured edges/interface/session relations. Select the assigned
+server, native session/pane and workspace before interpreting it. Operator-wide
+visibility never grants authority to manage/send/read every visible mailbox.
+There is no top-level workspace/nodes/parent/children projection.
+
+See [the complete server snapshot contract](design/server-status.md) for schema,
+storage, attribution, failure/lock boundaries and the final writer/call-site
+map.
 
 ### 3.1. get-status-oneline
 
-This is a human operator view of all sessions on the explicit native `TMUX`
-server. It has no positional arguments or command-specific options. It needs
-no agent caller or `TMUX_PANE`; ordinary `get-status` stays workspace-scoped.
-Use the actual status job's socket rather than an inherited agent environment:
-
-```tmux
-set-option -g status-format[1] "#[align=right]#(env -u TMUX_PANE TMUX='#{socket_path},#{pid},0' tmux-a2a-postman get-status-oneline 2>/dev/null)"
-```
-
-Example: `[0]🟩💛:🟢 [1]⬛🟥`. Each `[N]` is native session `$N`, sorted
-numerically. Colons separate included windows in window-index order; panes
-within each window follow physical top, then left position. Each included
-role pane produces exactly one complete glyph. Unrelated panes, empty windows
-and absent panes produce no placeholder.
+Example: `[0]🟩💛:🟢 [3]⬛🟥 [9] [12]⚫`. `[N]` is native `$N`, numerically
+sorted, including gaps/two-digit IDs, independently of session names. Colons
+separate included agent windows, with panes in physical top/left order.
+Ordinary panes have no glyph; their native session label remains visible.
+Missing/incompatible cache emits `?` and exits nonzero, with stderr diagnostics.
 
 Shape uses the shared node summary: unread or inbound work produces a square,
 including when outbound waits also exist; otherwise an outbound wait produces
@@ -161,20 +174,10 @@ screen-change age. Red describes old observed movement, not failure or a
 stopped process. Equal samples do not prove continuous inactivity; changed
 screens may be spinners or pasted input. Last POP is never an activity fallback.
 
-Configured role titles only select candidates. Known mail counts additionally
-require the exact saved binding and native server incarnation, session, pane
-and process identity. Unbound, dead, linked, duplicate or renamed role panes
-remain unknown; an exactly identified live saved-role pane stays visible after
-renaming. No title, cwd or directory ancestry grants agent identity.
-
-The command uses existing private mail and observation readers with a
-three-second foreground deadline, a 256-KiB/1024-pane native frame bound and
-at most 256 included candidates. No capture, initialization, binding update,
-POP, recovery, notification, pruning or resident process runs. Partial state
-failures retain safe rows and report reasons on stderr. No candidates gives
-an empty line. Fatal configuration/native enumeration errors emit an empty
-line and exit nonzero. The CLI does not truncate UTF-8 or remove the red heart's
-variation selector; terminal/font/tmux width policy still affects rendering.
+Configured titles alone grant no identity. Known summaries require matching
+saved bindings/config provenance and collection-time native process identity.
+Unknown/partial rows retain reasons on stderr. Current-clock colors do not
+update the saved collection or individual capture timestamps.
 
 ## 4. pop
 
@@ -290,21 +293,15 @@ outer eight-second deadline. A shorter native read timeout may retry only the
 read; no retry pastes input or repeats Enter. Actual identity/geometry failures
 stop immediately. The input deadline never cancels post-submit evidence.
 
-Valid send and POP, including empty POP, trigger a bounded saved-text snapshot
-of every eligible pane across the caller's verified session windows. Parent or
-child sessions refresh their own snapshots; get-status does not refresh them.
-Notification confirmation may additionally inspect only its authorized target
-pane. Unconfigured panes keep native identity in observation storage, not fake
-agent mailboxes. Linked windows, process changes and partial coverage are
-explicit.
-
-Snapshot timing and implementation are chosen by measured CLI latency and
-coverage. Any asynchronous helper must be finite and detach inherited streams
-and locks. Observation errors never change mail results or failed mail counts.
-Saved snapshots and logs remain until the user explicitly deletes them. There
-is no automatic expiry, pruning, rotation or OS cleanup task. Per-invocation
-bounds limit one capture without deleting older history. The CLI maintains
-bounded latest-observation indexes instead of rescanning all retained text.
+Eligible send/POP (including empty POP), decisions, execution and external
+operations attempt the same bounded whole-server refresh after primary locks.
+Busy skips immediately. Primary operation success, IDs, recovery and verified
+operation-local self remain authoritative even if observation fails.
+Notification confirmation still uses synchronous live recipient-only safety
+captures; it never uses the cache or waits for its lock. See §3's contract for
+cadence, coverage, raw history retention, limits and exact call sites.
+Logs/snapshots remain until manually deleted; no automatic expiry or pruning
+occurs.
 
 ## 7. execute-heredoc
 
@@ -409,35 +406,35 @@ main interface before this change; removed syntax is intentionally rejected.
 
 ### 10.1. Inputs and entry points
 
-| Surface                                                               | Decision and purpose                                               | Callers and rationale                                                                    |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `get-status`                                                          | Keep, simplify to workspace nodes and authorized direct interfaces | Agents/operators need one saved-file view; no global workspace scan                      |
-| `pop [id]`                                                            | Simplify to argument-free `pop`                                    | Receivers claim their actual next mail; notification IDs remain hints                    |
-| `send-heredoc --to node`                                              | Keep; new requests require replies                                 | Senders need explicit configured routes and literal stdin                                |
-| `--to session:interface`                                              | Keep direct parent/child routes                                    | Interface nodes need exact per-hop identity without foreign capture access               |
-| `--reply-to`, `--fills-input-request-id`                              | Remove from public input; derive from `--to <POP'd-id>`            | Agents should not transcribe correlation metadata                                        |
-| Comma-separated `--to` IDs                                            | Add bounded combined replies, maximum 16                           | One answer can resolve several claimed requests with one sender/route                    |
-| `--reply-required`, `--no-reply`                                      | Remove; request/reply semantics determine policy                   | Avoid contradictory reply flags and endless reply obligations                            |
-| `execute-bash --command`                                              | Replace with `execute-heredoc --reason` and stdin                  | Exact multiline source, cwd and initialized shell form one reviewable request            |
-| `approve-execution`, `decline-execution`                              | Add fixed actions with `--to` and `--reason`                       | Approvers choose one action without JSON/code copies or boolean ambiguity                |
-| Decision/helper stdin                                                 | Reject nonempty stdin                                              | Reasons and target are explicit flags; source is never copied by the approver            |
-| `--config`                                                            | Keep one absolute override, before or after the command            | Operators/fixtures need explicit topology; defaults are cwd-independent                  |
-| `--postman-md`                                                        | Remove product alias                                               | One spelling for one input; the smoke driver's fixture-copy flag is separate             |
-| `--capture-related-panes`                                             | Remove; valid send/POP always trigger bounded session capture      | Visibility should not depend on each agent remembering a flag                            |
-| `help [topic]`, `<command> --help`, top-level `--help`                | Keep without runtime state; reject extra help arguments            | Installed syntax belongs in help, workflows in skills                                    |
-| `version`, top-level `--version`                                      | Keep compact name/version/commit JSON                              | Operators need the actual installed revision                                             |
-| Bare executable                                                       | Keep usage display, no mutation                                    | No implicit startup operation                                                            |
-| Duplicate/unknown flags and extra positionals                         | Reject before mail publication/execution                           | No last-value-wins decisions or hidden compatibility branches                            |
-| HOME and XDG_CONFIG_HOME                                              | Keep absolute, canonical ownership/config sources                  | Agents/operators use normal XDG layout; relative values fail                             |
-| XDG_STATE_HOME                                                        | Keep absolute private state selection                              | Tests and operators isolate mail; no new root flag                                       |
-| TMUX, TMUX_PANE and tmux native evidence                              | Keep verified identity inputs                                      | Mutable names, cwd alone and PID liveness alone are insufficient                         |
-| tmux default-shell, cwd and exported caller environment               | Keep explicit execution environment                                | Fresh shell configuration and first-prompt hooks run after authorization                 |
-| Legacy TOML, POSTMAN_HOME, context/root/daemon overrides              | Remove/ignore as authority                                         | They must not gate or redirect current mail                                              |
-| Daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                             | No resident process, retry service or second state engine                                |
-| Unused related capture-registration ledger                            | Remove dormant code                                                | Deferred state-machine work must not masquerade as current authority                     |
-| Pure compaction-marker helper                                         | Keep isolated, without automatic observation or action             | Preserve reusable parsing without coupling mail/notification to a model                  |
-| `nix run .#notification-smoke` and Python smoke options               | Keep development-only                                              | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing |
-| Nix update-toolchain, skill-check/publish and release helpers         | Keep explicit development/release tools                            | They do not add Postman operational commands; publishing remains user/release-owned      |
+| Surface                                                               | Decision and purpose                                           | Callers and rationale                                                                    |
+| --------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `get-status`                                                          | Saved server snapshot; explicit refresh-status owns collection | Agents/operators need one saved-file view; no global workspace scan                      |
+| `pop [id]`                                                            | Simplify to argument-free `pop`                                | Receivers claim their actual next mail; notification IDs remain hints                    |
+| `send-heredoc --to node`                                              | Keep; new requests require replies                             | Senders need explicit configured routes and literal stdin                                |
+| `--to session:interface`                                              | Keep direct parent/child routes                                | Interface nodes need exact per-hop identity without foreign capture access               |
+| `--reply-to`, `--fills-input-request-id`                              | Remove from public input; derive from `--to <POP'd-id>`        | Agents should not transcribe correlation metadata                                        |
+| Comma-separated `--to` IDs                                            | Add bounded combined replies, maximum 16                       | One answer can resolve several claimed requests with one sender/route                    |
+| `--reply-required`, `--no-reply`                                      | Remove; request/reply semantics determine policy               | Avoid contradictory reply flags and endless reply obligations                            |
+| `execute-bash --command`                                              | Replace with `execute-heredoc --reason` and stdin              | Exact multiline source, cwd and initialized shell form one reviewable request            |
+| `approve-execution`, `decline-execution`                              | Add fixed actions with `--to` and `--reason`                   | Approvers choose one action without JSON/code copies or boolean ambiguity                |
+| Decision/helper stdin                                                 | Reject nonempty stdin                                          | Reasons and target are explicit flags; source is never copied by the approver            |
+| `--config`                                                            | Keep one absolute override, before or after the command        | Operators/fixtures need explicit topology; defaults are cwd-independent                  |
+| `--postman-md`                                                        | Remove product alias                                           | One spelling for one input; the smoke driver's fixture-copy flag is separate             |
+| `--capture-related-panes`                                             | Remove; valid send/POP always trigger bounded session capture  | Visibility should not depend on each agent remembering a flag                            |
+| `help [topic]`, `<command> --help`, top-level `--help`                | Keep without runtime state; reject extra help arguments        | Installed syntax belongs in help, workflows in skills                                    |
+| `version`, top-level `--version`                                      | Keep compact name/version/commit JSON                          | Operators need the actual installed revision                                             |
+| Bare executable                                                       | Keep usage display, no mutation                                | No implicit startup operation                                                            |
+| Duplicate/unknown flags and extra positionals                         | Reject before mail publication/execution                       | No last-value-wins decisions or hidden compatibility branches                            |
+| HOME and XDG_CONFIG_HOME                                              | Keep absolute, canonical ownership/config sources              | Agents/operators use normal XDG layout; relative values fail                             |
+| XDG_STATE_HOME                                                        | Keep absolute private state selection                          | Tests and operators isolate mail; no new root flag                                       |
+| TMUX, TMUX_PANE and tmux native evidence                              | Keep verified identity inputs                                  | Mutable names, cwd alone and PID liveness alone are insufficient                         |
+| tmux default-shell, cwd and exported caller environment               | Keep explicit execution environment                            | Fresh shell configuration and first-prompt hooks run after authorization                 |
+| Legacy TOML, POSTMAN_HOME, context/root/daemon overrides              | Remove/ignore as authority                                     | They must not gate or redirect current mail                                              |
+| Daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                         | No resident process, retry service or second state engine                                |
+| Unused related capture-registration ledger                            | Remove dormant code                                            | Deferred state-machine work must not masquerade as current authority                     |
+| Pure compaction-marker helper                                         | Keep isolated, without automatic observation or action         | Preserve reusable parsing without coupling mail/notification to a model                  |
+| `nix run .#notification-smoke` and Python smoke options               | Keep development-only                                          | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing |
+| Nix update-toolchain, skill-check/publish and release helpers         | Keep explicit development/release tools                        | They do not add Postman operational commands; publishing remains user/release-owned      |
 
 ### 10.2. Outputs
 
@@ -450,7 +447,7 @@ its archive. A notification never exposes the body.
 | Output                                                              | Decision and reason                                                                                     |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `workspace`, `as_of`, operation `success`, common `self`            | Keep compact context and operation result on every mail outcome                                         |
-| `nodes`, interface `parent`/`children`                              | Keep explicit scope; unavailable related interfaces remain unknown                                      |
+| `nodes`, interface `parent`/`children`                              | Removed projection; saved pane status/scope and declared relations replace it                           |
 | `markdown_absolute_path`                                            | Keep only POP's final archive path; empty is null                                                       |
 | Metadata/body/receipt echo, old status labels, next-action/activity | Remove redundant or inferred fields; archives and file facts are authoritative                          |
 | `notification`                                                      | Show only unavailable/unknown; never reverse delivery success                                           |
@@ -487,7 +484,7 @@ boundaries, privacy, limits and measured cost.
 | `runtime/notices/*.json`                                                       | Per-message input attempt/receipt prevents replay; accepted/unknown are separate from POP                                                                                     |
 | `runtime/notice-locks/*`, `runtime/input-guards/*`                             | Per-recipient serialization and pending input evidence survives process death; current state can be updated, no queued delivery service                                       |
 | `runtime/observations/s-*.json`                                                | Immutable native text and coverage, private; no role/model identity invention                                                                                                 |
-| `runtime/observations/index.json`, capture lock                                | Bounded current pointers and generation fencing; history is never rescanned or pruned for status                                                                              |
+| `runtime/observations/index.json`, capture lock                                | Historical files retained; no current writer; server %status snapshot/history replaces them                                                                                   |
 | `agents/*/executions/<operation>.json`                                         | Minimal invocation, pinned parties, decision and outcome; never a reusable grant or automatic retry                                                                           |
 | `agents/<verified-node>/logs/YYYY-MM-DD/inv-<random-id>.jsonl`                 | Versioned timing/outcome/correlation diagnostics; invocation UTC start-date partition, 0700/0600, no expiry, no content/stream copies; recording failures never grant retries |
 | execution `decisions/` and `waiters/`                                          | Immutable reserved choice and exact waiter metadata; waiter authority additionally requires its live OS lock                                                                  |
@@ -509,14 +506,12 @@ delivery or execution. Decision reasons are 1–4096 bytes. There is no automati
 expiry, count pruning, rotation or external cleanup owner. The user deletes
 saved logs, snapshots and mail explicitly.
 
-Session capture selects once, up to 64 panes; stores at most 30 recent lines and
-8 KiB of valid UTF-8 per pane; bounds each native frame probe to 200 ms and
-screen output to 60 KiB; and limits capture to one second plus 500 ms
-persistence. Coverage records distinguish enumeration failure,
-skipped/dead/linked panes and partial results. Sequence/generation fencing
-prevents stale completion from replacing a newer index. A first or replaced
-native pane has no inferred change time. Snapshots are sequential observations,
-not one simultaneous screen image.
+Server refresh has a two-second total budget, one-second/64-pane capture sweep,
+200ms/60-KiB native frame bound and 30-second per-pane cadence. Raw captures
+retain up to 30 lines/8 KiB; partial sweeps preserve individual times and keep
+uncaptured panes due. Atomic publication and one nonblocking stable-inode lock
+replace generation/index writers; see the
+[server contract](design/server-status.md).
 
 Shell initialization has a 15-second acknowledgement bound. Normal user startup
 and environment-loader trust rules apply; Postman never approves `.envrc` for
@@ -531,38 +526,17 @@ The values below are illustrative; paths, IDs and timestamps depend on the
 invocation. Each block is a complete JSON object. Node/self fields have the
 same meaning in every command; no field is a working/idle classification.
 
-### 11.1. Saved status from an ordinary caller
+### 11.1. Saved whole-server status
+
+Illustrative unavailable pane (abbreviated layout text; all schema fields
+shown):
 
 ```json
-{
-  "workspace": "~/work",
-  "as_of": "2026-11-01T10:00:00Z",
-  "nodes": [
-    {
-      "node": "worker",
-      "unread_count": 0,
-      "inbound_count": 0,
-      "outbound_count": 0,
-      "draft_count": 0,
-      "failed_count": 0,
-      "last_pop_at": null,
-      "last_capture_at": null,
-      "last_screen_change_at": null
-    },
-    {
-      "node": "peer",
-      "unread_count": 0,
-      "inbound_count": 0,
-      "outbound_count": 0,
-      "draft_count": 0,
-      "failed_count": 0,
-      "last_pop_at": null,
-      "last_capture_at": null,
-      "last_screen_change_at": null
-    }
-  ]
-}
+{"version":1,"server":{"socket":"/tmp/example/s","canonical_socket":"/tmp/example/s","pid":1234,"incarnation":"1234:1793520000:1:2:1793520000000000000"},"started_at":"2026-11-01T10:00:00Z","as_of":"2026-11-01T10:00:00Z","coverage":{"enumerated":1,"captured":0,"reused":0,"unavailable":1,"complete":false,"reason":"capture unavailable"},"sessions":[{"id":"$9","name":"project","windows":[{"id":"@3","index":1,"name":"terminal","layout":"native-layout","panes":[{"id":"%4","pid":"1235","title":"terminal","workspace":"~/work","top":0,"left":0,"dead":false,"linked":false,"capture":null,"status":null,"scope":null,"reason":"capture unavailable"}]}]}]}
 ```
+
+Ordinary unregistered panes have null status/scope; registered panes use the
+node fields in §2 and configuration attribution defined in the server contract.
 
 ### 11.2. Successful POP of a request
 

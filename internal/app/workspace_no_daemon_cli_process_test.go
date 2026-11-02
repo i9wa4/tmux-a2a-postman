@@ -183,7 +183,7 @@ func (f *rebuiltCLIFixture) exerciseFourCommands(t *testing.T, phase string) {
 	}
 	status := f.run(f.worker, "", "get-status", "--config", f.config)
 	known := f.jsonResult(t, status)
-	worker := findProtocolNode(t, known.Nodes, "worker")
+	worker := findStatusPane(t, known.Sessions, f.worker).StatusValue()
 	if status.exit != 0 || worker.UnreadCount == nil || *worker.UnreadCount != 1 {
 		t.Fatal(status, known)
 	}

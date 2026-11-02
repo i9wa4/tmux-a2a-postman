@@ -2,44 +2,34 @@
 
 ## 1. Resolve the actual caller
 
-Use installed `help get-status` when syntax is uncertain. A successful
-`get-status` reads existing state and verifies its native caller; require its
-canonical `workspace` and usable node rows. An unavailable workspace, missing
-binding or identity failure is an unknown, not an invitation to initialize
-state, POP, choose another role or scan every mailbox.
+Use installed `help get-status` and `help refresh-status` for the server
+contract. The getter returns the exact saved server snapshot without a live tmux
+query, registration or new as_of. Missing/malformed/incompatible cache is
+unavailable; stale evidence is dated, never proof of the current incarnation.
+Request an explicit authorized `refresh-status` if needed, without starting a
+poll loop.
 
-`get-status` returns all local nodes, **not a self node field**. If a previous
-genuine operation's `self.node` is available, it is only a candidate until
-verified against this invocation's saved/native binding. Otherwise resolve
-directly from that binding:
+Resolve your actual explicit TMUX socket/PID and native TMUX_PANE. Within the
+saved server, require exactly one matching `sessions[].windows[].panes[]` row,
+with its native session, pane PID and canonical HOME-relative workspace. Require
+non-null attributed `status`/`scope`; `status.node` is the candidate logical
+role. Do not choose a similarly named role in another workspace or infer
+identity from CLI cwd, a mutable title or a previous operation's self alone.
 
-```sh
-tmux-a2a-postman get-status
-tmux -u -S "${TMUX%%,*}" display-message -p -t "$TMUX_PANE" \
-  'socket=#{socket_path}; pid=#{pid}; start=#{start_time}; session=#{session_id}; pane=#{pane_id}; pane_pid=#{pane_pid}; root=#{pane_current_path}'
-```
+For current identity before opening private archives, verify the native pane
+using the explicit socket and pane, and compare its server PID/start time,
+session ID, pane ID/PID and pane_current_path with the saved server incarnation,
+workspace and existing private runtime/binding.json. The incarnation includes
+server PID, start time and owned socket device/inode/mtime. Require one exact
+binding and matching workspace.json, then recheck native facts; replacement,
+ambiguity or unavailable proof stops recall. This is an explicit Skill identity
+check, not a hidden query performed by get-status. Socket paths can contain
+commas: parse TMUX at its last two commas rather than ${TMUX%%,*}. Never use a
+default server or select by a role name alone.
 
-Use the explicit absolute socket from `TMUX` and native pane from `TMUX_PANE`;
-do not use tmux's default server or look up a pane by its mutable title. The
-fields above are native identity evidence, not the logical role. Check these
-against the existing private `runtime/binding.json`:
-
-- Exactly one `bindings[]` entry must have this `owner.pane`, `pane_pid` and
-  `owner.session`. Its `role` is the logical node. Require that node exactly
-  once in the status rows; do not infer it from a role name in a directory.
-- `owner.server` is the canonical socket path. `owner.incarnation` is
-  `server-pid:start-time:socket-device:socket-inode:socket-mtime-nanoseconds`.
-  Compare the native PID/start time and the current owned socket's stat facts;
-  a matching pane number or PID alone is insufficient. The runtime record's
-  owner and all binding owners must identify the same server incarnation and
-  native session. Do not match the runtime owner's pane to every agent.
-- Verify the canonical native agent-pane directory below canonical HOME against
-  the status `workspace` and `workspace.json`. The CLI subprocess cwd and the
-  session's old creation directory do not select it. A change to the agent
-  pane's own directory selects another workspace; do not merge old history or
-  infer identity from a directory alone.
-  Recheck native facts/status after locating the record; any replacement,
-  ambiguous binding or unavailable proof stops the workflow.
+Operator visibility grants no mailbox or management authority. Recall selects
+only the already authorized caller's own read/sent; no peer inbox access,
+POP side effect or broad all-workspace scan follows from server-wide status.
 
 The checks above describe the current native/file contract. They do not add a
 new product identity/history command. Never claim an unverified installed

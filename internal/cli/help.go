@@ -19,6 +19,7 @@ var helpTopicFiles = map[string]string{
 	"execute-heredoc": "helptext/execute-heredoc.txt", "version": "helptext/version.txt",
 	"approve-execution": "helptext/approve-execution.txt", "decline-execution": "helptext/decline-execution.txt",
 	"get-status-oneline": "helptext/get-status-oneline.txt",
+	"refresh-status":     "helptext/refresh-status.txt",
 }
 
 func RunHelp(args []string) {

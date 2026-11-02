@@ -65,7 +65,7 @@ func TestStatusOnelineColdPaneCandidatesDoNotInitializeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	line, diagnostic, err := operatorLine(t, f)
-	if err != nil || line != "[0]??\n" || diagnostic == "" {
+	if err == nil || line != "?\n" || diagnostic == "" {
 		t.Fatal(line, diagnostic, err)
 	}
 	if _, err := os.Stat(f.stateHome); !os.IsNotExist(err) {
@@ -108,6 +108,7 @@ func TestStatusOnelineReadsAllSessionsAndWindowsWithoutMutatingMail(t *testing.T
 	if err := os.WriteFile(filepath.Join(f.box("worker", "inbox"), "invalid-entry"), []byte("private malformed fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
 	if err != nil || line != "[0]?🖤:⚫ [1]⚫\n" || !strings.Contains(diagnostic, "unexpected mailbox entry") {
 		t.Fatal("partial read corrupted another node/session", line, diagnostic, err)
@@ -116,16 +117,21 @@ func TestStatusOnelineReadsAllSessionsAndWindowsWithoutMutatingMail(t *testing.T
 
 func TestStatusOnelineRenamedOrReplacedPaneCannotKeepHealthyCounts(t *testing.T) {
 	f := newPublicApprovalFixture(t)
+	if output, err := f.run(f.peer, "", "pop", "--config", f.config); err != nil || !output.Success {
+		t.Fatal(output, err)
+	}
 	if output, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !output.Success {
 		t.Fatal(output, err)
 	}
 	f.tmux("select-pane", "-t", f.worker, "-T", "editor")
+	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
 	if err != nil || line != "[0]?⚫\n" || !strings.Contains(diagnostic, "renamed") {
 		t.Fatal(line, diagnostic, err)
 	}
 	f.tmux("select-pane", "-t", f.worker, "-T", "worker")
 	f.tmux("respawn-pane", "-k", "-t", f.worker, "exec sleep 120")
+	refreshPublicStatus(t, f)
 	line, diagnostic, err = operatorLine(t, f)
 	if err != nil || line != "[0]?⚫\n" {
 		t.Fatal("pane replacement reused an old role identity", line, diagnostic, err)
@@ -166,23 +172,21 @@ func TestStatusOnelineActualTmuxStatusJobAndEmojiPresentation(t *testing.T) {
 	}
 }
 
-func TestStatusOnelineEmptyAndFatalResultsKeepOneLine(t *testing.T) {
+func TestStatusOnelineUnconfiguredSessionsStayVisibleAndConfigIsNotRead(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	for _, pane := range []string{f.worker, f.peer} {
 		f.tmux("select-pane", "-t", pane, "-T", "unrelated")
 	}
+	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
-	if err != nil || line != "\n" || diagnostic != "" {
+	if err != nil || line != "[0]\n" || diagnostic != "" {
 		t.Fatal(line, diagnostic, err)
 	}
 	if err := os.Remove(f.config); err != nil {
 		t.Fatal(err)
 	}
 	line, diagnostic, err = operatorLine(t, f)
-	if err == nil || line != "\n" || diagnostic == "" {
-		t.Fatal("fatal operator failure lost its line/exit boundary", line, diagnostic, err)
-	}
-	if _, err := os.Stat(f.stateHome); !os.IsNotExist(err) {
-		t.Fatal("operator error initialized state", err)
+	if err != nil || line != "[0]\n" || diagnostic != "" {
+		t.Fatal(line, diagnostic, err)
 	}
 }

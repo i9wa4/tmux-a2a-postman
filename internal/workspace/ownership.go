@@ -187,6 +187,7 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 		return err
 	}
 	defer func(closeFn func() error) { _ = closeFn() }(ws.Close)
+	noteStatusConfigError(ctx, saveStatusConfig(ws, fresh))
 	return fn(ws, fresh)
 }
 

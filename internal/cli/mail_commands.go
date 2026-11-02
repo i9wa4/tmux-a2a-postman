@@ -36,26 +36,10 @@ func finishMail(c *workspaceCommand, out *mailOutput, operationErr error) (retEr
 	out.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 	if c != nil {
 		if out.CaptureEligible {
-			captureSpan := trace.Start("session_capture")
-			snapshot := c.mail.CaptureSession(diagnostic.With(context.Background(), trace), c.runtime, c.caller.Caller)
-			captureResult := "partial"
-			if snapshot.Complete {
-				captureResult = "complete"
-			}
-			out.facts.Capture = captureResult
-			trace.Note(diagnostic.Facts{Capture: captureResult, ObservationID: snapshot.ID})
-			trace.Add("panes_discovered", int64(snapshot.Discovered), 0)
-			trace.Add("panes_captured", int64(snapshot.Captured), 0)
-			trace.Add("panes_skipped", int64(snapshot.Skipped), 0)
-			failed := 0
-			for _, pane := range snapshot.Panes {
-				if pane.Reason != "" {
-					failed++
-				}
-			}
-			trace.Add("panes_failed", int64(failed), 0)
-			captureSpan.End(captureResult)
+			result := c.refreshStatusAfterOperation()
+			out.facts.Capture = result.Status
 		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		summarySpan := trace.Start("self_summary")
@@ -290,107 +274,4 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		out.RecoveryMessageID = msg.ID
 	}
 	return retErr
-}
-
-// Normal nodes omit parent/children entirely. An interface reports exactly its
-// own configured parent and children, retaining unavailable peers as unknown.
-func RunWorkspaceGetStatus(args []string) error {
-	f := newWorkspaceFlags("get-status")
-	path, err := f.parse(args)
-	if err == nil && f.fs.NArg() != 0 {
-		err = errors.New("get-status takes no positional arguments")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	var c workspaceCommand
-	if err == nil {
-		c, err = openWorkspaceCommand(ctx, path)
-	}
-	result := map[string]any{"workspace": "", "as_of": time.Now().UTC().Format(time.RFC3339Nano), "nodes": []workspace.NodeStatus{}}
-	if err == nil {
-		root, at, nodes, readErr := c.mail.Summaries(ctx, c.boundRuntime(), c.topology.Nodes)
-		if root == "" {
-			root = c.caller.Root
-		}
-		result["workspace"], result["as_of"], result["nodes"] = root, at, nodes
-		err = readErr
-		if c.topology.InterfaceNode == c.caller.Caller.Role {
-			result["parent"], result["children"] = nil, []any{}
-			if len(c.topology.Sessions) > 0 {
-				caller, nameErr := c.namedCaller(ctx)
-				if nameErr != nil {
-					result["reason"] = nameErr.Error()
-				} else {
-					parent := ""
-					for _, session := range c.topology.Sessions {
-						if session.Name == caller.Name() {
-							parent = session.Parent
-						}
-					}
-					children := []any{}
-					for _, session := range c.topology.Sessions {
-						if session.Name != parent && session.Parent != caller.Name() {
-							continue
-						}
-						row := map[string]any{"workspace": nil, "session": session.Name}
-						status := workspace.NodeStatus{Node: session.InterfaceNode}
-						_, _, routeErr := c.topology.InterfaceRoute(caller.Name(), c.caller.Caller.Role, session.Name+":"+session.InterfaceNode)
-						if routeErr == nil {
-							peer, peerErr := c.runtime.FindNamedPeer(ctx, session.Name, session.InterfaceNode)
-							if peerErr == nil {
-								root, _, node := c.mail.Summary(ctx, peer, session.InterfaceNode)
-								status = node
-								if root != "" {
-									row["workspace"] = root
-								}
-							} else {
-								status.Reason = peerErr.Error()
-							}
-						} else {
-							status.Reason = routeErr.Error()
-						}
-						raw, _ := json.Marshal(status)
-						var fields map[string]any
-						_ = json.Unmarshal(raw, &fields)
-						for key, value := range fields {
-							row[key] = value
-						}
-						if session.Name == parent {
-							result["parent"] = row
-						} else {
-							children = append(children, row)
-						}
-					}
-					result["children"] = children
-				}
-			}
-		}
-	}
-	if c.runtime.Socket != "" {
-		final, verifyErr := c.boundRuntime().Snapshot(ctx)
-		if verifyErr != nil || final.Root != c.caller.Root || final.Caller != c.caller.Caller {
-			if verifyErr == nil {
-				verifyErr = workspace.ErrUnknown
-			}
-			err = verifyErr
-			unknown := make([]workspace.NodeStatus, 0, len(c.topology.Nodes))
-			for _, node := range c.topology.Nodes {
-				unknown = append(unknown, workspace.NodeStatus{Node: node, Reason: verifyErr.Error()})
-			}
-			result["nodes"] = unknown
-			delete(result, "parent")
-			delete(result, "children")
-		}
-	}
-	if err != nil {
-		result["reason"] = err.Error()
-	}
-	result["as_of"] = time.Now().UTC().Format(time.RFC3339Nano)
-	if writeErr := json.NewEncoder(os.Stdout).Encode(result); writeErr != nil {
-		return writeErr
-	}
-	if err != nil {
-		return reportedError{err}
-	}
-	return nil
 }

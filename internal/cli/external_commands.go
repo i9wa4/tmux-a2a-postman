@@ -60,6 +60,7 @@ func RunWorkspaceChannelSync(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	defer c.refreshStatusAfterOperation()
 	rt, b, err := c.externalBinding(ctx)
 	if err != nil {
 		return err
@@ -109,6 +110,7 @@ func RunWorkspaceChannelReport(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
+	defer c.refreshStatusAfterOperation()
 	rt, b, err := c.externalBinding(ctx)
 	if err != nil {
 		return err

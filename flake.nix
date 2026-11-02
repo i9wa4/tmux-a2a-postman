@@ -269,6 +269,28 @@
               fi
               touch "$out"
             '';
+            status-benchmark =
+              pkgs.runCommand "status-benchmark"
+                {
+                  nativeBuildInputs = [
+                    pkgs.python3
+                    pkgs.tmux
+                  ];
+                }
+                ''
+                  export HOME="$TMPDIR/home"
+                  mkdir -p "$HOME" "$out"
+                  python3 ${./scripts/validation/benchmark-invocations.py} \
+                    --candidate ${config.packages.default}/bin/tmux-a2a-postman \
+                    --samples 3 --history 10 --concurrency 4 > "$out/results.json"
+                  python3 - "$out/results.json" <<'PYTHON'
+                  import json, sys
+                  result = json.load(open(sys.argv[1]))["candidate"]
+                  assert result["supports_refresh"] and result["incomplete_logs"] == 0
+                  assert result["raw_capture_files"] > 0
+                  print(json.dumps(result, indent=2))
+                  PYTHON
+                '';
             invocation-analysis =
               pkgs.runCommand "invocation-analysis" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''

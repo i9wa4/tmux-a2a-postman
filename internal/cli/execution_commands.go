@@ -60,6 +60,8 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		out.Success = retErr == nil
 		out.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 		if c != nil {
+			result := c.refreshStatusAfterOperation()
+			facts.Capture = result.Status
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			summarySpan := trace.Start("self_summary")

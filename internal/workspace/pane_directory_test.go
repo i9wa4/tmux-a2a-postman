@@ -93,13 +93,17 @@ func TestForeignNativeRoleDirectoryCannotBecomeAbsentApprover(t *testing.T) {
 	if err == nil || ran || result.Executed == nil || *result.Executed {
 		t.Fatal("mixed directory downgraded approval", result, err, ran)
 	}
-	rows, err := m.OperatorStatus(context.Background(), rt)
-	if err != nil || len(rows) != 2 {
-		t.Fatal(rows, err)
+	frame, err := rt.enumerateStatus(context.Background(), ServerContext{Socket: f.socket})
+	if err != nil || frame.Coverage.Enumerated != 2 {
+		t.Fatal(frame, err)
 	}
-	for _, row := range rows {
-		if row.Status.UnreadCount != nil || row.Status.Reason == "" {
-			t.Fatal("mixed role directory looked healthy", row)
+	for _, session := range frame.Sessions {
+		for _, window := range session.Windows {
+			for _, pane := range window.Panes {
+				if pane.Status != nil {
+					t.Fatal("raw enumeration invented mail facts", pane)
+				}
+			}
 		}
 	}
 	if _, err := os.Stat(m.Store.StateRoot); !errors.Is(err, os.ErrNotExist) {

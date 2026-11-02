@@ -3,10 +3,14 @@ get-status-oneline — compact human overview of one tmux server
   tmux-a2a-postman get-status-oneline [--config <absolute-path>]
 
 No positional arguments or command-specific options. TMUX selects the native
-server; TMUX_PANE is not needed. Ordinary get-status remains workspace-scoped.
+server; TMUX_PANE is not needed. Both getters read the same saved snapshot.
 For a tmux #() job, pass its actual socket explicitly, for example:
 
-  #(env -u TMUX_PANE TMUX='#{socket_path},#{pid},0' tmux-a2a-postman get-status-oneline)
+  TMUX=/absolute/socket,PID,0 tmux-a2a-postman refresh-status
+  TMUX=/absolute/socket,PID,0 tmux-a2a-postman get-status-oneline
+
+External tmux status integration should refresh then render even when refresh
+is busy or fails; quote actual native socket/PID and preserve stderr diagnostics.
 
 Output is one line: [0]🟩💛:🟢 [1]⬛🟥
 [N] is native session $N, sorted numerically. ':' separates included windows
@@ -30,13 +34,15 @@ replaced native pane makes activity unknown. Red means old observed screen
 movement, not failure or a stopped agent. Equal samples do not prove continuous
 inactivity. Screen movement can be a spinner or pasted input.
 
-Only declared role candidates and live saved-role bindings are included.
-Unbound, dead, linked, renamed or duplicate role panes display unknown; their
-titles do not establish an agent identity. Unrelated panes/empty windows and
-absent panes are excluded. No candidate panes gives an empty line. Partial
-reads retain safe rows with diagnostics on stderr; fatal config/native errors
-return nonzero and an empty line. There is no fresh capture, POP, binding update,
-state initialization, send, pruning or resident process.
+Rows with saved agent status produce glyphs. Unbound, dead, linked, renamed or
+ambiguous role panes have unknown counts. Ordinary panes add no glyph; every
+saved native session still displays its [N], including sessions without agents.
+Missing/malformed/incompatible cache emits '?' and exits nonzero, with stderr.
+Partial coverage and per-node uncertainty have stderr diagnostics. Valid stale
+snapshots remain dated; current time only ages glyph color, never changes as_of.
+--config is accepted but never read. No tmux, discovery, mail scan, state writes,
+locks, invocation logs or hidden refresh occurs. Reading cannot verify a current
+server incarnation. See help get-status and help refresh-status.
 
 Emoji are emitted intact, including the red heart's variation selector.
 Display width depends on tmux/terminal/font; no byte/column truncation is done.

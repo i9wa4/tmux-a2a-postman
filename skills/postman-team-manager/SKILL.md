@@ -19,7 +19,9 @@ reply. Scheduling belongs to the host; this skill starts no timer or daemon.
    directly managed nodes from the supplied context. Communication topology
    does not assign management authority. Report missing context; do not
    invent an objective or assume fixed role names.
-2. Run `tmux-a2a-postman get-status`. Select only those direct reports.
+2. Run `tmux-a2a-postman get-status`. Resolve your assigned server/session/
+   native pane/workspace in the saved server snapshot, then select only those
+   direct reports in that scope. Role names can repeat across sessions.
    Read the actual counts and saved timestamps using the
    [evidence and recovery procedure](references/management.md). This command
    neither captures panes nor refreshes observations. Null or stale evidence

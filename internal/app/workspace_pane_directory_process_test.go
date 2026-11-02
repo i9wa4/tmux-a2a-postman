@@ -15,7 +15,7 @@ func TestWorkspaceUsesAgentPaneDirectoryWhenNativeSessionStartedAtHome(t *testin
 		t.Fatal("fixture did not retain original HOME session directory", got)
 	}
 	status, err := f.run(f.worker, "", "get-status", "--config", f.config)
-	if err == nil || status.Workspace != "~/work" {
+	if err == nil || status.Reason == "" {
 		t.Fatal("unregistered status chose old session root", status, err)
 	}
 	if _, err := os.Stat(f.stateRoot()); !os.IsNotExist(err) {
@@ -45,7 +45,7 @@ func TestWorkspaceUsesAgentPaneDirectoryWhenNativeSessionStartedAtHome(t *testin
 		t.Fatal(err)
 	}
 	var moved protocolOutput
-	if err := json.Unmarshal(raw, &moved); err != nil || moved.Workspace != "~/work" {
+	if err := json.Unmarshal(raw, &moved); err != nil || findStatusPane(t, moved.Sessions, f.worker).Workspace != "~/work" {
 		t.Fatal("tool cwd redirected mailbox", string(raw), err)
 	}
 	before, err := snapshotRegularFiles(f.stateRoot())

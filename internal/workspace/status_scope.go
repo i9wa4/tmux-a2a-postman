@@ -1,0 +1,239 @@
+package workspace
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+)
+
+type statusConfigRecord struct {
+	Version     int     `json:"version"`
+	Binding     Binding `json:"binding"`
+	Path        string  `json:"path"`
+	Fingerprint string  `json:"fingerprint"`
+}
+
+func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
+	raw, _ := json.Marshal(topology)
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// This is registration provenance, written only inside verified normal operation
+// admission. refresh-status neither invents registrations nor trusts its own
+// caller's --config to define server membership.
+func saveStatusConfig(ws *os.Root, snapshot Snapshot) error {
+	if snapshot.ConfigPath == "" {
+		return nil
+	}
+	if !filepath.IsAbs(snapshot.ConfigPath) || snapshot.ConfigFingerprint == "" {
+		return ErrUnknown
+	}
+	dir, err := privateDir(ws, "runtime", false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	name := "status-config-p" + snapshot.Caller.Owner.Pane[1:] + ".json"
+	record := statusConfigRecord{1, snapshot.Caller, snapshot.ConfigPath, snapshot.ConfigFingerprint}
+	var previous statusConfigRecord
+	if readJSON(dir, name, &previous) == nil && previous == record {
+		return nil
+	}
+	return replaceJSON(dir, name, record)
+}
+
+func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*StatusScope, []string, error) {
+	dir, err := privateDir(ws, "runtime", false)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = dir.Close() }()
+	var chosen *StatusScope
+	var nodes []string
+	for _, b := range bindings {
+		var record statusConfigRecord
+		err := readJSON(dir, "status-config-p"+b.Owner.Pane[1:]+".json", &record)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		if record.Binding.Owner != b.Owner || record.Binding.PanePID != b.PanePID {
+			continue
+		} // Former processes cannot supply provenance.
+		if record.Version != 1 || !filepath.IsAbs(record.Path) {
+			return nil, nil, ErrUnknown
+		}
+		topology, err := config.LoadWorkspaceTopology(ctx, record.Path)
+		if err != nil {
+			return nil, nil, err
+		}
+		fingerprint := StatusConfigFingerprint(topology)
+		if fingerprint != record.Fingerprint {
+			return nil, nil, errors.New("registered configuration changed; a normal operation must verify it again")
+		}
+		if chosen != nil && chosen.Fingerprint != fingerprint {
+			return nil, nil, errors.New("conflicting registered workspace configurations")
+		}
+		if chosen == nil {
+			chosen = &StatusScope{Config: record.Path, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode, Sessions: []StatusRoute{}}
+			nodes = topology.Nodes
+			for _, s := range topology.Sessions {
+				chosen.Sessions = append(chosen.Sessions, StatusRoute{s.Name, s.Parent, s.InterfaceNode})
+			}
+		}
+	}
+	if chosen == nil {
+		return nil, nil, errors.New("workspace configuration provenance unavailable; run a normal configured operation")
+	}
+	return chosen, nodes, nil
+}
+
+func (m Mail) aggregateStatus(ctx context.Context, snapshot *ServerStatus) {
+	type location struct{ session, window, pane int }
+	groups := map[string][]location{}
+	order := []string{}
+	for si, s := range snapshot.Sessions {
+		for wi, w := range s.Windows {
+			for pi, p := range w.Panes {
+				if p.Workspace == "" {
+					continue
+				}
+				key := s.ID + "\x00" + p.Workspace
+				if _, ok := groups[key]; !ok {
+					order = append(order, key)
+				}
+				groups[key] = append(groups[key], location{si, wi, pi})
+			}
+		}
+	}
+	for _, key := range order {
+		locations := groups[key]
+		first := locations[0]
+		root := snapshot.Sessions[first.session].Windows[first.window].Panes[first.pane].Workspace
+		err := m.Store.withReadWorkspace(ctx, root, func(ws *os.Root) error {
+			owner := Owner{Server: snapshot.Server.CanonicalSocket, Incarnation: snapshot.Server.Incarnation, Session: snapshot.Sessions[first.session].ID}
+			saved, err := readOperatorRuntime(ws, owner)
+			if err != nil {
+				return err
+			}
+			provenance := []Binding{}
+			for _, l := range locations {
+				p := snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
+				if !p.Dead && !p.Linked {
+					provenance = append(provenance, Binding{Role: p.Title, Owner: Owner{owner.Server, owner.Incarnation, owner.Session, p.ID}, PanePID: p.PID})
+				}
+			}
+			scope, nodes, scopeErr := readStatusScope(ctx, ws, provenance)
+			configured := map[string]bool{}
+			for _, n := range nodes {
+				configured[n] = true
+			}
+			titles := map[string]int{}
+			for _, l := range locations {
+				p := snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
+				titles[p.Title]++
+			}
+			for _, l := range locations {
+				pane := &snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
+				current := Binding{Owner: Owner{owner.Server, owner.Incarnation, owner.Session, pane.ID}, PanePID: pane.PID}
+				bound := false
+				for _, b := range saved.Bindings {
+					if b.Owner == current.Owner && b.PanePID == current.PanePID {
+						current.Role = b.Role
+						bound = true
+					}
+				}
+				if !bound {
+					if configured[pane.Title] {
+						pane.Status = &NodeStatus{Node: pane.Title, Reason: "native pane lacks a matching saved binding"}
+					}
+					continue
+				}
+				pane.Status = &NodeStatus{Node: current.Role}
+				if scopeErr != nil {
+					pane.Status.Reason = scopeErr.Error()
+					continue
+				}
+				if pane.Dead || pane.Linked || current.Role != pane.Title || !configured[current.Role] || titles[current.Role] != 1 {
+					pane.Status.Reason = "dead, linked, renamed, unconfigured or ambiguous native role pane"
+					continue
+				}
+				pane.Scope = scope
+				status := nodeSummary(ctx, ws, current.Role)
+				if pane.Capture != nil {
+					status.LastCaptureAt = &pane.Capture.At
+					status.LastScreenChangeAt = pane.Capture.ChangedAt
+				}
+				pane.Status = &status
+			}
+			return nil
+		})
+		if err != nil {
+			for _, l := range locations {
+				p := &snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
+				if p.Reason == "" {
+					p.Reason = "mail/config attribution unavailable: " + err.Error()
+				}
+			}
+		}
+	}
+}
+
+// readCachedPaneTimes retains operation-local self semantics: the operation's
+// verified binding must match the saved native process before using its clock.
+func (m Mail) readCachedPaneTimes(snapshot Snapshot, role string) (*string, *string) {
+	var b Binding
+	for _, candidate := range snapshot.Bindings {
+		if candidate.Role == role {
+			b = candidate
+		}
+	}
+	if !b.Owner.valid() {
+		return nil, nil
+	}
+	pid := 0
+	parts := strings.Split(b.Owner.Incarnation, ":")
+	if len(parts) > 0 {
+		pid, _ = strconv.Atoi(parts[0])
+	}
+	_, status, err := m.Store.ReadServerStatus(ServerContext{Socket: b.Owner.Server, PID: pid})
+	if err != nil || status.Server.Incarnation != b.Owner.Incarnation {
+		return nil, nil
+	}
+	for _, s := range status.Sessions {
+		if s.ID != b.Owner.Session {
+			continue
+		}
+		for _, w := range s.Windows {
+			for _, p := range w.Panes {
+				if p.ID == b.Owner.Pane && p.PID == b.PanePID && p.Title == role && p.Workspace == snapshot.Root && p.Capture != nil && !p.Dead && !p.Linked {
+					at, e := time.Parse(time.RFC3339Nano, p.Capture.At)
+					if e == nil && !at.After(time.Now().UTC()) {
+						return &p.Capture.At, p.Capture.ChangedAt
+					}
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// Keep configuration-save failure supplemental to authoritative mail mutations.
+func noteStatusConfigError(ctx context.Context, err error) {
+	if err != nil {
+		diagnostic.From(ctx).MarkFailed()
+	}
+}

@@ -1,17 +1,21 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
 func TestWorkspaceStatusProcessIsReadOnlyAndReportsSavedFacts(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	missing, err := f.run(f.worker, "", "get-status", "--config", f.config)
-	if err == nil || len(missing.Nodes) != 2 || missing.Nodes[0].UnreadCount != nil {
+	if err == nil || missing.Reason == "" || len(missing.Sessions) != 0 {
 		t.Fatal("missing state not unknown", missing, err)
 	}
 	if _, err := os.Stat(f.stateRoot()); !os.IsNotExist(err) {
@@ -28,7 +32,7 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsSavedFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(status, err)
 	}
-	worker := findProtocolNode(t, status.Nodes, "worker")
+	worker := findStatusPane(t, status.Sessions, f.worker).StatusValue()
 	if worker.UnreadCount == nil || *worker.UnreadCount != 1 || worker.InboundCount == nil || *worker.InboundCount != 1 || worker.LastPopAt != nil || worker.LastCaptureAt == nil {
 		t.Fatal(worker)
 	}
@@ -42,15 +46,16 @@ func TestWorkspaceStatusProcessIsReadOnlyAndReportsSavedFacts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(f.box("worker", "inbox"), sent.ID+".md"), []byte("damaged"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	refreshPublicStatus(t, f)
 	status, err = f.run(f.worker, "", "get-status", "--config", f.config)
 	if err != nil {
 		t.Fatal(status, err)
 	}
-	worker = findProtocolNode(t, status.Nodes, "worker")
+	worker = findStatusPane(t, status.Sessions, f.worker).StatusValue()
 	if worker.UnreadCount != nil || worker.InboundCount != nil || worker.Reason == "" {
 		t.Fatal("corrupt inbox looked empty", worker)
 	}
-	peer := findProtocolNode(t, status.Nodes, "peer")
+	peer := findStatusPane(t, status.Sessions, f.peer).StatusValue()
 	if peer.OutboundCount == nil || *peer.OutboundCount != 1 {
 		t.Fatal("damage contaminated another node", peer)
 	}
@@ -61,7 +66,11 @@ func TestWorkspaceCaptureFailureDoesNotUndoMail(t *testing.T) {
 	if got, err := f.run(f.peer, "capture failure must not lose mail", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !got.Success {
 		t.Fatal(got, err)
 	}
-	observations := filepath.Join(f.stateRoot(), "work", "runtime", "observations")
+	entries, err := os.ReadDir(filepath.Join(f.stateRoot(), "%status"))
+	if err != nil || len(entries) != 1 {
+		t.Fatal(entries, err)
+	}
+	observations := filepath.Join(f.stateRoot(), "%status", entries[0].Name(), "history")
 	if err := os.Rename(observations, observations+".saved"); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +83,7 @@ func TestWorkspaceCaptureFailureDoesNotUndoMail(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := f.run(f.worker, "", "pop", "--config", f.config)
-	if err != nil || !got.Success || got.MarkdownPath == nil || got.Self.LastCaptureAt != nil || got.Self.LastPopAt == nil {
+	if err != nil || !got.Success || got.MarkdownPath == nil || got.Self.LastPopAt == nil {
 		t.Fatal("supplemental capture reversed claim", got, err)
 	}
 	if readProtocolArchive(t, *got.MarkdownPath).Body != "capture failure must not lose mail" {
@@ -117,4 +126,41 @@ func snapshotRegularFiles(root string) (map[string]fileSnapshot, error) {
 		return nil
 	})
 	return result, err
+}
+
+type selectedStatusPane struct{ workspace.StatusPane }
+
+func (p selectedStatusPane) StatusValue() workspace.NodeStatus {
+	if p.Status == nil {
+		return workspace.NodeStatus{Reason: "saved node unavailable"}
+	}
+	return *p.Status
+}
+
+func findStatusPane(t *testing.T, sessions []workspace.StatusSession, pane string) selectedStatusPane {
+	t.Helper()
+	var matches []workspace.StatusPane
+	for _, s := range sessions {
+		for _, w := range s.Windows {
+			for _, p := range w.Panes {
+				if p.ID == pane {
+					matches = append(matches, p)
+				}
+			}
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("native pane %s matched %d saved rows", pane, len(matches))
+	}
+	return selectedStatusPane{matches[0]}
+}
+
+func refreshPublicStatus(t *testing.T, f *publicApprovalFixture) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := f.child(ctx, "", "refresh-status").CombinedOutput()
+	if err != nil {
+		t.Fatalf("explicit refresh: %v %s", err, out)
+	}
 }

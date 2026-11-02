@@ -20,21 +20,22 @@ type publicApprovalFixture struct {
 	socket, home, stateHome, config, worker, peer, self string
 }
 type protocolOutput struct {
-	Workspace           string                  `json:"workspace"`
-	AsOf                string                  `json:"as_of"`
-	Success             bool                    `json:"success"`
-	MarkdownPath        *string                 `json:"markdown_absolute_path"`
-	Instruction         string                  `json:"instruction"`
-	Self                workspace.NodeStatus    `json:"self"`
-	Nodes               []workspace.NodeStatus  `json:"nodes"`
-	Parent              json.RawMessage         `json:"parent"`
-	Children            []json.RawMessage       `json:"children"`
-	Notification        *workspace.NoticeResult `json:"notification"`
-	RecoveryMessageID   string                  `json:"recovery_message_id"`
-	RecoveryOperationID string                  `json:"recovery_operation_id"`
-	Reason              string                  `json:"reason"`
-	Executed            *bool                   `json:"executed"`
-	ExitCode            *int                    `json:"exit_code"`
+	Workspace           string                    `json:"workspace"`
+	AsOf                string                    `json:"as_of"`
+	Success             bool                      `json:"success"`
+	MarkdownPath        *string                   `json:"markdown_absolute_path"`
+	Instruction         string                    `json:"instruction"`
+	Self                workspace.NodeStatus      `json:"self"`
+	Sessions            []workspace.StatusSession `json:"sessions"`
+	Server              workspace.StatusServer    `json:"server"`
+	Parent              json.RawMessage           `json:"parent"`
+	Children            []json.RawMessage         `json:"children"`
+	Notification        *workspace.NoticeResult   `json:"notification"`
+	RecoveryMessageID   string                    `json:"recovery_message_id"`
+	RecoveryOperationID string                    `json:"recovery_operation_id"`
+	Reason              string                    `json:"reason"`
+	Executed            *bool                     `json:"executed"`
+	ExitCode            *int                      `json:"exit_code"`
 	Approval            *struct {
 		Approver string  `json:"approver"`
 		Decision *string `json:"decision"`
@@ -146,7 +147,7 @@ func (f *publicApprovalFixture) run(pane, body string, args ...string) (protocol
 	if json.Unmarshal(out.Bytes(), &result) != nil {
 		f.t.Fatalf("CLI invalid JSON %v: %q %q (%v)", args, out.String(), diagnostic.String(), err)
 	}
-	if result.AsOf == "" {
+	if result.AsOf == "" && result.Reason == "" && (len(args) == 0 || args[0] != "refresh-status") {
 		f.t.Fatalf("missing as_of: %s", out.Bytes())
 	}
 	return result, err

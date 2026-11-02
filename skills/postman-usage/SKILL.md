@@ -77,13 +77,20 @@ If configured as the top-level external interface, follow the
 [external channel procedure](references/external-channel.md) for external mail
 and reports. Ordinary mail still uses its existing exact reply guidance.
 
-`tmux-a2a-postman get-status` reads saved files. It does not claim mail,
-capture panes, refresh liveness, or escalate by itself. Use it for a concrete
-status request, workflow boundary, or delivery problem; wait passively
-otherwise. Pane evidence can be stale or unavailable and is not task state.
-Every valid send and POP refreshes bounded native snapshots in its own
-session. These are screen observations, not authenticated model history.
-Logs and snapshots remain until the user deletes them.
+`tmux-a2a-postman get-status` reads saved files. It does not claim mail, capture
+panes, refresh liveness, or escalate by itself. Use it for a concrete status
+request, workflow boundary, or delivery problem; wait passively otherwise. Pane
+evidence can be stale or unavailable and is not task state. Eligible sends and
+POP (including empty POP) attempt the shared finite whole-server refresh after
+mail locks are released; busy refresh skips. `refresh-status` explicitly
+collects; both status getters only read its saved server snapshot. Select the
+assigned server, session, native pane and workspace under
+`sessions[].windows[].panes[]`; its `status` is the node summary and `scope`
+records configuration/relations. Do not select by role name alone or treat
+operator visibility as management, route or mailbox-read authority. Missing
+cache requires an explicit authorized refresh; stale as_of stays stale. These
+are screen observations, not authenticated model history. Logs and snapshots
+remain until the user deletes them.
 
 Filling an input request closes transport, not task acceptance. After an exact
 reply, inspect the returned self-state to confirm the specific obligation was
