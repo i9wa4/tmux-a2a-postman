@@ -300,6 +300,19 @@ func TestServerRefreshNativeNumberGapsNamesAndTwoSockets(t *testing.T) {
 	}
 	// Reusing a socket after process exit cannot reuse its old capture baseline.
 	f.run(t, "kill-server")
+	// kill-server acknowledges the command before the daemon necessarily exits.
+	// Await the owned process boundary; tmux may retain its stale socket path.
+	// Do not delete the socket or retry a runtime operation.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if processLiveness(a.Server.PID) == Dead {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("owned server did not exit before restart")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	f.run(t, "-f", "/dev/null", "new-session", "-d", "-s", "replacement", "-c", f.repo, "exec sleep 120")
 	c := refreshFixture(t, m, f, at.Add(time.Second))
 	if c.Server.Incarnation == a.Server.Incarnation || c.Coverage.Captured != 1 || firstStatusPane(t, c).Capture.ChangedAt != nil {
