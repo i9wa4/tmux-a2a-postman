@@ -24,8 +24,8 @@ is required.
 
 On that notification, run POP without arguments, read the actual returned
 archive, and follow the existing role contract. Keep the native pane title bound
-to your configured role. See
-[notification setup](../../README.md#1-install-and-configure).
+to your configured role. For Codex, `tui.terminal_title = []` preserves it;
+other clients must likewise leave the configured title intact.
 
 For manual receipt or an explicit known-mail trigger, use:
 
