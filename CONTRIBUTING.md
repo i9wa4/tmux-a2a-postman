@@ -59,7 +59,7 @@ python3 scripts/validation/notification-smoke.py \
   --postman "$(command -v tmux-a2a-postman)" --agent fixture --terminal both
 ```
 
-The default matrix has twenty-eight cases: plain editor input and
+The default matrix has thirty cases: plain editor input and
 bracketed-paste input, each covering rally, busy recipient, concurrent
 independent messages, parent-to-child, child-to-parent, approval, rejection,
 blocked notification, an always-absorbed Enter, a first-Enter newline recovered
@@ -125,8 +125,18 @@ Unavailable or uncertain hints can coexist with successful batch processing;
 terminal line-diff observations never replace exact recipient evidence. The
 absorbed-Enter negative control checks three spaced attempts per message, one
 paste per ID, no claims and no persistent gate blocking the next sender. The
-newline-retry case checks actual submission on the second Enter and all four
+concurrent and approval-burst editors also absorb the first Enter and presses
+less than 500ms apart. The concurrent senders start 300ms apart, reproducing
+constant-rate interleaving; increasing retry cooldown must recover. Complete
+notification texts, claims and effects remain required. The newline-retry case
+checks actual submission on the second Enter and all four
 full-read/correlated-reply steps, in plain and bracketed editors.
+
+The default terminal actor makes a substantial redraw after a genuine submitted
+buffer; `minimal-redraw` retains the one-row echo of a minimal line editor.
+Both must complete receiver-owned full reads and exact replies. The latter may
+report an uncertain hint and receive bounded extra Enter. No fixture renders a
+submission or queues a helper merely because the screen changed.
 
 Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
 transport outcomes, pre-paste rejection, mailbox-lock independence,

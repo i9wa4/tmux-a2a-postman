@@ -18,7 +18,7 @@ from mail_fixture import sent_evidence
 from burst_progress import approval_progress
 
 EXTERNAL_CASES = ["external", "external-blocked", "external-decision"]
-CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "newline-retry", "approval-burst", *EXTERNAL_CASES]
+CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "newline-retry", "minimal-redraw", "approval-burst", *EXTERNAL_CASES]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--agent", choices=["fixture", "codex"], default="fixture")
 parser.add_argument("--terminal", choices=["both", "plain", "bracketed"], default="both")
@@ -41,7 +41,7 @@ postman = str(pathlib.Path(args.postman).resolve())
 codex = shutil.which(args.codex) if args.agent == "codex" else None
 if not shutil.which("tmux") or (args.agent == "codex" and not codex):
     parser.error("tmux is required; --agent codex additionally needs Codex")
-if codex and args.case in ["absorbed-enter", "newline-retry", "approval-burst"]:
+if codex and args.case in ["absorbed-enter", "newline-retry", "minimal-redraw", "approval-burst"]:
     parser.error("this case requires deterministic terminal editors; use --agent fixture")
 if args.baseline and args.case != "rally":
     parser.error("--baseline requires --case rally")
@@ -397,7 +397,10 @@ def run_case(case, terminal):
                 sends = [send(), send()]
             elif case == "concurrent":
                 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                    sends = list(pool.map(lambda _: send(), range(2)))
+                    # Half an Enter interval keeps constant-rate sender keys
+                    # interleaved at the strict fixture editor. Backoff must
+                    # recover without serializing independent destinations.
+                    sends = list(pool.map(lambda i: (time.sleep(i * 0.3), send())[1], range(2)))
             else:
                 sends = [send()]
             report["sends"] = sends
@@ -460,6 +463,15 @@ def run_case(case, terminal):
                 if len(visited) != 4:
                     raise RuntimeError("duplicate or missing notification claim")
                 report["claims"] = proofs
+                if case == "concurrent" and not codex:
+                    inputs = [json.loads(line)["text"] for line in (evidence / "worker.input.jsonl").read_text().splitlines()]
+                    for sent in sends:
+                        if sum(text.count(sent["mail_evidence"]["id"]) for text in inputs) != 1:
+                            raise RuntimeError("concurrent hint was incomplete, missing or pasted twice")
+                    absorbed = json.loads((evidence / "worker.absorbed.json").read_text())
+                    if absorbed["enter_count"] < 1:
+                        raise RuntimeError("concurrent case did not exercise newline absorption")
+                    report["concurrent_newline_recovery"] = "interleaved senders, complete hints pasted once, bounded spaced retries, exact claims/replies"
                 if case == "newline-retry":
                     absorbed = json.loads((evidence / "worker.absorbed.json").read_text())
                     keys = [json.loads(line) for line in (evidence / "worker.keys.jsonl").read_text().splitlines()]
@@ -542,7 +554,7 @@ def run_case(case, terminal):
 reports = []
 terminals = ["plain", "bracketed"] if args.terminal == "both" and not codex else ["bracketed" if codex else args.terminal]
 for terminal in terminals:
-    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "newline-retry", "approval-burst", *EXTERNAL_CASES]] if args.case == "all" else [args.case]:
+    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "newline-retry", "minimal-redraw", "approval-burst", *EXTERNAL_CASES]] if args.case == "all" else [args.case]:
         reports.append(run_case(selected, terminal))
         if reports[-1]["result"] != "pass":
             break

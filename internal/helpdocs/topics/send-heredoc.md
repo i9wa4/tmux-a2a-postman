@@ -27,11 +27,14 @@ The sender pastes one short hint, waits at least 600ms, then sends C-m. It
 compares the whole capture-pane immediately before Enter and at least 600ms
 after it. Up to four inserted/deleted lines is a small change: after the same
 minimum interval it retries Enter, at most three presses total. A substantial
-change stops extra Enter. A newline or viewport scroll is counted as a line
-edit, not a change at every later row. There are no prompt, cursor/input-area,
-Codex/Claude or other provider rules. Screen change is a retry heuristic and
-cannot prove submission, POP, understanding or a response. An exhausted or
-unobservable attempt reports unknown, leaving durable mail intact.
+change stops extra Enter. Retry cooldown grows by 300ms per retry, making Enter
+intervals at least 600ms, 900ms and 1200ms from the preceding paste/key. This
+breaks repeated interleaving between independent senders. A newline or viewport
+scroll is counted as a line edit, not a change at every later row. There are no
+prompt, cursor/input-area, Codex/Claude or other provider rules. Screen change
+is a retry heuristic and cannot prove submission, POP, understanding or a
+response. An exhausted or unobservable attempt reports unknown, leaving durable
+mail intact.
 
 There is no destination notification lock or persistent input guard. Independent
 senders may paste into one terminal; each uses the same bounded observation

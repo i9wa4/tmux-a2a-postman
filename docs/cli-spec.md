@@ -302,18 +302,21 @@ does not await POP, understanding, a reply or task completion. The target is a
 verified recipient pane; ordinary shells and tmux copy/input modes are rejected.
 
 The foreground sender pastes one short hint once. After at least 600ms it
-captures the whole pane and sends C-m; after another 600ms it captures again.
-A bounded line diff counts inserted/deleted lines, ignoring trailing terminal
-padding. A replacement counts as two lines; a one-row scroll does not make
-every subsequent row different. At most four changed lines is small enough
-to retry Enter, with at least 600ms between presses and a maximum of three.
-Substantial change stops extra Enter. No prompt glyph, cursor prefix, input
-area, provider name or model API is inspected. An identical screen can mean
-newline or accepted input; the retry heuristic deliberately permits extra Enter
-and never establishes recipient acceptance or processing. `accepted` retains
-its transport-only compatibility name for a substantially changed screen;
-`unknown` includes exhausted small-change retries. POP/full reads/exact replies
-and execution effects require their own evidence.
+captures the whole pane and sends C-m; after another 600ms it captures again. A
+bounded line diff counts inserted/deleted lines, ignoring trailing terminal
+padding. A replacement counts as two lines; a one-row scroll does not make every
+subsequent row different. At most four changed lines is small enough to retry
+Enter, with at least 600ms between presses and a maximum of three. Retry
+cooldown adds 300ms per attempt: paste-to-first Enter is at least 600ms;
+subsequent Enter intervals are at least 900ms and 1200ms. This breaks
+constant-rate interleaving across senders. Capture again immediately before each
+retry. Substantial change stops extra Enter. No prompt glyph, cursor prefix,
+input area, provider name or model API is inspected. An identical screen can
+mean newline or accepted input; the retry heuristic deliberately permits extra
+Enter and never establishes recipient acceptance or processing. `accepted`
+retains its transport-only compatibility name for a substantially changed
+screen; `unknown` includes exhausted small-change retries. POP/full reads/exact
+replies and execution effects require their own evidence.
 
 Independent messages do not acquire a destination notification lock or
 read/write persistent input guards. Concurrent senders can paste complete hints

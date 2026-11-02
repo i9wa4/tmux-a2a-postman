@@ -21,6 +21,7 @@ lock = threading.RLock()
 history, draft = [], bytearray()
 absorbed_enters = 0
 draft_enters = 0
+last_enter_at = 0
 
 
 def render():
@@ -101,8 +102,11 @@ try:
                 if value in [10, 13] and not pasted:
                     with (evidence / (role + ".keys.jsonl")).open("a") as trace:
                         trace.write(json.dumps({"at": time.monotonic(), "key": "C-m"}) + "\n")
+                    now = time.monotonic()
+                    rapid = now - last_enter_at < 0.5
+                    last_enter_at = now
                     case = os.environ["POSTMAN_SMOKE_CASE"]
-                    if role == "worker" and (case == "absorbed-enter" or (case == "newline-retry" and draft_enters == 0 and draft)):
+                    if role in ["worker", "approver"] and (case == "absorbed-enter" or (case == "newline-retry" and draft_enters == 0 and draft) or (case in ["concurrent", "approval-burst"] and draft and (draft_enters == 0 or rapid))):
                         absorbed_enters += 1
                         draft_enters += 1
                         draft.append(10)
@@ -113,6 +117,12 @@ try:
                     draft.clear()
                     if line.strip():
                         history.append("agent> " + line)
+                        # Cover both substantial real-TUI redraws and minimal
+                        # line editors. Only the actual submitted byte buffer
+                        # queues recipient work; display changes cannot do so.
+                        if case != "minimal-redraw":
+                            history.extend(["[terminal submission]", "[recipient work queued]",
+                                            "[stdin ready]", "[waiting for next input]"])
                         with (evidence / (role + ".input.jsonl")).open("a") as trace:
                             trace.write(json.dumps({"text": line, "conversation": os.environ["POSTMAN_SMOKE_CONVERSATION"]}) + "\n")
                         submitted.put(line)

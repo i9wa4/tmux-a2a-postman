@@ -105,7 +105,21 @@ func (s Store) observedNotice(ctx context.Context, _ Runtime, transport observed
 	if !base.sameGeometry(before) || before.InputMode {
 		return errors.New("recipient changed during notification paste")
 	}
-	for range noticeMaxEnters {
+	for attempt := range noticeMaxEnters {
+		if attempt > 0 {
+			// Increasing cooldown breaks interleaved Enter bursts from
+			// independent senders without a shared destination lock.
+			if err := noticeWait(inputCtx, time.Duration(attempt)*300*time.Millisecond); err != nil {
+				return err
+			}
+			before, err = noticeObservation(inputCtx, transport, target)
+			if err != nil {
+				return err
+			}
+			if !base.sameGeometry(before) || before.InputMode {
+				return errors.New("recipient changed during notification retry")
+			}
+		}
 		submitSpan := trace.Start("notification_submit")
 		err = transport.enterNotice(inputCtx, target)
 		submitSpan.Error(err)
