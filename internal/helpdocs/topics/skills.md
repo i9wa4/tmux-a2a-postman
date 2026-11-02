@@ -1,9 +1,9 @@
 # Stable Skill entry points
 
-The binary provides five thin entry points and their complete Markdown
-HelpDocs. Each stable entry directs the agent to the installed executable's
-help, so upgrading the binary updates detailed procedures without repeatedly
-updating Skill text.
+The binary provides thin entry points for transport, planning, coordination,
+records and review and their complete Markdown HelpDocs. Each stable entry
+directs the agent to the installed executable's help, so upgrading the binary
+updates detailed procedures without repeatedly updating Skill text.
 
 List entry names and their content identity without changing files:
 

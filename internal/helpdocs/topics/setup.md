@@ -19,3 +19,10 @@ contributor instructions are separate.
 
 Run `tmux-a2a-postman help skills` for the consumer-owned Skill setup boundary
 and `tmux-a2a-postman help config` for the selected configuration contract.
+
+With no user postman.md, the embedded standard eight-role team is available.
+Use existing titled consoles and a first send, or explicitly preview/run
+`launch-agents codex` or `launch-agents claude`. Presets add no model/bypass
+flags or initial prompt. `help config` explains inspecting/customizing a full
+copy; `help orchestration` describes the end-to-end workflow. Thin Skills are
+optional discovery entries; the installed HelpDocs are the detailed authority.

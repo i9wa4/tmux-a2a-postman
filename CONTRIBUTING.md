@@ -346,3 +346,17 @@ source of runtime contracts or test evidence.
 [agent-research]: docs/research/891-agent-environment-comparison.md
 
 Canonical agent instructions live in [AGENTS.md](AGENTS.md).
+
+The builtin standard-team case runs with no user configuration or installed
+personal Skills. It reuses the same deterministic terminal driver:
+
+```sh
+nix run .#recursive-smoke -- --builtin --case root
+```
+
+`recursive-teams` checks it alongside the explicit-config recursive matrix.
+The actors' private state/scope files are fixture bookkeeping; this proves
+mail/editor mechanics and complete archived policy delivery, not autonomous
+role compliance or substantive model review. Canonical workflow ownership and
+migration boundaries are recorded in
+[the standard-team inventory](docs/design/standard-team-migration.md).

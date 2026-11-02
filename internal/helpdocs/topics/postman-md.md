@@ -240,3 +240,11 @@ prompts and tmux copy/input modes are not receiving consoles. Notification
 failure leaves mail durable and never grants command approval. Consult installed
 `help config`, `help send-heredoc` and `help execute-heredoc` for exact
 commands.
+
+## 8. Builtin standard configuration
+
+An absent automatic XDG/HOME path selects the embedded complete standard team.
+A custom file replaces it completely; there is no implicit role/catalog merge.
+Use `tmux-a2a-postman help config` for precedence, error handling and explicit
+read-only inspection/export of the installed default. `help orchestration`,
+`help planning`, `help records` and `help reviews` own its portable workflows.

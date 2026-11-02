@@ -56,3 +56,48 @@ recovery.
 Optional YAML presets define ordered columns of panes with role/command pairs.
 Only explicit launch-agents executes those commands; --list and --dry-run are
 inert. See help launch-agents and `tmux-a2a-postman help launching`.
+
+## 1. Builtin standard team and complete overrides
+
+When the automatic XDG/HOME path has no directory entry, the binary uses its
+embedded standard team. An explicit --config or nonempty inherited
+TMUX_A2A_POSTMAN_CONFIG always selects that complete file. Empty --config is an
+error; empty inherited selection keeps automatic discovery. A custom file
+replaces all default roles, routes, policy and catalogs. No implicit merge.
+An unreadable, malformed, non-regular or dangling-symlink default is an error,
+not absence. Nix-managed valid symlinks remain supported.
+
+No default file is copied to the configuration directory. Binary upgrades
+therefore update builtin policy and HelpDocs together. Archives preserve their
+original rendered bytes/digest; upgrades never rerender old mail. Generated
+archives identify authored policy SHA256 and, for builtin policy, bundle ID.
+Cached scope records identify the selected file/default and fingerprint; they
+use the original registered source even if a status collector has another HOME.
+A selected default appearing as a file during delayed approval is a source
+change, never permission to switch or execute.
+
+Inspect the exact installed default without selecting or modifying it:
+
+```sh
+postman_resources=$(tmux-a2a-postman resources)
+cat "$postman_resources/defaults/postman.md"
+tmux-a2a-postman skills list
+```
+
+To customize, explicitly copy that complete file to a new chosen path with
+noclobber semantics, inspect/edit it, then select the absolute path. For
+example:
+
+```sh
+(set -C; cat "$postman_resources/defaults/postman.md" > /absolute/new-postman.md)
+```
+
+This example refuses an existing destination. No command overwrites a user's
+configuration automatically. `resources` materializes only its
+content-identified cache bundle. Its default, licenses, optional record helper
+and review prompts are portable and require no dotfiles checkout.
+
+A complete custom file may explicitly direct a role/common section to read an
+installed HelpDoc such as `tmux-a2a-postman help reviews`, or explicitly select
+consumer-owned thin Skill metadata with the existing `skill_path` syntax. The
+binary never silently adds builtin workflow policy/catalogs to a custom file.

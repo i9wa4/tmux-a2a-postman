@@ -21,10 +21,14 @@ type statusConfigRecord struct {
 	Binding     Binding `json:"binding"`
 	Path        string  `json:"path"`
 	Fingerprint string  `json:"fingerprint"`
+	Builtin     bool    `json:"builtin,omitempty"`
 }
 
 func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
 	raw, _ := json.Marshal(topology)
+	if id := topology.BuiltinBundleID(); id != "" {
+		raw = append(raw, []byte("\x00builtin:"+id)...)
+	}
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -45,7 +49,10 @@ func saveStatusConfig(ws *os.Root, snapshot Snapshot) error {
 	}
 	defer func() { _ = dir.Close() }()
 	name := "status-config-p" + snapshot.Caller.Owner.Pane[1:] + ".json"
-	record := statusConfigRecord{1, snapshot.Caller, snapshot.ConfigPath, snapshot.ConfigFingerprint}
+	record := statusConfigRecord{Version: 1, Binding: snapshot.Caller, Path: snapshot.ConfigPath, Fingerprint: snapshot.ConfigFingerprint, Builtin: snapshot.BuiltinConfig}
+	if record.Builtin {
+		record.Version = 2
+	}
 	var previous statusConfigRecord
 	if readJSON(dir, name, &previous) == nil && previous == record {
 		return nil
@@ -73,10 +80,10 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		if record.Binding.Owner != b.Owner || record.Binding.PanePID != b.PanePID {
 			continue
 		} // Former processes cannot supply provenance.
-		if record.Version != 1 || !filepath.IsAbs(record.Path) {
+		if (record.Version != 1 && record.Version != 2) || record.Version == 1 && record.Builtin || record.Version == 2 && !record.Builtin || !filepath.IsAbs(record.Path) {
 			return nil, nil, ErrUnknown
 		}
-		topology, err := config.LoadWorkspaceTopology(ctx, record.Path)
+		topology, err := (config.Source{Path: record.Path, Builtin: record.Builtin}).Load(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -88,7 +95,7 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 			return nil, nil, errors.New("conflicting registered workspace configurations")
 		}
 		if chosen == nil {
-			chosen = &StatusScope{Config: record.Path, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode, Sessions: []StatusRoute{}}
+			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode, Sessions: []StatusRoute{}}
 			nodes = topology.Nodes
 			for _, s := range topology.Sessions {
 				chosen.Sessions = append(chosen.Sessions, StatusRoute{s.Name, s.Parent, s.InterfaceNode})

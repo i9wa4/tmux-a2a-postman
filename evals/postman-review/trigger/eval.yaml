@@ -1,0 +1,12 @@
+name: postman-review-trigger
+description: Deterministic authored trigger expectations; no model API.
+skill: postman-review
+version: '1.0'
+config:
+  executor: mock
+  model: offline-mock
+  trials_per_task: 1
+  timeout_seconds: 30
+  parallel: false
+tasks:
+- tasks/*.yaml

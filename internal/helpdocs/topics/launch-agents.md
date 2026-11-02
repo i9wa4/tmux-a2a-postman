@@ -25,8 +25,11 @@ and evaluates each declared command. First-prompt-only hooks are not promised;
 use an explicit environment-loader command when needed. No private state of an
 already running shell is copied. No model credentials or bypass flags are added.
 
-The new consoles inherit TMUX_A2A_POSTMAN_CONFIG, an absolute routing/policy
-selection. Operational CLI precedence is explicit --config, this inherited
+With a custom file, new consoles inherit TMUX_A2A_POSTMAN_CONFIG as its absolute
+routing/policy selection. With the builtin team, it is explicitly empty and
+XDG_CONFIG_HOME retains the selected automatic location, overriding stale server
+values without creating a default file. Operational CLI precedence is explicit
+--config, this inherited
 selection, then the normal XDG/HOME default. Commands which clear inherited
 environment must preserve it or pass --config. Both status getters remain
 cache-only and ignore configuration selection. No generated config is needed.
@@ -42,3 +45,8 @@ Partial failure cleans only positively owned new resources. Commands already
 started may have irreversible effects; stopping panes does not undo them.
 A killed launcher may leave resources/uncertain receipts: no force-reset,
 force-unlock or automatic repair is provided.
+
+With an absent automatic user configuration, the standard `codex` and `claude`
+presets provide all eight roles. They use plain `exec codex` / `exec claude`,
+without personal models or bypass flags. Inspect `help config` before exporting
+a complete custom preset for other clients or local models.

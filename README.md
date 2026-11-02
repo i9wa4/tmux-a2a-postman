@@ -34,7 +34,8 @@ flowchart TB
     child --> childworker[Child worker]
 ```
 
-Choose the organization in one file. Artifact review and command approval are
+Use the embedded standard team without a configuration file, or customize
+the whole organization in one file. Artifact review and command approval are
 different roles; review coordinates decisions and is not an OS sandbox.
 Direct parent/child routes require declared interfaces and distinct workspaces.
 The diagrams here explain capabilities; copy the tested configurations below.
@@ -104,8 +105,16 @@ checkout, tmux or configuration. Thin Skills discover these installed topics;
 `tmux-a2a-postman help skills` explains the thin entries and consumer-owned
 setup. Updating the binary updates the detailed procedures.
 
-Follow the [first exchange](docs/quickstart.md) with the complete
-[minimal config](examples/minimal/postman.md). Then try the
+Start with the
+[builtin standard team](internal/helpdocs/assets/defaults/postman.md) and
+`tmux-a2a-postman help orchestration`; no dotfiles or Skill installation is
+required. Existing consoles can start with a send. Optional
+`launch-agents codex` or `launch-agents claude` starts the same team without an
+initial prompt. Read `help config` to inspect/export a full custom
+configuration.
+
+The [first exchange](docs/quickstart.md) also offers a complete
+[minimal override](examples/minimal/postman.md). Then try the
 [practical team](examples/practical/postman.md),
 [parent/child team](examples/hierarchy/postman.md), or
 [optional launch presets](examples/launch/postman.md).
@@ -122,7 +131,14 @@ Follow the [first exchange](docs/quickstart.md) with the complete
   [server status](docs/design/server-status.md), and
   [external file integration](docs/design/external-filesystem-channel.md).
 - [Installable Skills](skills/): usage, sending, recall, configuration audit and
-  team management.
+  team management, planning, records, orchestration and review.
+- [Operating procedures](internal/helpdocs/topics/orchestration.md),
+  [planning](internal/helpdocs/topics/planning.md),
+  [records](internal/helpdocs/topics/records.md), and
+  [review](internal/helpdocs/topics/reviews.md): the same canonical HelpDocs
+  available in the binary.
+- [Migration inventory](docs/design/standard-team-migration.md): source
+  ownership, portability and verification boundaries.
 - [Contributing](CONTRIBUTING.md): development, deterministic tmux tests and
   evidence limits.
 

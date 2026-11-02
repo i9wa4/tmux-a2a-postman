@@ -263,8 +263,14 @@
               mkdir -p "$HOME"
               python3 ${recursiveSource}/scripts/validation/test-recursive-configuration.py
               ${recursiveSmoke}/bin/recursive-smoke --output "$TMPDIR/results.json"
+              ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --output "$TMPDIR/builtin.json"
+              ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --launch codex --output "$TMPDIR/builtin-launch.json"
+              ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --launch claude --output "$TMPDIR/builtin-claude.json"
               mkdir -p "$out"
               cp "$TMPDIR/results.json" "$out/results.json"
+              cp "$TMPDIR/builtin.json" "$out/builtin.json"
+              cp "$TMPDIR/builtin-launch.json" "$out/builtin-launch.json"
+              cp "$TMPDIR/builtin-claude.json" "$out/builtin-claude.json"
             '';
             retired-task-artifacts = pkgs.runCommand "retired-task-artifacts" { } ''
               if test -e ${./.}/.task-artifacts; then

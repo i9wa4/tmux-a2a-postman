@@ -47,7 +47,7 @@ func RunWorkspaceChannelSync(args []string) (retErr error) {
 		}
 	}()
 	f := newWorkspaceFlags("channel-sync")
-	path, err := f.parse(args)
+	path, err := f.source(args)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func RunWorkspaceChannelReport(args []string) (retErr error) {
 	to := f.fs.String("to", "", "one claimed external message ID")
 	state := f.fs.String("state", "", "done, blocked or pending")
 	scope := f.fs.String("scope", "", "SHA256 of the exact pending action and context")
-	path, err := f.parse(args)
+	path, err := f.source(args)
 	if err != nil {
 		return err
 	}

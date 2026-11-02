@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
@@ -35,7 +34,7 @@ func RunLaunchAgents(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	path, err := f.parse(flags)
+	path, err := f.source(flags)
 	if err != nil {
 		return err
 	}
@@ -44,7 +43,7 @@ func RunLaunchAgents(args []string) (retErr error) {
 	}
 	ctx, cancel := defaultInterruptContext()
 	defer cancel()
-	topology, err := config.LoadWorkspaceTopology(ctx, path)
+	topology, err := path.Load(ctx)
 	if err != nil {
 		return err
 	}
@@ -112,7 +111,7 @@ func RunLaunchAgents(args []string) (retErr error) {
 	if len(*session) == 0 || len(*session) > 128 {
 		return errors.New("session name must contain 1 to 128 characters")
 	}
-	plan := workspace.LaunchPlan{Preset: selected, Config: path, CWD: *cwd, Workspace: root, Socket: *socket, ExpectedPID: server.PID, Session: *session, Shell: os.Getenv("SHELL"), Columns: preset.Columns, Home: home, Topology: topology}
+	plan := workspace.LaunchPlan{Preset: selected, Config: path.Path, BuiltinConfig: path.Builtin, CWD: *cwd, Workspace: root, Socket: *socket, ExpectedPID: server.PID, Session: *session, Shell: os.Getenv("SHELL"), Columns: preset.Columns, Home: home, Topology: topology}
 	if *dryRun {
 		output["dry_run"] = true
 		output["plan"] = plan

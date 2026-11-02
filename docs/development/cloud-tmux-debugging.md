@@ -95,6 +95,23 @@ assuming every cloud supports it:
   later host Git/Go commands. Restore only the owned paths to the actual task
   UID/GID; do not use world-writable permissions or bypass hooks.
 
+Prefer an unprivileged client of the owned container's Nix daemon when
+available. After starting only that builder's Nix daemon, verify an actual
+derivation as the workspace UID/GID before relying on it. For example, use
+
+```sh
+docker exec --user <uid>:<gid> -e NIX_REMOTE=daemon \
+  -e HOME=<owned-writable-home> --workdir <owned-worktree> \
+  <owned-builder> nix ...
+```
+
+Supply the pinned Nix PATH and the existing CA/proxy configuration. This avoids
+repeated root ownership changes to shared Git metadata and allows host Git while
+Nix checks run. The Nix builder daemon is build infrastructure; no Postman
+runtime daemon is introduced. Hook setup/commits must still run the actual
+configured hooks as that workspace user. Wait for pushes to finish before
+mutating shared Git metadata.
+
 After preparing an owned builder, invoke the same repository commands there:
 
 ```sh

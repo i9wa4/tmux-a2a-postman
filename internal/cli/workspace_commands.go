@@ -21,6 +21,7 @@ import (
 type workspaceCommand struct {
 	trace        *diagnostic.Recorder
 	topologyPath string
+	source       config.Source
 	topology     config.WorkspaceTopology
 	runtime      workspace.Tmux
 	mail         workspace.Mail
@@ -83,6 +84,15 @@ func (f workspaceFlagSet) parse(args []string) (string, error) {
 	if err := fs.Parse(args); err != nil {
 		return "", err
 	}
+	provided := false
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "config" {
+			provided = true
+		}
+	})
+	if provided && *path == "" {
+		return "", errors.New("--config requires an absolute file path")
+	}
 	if *path == "" {
 		*path = os.Getenv("TMUX_A2A_POSTMAN_CONFIG")
 	}
@@ -105,10 +115,33 @@ func (f workspaceFlagSet) parse(args []string) (string, error) {
 	return *path, nil
 }
 
-func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, error) {
+func (f workspaceFlagSet) source(args []string) (config.Source, error) {
+	path, err := f.parse(args)
+	if err != nil {
+		return config.Source{}, err
+	}
+	explicit := os.Getenv("TMUX_A2A_POSTMAN_CONFIG") != ""
+	f.fs.Visit(func(option *flag.Flag) {
+		if option.Name == "config" {
+			explicit = true
+		}
+	})
+	source := config.Source{Path: path}
+	if !explicit {
+		_, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			source.Builtin = true
+		} else if err != nil {
+			return source, err
+		}
+	}
+	return source, nil
+}
+
+func openWorkspaceCommand(ctx context.Context, source config.Source) (workspaceCommand, error) {
 	var c workspaceCommand
 	configSpan := diagnostic.From(ctx).Start("configuration")
-	topology, err := config.LoadWorkspaceTopology(ctx, path)
+	topology, err := source.Load(ctx)
 	configSpan.Error(err)
 	if err != nil {
 		return c, err
@@ -125,7 +158,7 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 	if contextErr != nil {
 		return c, errors.New("TMUX must contain an absolute native tmux socket")
 	}
-	rt := workspace.Tmux{Socket: server.Socket, ConfigPath: path, ConfigFingerprint: workspace.StatusConfigFingerprint(topology), Pane: os.Getenv("TMUX_PANE"), Home: home, Roles: topology.Nodes}
+	rt := workspace.Tmux{Socket: server.Socket, ConfigPath: source.Path, BuiltinConfig: source.Builtin, ConfigFingerprint: workspace.StatusConfigFingerprint(topology), Pane: os.Getenv("TMUX_PANE"), Home: home, Roles: topology.Nodes}
 	identitySpan := diagnostic.From(ctx).Start("identity")
 	snapshot, err := rt.Snapshot(ctx)
 	identitySpan.Error(err)
@@ -145,7 +178,7 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 	if !configured {
 		return c, errors.New("caller is not a configured topology node")
 	}
-	return workspaceCommand{topologyPath: path, topology: topology, runtime: rt, mail: workspace.Mail{Store: workspace.Store{StateRoot: root}}, caller: snapshot}, nil
+	return workspaceCommand{topologyPath: source.Path, source: source, topology: topology, runtime: rt, mail: workspace.Mail{Store: workspace.Store{StateRoot: root}}, caller: snapshot}, nil
 }
 
 func (c workspaceCommand) permits(to string) bool {

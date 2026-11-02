@@ -12,11 +12,15 @@ import (
 // from a failed config lookup. The Executor separately pins the initial native
 // reviewer and caller identities throughout one invocation.
 func ConfiguredApprovalResolver(path string) ApprovalResolver {
+	return SourceApprovalResolver(config.Source{Path: path})
+}
+
+func SourceApprovalResolver(source config.Source) ApprovalResolver {
 	return func(ctx context.Context, s Snapshot) (string, error) {
 		if _, err := validateSnapshot(s); err != nil {
 			return "", err
 		}
-		topology, err := config.LoadWorkspaceTopology(ctx, path)
+		topology, err := source.Load(ctx)
 		if err != nil {
 			return "", err
 		}

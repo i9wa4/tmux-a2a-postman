@@ -94,3 +94,11 @@ use no model credentials or live user sessions. See
 For filesystem references, explicitly run `tmux-a2a-postman resources` once
 and use the returned absolute directory as `postman_resources`. See
 `tmux-a2a-postman help resources` for offline prerequisites and integrity.
+
+## 5. Builtin presets
+
+When no automatic user configuration exists, `launch-agents --list` lists
+`codex` and `claude`. Preview either with `--dry-run` before explicit launch.
+These plain-client presets do not inject policy or grant client permissions.
+The default file and portable operating procedures ship in the binary; see
+`help config`, `help orchestration`, `help records` and `help reviews`.

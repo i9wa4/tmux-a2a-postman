@@ -23,17 +23,18 @@ const (
 )
 
 type LaunchPlan struct {
-	Preset      string                   `json:"preset"`
-	Config      string                   `json:"config"`
-	CWD         string                   `json:"cwd"`
-	Workspace   string                   `json:"workspace"`
-	Socket      string                   `json:"socket"`
-	Session     string                   `json:"session"`
-	Shell       string                   `json:"shell"`
-	Columns     []config.LaunchColumn    `json:"columns"`
-	Home        string                   `json:"-"`
-	ExpectedPID int                      `json:"-"`
-	Topology    config.WorkspaceTopology `json:"-"`
+	Preset        string                   `json:"preset"`
+	Config        string                   `json:"config"`
+	BuiltinConfig bool                     `json:"builtin,omitempty"`
+	CWD           string                   `json:"cwd"`
+	Workspace     string                   `json:"workspace"`
+	Socket        string                   `json:"socket"`
+	Session       string                   `json:"session"`
+	Shell         string                   `json:"shell"`
+	Columns       []config.LaunchColumn    `json:"columns"`
+	Home          string                   `json:"-"`
+	ExpectedPID   int                      `json:"-"`
+	Topology      config.WorkspaceTopology `json:"-"`
 }
 type LaunchedPane struct {
 	Role    string `json:"role"`
@@ -321,11 +322,20 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	if !filepath.IsAbs(plan.CWD) || !filepath.IsAbs(plan.Config) || !filepath.IsAbs(plan.Socket) || !validNativeSessionName(plan.Session) || len(plan.Columns) == 0 {
 		return result, errors.New("invalid complete launch plan")
 	}
+	if plan.BuiltinConfig {
+		fresh, err := (config.Source{Path: plan.Config, Builtin: true}).Load(ctx)
+		if err != nil {
+			return result, err
+		}
+		if StatusConfigFingerprint(fresh) != StatusConfigFingerprint(plan.Topology) {
+			return result, ErrUnknown
+		}
+	}
 	root, err := CanonicalRoot(plan.CWD, plan.Home)
 	if err != nil || root != plan.Workspace {
 		return result, errors.New("launch cwd must match its canonical workspace")
 	}
-	rt := Tmux{Socket: plan.Socket, Home: plan.Home, Roles: plan.Topology.Nodes, ConfigPath: plan.Config, ConfigFingerprint: StatusConfigFingerprint(plan.Topology)}
+	rt := Tmux{Socket: plan.Socket, Home: plan.Home, Roles: plan.Topology.Nodes, ConfigPath: plan.Config, BuiltinConfig: plan.BuiltinConfig, ConfigFingerprint: StatusConfigFingerprint(plan.Topology)}
 	server, err := launchServer(ctx, ServerContext{Socket: plan.Socket, PID: plan.ExpectedPID})
 	if err != nil {
 		return result, err
@@ -459,7 +469,7 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	}
 	height := max(48, maxRows*4)
 	width := max(160, len(plan.Columns)*20)
-	out, err := tmuxOutput(ctx, plan.Socket, "new-session", "-d", "-s", plan.Session, "-n", plan.Preset, "-c", plan.CWD, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height), "-e", LaunchConfigEnvironment+"="+plan.Config, "-e", launchOwnerEnvironment+"="+invocation, "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}", sleeper, "86400")
+	out, err := tmuxOutput(ctx, plan.Socket, "new-session", "-d", "-s", plan.Session, "-n", plan.Preset, "-c", plan.CWD, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height), "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), "-e", launchOwnerEnvironment+"="+invocation, "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}", sleeper, "86400")
 	if err != nil {
 		return result, fmt.Errorf("dedicated session creation failed; no launch commands dispatched: %w", err)
 	}
@@ -542,7 +552,7 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 			pane := &result.Panes[index]
 			// Multiple tmux command arguments execute directly: the exact source is one
 			// argument to the user's interactive/login shell, never naively word-split.
-			if _, err := tmuxOutput(ctx, plan.Socket, "respawn-pane", "-k", "-t", pane.Pane, "-c", plan.CWD, "-e", LaunchConfigEnvironment+"="+plan.Config, shell, "-lic", item.Command); err != nil {
+			if _, err := tmuxOutput(ctx, plan.Socket, "respawn-pane", "-k", "-t", pane.Pane, "-c", plan.CWD, "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), shell, "-lic", item.Command); err != nil {
 				return result, fmt.Errorf("role %s start uncertain: %w", item.Role, err)
 			}
 			pane.Started = true
@@ -598,4 +608,18 @@ func recoverLaunchSession(record launchRecord) launchRecord {
 		}
 	}
 	return record
+}
+
+func launchConfigEnvironment(plan LaunchPlan) string {
+	if plan.BuiltinConfig {
+		return LaunchConfigEnvironment + "="
+	}
+	return LaunchConfigEnvironment + "=" + plan.Config
+}
+
+func launchXDGEnvironment(plan LaunchPlan) string {
+	if plan.BuiltinConfig {
+		return "XDG_CONFIG_HOME=" + filepath.Dir(filepath.Dir(plan.Config))
+	}
+	return "XDG_CONFIG_HOME=" + os.Getenv("XDG_CONFIG_HOME")
 }

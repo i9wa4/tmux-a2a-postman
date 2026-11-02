@@ -1,7 +1,16 @@
 {
+  "defaults/postman.md": "0444",
   "diagnostics/analyze-invocations.py": "0555",
   "examples/launch/postman.md": "0444",
+  "licenses/dotfiles.txt": "0444",
   "licenses/postman.txt": "0444",
   "recall/select_day.py": "0444",
+  "records/mkmd": "0555",
+  "review/reviewer-architecture.md": "0444",
+  "review/reviewer-code.md": "0444",
+  "review/reviewer-data.md": "0444",
+  "review/reviewer-historian.md": "0444",
+  "review/reviewer-qa.md": "0444",
+  "review/reviewer-security.md": "0444",
   "team-manager/next_step.py": "0444"
 }

@@ -59,7 +59,13 @@ func Main() {
 		return
 	}
 
-	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath}, cli.Handlers{
+	configProvided := false
+	fs.Visit(func(option *flag.Flag) {
+		if option.Name == "config" {
+			configProvided = true
+		}
+	})
+	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath, ConfigProvided: configProvided}, cli.Handlers{
 		Skills: cli.RunSkills, Resources: cli.RunResources,
 		LaunchAgents: cli.RunLaunchAgents, ChannelSync: cli.RunWorkspaceChannelSync, ChannelReport: cli.RunWorkspaceChannelReport,
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,

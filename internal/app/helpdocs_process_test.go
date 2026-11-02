@@ -108,3 +108,44 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 		}
 	}
 }
+
+func TestBuiltinPublicSelectionAndEmptyExplicitConfig(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	run := func(args ...string) ([]byte, error) {
+		t.Helper()
+		raw, err := json.Marshal(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, self, "-test.run=^TestIssue937PublicCLIChild$")
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "TMUX_A2A_POSTMAN_CONFIG=", "TMUX=", "TMUX_PANE=", "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
+		return cmd.CombinedOutput()
+	}
+	out, err := run("launch-agents", "--list")
+	if err != nil {
+		t.Fatal(string(out), err)
+	}
+	var listed struct {
+		Success bool     `json:"success"`
+		Presets []string `json:"presets"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil || !listed.Success || !reflect.DeepEqual(listed.Presets, []string{"claude", "codex"}) {
+		t.Fatal(string(out), err)
+	}
+	for _, args := range [][]string{{"--config=", "launch-agents", "--list"}, {"launch-agents", "--list", "--config="}, {"--config", filepath.Join(home, "missing.md"), "launch-agents", "--list"}} {
+		out, err := run(args...)
+		if err == nil || !bytes.Contains(out, []byte(`"success":false`)) {
+			t.Fatal("explicit configuration fell back", args, string(out), err)
+		}
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatal("preview initialized user configuration/state", entries, err)
+	}
+}

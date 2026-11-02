@@ -88,3 +88,33 @@ func TestInheritedLaunchConfigurationKeepsExplicitOverridePrecedence(t *testing.
 		t.Fatal("relative inherited config accepted")
 	}
 }
+
+func TestWorkspaceSourceFallbackAndExplicitErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("TMUX_A2A_POSTMAN_CONFIG", "")
+	implicit, err := newWorkspaceFlags("pop").source(nil)
+	if err != nil || !implicit.Builtin {
+		t.Fatal(implicit, err)
+	}
+	t.Chdir(t.TempDir())
+	again, err := newWorkspaceFlags("pop").source(nil)
+	if err != nil || again != implicit {
+		t.Fatal("cwd changed selection", again, err)
+	}
+	for _, args := range [][]string{{"--config="}, {"--config", ""}} {
+		if _, err := newWorkspaceFlags("pop").source(args); err == nil {
+			t.Fatal("explicit empty accepted", args)
+		}
+	}
+	explicit, err := newWorkspaceFlags("pop").source([]string{"--config", implicit.Path})
+	if err != nil || explicit.Builtin {
+		t.Fatal("explicit missing path fell back", explicit, err)
+	}
+	t.Setenv("TMUX_A2A_POSTMAN_CONFIG", implicit.Path)
+	inherited, err := newWorkspaceFlags("pop").source(nil)
+	if err != nil || inherited.Builtin {
+		t.Fatal("inherited missing path fell back", inherited, err)
+	}
+}

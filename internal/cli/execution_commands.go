@@ -105,7 +105,7 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 	}()
 	f := newWorkspaceFlags("execute-heredoc")
 	reason := f.fs.String("reason", "", "why this command should run")
-	path, err := f.parse(args)
+	path, err := f.source(args)
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		return err
 	}
 	invocation := workspace.ShellInvocation{Source: source, Reason: *reason, CWD: cwd, Shell: shell}
-	executor := workspace.Executor{Mail: c.mail, Resolve: workspace.ConfiguredApprovalResolver(path), Stdout: os.Stdout, Stderr: boundary, Invocation: &invocation, Notifier: c.runtime}
+	executor := workspace.Executor{Mail: c.mail, Resolve: workspace.SourceApprovalResolver(path), Stdout: os.Stdout, Stderr: boundary, Invocation: &invocation, Notifier: c.runtime}
 	executionSpan := trace.Start("execution")
 	result, err := executor.Execute(ctx, c.boundRuntime(), source)
 	executionSpan.Error(err)
@@ -199,7 +199,7 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	f := newWorkspaceFlags(name)
 	to := f.fs.String("to", "", "own POP'd execution request ID")
 	reason := f.fs.String("reason", "", "reason for this decision")
-	path, err := f.parse(args)
+	path, err := f.source(args)
 	if err != nil {
 		return err
 	}

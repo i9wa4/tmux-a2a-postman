@@ -28,6 +28,7 @@ type WorkspaceTopology struct {
 	ExternalWorkspace string
 	ExternalSession   string
 	messageSource     string
+	builtin           bool
 }
 
 // WorkspaceSession declares one member of an opt-in, direct parent-child
@@ -71,7 +72,14 @@ func LoadWorkspaceTopology(ctx context.Context, path string) (WorkspaceTopology,
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	content := string(raw)
+	return parseWorkspaceTopology(ctx, string(raw))
+}
+
+func parseWorkspaceTopology(ctx context.Context, content string) (WorkspaceTopology, error) {
+	var result WorkspaceTopology
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if err := validateWorkspaceFrontmatter(content); err != nil {
 		return result, err
 	}

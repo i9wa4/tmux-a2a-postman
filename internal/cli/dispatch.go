@@ -2,7 +2,10 @@ package cli
 
 import "fmt"
 
-type Config struct{ ConfigPath string }
+type Config struct {
+	ConfigPath     string
+	ConfigProvided bool
+}
 
 type Handlers struct {
 	Skills           func([]string) error
@@ -69,7 +72,7 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 	default:
 		return Result{Label: "postman", Err: fmt.Errorf("unknown command %q", command), ShowUsage: true}
 	}
-	if cfg.ConfigPath != "" {
+	if cfg.ConfigProvided || cfg.ConfigPath != "" {
 		args = append([]string{"--config", cfg.ConfigPath}, args...)
 	}
 	return Result{Label: "postman " + command, Err: handler(args)}
