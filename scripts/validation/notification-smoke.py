@@ -424,8 +424,16 @@ def run_case(case, terminal):
                         raise RuntimeError("busy recipient unexpectedly handled another notification")
                     (evidence / "release").touch()
                     report["queued_while_busy"] = True
-                wait_for("notification-driven rally", lambda: len(list(evidence.glob("*.claim.*.json"))) == 4)
+                # Four sequential recipient tools each finish bounded mail,
+                # notification and capture phases before publishing a proof.
+                # Give each completed step its own deadline; a single budget
+                # for the whole chain fails under concurrent native CI work.
+                for expected in range(1, 5):
+                    wait_for("notification-driven rally claim " + str(expected) + "/4",
+                             lambda n=expected: len(list(evidence.glob("*.claim.*.json"))) >= n)
                 proofs = [json.loads(path.read_text()) for path in evidence.glob("*.claim.*.json")]
+                if len(proofs) != 4:
+                    raise RuntimeError("duplicate or missing notification claim")
                 by_id = {proof["message"]["id"]: proof for proof in proofs}
                 visited = set()
                 for sent in sends:
