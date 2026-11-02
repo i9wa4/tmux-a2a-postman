@@ -365,11 +365,11 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if len(raw) > 48*1024 {
 		return fail("unavailable", errors.New("command exceeds audit bound"))
 	}
-	nonce, err := randomName()
+	identity, err := newMailIdentity()
 	if err != nil {
 		return fail("unavailable", err)
 	}
-	result.OperationID = "m-" + strings.TrimPrefix(nonce, ".new-")
+	result.OperationID = identity.ID
 	trace.Note(diagnostic.Facts{OperationID: result.OperationID, Counterparty: role})
 	audit = pinned
 	dispatchCtx := ctx

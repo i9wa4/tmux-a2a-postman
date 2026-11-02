@@ -207,9 +207,9 @@ tmux-a2a-postman pop
 
 No command-specific options or positional arguments are accepted. One eligible
 own inbox message is exclusively moved to read and receives a durable receipt.
-The existing selection order is preserved; random message IDs are not a FIFO
-timestamp contract. Output fields are `workspace`, `as_of`, `success`,
-`markdown_absolute_path` and common `self`.
+The existing filename selection order is preserved; timestamped IDs do not
+establish cross-process FIFO or order mixed legacy history. Output fields are
+`workspace`, `as_of`, `success`, `markdown_absolute_path` and common `self`.
 
 A non-null path also returns `instruction`, explicitly requiring a complete
 read of that Markdown through EOF before processing, replying or deciding that
@@ -558,6 +558,27 @@ the user. Initialized command stdin is a private PTY without input forwarding;
 stdout/stderr are non-TTY streams. Bash and Zsh are verified; POSIX-compatible
 shells use compatible source/control syntax. Fish/Nu and arbitrary shell
 grammars fail explicitly rather than silently running source in another shell.
+
+### 10.4. Message identity and filenames
+
+New mail uses `m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<32-lowercase-hex>.md`.
+The fixed-width UTC timestamp and `created_at` derive from the same instant;
+the suffix contains 128 bits of cryptographic randomness. The reader rejects
+invalid calendar dates and timestamp/creation-metadata mismatches. Exact
+reply/decision targets use the complete ID without `.md`.
+
+New filenames sort by recorded creation time. Equal timestamps sort by random
+suffix; a clock rollback follows recorded wall time rather than real-world
+submission order. This is not a cross-process FIFO guarantee. Legacy
+`m-<32-lowercase-hex>` IDs and their absolute archive paths remain valid and
+are never renamed; mixed old/new filenames do not provide one chronological
+history. Use archived `created_at` for historical selection.
+
+Input-request tokens retain `ireq_<32-lowercase-hex>` without the timestamp.
+Drafts, receipts, notices, transactions and execution decisions retain the same
+complete assigned ID across recovery. External inputs and reports reuse their
+first durable assignment through existing mail records; no ID registry is
+introduced. Historical examples below intentionally include accepted legacy IDs.
 
 ## 11. Result examples
 

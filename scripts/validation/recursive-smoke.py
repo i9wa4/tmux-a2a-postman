@@ -16,7 +16,7 @@ import tempfile
 import time
 import uuid
 
-from mail_fixture import read_archive
+from mail_fixture import MESSAGE_ID_PATTERN, read_archive
 from recursive_team.configuration import compile_config
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -220,7 +220,7 @@ def run_case(case):
                 submitted = [
                     hint
                     for item in inputs
-                    for hint in re.findall(r"You've got mail: (m-[a-f0-9]{32})\.md", item["text"])
+                    for hint in re.findall(r"You've got mail: (" + MESSAGE_ID_PATTERN + r")\.md", item["text"])
                 ]
                 completed = [json.loads(line)["hint"] for line in actions.read_text().splitlines()]
                 current = json.loads(progress.read_text())

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
-	"time"
 )
 
 type DeliveryFailure struct {
@@ -32,13 +30,13 @@ func (m Mail) StageUnavailableCross(ctx context.Context, source NamedRuntime, to
 				}
 				refs = replyReferences(sources)
 			}
-			nonce, err := randomName()
+			identity, err := newMailIdentity()
 			if err != nil {
 				return err
 			}
-			msg = Message{ID: "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, FromSession: source.Name(), To: to, ToSession: toSession, Replies: refs, NeedsReply: len(ids) == 0, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body, GuidanceVersion: 1}
+			msg = Message{ID: identity.ID, From: s.Caller.Role, FromSession: source.Name(), To: to, ToSession: toSession, Replies: refs, NeedsReply: len(ids) == 0, CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 1}
 			if msg.NeedsReply {
-				msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
+				msg.InputRequestID = inputRequestID(msg.ID)
 			}
 			if err := m.addMessageContext(ctx, s, &msg); err != nil {
 				return err

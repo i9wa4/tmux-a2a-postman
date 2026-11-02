@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 )
 
 // ExternalBinding is provisioned by local configuration, never by message text.
@@ -23,14 +25,15 @@ type ExternalBinding struct {
 }
 
 type ExternalMessage struct {
-	Binding    string `json:"binding"`
-	Filename   string `json:"filename"`
-	ExchangeID string `json:"exchange_id"`
-	Direction  string `json:"direction"`
-	State      string `json:"state,omitempty"`
-	Scope      string `json:"scope,omitempty"`
-	DecisionID string `json:"decision_id,omitempty"`
-	Choice     string `json:"choice,omitempty"`
+	Binding         string `json:"binding"`
+	Filename        string `json:"filename"`
+	ExchangeID      string `json:"exchange_id"`
+	Direction       string `json:"direction"`
+	State           string `json:"state,omitempty"`
+	Scope           string `json:"scope,omitempty"`
+	DecisionID      string `json:"decision_id,omitempty"`
+	Choice          string `json:"choice,omitempty"`
+	SourceMessageID string `json:"source_message_id,omitempty"`
 }
 
 type ExternalRuntime interface {
@@ -60,7 +63,7 @@ func validateExternalMessage(m Message) error {
 	role := externalRole(x.Binding)
 	switch x.Direction {
 	case "in":
-		if m.From != role || m.To == role || !m.NeedsReply || x.State != "" {
+		if m.From != role || m.To == role || !m.NeedsReply || x.State != "" || x.SourceMessageID != "" {
 			return ErrUnknown
 		}
 		if x.DecisionID != "" {
@@ -73,6 +76,12 @@ func validateExternalMessage(m Message) error {
 	case "out":
 		if m.To != role || m.From == role || m.NeedsReply || x.DecisionID != "" || x.Choice != "" {
 			return ErrUnknown
+		}
+		if x.SourceMessageID != "" && !messageID(x.SourceMessageID) {
+			return ErrUnknown
+		}
+		if _, timestamped := messageid.Timestamp(m.ID); timestamped && x.SourceMessageID == "" {
+			return errors.New("timestamped external report lacks its exact source message")
 		}
 		if x.State == "pending" {
 			if !hashString(x.Scope) {
@@ -167,7 +176,11 @@ func decisionFilename(id, scope, choice string) string {
 }
 
 func externalInput(b ExternalBinding, name, body string, reports []Message) (Message, error) {
-	id := "m-" + externalHash(b.key() + "\x00" + strings.ToLower(name))[:32]
+	identity, err := newMailIdentity()
+	if err != nil {
+		return Message{}, err
+	}
+	id := identity.ID
 	x := &ExternalMessage{Binding: b.key(), Filename: name, ExchangeID: id, Direction: "in"}
 	if strings.HasPrefix(name, "answer--") {
 		parts := strings.Split(strings.TrimSuffix(name, ".md"), "--")
@@ -189,7 +202,7 @@ func externalInput(b ExternalBinding, name, body string, reports []Message) (Mes
 		}
 		x.ExchangeID, x.DecisionID, x.Scope, x.Choice = decision.External.ExchangeID, decision.ID, parts[2], parts[3]
 	}
-	return Message{ID: id, From: externalRole(b.key()), To: b.Node, NeedsReply: true, InputRequestID: "ireq_" + id[2:], CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body, GuidanceVersion: 1, External: x}, nil
+	return Message{ID: id, From: externalRole(b.key()), To: b.Node, NeedsReply: true, InputRequestID: inputRequestID(id), CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 1, External: x}, nil
 }
 
 // SyncExternal performs a bounded scan. A producer invokes it after atomic file
@@ -243,7 +256,15 @@ func (m Mail) SyncExternal(ctx context.Context, rt ExternalRuntime, b ExternalBi
 				return err
 			}
 			answered := map[string]string{}
+			acceptedByName := map[string]Message{}
 			for _, input := range received {
+				if input.External != nil && input.External.Binding == b.key() && input.External.Direction == "in" {
+					key := strings.ToLower(input.External.Filename)
+					if prior, exists := acceptedByName[key]; exists && prior.ID != input.ID {
+						return errors.New("multiple transport identities for one external input")
+					}
+					acceptedByName[key] = input
+				}
 				if input.External != nil && input.External.Binding == b.key() && input.External.DecisionID != "" {
 					answered[input.External.DecisionID] = input.ID
 				}
@@ -292,10 +313,11 @@ func (m Mail) SyncExternal(ctx context.Context, rt ExternalRuntime, b ExternalBi
 					if len(raw) > 32*1024 {
 						return errors.New("external input exceeds 32768 bytes")
 					}
-					msg, err := m.acceptExternal(ctx, ws, s, b, name, string(raw), reports, box == inbox)
+					msg, err := m.acceptExternal(ctx, ws, s, b, name, string(raw), reports, acceptedByName, box == inbox)
 					if err != nil {
 						return err
 					}
+					acceptedByName[strings.ToLower(name)] = msg
 					if msg.External.DecisionID != "" {
 						for i := range out.Pending {
 							if out.Pending[i].DecisionID == msg.External.DecisionID {
@@ -355,7 +377,7 @@ func (m Mail) SyncExternal(ctx context.Context, rt ExternalRuntime, b ExternalBi
 	if err != nil {
 		return out, err
 	}
-	// The same per-recipient input lock and no-replay receipts as agent mail.
+	// The same per-message attempt reservation and no-replay receipts as agent mail.
 	for i := range out.Accepted {
 		if err := ctx.Err(); err != nil {
 			return out, err
@@ -366,22 +388,14 @@ func (m Mail) SyncExternal(ctx context.Context, rt ExternalRuntime, b ExternalBi
 	return out, nil
 }
 
-func (m Mail) acceptExternal(ctx context.Context, ws *os.Root, s Snapshot, b ExternalBinding, name, body string, reports []Message, published bool) (Message, error) {
-	id := "m-" + externalHash(b.key() + "\x00" + strings.ToLower(name))[:32]
-	sent, err := mailBox(ws, externalRole(b.key()), "sent")
-	if err != nil {
-		return Message{}, err
-	}
-	defer func() { _ = sent.Close() }()
-	prior, err := readMessage(sent, id+".md")
-	if err == nil {
+func (m Mail) acceptExternal(ctx context.Context, ws *os.Root, s Snapshot, b ExternalBinding, name, body string, reports []Message, accepted map[string]Message, published bool) (Message, error) {
+	// Sync already read and validated sent history once. Keep this lookup in
+	// memory so retained read archives do not rescan the whole mailbox per file.
+	if prior, found := accepted[strings.ToLower(name)]; found {
 		if prior.External == nil || prior.External.Binding != b.key() || prior.External.Filename != name || prior.Body != body {
 			return Message{}, errors.New("external identity reused with changed payload")
 		}
 		return prior, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return Message{}, err
 	}
 	if !published {
 		return Message{}, errors.New("external read archive has no durable accepted mail; restore mail state rather than replay it")
@@ -407,31 +421,64 @@ func (m Mail) acceptExternal(ctx context.Context, ws *os.Root, s Snapshot, b Ext
 	if err := validateMessage(msg); err != nil {
 		return Message{}, err
 	}
-	msg, err = resumeExternalDraft(ws, msg)
+	msg, err = resumeExternalDraft(ctx, ws, msg)
 	if err != nil {
 		return Message{}, err
 	}
 	return msg, m.begin(ws, mailTransaction{Version: 1, Kind: "send", Message: msg, Body: body})
 }
 
-// A deterministic transport ID must preserve the original timestamp/context if
-// the process stopped after staging but before writing its mail intent.
-func resumeExternalDraft(ws *os.Root, candidate Message) (Message, error) {
-	draft, err := openOwnBox(ws, candidate.From, "draft")
-	if errors.Is(err, os.ErrNotExist) {
-		return candidate, nil
+// Logical correlation, rather than a filename assignment registry, retains the
+// original random ID across retries and the draft-before-intent crash boundary.
+func findExternalIdentity(ctx context.Context, ws *os.Root, role, box string, matches func(Message) bool) (Message, bool, error) {
+	messages, err := readSummaryBox(ctx, ws, role, box)
+	if err != nil {
+		return Message{}, false, err
 	}
+	var prior Message
+	found := false
+	for _, item := range messages {
+		if !matches(item) {
+			continue
+		}
+		if found {
+			return Message{}, false, errors.New("multiple transport identities for one external action")
+		}
+		prior, found = item, true
+	}
+	return prior, found, nil
+}
+
+func sameExternalAction(prior, candidate Message) bool {
+	a, b := prior.External, candidate.External
+	if a == nil || b == nil || a.Binding != b.Binding || a.Direction != b.Direction {
+		return false
+	}
+	if b.Direction == "in" {
+		return strings.EqualFold(a.Filename, b.Filename)
+	}
+	if a.SourceMessageID == "" {
+		legacy := "m-" + externalHash(b.Binding + "\x00" + b.SourceMessageID + "\x00" + b.State + "\x00" + b.Scope + "\x00" + candidate.Body)[:32]
+		return prior.ID == legacy
+	}
+	return a.SourceMessageID == b.SourceMessageID && a.State == b.State && a.Scope == b.Scope && prior.Body == candidate.Body
+}
+
+func resumeExternalDraft(ctx context.Context, ws *os.Root, candidate Message) (Message, error) {
+	prior, found, err := findExternalIdentity(ctx, ws, candidate.From, "draft", func(item Message) bool { return sameExternalAction(item, candidate) })
 	if err != nil {
 		return Message{}, err
 	}
-	defer func() { _ = draft.Close() }()
-	prior, err := readMessage(draft, candidate.ID+".md")
-	if errors.Is(err, os.ErrNotExist) {
+	if !found {
 		return candidate, nil
 	}
-	if err != nil {
-		return Message{}, err
+	if candidate.External.Direction == "in" && candidate.External.ExchangeID == candidate.ID {
+		candidate.External.ExchangeID = prior.ID
 	}
+	if candidate.External.Direction == "out" && prior.External.SourceMessageID == "" {
+		candidate.External.SourceMessageID = ""
+	}
+	candidate.ID, candidate.InputRequestID = prior.ID, prior.InputRequestID
 	candidate.CreatedAt, candidate.Context = prior.CreatedAt, prior.Context
 	if !sameMessage(candidate, prior) {
 		return Message{}, errors.New("external staged identity conflicts with the retried action")
@@ -482,9 +529,12 @@ func (m Mail) ReportExternal(ctx context.Context, rt ExternalRuntime, b External
 		if source.External == nil || source.External.Direction != "in" || source.External.Binding != b.key() {
 			return errors.New("report source is not this external binding's claimed mail")
 		}
-		x := &ExternalMessage{Binding: b.key(), Direction: "out", ExchangeID: source.External.ExchangeID, State: state, Scope: scope, Filename: source.External.Filename}
-		id := "m-" + externalHash(b.key() + "\x00" + to + "\x00" + state + "\x00" + scope + "\x00" + body)[:32]
-		result = Message{ID: id, From: b.Node, To: source.From, External: x, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body}
+		x := &ExternalMessage{Binding: b.key(), Direction: "out", ExchangeID: source.External.ExchangeID, State: state, Scope: scope, Filename: source.External.Filename, SourceMessageID: source.ID}
+		identity, err := newMailIdentity()
+		if err != nil {
+			return err
+		}
+		result = Message{ID: identity.ID, From: b.Node, To: source.From, External: x, CreatedAt: identity.CreatedAt, Body: body}
 		if state != "pending" {
 			result.Replies, err = externalTerminalReferences(ctx, ws, b, x.ExchangeID)
 			if err != nil {
@@ -498,11 +548,18 @@ func (m Mail) ReportExternal(ctx context.Context, rt ExternalRuntime, b External
 		if err != nil {
 			return err
 		}
-		for _, previous := range reports {
-			if previous.ID == id {
-				result = previous
-				return nil
+		var previous *Message
+		for i := range reports {
+			if sameExternalAction(reports[i], result) {
+				if previous != nil {
+					return errors.New("multiple transport identities for one external report")
+				}
+				previous = &reports[i]
 			}
+		}
+		if previous != nil {
+			result = *previous
+			return nil
 		}
 		if source.External.DecisionID != "" {
 			latest := latestExternal(reports, x.ExchangeID)
@@ -513,7 +570,7 @@ func (m Mail) ReportExternal(ctx context.Context, rt ExternalRuntime, b External
 		if latest := latestExternal(reports, x.ExchangeID); latest != nil && (latest.External.State == "done" || latest.External.State == "blocked") {
 			return errors.New("external exchange is already terminal")
 		}
-		result, err = resumeExternalDraft(ws, result)
+		result, err = resumeExternalDraft(ctx, ws, result)
 		if err != nil {
 			return err
 		}

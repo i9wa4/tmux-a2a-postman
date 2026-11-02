@@ -84,11 +84,13 @@ retains its existing bounded post-commit tail.
 
 ## 4. Durable intake and crash recovery
 
-Binding/filename deterministically identifies ordinary Postman mail from a
-binding-specific external transport role to the interface. Metadata retains the
-binding, filename and exchange separately from the literal text. Full common and
-recipient instructions are rendered as for agent mail. The transport role is
-neither a native agent nor an authenticated remote principal.
+Binding/filename identifies one logical input from a binding-specific external
+transport role to the interface. The first durable draft assigns a timestamped
+random message ID. Existing sent/draft records retain that exact assignment
+across retries and crashes; multiple assignments fail rather than choosing one.
+Metadata retains the binding, filename and exchange separately from the literal
+text. Full common and recipient instructions are rendered as for agent mail. The
+transport role is neither a native agent nor an authenticated remote principal.
 
 Existing recoverable mail intents commit publication and the sent archive before
 the exact input is durably copied into external `read/` and removed from
@@ -98,8 +100,9 @@ payload conflict checking and correlation across the acceptance/archival gap.
 Repeated scans and read/inbox overlap converge on the same message even if
 already POP'd.
 
-The shared recipient lock serializes notification with concurrent agent sends.
-Its paste/one-submit, observation and uncertain-replay rules still apply. Failed
+Notification uses the same one-paste-per-ID reservation and bounded whole-pane
+line-diff Enter retries as agent mail, without a destination lock or persistent
+input guard. Its uncertain-replay rules still apply. Failed
 notification does not undo accepted mail. Unclaimed accepted archives
 participate in recovery; valid claims prevent further input. Missing/corrupt
 receipts, changed payloads, unsafe types/paths, conflicting records or read
@@ -124,6 +127,14 @@ filename. Reports require this interface's POP receipt and active binding. Exact
 reruns are idempotent; changed terminal reports are rejected. An acknowledgement
 is not task completion. No channel command executes or approves a shell command.
 
+New reports also have timestamped random IDs. Their internal external metadata
+retains `source_message_id`, the exact claimed request or answer, so equal
+state/scope/body sent for different sources cannot alias. A retry for the same
+source/action retains its original ID. Legacy deterministic IDs and staged
+records remain reusable without rewriting their metadata. This correlation
+field supplies no additional authority; the POP receipt and active binding
+remain required.
+
 For one human decision, report `--state pending --scope <sha256>` and describe
 the complete exact action, revision/context and why a decision is needed. Hash
 that complete context. The output presents two exact inbox filenames, also
@@ -133,6 +144,11 @@ returned by `channel-sync` catch-up:
 answer--<pending-report-message-id>--<scope-sha256>--approve.md
 answer--<pending-report-message-id>--<scope-sha256>--decline.md
 ```
+
+Use the returned filename exactly. Timestamped decisions contain the timestamp
+dot and exceed the ordinary 128-byte producer-name limit; only this exact
+validated message-ID/scope/choice shape has that exception. The ordinary input
+filename grammar is unchanged.
 
 Publish exactly one with the human's reason as plain text and trigger intake. It
 becomes another claimed message bound to that decision, original exchange and

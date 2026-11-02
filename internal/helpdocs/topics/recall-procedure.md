@@ -49,9 +49,14 @@ directory's `workspace.json` has version 1 and the exact `root` and `name`.
 For the verified logical node, inspect only:
 
 ```text
-<state>/<workspace-name>/agents/<node>/read/m-<32 lowercase hex>.md
-<state>/<workspace-name>/agents/<node>/sent/m-<32 lowercase hex>.md
+<state>/<workspace-name>/agents/<node>/read/<message-id>.md
+<state>/<workspace-name>/agents/<node>/sent/<message-id>.md
 ```
+
+Accept legacy `m-<32 lowercase hex>` and new
+`m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<32 lowercase hex>` IDs. Validate the complete
+calendar/time shape and require a new ID's timestamp to match `created_at`.
+Do not rename an old archive or select history by mixed-format filename order.
 
 Require existing private owned directories/files and refuse symlinks or changed
 identity. Missing/unreadable directories are unknown; an existing empty pair
@@ -118,7 +123,7 @@ role or grant new authorization.
 
 For an unclear reply, follow exact `reply_to` or `replies[].message_id` only
 within own read/sent. An `input_request_id` / `fills_input_request_id` pair can
-confirm correlation. Do not infer a thread from random-ID ordering or expand
+confirm correlation. Do not infer a thread from filename ordering or expand
 all older history. Report absent referenced mail as missing context; never
 open unclaimed inbox or another agent's copies to fill the gap.
 

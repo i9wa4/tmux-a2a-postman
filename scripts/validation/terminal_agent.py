@@ -11,6 +11,8 @@ import threading
 import tty
 import time
 
+from mail_fixture import MESSAGE_ID_PATTERN
+
 nonce, mode = sys.argv[1:3]
 helper = (sys.argv[3] if len(sys.argv) == 4 else
           str(pathlib.Path(__file__).with_name("notification_recipient.py")))
@@ -71,7 +73,7 @@ def process():
                 raise RuntimeError("notification split, interleaved or corrupted: " + line)
             identifiers = []
             for notice in notices:
-                matches = re.findall(r"You've got mail: (m-[a-f0-9]{32})\.md", notice)
+                matches = re.findall(r"You've got mail: (" + MESSAGE_ID_PATTERN + r")\.md", notice)
                 if len(matches) != 1:
                     raise RuntimeError("corrupted notification: " + notice)
                 identifiers.extend(matches)
