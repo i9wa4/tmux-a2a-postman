@@ -100,12 +100,16 @@ func TestLaunchAgentsPreviewIsInertAndConfigurationFollowsRealConsoles(t *testin
 		if !pane.Started {
 			t.Fatal(pane)
 		}
-		raw := f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_title}\t#{pane_current_path}\t#{pane_top}\t#{pane_left}")
-		fields := strings.Split(raw, "\t")
-		if len(fields) != 4 || fields[0] != pane.Role || fields[1] != directory {
-			t.Fatal(raw, pane)
+		// tmux 3.8 display-message sanitizes literal control characters in
+		// the format. Query native fields individually rather than splitting
+		// a version-dependent human display separator.
+		title := f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_title}")
+		cwd := f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_current_path}")
+		if title != pane.Role || cwd != directory {
+			t.Fatal(title, cwd, pane)
 		}
-		tops[pane.Role], lefts[pane.Role] = fields[2], fields[3]
+		tops[pane.Role] = f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_top}")
+		lefts[pane.Role] = f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_left}")
 		content, _ := os.ReadFile(filepath.Join(directory, pane.Role+".config"))
 		if strings.TrimSpace(string(content)) != path {
 			t.Fatal("selected config lost in new console", string(content))
