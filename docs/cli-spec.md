@@ -22,6 +22,7 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 
 | Command              | Purpose                                                     |
 | -------------------- | ----------------------------------------------------------- |
+| `launch-agents`      | Explicitly create one preset team in a dedicated session    |
 | `refresh-status`     | Collect one finite shared server snapshot                   |
 | `get-status`         | Read the saved explicit-server JSON snapshot                |
 | `get-status-oneline` | Render the same saved server snapshot as one human line     |
@@ -34,12 +35,22 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 | `version`            | Print name, version and commit as JSON                      |
 
 Operational commands accept `--config <absolute-postman.md>` and `--help`.
-The default is `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or
+Without an explicit override, the inherited absolute
+`TMUX_A2A_POSTMAN_CONFIG` selection takes precedence over
+`$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or
 `$HOME/.config/tmux-a2a-postman/postman.md` when XDG_CONFIG_HOME is unset.
 The top-level `--config` selects the same configuration. Relative or duplicate
 options, unexpected positional arguments and removed options are errors.
 `--postman-md` is removed from the product CLI. The notification test driver's
 similarly named fixture-copy option is a separate development interface.
+
+`launch-agents <preset>` is an optional finite operation with `--socket`,
+`--cwd`, `--session`, and inert `--dry-run`; `launch-agents --list` lists
+validated presets without creating anything. It accepts one positional preset;
+the mail/status commands retain their argument contracts. See the
+[launch contract](launch-agents.md) for exact selection, shell initialization,
+config inheritance, native ownership, partial starts, and cleanup. It never
+injects initial mail or supervises consoles. Other commands never invoke it.
 
 The workspace value is the canonical HOME-relative identity (`~` or `~/path`).
 The caller comes from verified native tmux identity. The workspace directory is

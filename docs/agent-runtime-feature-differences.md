@@ -3,8 +3,10 @@
 ## 1. Shared Postman surface
 
 Codex, Claude Code and local LLM consoles receive the same tmux text/paste/C-m
-notification in their existing input editor. Postman does not call model APIs,
-register conversations or start another agent. Agent-specific authentication,
+notification in their existing input editor. Mail transport does not call model
+APIs, register conversations or start another agent. The optional explicit
+[preset launcher](launch-agents.md) creates consoles and exits, without initial
+mail or a supervisor. Agent-specific authentication,
 permissions and input behavior remain with the agent.
 
 | Feature          | Shared contract                                        | Runtime responsibility                                |

@@ -80,6 +80,9 @@ native agent pane's working directory below canonical HOME as the workspace.
 The directory where the tmux session was first created does not select it.
 A tool subprocess's cwd does not redirect mail; separate worktrees remain
 independent when their agent panes run there. No launch wrapper is required.
+For explicit one-shot team creation, the optional
+[`launch-agents` presets](docs/launch-agents.md) create a dedicated session;
+they never inject a startup message or supervise the consoles.
 A live independent session cannot also own the same workspace. Verified runtime
 replacement preserves mail; unknown ownership does not silently transfer.
 

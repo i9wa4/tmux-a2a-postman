@@ -6,7 +6,10 @@ postman.md. Default path:
   $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md
   ~/.config/tmux-a2a-postman/postman.md when XDG_CONFIG_HOME is unset
 
-Each command accepts exactly one absolute --config override.
+Operational commands accept one absolute --config override. Otherwise the
+documented inherited TMUX_A2A_POSTMAN_CONFIG selection takes precedence over
+the XDG/HOME default. launch-agents sets it only for its newly created session.
+The two cache-only status getters ignore config selection.
 Relative paths and a relative XDG_CONFIG_HOME fail closed. Configuration is
 reread by each invocation; no daemon restart is needed for these commands.
 
@@ -39,3 +42,7 @@ Optional external filesystem binding (frontmatter scalar strings):
 It also requires interface_node and the declared top-level interface. Distinct
 bindings use separate private roots. See help channel-sync and
 docs/design/external-filesystem-channel.md for producer activation and recovery.
+
+Optional YAML presets define ordered columns of panes with role/command pairs.
+Only explicit launch-agents executes those commands; --list and --dry-run are
+inert. See help launch-agents and docs/launch-agents.md.
