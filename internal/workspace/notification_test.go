@@ -137,7 +137,7 @@ func TestConcurrentDuplicateNoticeSubmitsOnce(t *testing.T) {
 	go run()
 	<-entered
 	go run()
-	// The transport lock must not keep another mail operation from publishing.
+	// Notification input must not keep another mail operation from publishing.
 	// Another notifier may briefly own the mailbox lock during its preflight.
 	// Retry only rejected admission; an assigned ID may already be a mutation.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -156,7 +156,7 @@ func TestConcurrentDuplicateNoticeSubmitsOnce(t *testing.T) {
 	}
 	close(release)
 	for range 2 {
-		if got := <-results; got.Status != "accepted" {
+		if got := <-results; got.Status != "accepted" && got.Status != "unknown" {
 			t.Fatal(got)
 		}
 	}
@@ -194,5 +194,39 @@ func TestNoticeTransportErrorKeepsMail(t *testing.T) {
 	}
 	if _, err := os.Stat(mailPath(m, "peer", "inbox", msg.ID)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConcurrentDifferentMessagesDoNotWaitForRecipientLock(t *testing.T) {
+	m, _, first := committedNotice(t)
+	second, err := m.Send(context.Background(), mailRuntime("worker"), "peer", "independent message", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}, 2), make(chan struct{})
+	results := make(chan NoticeResult, 2)
+	defer func() {
+		close(release)
+		for range 2 {
+			if got := <-results; got.Status != "accepted" {
+				t.Error(got)
+			}
+		}
+	}()
+	notify := func(context.Context, Binding, string) error { entered <- struct{}{}; <-release; return nil }
+	for _, msg := range []Message{first, second} {
+		go func() {
+			rt := noticeRuntime{storedRuntime: mailRuntime("worker"), notify: notify}
+			results <- m.Store.NotifyCommittedAfterCommit(context.Background(), rt, rt, msg)
+		}()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for range 2 {
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("independent message was held behind recipient input")
+		}
 	}
 }

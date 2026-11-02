@@ -238,7 +238,7 @@
               pname = "tmux-a2a-postman";
               inherit version;
               src = ./.;
-              vendorHash = "sha256-wkLAGzVge9WOZdLKPB0cuW1cpzy/rXKTTmqj29uqFv0=";
+              vendorHash = "sha256-T0KmN00q6lGo8LHKiBdmSveSMSLykCWi1pxCqkqE1Rs=";
               nativeCheckInputs = [
                 pkgs.tmux
                 pkgs.bash

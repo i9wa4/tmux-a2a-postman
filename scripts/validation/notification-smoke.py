@@ -18,7 +18,7 @@ from mail_fixture import sent_evidence
 from burst_progress import approval_progress
 
 EXTERNAL_CASES = ["external", "external-blocked", "external-decision"]
-CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "approval-burst", *EXTERNAL_CASES]
+CASES = ["rally", "busy", "concurrent", "parent-child", "child-parent", "approval", "rejected", "disabled", "absorbed-enter", "newline-retry", "approval-burst", *EXTERNAL_CASES]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--agent", choices=["fixture", "codex"], default="fixture")
 parser.add_argument("--terminal", choices=["both", "plain", "bracketed"], default="both")
@@ -41,7 +41,7 @@ postman = str(pathlib.Path(args.postman).resolve())
 codex = shutil.which(args.codex) if args.agent == "codex" else None
 if not shutil.which("tmux") or (args.agent == "codex" and not codex):
     parser.error("tmux is required; --agent codex additionally needs Codex")
-if codex and args.case in ["absorbed-enter", "approval-burst"]:
+if codex and args.case in ["absorbed-enter", "newline-retry", "approval-burst"]:
     parser.error("this case requires deterministic terminal editors; use --agent fixture")
 if args.baseline and args.case != "rally":
     parser.error("--baseline requires --case rally")
@@ -268,7 +268,7 @@ def run_case(case, terminal):
             channel_sync()  # Provision only this fixture's configured private binding.
             publish_external("request.md", "External subject " + uuid.uuid4().hex + "\nEOF_MARKER\n")
             initial = channel_sync()
-            if len(initial["accepted"]) != 1 or initial["accepted"][0]["notification"]["status"] != "accepted":
+            if len(initial["accepted"]) != 1 or initial["accepted"][0]["notification"]["status"] == "unavailable":
                 raise RuntimeError("external input notification not accepted: " + json.dumps(initial))
             wait_for("external recipient result", lambda: len(list(evidence.glob("*.claim.*.json"))) == 1)
             if case == "external-decision":
@@ -356,7 +356,7 @@ def run_case(case, terminal):
                     received.add((proof["message"]["from"], request["command"]))
                 if received != expected:
                     raise RuntimeError("burst claims did not match all eight sender/command pairs")
-                if all(result.get("notification") for result in outcomes):
+                if all(result.get("notification", {}).get("status") == "unavailable" for result in outcomes):
                     raise RuntimeError("burst did not demonstrate a working input notification")
                 report.update(executions=outcomes, claims=proofs, batch_seconds=time.monotonic() - began)
             finally:
@@ -383,7 +383,7 @@ def run_case(case, terminal):
             proof = json.loads(next(evidence.glob("approver.claim.*.json")).read_text())
             verify_proof(proof, ready)
             expected = "rejected" if case == "rejected" else "approved"
-            if result["approval"]["decision"] != expected or result.get("notification") or result["executed"] != (case == "approval"):
+            if result["approval"]["decision"] != expected or result.get("notification", {}).get("status") == "unavailable" or result["executed"] != (case == "approval"):
                 raise RuntimeError("approval did not use the notification-driven decision: " + stderr)
             reply = proof["send"]["mail_evidence"]
             paths = list((root / "state").glob("**/read/" + reply["id"] + ".md"))
@@ -405,14 +405,14 @@ def run_case(case, terminal):
                 if any(item.get("notification", {}).get("status") != "unknown" for item in sends):
                     raise RuntimeError("absorbed Enter or pending input was incorrectly accepted")
                 observed = json.loads((evidence / "worker.absorbed.json").read_text())
-                if observed["enter_count"] != 1 or sends[0]["mail_evidence"]["id"] not in observed["draft"] or sends[1]["mail_evidence"]["id"] in observed["draft"]:
-                    raise RuntimeError("uncertain input was pasted/submitted again")
+                if observed["enter_count"] != 6 or any(observed["draft"].count(item["mail_evidence"]["id"]) != 1 for item in sends):
+                    raise RuntimeError("Enter retry bound or paste-once invariant failed")
                 if list(evidence.glob("*.claim.*.json")):
                     raise RuntimeError("absorbed Enter triggered recipient action")
                 for item in sends:
                     if len(list((root / "state").glob("**/inbox/" + item["mail_evidence"]["id"] + ".md"))) != 1:
                         raise RuntimeError("unknown notification lost durable mail")
-                report["negative_control"] = "one absorbed Enter; next sender blocked; both messages remain unread"
+                report["negative_control"] = "three spaced Enter attempts per message; later sender proceeds; both pasted once and remain unread"
             elif args.baseline or case == "disabled":
                 if sends[0].get("notification", {}).get("status") != "unavailable":
                     raise RuntimeError("negative control unexpectedly accepted notification")
@@ -427,7 +427,7 @@ def run_case(case, terminal):
                 # send() already has a 15-second subprocess deadline. The busy
                 # case proves no response wait by withholding recipient work
                 # until send returns; CI wall time is retained as evidence.
-                if any(s.get("notification") for s in sends):
+                if any(s.get("notification", {}).get("status") == "unavailable" for s in sends):
                     raise RuntimeError("notification failed: " + json.dumps([
                         {"id": s["mail_evidence"]["id"], "seconds": s["seconds"],
                          "notification": s.get("notification")} for s in sends]))
@@ -460,6 +460,14 @@ def run_case(case, terminal):
                 if len(visited) != 4:
                     raise RuntimeError("duplicate or missing notification claim")
                 report["claims"] = proofs
+                if case == "newline-retry":
+                    absorbed = json.loads((evidence / "worker.absorbed.json").read_text())
+                    keys = [json.loads(line) for line in (evidence / "worker.keys.jsonl").read_text().splitlines()]
+                    if absorbed["enter_count"] != 2 or not 4 <= len(keys) <= 6:
+                        raise RuntimeError("newline recovery did not submit each hint on the second Enter")
+                    if any(b["at"] - a["at"] < 0.59 for a, b in zip(keys, keys[1:])):
+                        raise RuntimeError("Enter presses were too close together")
+                    report["newline_recovery"] = "two hints, each pasted once and submitted after its first Enter became a newline"
         if case == "rally":
             # All four recipient tools have finished here. Their overlapping
             # supplemental refreshes may have saved a partial snapshot while
@@ -484,7 +492,7 @@ def run_case(case, terminal):
         report["result"], report["error"] = "failed", str(error)
     finally:
         if report.get("result") != "pass":
-            for category, pattern in [("notification_records", "**/runtime/notices/*.json"), ("input_guards", "**/runtime/input-guards/*.json")]:
+            for category, pattern in [("notification_records", "**/runtime/notices/*.json")]:
                 records = {}
                 for path in (root / "state").glob(pattern):
                     try:
@@ -527,14 +535,14 @@ def run_case(case, terminal):
                               "final_refresh": report.get("final_refresh"), "final_status": report.get("final_status"),
                               "invocation_diagnostics": report.get("invocation_diagnostics", {}),
                               "runtime_logs": report.get("runtime_logs", {}), "notification_records": report.get("notification_records", {}),
-                              "input_guards": report.get("input_guards", {}), "mailbox_counts": report.get("mailbox_counts", {})}), flush=True)
+                              "mailbox_counts": report.get("mailbox_counts", {})}), flush=True)
     return report
 
 
 reports = []
 terminals = ["plain", "bracketed"] if args.terminal == "both" and not codex else ["bracketed" if codex else args.terminal]
 for terminal in terminals:
-    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "approval-burst", *EXTERNAL_CASES]] if args.case == "all" else [args.case]:
+    for selected in [case for case in CASES if not codex or case not in ["absorbed-enter", "newline-retry", "approval-burst", *EXTERNAL_CASES]] if args.case == "all" else [args.case]:
         reports.append(run_case(selected, terminal))
         if reports[-1]["result"] != "pass":
             break

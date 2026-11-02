@@ -9,6 +9,7 @@ import sys
 import termios
 import threading
 import tty
+import time
 
 nonce, mode = sys.argv[1:3]
 helper = (sys.argv[3] if len(sys.argv) == 4 else
@@ -19,6 +20,7 @@ submitted = queue.Queue()
 lock = threading.RLock()
 history, draft = [], bytearray()
 absorbed_enters = 0
+draft_enters = 0
 
 
 def render():
@@ -44,10 +46,24 @@ def process():
             line = submitted.get()
             if line is None:
                 return
-            matches = re.findall(r"You've got mail: (m-[a-f0-9]{32})\.md", line)
-            if len(matches) != 1 or "<!-- message start -->" not in line or "<!-- end of message -->" not in line:
+            # Two independent senders may paste complete hints before either
+            # Enter. Accept a sequence of whole notifications, never fragments,
+            # interleaved text or duplicate IDs. This is a terminal test actor,
+            # not a production notification parser or task runtime.
+            notices = re.findall(r"<!-- message start -->.*?<!-- end of message -->", line, re.S)
+            remaining = re.sub(r"<!-- message start -->.*?<!-- end of message -->", "", line, flags=re.S)
+            if not notices or remaining.strip():
                 raise RuntimeError("notification split, interleaved or corrupted: " + line)
-            action(matches[0])
+            identifiers = []
+            for notice in notices:
+                matches = re.findall(r"You've got mail: (m-[a-f0-9]{32})\.md", notice)
+                if len(matches) != 1:
+                    raise RuntimeError("corrupted notification: " + notice)
+                identifiers.extend(matches)
+            if len(set(identifiers)) != len(identifiers):
+                raise RuntimeError("duplicate notification body pasted")
+            for identifier in identifiers:
+                action(identifier)
     except Exception as error:
         (evidence / (role + ".error.txt")).write_text(str(error))
         os._exit(1)
@@ -83,11 +99,16 @@ try:
                     continue
                 value = pending.pop(0)
                 if value in [10, 13] and not pasted:
-                    if os.environ["POSTMAN_SMOKE_CASE"] == "absorbed-enter" and role == "worker":
+                    with (evidence / (role + ".keys.jsonl")).open("a") as trace:
+                        trace.write(json.dumps({"at": time.monotonic(), "key": "C-m"}) + "\n")
+                    case = os.environ["POSTMAN_SMOKE_CASE"]
+                    if role == "worker" and (case == "absorbed-enter" or (case == "newline-retry" and draft_enters == 0 and draft)):
                         absorbed_enters += 1
+                        draft_enters += 1
                         draft.append(10)
                         (evidence / (role + ".absorbed.json")).write_text(json.dumps({"enter_count": absorbed_enters, "draft": draft.decode()}))
                         continue
+                    draft_enters = 0
                     line = draft.decode()
                     draft.clear()
                     if line.strip():

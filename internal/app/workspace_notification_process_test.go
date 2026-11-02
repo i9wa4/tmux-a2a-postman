@@ -21,7 +21,7 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 	if out, err := progressCheck.CombinedOutput(); err != nil {
 		t.Fatalf("approval burst progress regression: %v\n%s", err, out)
 	}
-	// Twenty-six terminal cases plus six existing-config regressions share this
+	// Twenty-eight terminal cases plus six existing-config regressions share this
 	// deadline. Native tmux/file operations are slower on macOS; each driver's
 	// individual wait remains bounded rather than exhausting this batch early.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -32,7 +32,7 @@ func TestNotificationDrivenTerminalAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("terminal-driven notification matrix: %v\n%s", err, out)
 	}
-	t.Log("26 real-tmux cases passed, including external done/blocked/exact-decision round trips in plain and bracketed editors")
+	t.Log("28 real-tmux cases passed, including external done/blocked/exact-decision round trips in plain and bracketed editors")
 	// Exercise a production-shaped, numbered postman.md rather than replacing
 	// the user's established template sections with an edges-only topology.
 	for _, scenario := range []string{"rally", "approval", "rejected"} {

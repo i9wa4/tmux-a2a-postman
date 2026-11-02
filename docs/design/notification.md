@@ -3,84 +3,75 @@
 ## 1. Generic terminal input
 
 After durable mail commits, the foreground sender verifies its sent copy and
-recipient binding, then uses tmux text paste and one real `C-m` in the existing
-agent console. The greeting, `You've got mail:` filename hint and HTML protocol
-sentinels remain. The hint asks for argument-free POP and a complete archive
-read; the actual POP result selects the message. No mail body or executable
-source is pasted. No model API, client registration, shell hook, model name or
-hardcoded prompt glyph selects behavior.
+recipient binding, then pastes a short hint into the existing agent console.
+The greeting, `You've got mail:` filename hint and HTML sentinels remain. The
+hint asks for argument-free POP and a complete archive read; the actual POP
+result selects the mail. No body, executable source, model API, client
+registration or shell hook is involved.
 
-A unique tmux buffer is deleted after consumption. A private destination file
-lock serializes all Postman processes targeting that recipient, including
-cross-workspace senders. No mailbox lock spans input or screen observation.
-Native server/session/pane/process evidence is checked around captures and
-before input. Ordinary shell prompts and tmux copy/input modes are rejected.
+Unique tmux buffers are deleted after consumption. Native server/session/pane
+and process evidence is checked around captures and before every key. Ordinary
+shell prompts and tmux copy/input modes are rejected. Mailbox locks protect
+short file transactions; none spans terminal input or observation.
 
-## 2. Settlement, submit and uncertainty
+## 2. Screen differences and bounded retries
 
-The sender learns the current cursor prefix and screen geometry. It pastes once,
-observes the complete hint at the cursor, and waits for 180 milliseconds of
-settled input. Then it sends one `C-m`. Post-submit observations look for the
-input prefix returning and the hint leaving the current input area while being
-visible elsewhere on screen. Output changes alone do not count as acceptance.
-Lock admission has a five-second bound. After acquisition the input phase has
-its own two-second budget; a one-second margin covers initial verification
-within the eight-second post-commit bound. Waiting on an already opened lock
-does not repeatedly probe tmux or rewrite workspace state.
-The two-second input budget starts after the durable pending guard, and covers
-paste, settling, C-m and post-submit screen evidence. Ownership verification
-and guard/receipt persistence share the outer eight-second bound rather than
-inheriting an almost-expired input deadline. The recipient lock still covers
-the entire sequence; persistence failure remains unknown and never replays.
+Closely spaced Enter presses can become literal newlines. The sender separates
+paste and Enter, then compares the complete pane text before and after each
+Enter. A small insertion/deletion diff can represent a newline or a viewport
+scroll; comparing rows by position would mistake scrolling for a large redraw.
+Small differences permit another spaced Enter. Substantial change stops extra
+keys. Both the attempt count and elapsed input time are bounded. The exact
+interval, threshold and limits belong to the embedded
+[send-heredoc HelpDoc](../../internal/helpdocs/topics/send-heredoc.md).
 
-These are generic terminal observations, not proof of model processing. A screen
-cannot always distinguish submission from a newline or editor redraw. When
-evidence is insufficient, status is unknown. Do not add a second Enter or repeat
-the text. A pending destination input guard is durable before the first paste,
-so process exit releasing the OS lock does not admit another paste over an
-unresolved draft. A later sender may resolve it from sufficient fresh input
-evidence; otherwise it leaves both committed messages unread and reports
-unknown.
+The algorithm never locates an input area, learns cursor prefixes or branches
+on Codex/Claude prompt conventions. Equal-looking screens may have different
+internal meanings, and background output may create a large difference. The
+diff is deliberately only a retry heuristic. Extra Enter can be harmless even
+when the first was accepted; it must never become an unbounded key stream or
+proof of receiving, understanding, approving or completing mail.
 
-The source notice record prevents replay of accepted or uncertain attempts for
-the same message. A pre-input shell/mode rejection can be attempted later for
-that exact committed message; a new send always has its own mail identity.
-This is bounded foreground work, without a retry queue or permanent observer.
+Independent senders do not wait on a destination notification lock. Complete
+hints may collect before the last process submits them. There is no shared
+last-sender registry or queue. A persistent ambiguous-input guard previously
+prevented all later hints even after the original mail was claimed; current
+transport neither reads nor updates it. Historical guard/lock files remain
+untouched. Every message still reserves a durable attempt before its one paste,
+so concurrent attempts for that same ID cannot replay input. Unknown mail is
+not re-sent, and a fresh message is not blocked by another ID's uncertainty.
 
-| Fact             | Evidence                                                      |
-| ---------------- | ------------------------------------------------------------- |
-| Delivery         | Independent sent and receiver inbox/read copies               |
-| Accepted hint    | Bounded input-area observations after one C-m                 |
-| Unavailable hint | Binding/transport rejected before input admission             |
-| Unknown hint     | Input, submit or persistence remains uncertain                |
-| POP claim        | Final read archive and durable receipt                        |
-| Full read        | Receiver's complete-file evidence, such as its archive digest |
-| Response         | Exact correlated reply                                        |
+| Fact             | Evidence                                                       |
+| ---------------- | -------------------------------------------------------------- |
+| Delivery         | Independent sender sent and receiver inbox/read copies         |
+| Accepted hint    | Compatibility label for substantial post-Enter whole-pane diff |
+| Unavailable hint | Binding/transport rejected before input admission              |
+| Unknown hint     | Retry limit, observation, input or persistence uncertainty     |
+| POP claim        | Final read archive and durable claim receipt                   |
+| Full read        | Receiver's complete-file evidence, such as its archive digest  |
+| Response         | Exact correlated reply                                         |
 
-Normally accepted hints are omitted from compact CLI JSON. Other outcomes are
-reported in `notification`. Capture, claim, full reading, response and task
-acceptance are separate. Notification failure never undoes mail or grants
-approval. Use known unread counts as a POP trigger; do not poll an empty inbox.
+Normally accepted hints are omitted from compact JSON; the label is not
+recipient acceptance. Other outcomes appear in `notification`. Failure never
+undoes mail or grants execution permission. Known positive unread counts can
+drive a finite POP batch; an empty inbox never becomes a polling loop.
 
 ## 3. Limits and verification
 
-Postman controls its own writers, without saving/restoring human drafts or
-excluding unrelated key senders. The former #901 coordinator roadmap was
-withdrawn; these limitations remain. Native pane text does not authenticate
-model continuity or its historical author. Session snapshots remain separate
-from this target-only input check.
+Postman does not exclude human drafts or unrelated terminal writers, and native
+pane text cannot authenticate a model or conversation history. Session snapshots
+remain separate from target-only submission observations. There is no daemon,
+retry worker or continuous production recorder.
 
-The Go test and `nix run .#notification-smoke` share deterministic terminal
-editors with and without bracketed paste. Only actual submitted terminal bytes
-trigger receiver-owned POP, full archive reading and replies. Busy work runs
-independently of the editor. Twenty cases cover rally, concurrent senders,
-busy receivers, both interface directions, approval/rejection, copy-mode
-blocking and absorbed Enter. The absorbed-Enter control verifies one submit, no
-next paste and durable unread mail. Controllers never supply receiver
-POP/replies.
+Real isolated tmux tests own terminal editors with and without bracketed paste.
+They cover complete simultaneous hints, busy output, newline-only retries,
+finite permanently absorbed Enter, both interface directions, eight approval
+requests and external channels. Receiver-owned POP, complete archive digests,
+exact replies/decisions and exactly-once execution effects are mandatory; a
+controller never supplies those receiver actions.
 
-Optional real Codex TUI tests use fixed local model decisions over the same tmux
-input path. That test provider belongs only to validation. Actual Claude/model
-execution is not inferred from deterministic terminal tests. See
-[Contributing](../../CONTRIBUTING.md) and the
-[CLI specification](../cli-spec.md).
+Optional real Codex tests replace model decisions with a local deterministic
+Responses fixture, exercising the actual TUI and recipient tools without
+account authentication. These tests do not prove live Claude or model behavior.
+[Contributing](../../CONTRIBUTING.md) owns the matrix and commands; the
+[CLI specification](../cli-spec.md) owns the observable result contract.

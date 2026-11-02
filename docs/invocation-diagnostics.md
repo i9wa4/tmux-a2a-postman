@@ -106,10 +106,10 @@ measures the complete wall time.
 
 Phases cover configuration, native identity, diagnostic destination, recipient
 context, overall mail operation, staging, receiver publication, sender archival,
-POP claim/receipt, self summary, overall notification, paste, settlement, single
-submit, confirmation, shared server refresh, execution, approval wait,
-interactive-shell initialization and child execution. Ordinary mail's
-`result_output` includes JSON encoding and stdout write; execution's
+POP claim/receipt, self summary, overall notification, paste, settlement,
+bounded submit attempts, confirmation, shared server refresh, execution,
+approval wait, interactive-shell initialization and child execution. Ordinary
+mail's `result_output` includes JSON encoding and stdout write; execution's
 `result_encoding` measures JSON encoding before finalization. Its final stderr
 write is intentionally outside the internal end boundary.
 
