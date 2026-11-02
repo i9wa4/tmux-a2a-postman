@@ -60,6 +60,11 @@ jobs:
       - name: Check selected Go toolchain
         run: nix develop .#ci --command bash scripts/validation/check-go-toolchain.sh
 
+      - name: Verify GitHub Actions lockfile provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: nix run .#gh-actions-lock -- --verify
+
       - name: Run nix flake check
         run: nix flake check --print-build-logs
 
