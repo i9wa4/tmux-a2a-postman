@@ -8,6 +8,7 @@ import (
 func TestWorkspaceDefaultTopologyPathIsStableAcrossCWD(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("TMUX_A2A_POSTMAN_CONFIG", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	want := filepath.Join(home, ".config", "tmux-a2a-postman", "postman.md")
 	for _, command := range []string{"send-heredoc", "pop", "get-status", "get-status-oneline", "execute-heredoc", "approve-execution", "decline-execution"} {
@@ -25,6 +26,7 @@ func TestWorkspaceDefaultTopologyPathIsStableAcrossCWD(t *testing.T) {
 
 func TestWorkspaceTopologyPathXDGAndExplicitOverride(t *testing.T) {
 	xdg := t.TempDir()
+	t.Setenv("TMUX_A2A_POSTMAN_CONFIG", "")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	want := filepath.Join(xdg, "tmux-a2a-postman", "postman.md")
 	if got, err := newWorkspaceFlags("pop").parse(nil); err != nil || got != want {
@@ -68,5 +70,21 @@ func TestStatusOnelineDispatchUsesCommonConfigAndOwnHandler(t *testing.T) {
 	})
 	if result.Err != nil || result.ShowUsage || len(got) != 2 || got[0] != "--config" || got[1] != "/private/postman.md" {
 		t.Fatal(result, got)
+	}
+}
+
+func TestInheritedLaunchConfigurationKeepsExplicitOverridePrecedence(t *testing.T) {
+	inherited := filepath.Join(t.TempDir(), "selected.md")
+	t.Setenv("TMUX_A2A_POSTMAN_CONFIG", inherited)
+	if got, err := newWorkspaceFlags("pop").parse(nil); err != nil || got != inherited {
+		t.Fatal(got, err)
+	}
+	explicit := filepath.Join(t.TempDir(), "other.md")
+	if got, err := newWorkspaceFlags("pop").parse([]string{"--config", explicit}); err != nil || got != explicit {
+		t.Fatal(got, err)
+	}
+	t.Setenv("TMUX_A2A_POSTMAN_CONFIG", "relative.md")
+	if _, err := newWorkspaceFlags("pop").parse(nil); err == nil {
+		t.Fatal("relative inherited config accepted")
 	}
 }

@@ -84,6 +84,9 @@ func (f workspaceFlagSet) parse(args []string) (string, error) {
 		return "", err
 	}
 	if *path == "" {
+		*path = os.Getenv("TMUX_A2A_POSTMAN_CONFIG")
+	}
+	if *path == "" {
 		base := os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
 			home, err := os.UserHomeDir()

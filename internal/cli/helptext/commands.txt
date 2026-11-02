@@ -1,5 +1,8 @@
 Commands
 
+launch-agents <preset>: optional one-shot dedicated team creation.
+  --list and --dry-run are inert; see help launch-agents.
+
 channel-sync: bounded external inbox intake and report/decision catch-up.
 channel-report-heredoc --to <external-POP'd-id> --state <done|blocked|pending>:
   heredoc stdin; pending additionally requires --scope <action-context-SHA256>.

@@ -12,7 +12,8 @@ import (
 var helpTextFS embed.FS
 
 var helpTopicFiles = map[string]string{
-	"channel-sync": "helptext/channel-sync.txt", "channel-report-heredoc": "helptext/channel-report-heredoc.txt",
+	"launch-agents": "helptext/launch-agents.txt",
+	"channel-sync":  "helptext/channel-sync.txt", "channel-report-heredoc": "helptext/channel-report-heredoc.txt",
 	"": "helptext/overview.txt", "commands": "helptext/commands.txt", "config": "helptext/config.txt",
 	"directories": "helptext/directories.txt", "help": "helptext/help.txt", "messaging": "helptext/messaging.txt",
 	"send-heredoc": "helptext/send-heredoc.txt", "pop": "helptext/pop.txt", "get-status": "helptext/get-status.txt",
