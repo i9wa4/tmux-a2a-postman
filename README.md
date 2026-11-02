@@ -97,6 +97,7 @@ gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --scope user
 gh skill install i9wa4/tmux-a2a-postman postman-recall --agent codex --scope user
+gh skill install i9wa4/tmux-a2a-postman postman-team-manager --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code. For Codex, setting
@@ -138,6 +139,12 @@ caller's latest recorded UTC day's read and sent together, then read every
 selected archive completely. It uses `created_at`, not mtime or today's date;
 recall does not POP, send, edit mail or replace current status with old
 narrative.
+
+On an explicit team-management request, use
+[postman-team-manager](skills/postman-team-manager/SKILL.md) for direct reports,
+exact reply evidence, bounded stall recovery and a check against the caller's
+original objective. It requires no particular tracker or role names, and
+never treats a sent inquiry or screen change as task completion.
 
 `get-status` lists all configured nodes in this workspace using the same fields
 as `self`. Only the interface caller also sees its declared direct parent and
