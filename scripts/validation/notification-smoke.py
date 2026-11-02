@@ -335,14 +335,27 @@ def run_case(case, terminal):
                     stdout, stderr = process.communicate(timeout=2)
                     result = json.loads(stderr.splitlines()[-1])
                     outcomes.append(result)
-                    if process.returncode or not result["success"] or result["executed"] is not True or result.get("notification", {}).get("status") == "unknown" or marker.read_text() != "once":
+                    # A bounded hint can remain unavailable/unknown while a
+                    # different genuine hint drives POP of the known batch.
+                    # Keep that uncertainty in the report; require independent
+                    # exact claim/decision/once-only execution evidence below.
+                    if process.returncode or not result["success"] or result["executed"] is not True or marker.read_text() != "once":
                         raise RuntimeError("approval burst request did not finish successfully: " + stderr)
                 wait_for("all burst decisions", lambda: len(list(evidence.glob("approver.claim.*.json"))) == 8)
                 proofs = [json.loads(path.read_text()) for path in evidence.glob("approver.claim.*.json")]
                 if len({proof["message"]["id"] for proof in proofs}) != 8 or len({proof["message"]["from"] for proof in proofs}) != 4:
                     raise RuntimeError("burst did not contain eight independent requests from four senders")
+                expected = {(role, "printf once >> " + shlex.quote(str(marker))) for _, role, marker in executions}
+                received = set()
                 for proof in proofs:
                     verify_proof(proof, ready)
+                    request, decision = json.loads(proof["message"]["body"]), proof["decision"]
+                    if (decision["decision"] != "approved" or decision["command"] != request["command"] or
+                            decision.get("operation_id", "") != request.get("operation_id", "")):
+                        raise RuntimeError("burst decision did not approve its exact execution request")
+                    received.add((proof["message"]["from"], request["command"]))
+                if received != expected:
+                    raise RuntimeError("burst claims did not match all eight sender/command pairs")
                 if all(result.get("notification") for result in outcomes):
                     raise RuntimeError("burst did not demonstrate a working input notification")
                 report.update(executions=outcomes, claims=proofs, batch_seconds=time.monotonic() - began)
