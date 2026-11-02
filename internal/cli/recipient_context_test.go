@@ -43,3 +43,28 @@ func TestExecutionContextShowsFixedDecisionActionsAndNoOrdinaryReply(t *testing.
 		t.Fatal("typed approval used ordinary reply guidance or lost shell quoting", text)
 	}
 }
+
+func TestRecipientContextHeadingHierarchyPreservesTemplateSubsections(t *testing.T) {
+	common := "### Core contract\nShared policy.\n#### Exceptions\nExplicit authority applies.\n```markdown\n# literal fenced heading\n## another literal heading\n```"
+	role := "### `role`\nCommand approval owner.\n### Contract\nRead the exact request.\n#### Decision\nChoose the fixed helper."
+	policy := config.RecipientPolicy{
+		Common:  common,
+		Catalog: "### Available Skills\n\n- `postman-usage`: mailbox handling\n",
+		Nodes:   map[string]config.RecipientRole{"approver": {Instructions: role}},
+	}
+	msg := workspace.Message{ID: "m-0123456789abcdef0123456789abcdef", From: "worker", To: "approver", Kind: "execution-request", NeedsReply: true, GuidanceVersion: 1}
+	text := renderRecipientContext(policy, config.WorkspaceTopology{}, "/tmp/postman.md", "session", msg)
+	want := []string{"# Message", "# Recipient Instructions", "## Common contract", "### Core contract", "#### Exceptions", "## Available Skills", "## approver instructions", "### `role`", "### Contract", "#### Decision", "# Delivery and Reply Guidance", "# Sender Message"}
+	var headings []string
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "```") {
+			inFence = !inFence
+		} else if !inFence && strings.HasPrefix(line, "#") {
+			headings = append(headings, line)
+		}
+	}
+	if !slices.Equal(headings, want) || !strings.Contains(text, common) || !strings.Contains(text, role) {
+		t.Fatal("generated hierarchy changed template structure or fenced bytes", headings, text)
+	}
+}

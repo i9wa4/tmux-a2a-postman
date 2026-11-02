@@ -48,13 +48,13 @@ Message ID: m-0123456789abcdef0123456789abcdef
 Timestamp: 2026-11-01T12:00:00Z
 Reply policy: required
 
-## Recipient Instructions
+# Recipient Instructions
 
-### Common contract
+## Common contract
 
 [Complete configured common_template, preserving fenced code.]
 
-### Available Skills
+## Available Skills
 
 Read every applicable skill before starting work. Skill files live under
 the configured skill roots.
@@ -62,11 +62,11 @@ the configured skill roots.
 - `postman-send-message`: [configured SKILL.md description]
 - `postman-usage`: [configured SKILL.md description]
 
-### Worker instructions
+## worker instructions
 
 [Complete configured recipient policy, preserving fenced code.]
 
-## Delivery and Reply Guidance
+# Delivery and Reply Guidance
 
 You can talk to:
 - orchestrator: Task coordinator.
@@ -84,7 +84,7 @@ POSTMAN_BODY
 The reply closes transport responsibility; task completion still needs the
 original checklist and actual evidence.
 
-## Sender Message
+# Sender Message
 
 ---
 
@@ -99,6 +99,16 @@ describe the recipient's permitted routes, not the sender's contact list.
 Archived context records the configuration used for that send and grants no
 additional route or human authority. Ordinary sends, exact replies and command
 review traffic all retain their appropriate recipient context.
+
+Message metadata, Recipient Instructions, Delivery and Reply Guidance and
+Sender Message are H1 regions. Common contract, Available Skills and the
+selected role's instructions are H2 siblings within Recipient Instructions;
+Configured guidance, when present, is H2 within Delivery and Reply Guidance.
+Use H3 for template subsections and H4 for their nested detail. Existing policy
+normalization of H1/H2 template headings to H3 remains; fenced text is excluded.
+Captured Markdown is stored verbatim with its existing byte count and digest,
+so this layout change applies to new mail without rewriting old archives or
+changing envelope/context versions.
 
 ## 3. POP contract
 
