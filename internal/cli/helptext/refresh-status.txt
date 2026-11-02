@@ -12,6 +12,7 @@ reported with PID/invocation/phase/age; never delete, steal or force-unlock it.
 Refresh has a two-second total budget, a one-second capture sweep (64 panes,
 200ms per native frame), and a 30-second cadence for each matching live process.
 Partial coverage retains actual per-pane times; uncaptured panes remain due.
+Unknown node summaries are counted separately from unavailable captures.
 
 Atomic status.json is under the private state-root %status/socket-hash namespace.
 Raw history remains there until manually deleted. No daemon, timer or pruning.

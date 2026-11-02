@@ -274,6 +274,15 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 		return result, err
 	}
 	m.aggregateStatus(ctx, &snapshot)
+	for _, s := range snapshot.Sessions {
+		for _, w := range s.Windows {
+			for _, p := range w.Panes {
+				if p.Status != nil && (p.Status.Reason != "" || p.Status.UnreadCount == nil || p.Status.InboundCount == nil || p.Status.OutboundCount == nil || p.Status.DraftCount == nil || p.Status.FailedCount == nil) {
+					snapshot.Coverage.UnknownNodes++
+				}
+			}
+		}
+	}
 	// Full enumeration must still describe the same runtime and identities. A
 	// disappearing/replaced server is fatal: never publish a new healthy frame.
 	last, err := rt.enumerateStatus(ctx, server)
@@ -283,9 +292,9 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 	if !sameStatusNative(snapshot, last) {
 		return result, errors.New("server layout/process identities changed during refresh; previous snapshot retained")
 	}
-	snapshot.Coverage.Complete = snapshot.Coverage.Unavailable == 0
+	snapshot.Coverage.Complete = snapshot.Coverage.Unavailable == 0 && snapshot.Coverage.UnknownNodes == 0
 	if !snapshot.Coverage.Complete {
-		snapshot.Coverage.Reason = "partial sweep; individual capture times and reasons remain authoritative"
+		snapshot.Coverage.Reason = "partial observation; individual capture times and row reasons remain authoritative"
 	}
 	snapshot.AsOf = refreshNow(options).Format(time.RFC3339Nano)
 	if err := ctx.Err(); err != nil {

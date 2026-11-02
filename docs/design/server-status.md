@@ -22,9 +22,9 @@ The version 1 document contains:
 - `started_at`: collection start; `as_of`: collection/publication time. A getter
   does not change either or assert that the saved incarnation is still alive.
 - `coverage`: enumerated pane count, successful new captures, reused
-  observations, unavailable captures, complete flag and partial reason. This is
-  capture coverage; independently unavailable mail/config facts have per-row
-  reasons.
+  observations, unavailable captures, `unknown_nodes`, complete flag and partial
+  reason. Capture coverage and mail/config availability remain independent;
+  row reasons explain missing facts. Either makes the standalone result partial.
 - `sessions[]`: native `id` (`$N`), name and `windows[]`; windows retain native
   `id` (`@N`), numeric index, name, layout and physically ordered `panes[]`.
 - Each pane: native `id` (`%N`), process `pid`, title, canonical HOME-relative

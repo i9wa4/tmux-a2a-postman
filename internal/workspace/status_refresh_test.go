@@ -37,7 +37,7 @@ func configuredStatusFixture(t *testing.T, f tmuxFixture, m Mail) Tmux {
 func refreshFixture(t *testing.T, m Mail, f tmuxFixture, at time.Time) ServerStatus {
 	t.Helper()
 	result, err := m.RefreshServerStatus(context.Background(), ServerContext{Socket: f.socket}, f.home, RefreshOptions{now: func() time.Time { return at }})
-	if err != nil {
+	if err != nil && result.Status != "partial" {
 		t.Fatal(result, err)
 	}
 	_, snapshot, err := m.Store.ReadServerStatus(ServerContext{Socket: f.socket})

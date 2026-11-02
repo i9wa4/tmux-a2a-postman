@@ -532,7 +532,7 @@ Illustrative unavailable pane (abbreviated layout text; all schema fields
 shown):
 
 ```json
-{"version":1,"server":{"socket":"/tmp/example/s","canonical_socket":"/tmp/example/s","pid":1234,"incarnation":"1234:1793520000:1:2:1793520000000000000"},"started_at":"2026-11-01T10:00:00Z","as_of":"2026-11-01T10:00:00Z","coverage":{"enumerated":1,"captured":0,"reused":0,"unavailable":1,"complete":false,"reason":"capture unavailable"},"sessions":[{"id":"$9","name":"project","windows":[{"id":"@3","index":1,"name":"terminal","layout":"native-layout","panes":[{"id":"%4","pid":"1235","title":"terminal","workspace":"~/work","top":0,"left":0,"dead":false,"linked":false,"capture":null,"status":null,"scope":null,"reason":"capture unavailable"}]}]}]}
+{"version":1,"server":{"socket":"/tmp/example/s","canonical_socket":"/tmp/example/s","pid":1234,"incarnation":"1234:1793520000:1:2:1793520000000000000"},"started_at":"2026-11-01T10:00:00Z","as_of":"2026-11-01T10:00:00Z","coverage":{"enumerated":1,"captured":0,"reused":0,"unavailable":1,"unknown_nodes":0,"complete":false,"reason":"capture unavailable"},"sessions":[{"id":"$9","name":"project","windows":[{"id":"@3","index":1,"name":"terminal","layout":"native-layout","panes":[{"id":"%4","pid":"1235","title":"terminal","workspace":"~/work","top":0,"left":0,"dead":false,"linked":false,"capture":null,"status":null,"scope":null,"reason":"capture unavailable"}]}]}]}
 ```
 
 Ordinary unregistered panes have null status/scope; registered panes use the

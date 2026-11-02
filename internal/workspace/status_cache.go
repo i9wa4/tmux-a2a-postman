@@ -57,12 +57,13 @@ type StatusServer struct {
 	Incarnation     string `json:"incarnation"`
 }
 type StatusCoverage struct {
-	Enumerated  int    `json:"enumerated"`
-	Captured    int    `json:"captured"`
-	Reused      int    `json:"reused"`
-	Unavailable int    `json:"unavailable"`
-	Complete    bool   `json:"complete"`
-	Reason      string `json:"reason,omitempty"`
+	Enumerated   int    `json:"enumerated"`
+	Captured     int    `json:"captured"`
+	Reused       int    `json:"reused"`
+	Unavailable  int    `json:"unavailable"`
+	Complete     bool   `json:"complete"`
+	UnknownNodes int    `json:"unknown_nodes"`
+	Reason       string `json:"reason,omitempty"`
 }
 type ServerStatus struct {
 	Version   int             `json:"version"`
@@ -252,7 +253,7 @@ func decodeStatus(raw []byte, server ServerContext) (ServerStatus, error) {
 		return value, errors.New("saved pane limit exceeded")
 	}
 	c := value.Coverage
-	if c.Enumerated != total || c.Captured < 0 || c.Reused < 0 || c.Unavailable < 0 || c.Captured+c.Reused+c.Unavailable != total || c.Complete != (c.Unavailable == 0) {
+	if c.Enumerated != total || c.Captured < 0 || c.Reused < 0 || c.Unavailable < 0 || c.Captured+c.Reused+c.Unavailable != total || c.UnknownNodes < 0 || c.UnknownNodes > total || c.Complete != (c.Unavailable == 0 && c.UnknownNodes == 0) {
 		return value, errors.New("invalid saved coverage")
 	}
 	return value, nil

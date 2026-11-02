@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -159,8 +160,11 @@ func refreshPublicStatus(t *testing.T, f *publicApprovalFixture) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := f.child(ctx, "", "refresh-status").CombinedOutput()
+	out, err := f.child(ctx, "", "refresh-status").Output()
 	if err != nil {
-		t.Fatalf("explicit refresh: %v %s", err, out)
+		var result workspace.RefreshResult
+		if json.Unmarshal(out, &result) != nil || result.Status != "partial" {
+			t.Fatalf("explicit refresh: %v %s", err, out)
+		}
 	}
 }
