@@ -90,7 +90,7 @@ func newRebuiltCLIFixture(t *testing.T) *rebuiltCLIFixture {
 	}
 	f.worker = f.tmux("new-session", "-d", "-s", "work", "-c", work, "-P", "-F", "#{pane_id}")
 	f.tmux("select-pane", "-t", f.worker, "-T", "worker")
-	f.peer = f.tmux("split-window", "-d", "-t", f.worker, "-P", "-F", "#{pane_id}")
+	f.peer = f.tmux("split-window", "-d", "-t", f.worker, "-c", work, "-P", "-F", "#{pane_id}")
 	f.tmux("select-pane", "-t", f.peer, "-T", "peer")
 	if err := os.WriteFile(f.config, []byte("## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"), 0o600); err != nil {
 		t.Fatal(err)

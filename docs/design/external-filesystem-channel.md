@@ -28,10 +28,11 @@ external_workspace: ~/work/project-a
 external_session: project-a
 ```
 
-The workspace is Postman's exact canonical HOME-relative session creation root,
-not pane cwd. The named native session and interface role must match fresh
-evidence. A declared child cannot own the channel. Other sessions sharing the
-configuration cannot access this binding.
+The workspace is Postman's exact canonical HOME-relative native agent-pane
+directory, independent of the CLI subprocess cwd or old session creation root.
+The named native session and interface role must match fresh evidence. A
+declared child cannot own the channel. Other sessions sharing the configuration
+cannot access this binding.
 
 Provision the parent directory. The first scan creates only the final root,
 `inbox/`, `outbox/`, `read/`, `binding.json` and `.lock`. Use owned mode 0700
