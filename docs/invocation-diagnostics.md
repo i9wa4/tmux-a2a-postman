@@ -24,6 +24,8 @@ its file. The invocation ID is fresh and distinct from message and durable
 execution-operation IDs. Each process owns one exclusively created file;
 there is no shared append file, logging lock between processes, or new helper.
 Existing execution/observation goroutines share their process's recorder.
+Readable workspace aliases expose these same files; they never create another
+log stream. Explicit analysis of both paths counts the same physical file once.
 
 Destination admission reuses the normal verified native storage helpers and
 existing workspace binding. An initial operational call can register its real
@@ -125,9 +127,10 @@ Aggregated metrics contain `count` and optional `total_ms`:
 
 - Mutation/view lock acquisition attempts and actual held intervals, separated
   by purpose. Nonblocking failed admission records wait but no held interval.
-- Recipient notice-lock wait and held duration; no mailbox lock spans input
-  waiting. Capture-lock held time covers work after snapshot admission;
-  admission/index mutation also appears in mutation-lock metrics.
+- Historical logs may contain recipient notice-lock wait/held metrics; current
+  notifications have no destination lock or persistent input guard. No mailbox
+  lock spans input waiting. Capture-lock held time covers work after snapshot
+  admission; admission/index mutation also appears in mutation-lock metrics.
 - Admission retry waits, approval/notice observation counts.
 - Summary directory entries scanned and actual decoded body bytes (not an
   estimate of physical disk reads); heredoc body bytes.

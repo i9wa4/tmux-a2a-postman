@@ -16,8 +16,33 @@ locks/<workspace>.lock
 ```
 
 Workspace keys escape the HOME-relative path, independent of branch/session
-name. Directories are private (0700); mail and records are private (0600). Saved
-logs and captures remain until the user deletes them; no automatic
+name. The real directory, `workspace.json` identity and lock filename retain
+this canonical key for compatibility with existing binaries and absolute archive
+paths. Directories are private (0700); mail and records are private (0600). An
+existing owned application root may remain 0755.
+
+For a key containing `%2D` (a literal component hyphen), normal verified mail
+operations publish a readable directory alias, and POP returns paths through
+it. Replace only `%2D` with `-`, retain at most 200 prefix bytes, then append
+`--` and the first 32 lowercase hex characters of SHA-256 of the **complete
+canonical key**. For example, `~/work/team-a` has real key `work-team%2Da` and
+alias `work-team-a--<32 hex>`. The suffix distinguishes `team-a` from `team/a`
+and truncated prefixes; an unexpected collision fails instead of merging data.
+Keys without `%2D` need no alias.
+
+This alias is an owned symlink to exactly the relative canonical basename.
+Postman verifies the link and real workspace; internal reads/writes continue
+using the real directory with the original no-follow ownership checks. It does
+not move or rewrite mail, receipts, transactions, decisions, observations or
+logs. Older compatible binaries use the same mailbox and lock. Missing aliases
+are published atomically under that lock on the next normal operation; an
+interruption requires no migration command. A conflicting file/directory/link
+or an alias whose real history is missing is an error, not a fresh mailbox.
+Restore the original history before retrying. Read-only getters create no
+alias. Enumerating retained workspaces must use real directories once rather
+than following aliases and counting the same messages twice.
+
+Saved logs and captures remain until the user deletes them; no automatic
 expiry/rotation. Temporary publication files and completed recovery intents are
 operational state, not retained logs. get-status never initializes or deletes
 anything.

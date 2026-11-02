@@ -595,7 +595,7 @@ func (m Mail) Claim(ctx context.Context, rt Runtime, selected string) (*Claimed,
 		if err := m.begin(ws, tx); err != nil {
 			return err
 		}
-		name, err := Name(s.Root)
+		name, err := ReadableName(s.Root)
 		if err != nil {
 			return err
 		}

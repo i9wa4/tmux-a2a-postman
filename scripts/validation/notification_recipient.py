@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from mail_fixture import read_archive, sent_evidence
+from mail_fixture import read_archive, sent_evidence, workspace_files
 
 os.environ["PATH"] = os.environ["POSTMAN_SMOKE_BIN_DIR"] + ":" + os.environ["PATH"]
 phase, nonce = sys.argv[1:]
@@ -71,7 +71,7 @@ def receive():
             action = "decline-execution" if case == "rejected" else "approve-execution"
             proof["send"] = cli([action, "--config", config, "--to", target, "--reason", "deterministic smoke decision"])
             state = pathlib.Path(os.environ["XDG_STATE_HOME"]) / "tmux-a2a-postman"
-            decisions = [read_archive(path) for path in state.glob("*/agents/" + role + "/sent/*.md")]
+            decisions = [read_archive(path) for path in workspace_files(state, "agents/" + role + "/sent/*.md")]
             decisions = [item for item in decisions if any(ref["message_id"] == target for ref in item.get("replies", []))]
             if len(decisions) != 1:
                 raise RuntimeError("exact decision evidence unavailable")
