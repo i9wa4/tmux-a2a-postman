@@ -1,264 +1,124 @@
 # tmux-a2a-postman
 
-Postman coordinates agents in tmux panes through private workspace mail files.
-Each CLI invocation delivers its own mail and attempts an input notification;
-no resident Postman process is needed. Codex, Claude Code and local consoles
-use the same terminal transport, without model APIs or registration.
+Turn terminal AI consoles into a configurable team, with durable Markdown mail
+and no resident Postman service.
 
 ```mermaid
-flowchart LR
-    sender["Sender pane"] -->|send-heredoc| cli["Foreground CLI"]
-    config["postman.md: roles and allowed routes"] -.-> cli
-    cli -->|draft → inbox + sent| mail[("Private workspace mail files")]
-    cli -->|paste hint + one C-m| recipient["Recipient pane"]
-    recipient -->|pop| cli
-    cli -->|archive path + full-read instruction| recipient
-    recipient -->|read complete Markdown| mail
-    recipient -->|exact reply to claimed ID| cli
+flowchart TB
+    human[You: objective and criteria] --> entry[Human-facing agent]
+    subgraph team[Your existing tmux consoles]
+        entry -->|delegate| builder[Build]
+        entry -->|request review| reviewer[Review]
+        builder -->|results and evidence| entry
+        reviewer -->|findings| entry
+    end
+    entry -->|reconciled result| human
+    builder -.-> mail[(Readable Markdown mail)]
+    reviewer -.-> mail
 ```
 
-Each command runs a finite foreground process. Mail delivery, input
-notification, full reading and task completion are separate facts.
+Keep your clients, models and tool permissions. Postman supplies explicit
+routes, durable delivery, input notifications and correlated replies. Delivery
+does not prove task completion; agents reconcile results against your objective.
 
-## 1. Install and configure
-
-Prerequisites: Linux or macOS and tmux. Execution supports Bash and Zsh;
-POSIX-compatible shells can run the same source syntax. Install with Go:
-
-```sh
-go install github.com/i9wa4/tmux-a2a-postman@latest
-```
-
-Configure `$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md`, or
-`$HOME/.config/tmux-a2a-postman/postman.md`. Any operational command accepts
-one absolute `--config` override. Relative paths and duplicate options fail.
-The default is independent of the current directory.
-
-Illustrative topology:
+## 1. Configure the organization
 
 ```mermaid
-graph LR
-    orchestrator --- worker
-    orchestrator --- reviewer
-    class orchestrator interface_node
-    class reviewer command_approver_node
-    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
-    classDef command_approver_node fill:#fef3c7,stroke:#92400e,color:#0f172a
+flowchart TB
+    config[postman.md] --> policy[Routes + role policy]
+    policy --> manager[Manager / interface]
+    manager --- worker[Builder]
+    manager --- review[Reviewer]
+    worker --- approval[Approver]
+    manager <-->|direct route| child[Child interface]
+    child --> childworker[Child worker]
 ```
 
-The rendered graph and the copyable configuration below use the same roles
-and edges:
+Choose the organization in one file. Artifact review and command approval are
+different roles; review coordinates decisions and is not an OS sandbox.
+Direct parent/child routes require declared interfaces and distinct workspaces.
+The diagrams here explain capabilities; copy the tested configurations below.
 
-````markdown
-## `edges`
+## 2. Small commands, durable files
 
 ```mermaid
-graph LR
-    orchestrator --- worker
-    orchestrator --- reviewer
-    class orchestrator interface_node
-    class reviewer command_approver_node
-    classDef interface_node fill:#e0f2fe,stroke:#0369a1,color:#0f172a
-    classDef command_approver_node fill:#fef3c7,stroke:#92400e,color:#0f172a
+flowchart TB
+    config[postman.md: routing and policy] --> cli[Finite Postman CLI]
+    consoles[Existing Codex / Claude / local consoles] -->|tools| cli
+    cli -->|commit and claim| files[(Mail, receipts and captures)]
+    cli -->|text hint and Enter| consoles
+    files --> cache[Saved server snapshot]
+    cache --> getters[Read-only JSON / status line]
+    external[Optional external adapter] <-->|provisioned file channel| cli
 ```
 
-## `orchestrator`
+Transport uses native tmux panes and ordinary files, without model APIs.
+Optional [`launch-agents`](docs/launch-agents.md) creates one declared team and
+exits, without startup prompt injection or supervision. External services own
+their adapter and activation; no native GitHub/mobile service is implied.
 
-Coordinate work and assess evidence.
+```mermaid
+---
+config:
+  sequence:
+    actorMargin: 20
+    width: 95
+---
+sequenceDiagram
+    participant A as Sender
+    participant P as Postman
+    participant B as Recipient
+    A->>P: send-heredoc<br/>--to role
+    P->>B: Durable inbox<br/>+ input hint
+    B->>P: pop
+    P-->>B: Archive path
+    Note over B: Read whole file<br/>through EOF
+    B->>P: send-heredoc<br/>--to claimed-id
+    P-->>A: Exact reply<br/>+ input hint
+```
 
-## `worker`
+Messages carry the recipient's instructions, contacts and exact reply command.
+Notification uncertainty leaves committed mail intact. Logs remain until you
+delete them.
 
-Implement assigned work and report evidence.
+## 3. Install and try
 
-## `reviewer`
-
-Review execution requests.
-````
-
-Start each agent in a pane titled with its configured role. Postman uses that
-native agent pane's working directory below canonical HOME as the workspace.
-The directory where the tmux session was first created does not select it.
-A tool subprocess's cwd does not redirect mail; separate worktrees remain
-independent when their agent panes run there. No launch wrapper is required.
-For explicit one-shot team creation, the optional
-[`launch-agents` presets](docs/launch-agents.md) create a dedicated session;
-they never inject a startup message or supervise the consoles.
-A live independent session cannot also own the same workspace. Verified runtime
-replacement preserves mail; unknown ownership does not silently transfer.
-
-`---` declares a bidirectional edge. `interface_node` and an explicit
-`workspace_tree` allow direct parent/child interface routes. Numbered
-`common_template` and `message_footer` sections remain reserved. Every generated
-mail includes recipient-specific common/role instructions, configured ordinary
-skill catalogs, `You can talk to` role summaries and exact reply guidance before
-the literal sender body. POP explicitly instructs a complete read through EOF.
-Topology/status reads do not open catalogs. See the
-[configuration reference](skills/postman-config-auditor/references/postman-md.md).
-
-Agent workflows remain separate from CLI help:
+Requires tmux and an agent console able to run shell tools. These docs describe
+this checkout; older release tags may expose a different CLI. Build the same
+source you are reading:
 
 ```sh
-gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-send-message --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-config-auditor --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-recall --agent codex --scope user
-gh skill install i9wa4/tmux-a2a-postman postman-team-manager --agent codex --scope user
+git clone https://github.com/i9wa4/tmux-a2a-postman.git
+cd tmux-a2a-postman
+nix build
+./result/bin/tmux-a2a-postman version
 ```
 
-Use `--agent claude-code` for Claude Code. For Codex, setting
-`tui.terminal_title = []` preserves role titles. Agents retain responsibility
-for their authentication, sandbox and tool permissions.
+Without Nix, use the Go version selected in `go.mod` and `go install .`.
+Put the resulting binary on your consoles' `PATH`. Client installation,
+authentication and sandbox settings remain yours.
 
-## 2. Send, receive and inspect
+Follow the [first exchange](docs/quickstart.md) with the complete
+[minimal config](examples/minimal/postman.md). Then try the
+[practical team](examples/practical/postman.md),
+[parent/child team](examples/hierarchy/postman.md), or
+[optional launch presets](examples/launch/postman.md).
 
-Illustrative syntax:
+## 4. Guides and references
 
-```sh
-tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
-Implement the change and report the result.
-POSTMAN_BODY
+- [Quickstart and operations](docs/quickstart.md): setup, mail, observations and
+  troubleshooting.
+- [Configuration reference](skills/postman-config-auditor/references/postman-md.md):
+  anatomy, examples and exact supported fields.
+- [CLI contract](docs/cli-spec.md) and `tmux-a2a-postman help`: command inputs
+  and outputs.
+- [Command review](docs/command-approvals.md),
+  [server status](docs/design/server-status.md), and
+  [external file integration](docs/design/external-filesystem-channel.md).
+- [Installable Skills](skills/): usage, sending, recall, configuration audit and
+  team management.
+- [Contributing](CONTRIBUTING.md): development, deterministic tmux tests and
+  evidence limits.
 
-tmux-a2a-postman pop
-tmux-a2a-postman get-status
-```
-
-A node address creates a request requiring a reply. Send stages the complete
-body, publishes an independent receiver inbox copy, saves the sender copy,
-and attempts a bounded notification. Normal JSON is compact:
-
-```json
-{"workspace":"~/work","as_of":"2026-11-01T09:00:00Z","success":true,"self":{"node":"orchestrator","unread_count":0,"inbound_count":0,"outbound_count":1,"draft_count":0,"failed_count":0,"last_pop_at":null,"last_capture_at":null,"last_screen_change_at":null}}
-```
-
-`pop` takes no message ID. It claims one own unread message, writes a durable
-receipt, and returns an absolute `markdown_absolute_path`; an empty POP returns
-null. Read the complete archived Markdown through EOF. Its generated footer
-shows the exact reply command. Reply using `send-heredoc --to <POP'd-id>`;
-correlation and the return route are automatic. A reply creates no new reply
-obligation. Up to 16 different claimed IDs with one sender/return route can
-receive one combined reply with comma-separated `--to` IDs.
-
-After restart, compaction or an explicit recall request, use
-[postman-recall](skills/postman-recall/SKILL.md) to recover the verified
-caller's latest recorded UTC day's read and sent together, then read every
-selected archive completely. It uses `created_at`, not mtime or today's date;
-recall does not POP, send, edit mail or replace current status with old
-narrative.
-
-On an explicit team-management request, use
-[postman-team-manager](skills/postman-team-manager/SKILL.md) for direct reports,
-exact reply evidence, bounded stall recovery and a check against the caller's
-original objective. It requires no particular tracker or role names, and
-never treats a sent inquiry or screen change as task completion.
-
-`refresh-status` collects one finite snapshot across the explicit tmux server.
-`get-status` returns its saved JSON unchanged; `get-status-oneline` renders the
-same snapshot, such as `[0]🟩💛:🟢 [3]⬛🟥 [9]`. Getters make no tmux queries,
-mail scans or state writes. Busy refresh skips immediately; stale evidence
-stays dated. Scope and permissions come from assigned roles and configured
-routes, never from every node visible in this operator-wide snapshot.
-See the [CLI contract](docs/cli-spec.md#3-get-status) and
-[server snapshot reference](docs/design/server-status.md) for schema, native
-numbering, capture cadence, diagnostics and safe external status composition.
-
-## 3. Notification and pane observations
-
-Postman pastes a short hint into the existing recipient input and submits one
-`C-m`. A destination file lock serializes all Postman writers. Capture checks
-that pasted text settled and observes the input area after submission, without
-provider names or prompt glyph rules. A doubtful result keeps a pending input
-guard; later senders do not paste over it or blindly repeat Enter. Shell prompts
-and tmux copy/input modes are rejected before input.
-
-Delivery success and notification are separate. Accepted notifications are
-omitted from normal output; an unavailable or uncertain attempt appears in
-`notification`. Screen changes do not prove POP, understanding or completion.
-Notification failure never removes committed mail. Do not blindly resend after
-an uncertain delivery or lost output. Confirmed non-delivery retains complete
-`failed` mail; uncertainty preserves draft/recovery evidence.
-
-This controls Postman writers. It does not save/restore unsent human drafts or
-exclude unrelated input writers. The former #901 coordinator roadmap was
-withdrawn; these limitations remain.
-
-Eligible send/POP, including empty POP, attempt the shared finite server refresh
-after mail locks are released. Each pane has its own capture cadence; busy
-refreshes skip immediately. Ordinary panes never become agent mailboxes.
-Notification safety reads remain live, synchronous and recipient-only. Capture
-coverage and individual timestamps distinguish incomplete and stale evidence.
-
-All saved logs and captures remain until the user deletes them. There is no
-automatic expiry, rotation or cleanup service. Capture clocks describe sampled
-native screens; they do not authenticate model continuity or imply work
-progress.
-
-## 4. Execute a reviewed command
-
-```sh
-tmux-a2a-postman execute-heredoc --reason 'Check for regressions' <<'POSTMAN_COMMAND'
-go test ./...
-POSTMAN_COMMAND
-```
-
-The request records exact source, reason, cwd and tmux's default shell. A fresh
-interactive/login shell initializes normal configuration and first-prompt hooks,
-including configured project environment loaders. It inherits the caller's
-exported environment, without copying a different shell's private live state.
-Command stdin is a private PTY with no input forwarding; stdout/stderr stream
-separately and are not TTYs. Terminal applications requiring interaction are
-outside this command's contract.
-
-A verified present reviewer receives the request. The requesting CLI waits up to
-300 seconds and claims only its own exact decision. After POP and full reading,
-the reviewer chooses `approve-execution --to <request-id> --reason 'why'` or
-`decline-execution --to <request-id> --reason 'why'`. No manual JSON or command
-copy is needed. The requester executes, and an active waiter needs no extra TUI
-hint for its decision. A duplicate/conflicting choice fails before publication.
-
-An unconfigured or positively absent reviewer permits advisory execution.
-Unknown identity, rejection, timeout, interruption or reviewer loss never
-converts a waiting request into advisory execution. This coordinates review;
-it does not sandbox commands. Child exit codes are forwarded. Final JSON is a
-separate last stderr line; uncertain possibly started outcomes have
-`executed: null` and must not be automatically repeated. Postman retains minimal
-audit records, without automatically saving complete command stdout/stderr.
-
-## 5. Specification and verification
-
-The [CLI specification](docs/cli-spec.md) defines all inputs, outputs, limits
-and the keep/simplify/remove inventory. `help`, `help <command>` and each
-command's `--help` work without workspace initialization.
-
-```sh
-go test ./... -count=1
-nix run .#notification-smoke -- --case all
-```
-
-The smoke command and Go test share deterministic terminal agents: tmux startup,
-real input notifications, receiver-owned POP/full reading/replies, evidence and
-owned-fixture cleanup. No real model or account is needed. Optional real Codex
-TUI checks use fixed local Responses API decisions through the same terminal
-path. See [Contributing](CONTRIBUTING.md) for the test matrix and its limits.
-
-`nix flake check` also validates every shipped skill's deterministic positive
-and negative trigger expectations with the pinned offline Waza evaluator.
-Run it separately with `nix run .#skill-trigger-check`. These authored heuristic
-checks require no model account; manual behavioral suites remain separate.
-
-The [#937 acceptance audit](docs/validation/937-acceptance.md) maps the
-implemented core contract to process tests, capture measurements and explicit
-remaining integration work.
-
-The [agent-environment research snapshot][agent-research]
-compares the wider workflow with external systems, separates measured behavior
-from open questions, and proposes bounded experiments without expanding the
-transport into a task platform.
-
-[agent-research]: docs/research/891-agent-environment-comparison.md
-
-An optional
-[external filesystem channel](docs/design/external-filesystem-channel.md)
-connects a provisioned inbox/outbox/read binding to the top-level interface. The
-producer invokes `channel-sync` after publication and on reconnect; the
-interface POPs normally and uses `channel-report-heredoc` for actual results or
-exact pending decisions. No resident Postman service is required.
+This repository's [AGENTS.md](AGENTS.md) guides contributors. Your runtime
+`postman.md` configures your team; it is a separate instruction surface.
