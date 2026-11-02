@@ -20,6 +20,11 @@ type OperatorNode struct {
 	Status                     NodeStatus
 }
 
+type operatorWorkspace struct {
+	session int
+	root    string
+}
+
 type operatorPane struct {
 	Owner                      Owner
 	Root, Role, PID            string
@@ -37,7 +42,7 @@ func (t Tmux) operatorPanes(ctx context.Context) ([]operatorPane, error) {
 	// Sanitizing an invalid title inserts '_', which cannot be a configured
 	// role. It cannot turn an unrelated title into a valid declared role, and
 	// avoids tabs/newlines in unrelated UI titles corrupting every other row.
-	format := "#{session_id}\t#{window_id}\t#{window_index}\t#{window_linked}\t#{pane_id}\t#{pane_pid}\t#{s/[^a-zA-Z0-9-]/_/g:pane_title}\t#{pane_dead}\t#{pane_top}\t#{pane_left}\t#{session_path}"
+	format := "#{session_id}\t#{window_id}\t#{window_index}\t#{window_linked}\t#{pane_id}\t#{pane_pid}\t#{s/[^a-zA-Z0-9-]/_/g:pane_title}\t#{pane_dead}\t#{pane_top}\t#{pane_left}\t#{pane_current_path}"
 	out, err := tmuxOutputLimited(ctx, 256*1024, t.Socket, "display-message", "-p", serverFormat, ";", "list-panes", "-a", "-F", format, ";", "display-message", "-p", serverFormat)
 	if err != nil {
 		return nil, err
@@ -118,8 +123,8 @@ func (m Mail) OperatorStatus(ctx context.Context, rt Tmux) ([]OperatorNode, erro
 	}
 	rows := []OperatorNode{}
 	identity := map[int]operatorPane{}
-	groups := map[int][]int{}
-	sessionPanes := map[int][]operatorPane{}
+	groups := map[operatorWorkspace][]int{}
+	workspacePanes := map[operatorWorkspace][]operatorPane{}
 	add := func(pane operatorPane, role, reason string) error {
 		if len(rows) >= 256 {
 			return errors.New("operator overview exceeds 256 configured pane candidates")
@@ -127,24 +132,33 @@ func (m Mail) OperatorStatus(ctx context.Context, rt Tmux) ([]OperatorNode, erro
 		i := len(rows)
 		rows = append(rows, OperatorNode{pane.Session, pane.Window, pane.Top, pane.Left, pane.Owner.Pane, NodeStatus{Node: role, Reason: reason}})
 		identity[i] = pane
-		groups[pane.Session] = append(groups[pane.Session], i)
+		key := operatorWorkspace{pane.Session, pane.Root}
+		groups[key] = append(groups[key], i)
 		return nil
 	}
 	for _, pane := range panes {
-		sessionPanes[pane.Session] = append(sessionPanes[pane.Session], pane)
+		key := operatorWorkspace{pane.Session, pane.Root}
+		workspacePanes[key] = append(workspacePanes[key], pane)
+
 		if roles[pane.Role] {
 			if err := add(pane, pane.Role, "native pane has no verified saved binding"); err != nil {
 				return nil, err
 			}
 		}
 	}
-	var sessions []int
-	for session := range sessionPanes {
+	var sessions []operatorWorkspace
+	for session := range workspacePanes {
 		sessions = append(sessions, session)
 	}
-	sort.Ints(sessions)
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].session != sessions[j].session {
+			return sessions[i].session < sessions[j].session
+		}
+		return sessions[i].root < sessions[j].root
+	})
 	for _, session := range sessions {
-		first := sessionPanes[session][0]
+		first := workspacePanes[session][0]
+
 		if first.RootError != "" {
 			for _, i := range groups[session] {
 				rows[i].Status.Reason = first.RootError
@@ -158,7 +172,7 @@ func (m Mail) OperatorStatus(ctx context.Context, rt Tmux) ([]OperatorNode, erro
 			}
 			// A renamed live registered pane stays visible as unknown. Its identity
 			// comes from the saved/native binding, never a guessed agent name.
-			for _, pane := range sessionPanes[session] {
+			for _, pane := range workspacePanes[session] {
 				if roles[pane.Role] {
 					continue
 				}

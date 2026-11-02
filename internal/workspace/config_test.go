@@ -114,7 +114,7 @@ func TestConfiguredApprovalMalformedTopologyCannotBecomeAdvisory(t *testing.T) {
 
 func TestConfiguredApprovalNativeWorkspaceAndRealBash(t *testing.T) {
 	f := newTmuxFixture(t)
-	pane := f.run(t, "split-window", "-d", "-t", f.pane, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	pane := f.run(t, "split-window", "-d", "-t", f.pane, "-c", f.repo, "-P", "-F", "#{pane_id}", "exec sleep 120")
 	f.run(t, "select-pane", "-t", pane, "-T", "approver")
 	requester := f.adapter()
 	reviewer := requester
