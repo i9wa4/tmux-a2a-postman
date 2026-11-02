@@ -123,55 +123,82 @@ func (m Mail) aggregateStatus(ctx context.Context, snapshot *ServerStatus) {
 		locations := groups[key]
 		first := locations[0]
 		root := snapshot.Sessions[first.session].Windows[first.window].Panes[first.pane].Workspace
+		owner := Owner{Server: snapshot.Server.CanonicalSocket, Incarnation: snapshot.Server.Incarnation, Session: snapshot.Sessions[first.session].ID}
+		provenance := []Binding{}
+		titles := map[string]int{}
+		for _, l := range locations {
+			p := snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
+			titles[p.Title]++
+			if !p.Dead && !p.Linked {
+				provenance = append(provenance, Binding{Role: p.Title, Owner: Owner{owner.Server, owner.Incarnation, owner.Session, p.ID}, PanePID: p.PID})
+			}
+		}
+		saved, scope, nodes, scopeErr := m.Store.readStatusAttribution(ctx, root, owner, provenance)
+		configured := map[string]bool{}
+		for _, node := range nodes {
+			configured[node] = true
+		}
+		eligible := map[location]Binding{}
+		for _, l := range locations {
+			pane := &snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
+			current := Binding{Owner: Owner{owner.Server, owner.Incarnation, owner.Session, pane.ID}, PanePID: pane.PID}
+			bound := false
+			for _, b := range saved.Bindings {
+				if b.Owner == current.Owner && b.PanePID == current.PanePID {
+					current.Role = b.Role
+					bound = true
+				}
+			}
+			if !bound {
+				if configured[pane.Title] {
+					pane.Status = &NodeStatus{Node: pane.Title, Reason: "native pane lacks a matching saved binding"}
+				} else if scopeErr != nil && pane.Reason == "" {
+					pane.Reason = "configuration attribution unavailable: " + scopeErr.Error()
+				}
+				continue
+			}
+			pane.Status = &NodeStatus{Node: current.Role}
+			if pane.Capture != nil {
+				pane.Status.LastCaptureAt = &pane.Capture.At
+				pane.Status.LastScreenChangeAt = pane.Capture.ChangedAt
+			}
+			if scopeErr != nil {
+				pane.Status.Reason = scopeErr.Error()
+				continue
+			}
+			if pane.Dead || pane.Linked || current.Role != pane.Title || !configured[current.Role] || titles[current.Role] != 1 {
+				pane.Status.Reason = "dead, linked, renamed, unconfigured or ambiguous native role pane"
+				continue
+			}
+			pane.Scope = scope
+			eligible[l] = current
+		}
+		if len(eligible) == 0 {
+			continue
+		}
+		// Mail counts require the shared mailbox lock. Configuration attribution
+		// uses only atomic private registration records, so a busy mail writer
+		// does not erase a verified interface's configured scope.
 		err := m.Store.withReadWorkspace(ctx, root, func(ws *os.Root) error {
-			owner := Owner{Server: snapshot.Server.CanonicalSocket, Incarnation: snapshot.Server.Incarnation, Session: snapshot.Sessions[first.session].ID}
-			saved, err := readOperatorRuntime(ws, owner)
+			fresh, err := readOperatorRuntime(ws, owner)
 			if err != nil {
 				return err
 			}
-			provenance := []Binding{}
+			bindings := map[Binding]bool{}
+			for _, b := range fresh.Bindings {
+				bindings[b] = true
+			}
 			for _, l := range locations {
-				p := snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
-				if !p.Dead && !p.Linked {
-					provenance = append(provenance, Binding{Role: p.Title, Owner: Owner{owner.Server, owner.Incarnation, owner.Session, p.ID}, PanePID: p.PID})
+				current, ok := eligible[l]
+				if !ok {
+					continue
 				}
-			}
-			scope, nodes, scopeErr := readStatusScope(ctx, ws, provenance)
-			configured := map[string]bool{}
-			for _, n := range nodes {
-				configured[n] = true
-			}
-			titles := map[string]int{}
-			for _, l := range locations {
-				p := snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
-				titles[p.Title]++
-			}
-			for _, l := range locations {
 				pane := &snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
-				current := Binding{Owner: Owner{owner.Server, owner.Incarnation, owner.Session, pane.ID}, PanePID: pane.PID}
-				bound := false
-				for _, b := range saved.Bindings {
-					if b.Owner == current.Owner && b.PanePID == current.PanePID {
-						current.Role = b.Role
-						bound = true
-					}
-				}
-				if !bound {
-					if configured[pane.Title] {
-						pane.Status = &NodeStatus{Node: pane.Title, Reason: "native pane lacks a matching saved binding"}
-					}
+				if !bindings[current] {
+					pane.Scope = nil
+					pane.Status.Reason = "saved binding changed before mail aggregation"
 					continue
 				}
-				pane.Status = &NodeStatus{Node: current.Role}
-				if scopeErr != nil {
-					pane.Status.Reason = scopeErr.Error()
-					continue
-				}
-				if pane.Dead || pane.Linked || current.Role != pane.Title || !configured[current.Role] || titles[current.Role] != 1 {
-					pane.Status.Reason = "dead, linked, renamed, unconfigured or ambiguous native role pane"
-					continue
-				}
-				pane.Scope = scope
 				status := nodeSummary(ctx, ws, current.Role)
 				if pane.Capture != nil {
 					status.LastCaptureAt = &pane.Capture.At
@@ -182,14 +209,60 @@ func (m Mail) aggregateStatus(ctx context.Context, snapshot *ServerStatus) {
 			return nil
 		})
 		if err != nil {
-			for _, l := range locations {
+			for l := range eligible {
 				p := &snapshot.Sessions[l.session].Windows[l.window].Panes[l.pane]
-				if p.Reason == "" {
-					p.Reason = "mail/config attribution unavailable: " + err.Error()
-				}
+				p.Status.Reason = "mail aggregation unavailable: " + err.Error()
 			}
 		}
+
 	}
+}
+
+// readStatusAttribution opens only existing owned metadata. It does not open
+// mailboxes, initialize state or acquire a mailbox lock. Individual registration
+// files are atomic, all bindings/config sources are checked, and the collector
+// rechecks full native identity before publication. Mail reads separately recheck
+// their binding while holding the shared workspace lock.
+func (s Store) readStatusAttribution(ctx context.Context, root string, owner Owner, provenance []Binding) (runtimeRecord, *StatusScope, []string, error) {
+	var saved runtimeRecord
+	if err := ctx.Err(); err != nil {
+		return saved, nil, nil, err
+	}
+	name, err := Name(root)
+	if err != nil {
+		return saved, nil, nil, err
+	}
+	info, err := os.Lstat(s.StateRoot)
+	if err != nil {
+		return saved, nil, nil, err
+	}
+	if !stateRootInfo(info) {
+		return saved, nil, nil, ErrUnknown
+	}
+	base, err := os.OpenRoot(s.StateRoot)
+	if err != nil {
+		return saved, nil, nil, err
+	}
+	defer func() { _ = base.Close() }()
+	opened, err := base.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		return saved, nil, nil, ErrUnknown
+	}
+	ws, err := privateDir(base, name, false)
+	if err != nil {
+		return saved, nil, nil, err
+	}
+	defer func() { _ = ws.Close() }()
+	var identity workspaceRecord
+	if readJSON(ws, "workspace.json", &identity) != nil || identity != (workspaceRecord{1, root, name}) {
+		return saved, nil, nil, ErrUnknown
+	}
+	saved, err = readOperatorRuntime(ws, owner)
+	if err != nil {
+		return saved, nil, nil, err
+	}
+	scope, nodes, err := readStatusScope(ctx, ws, provenance)
+	return saved, scope, nodes, err
 }
 
 // readCachedPaneTimes retains operation-local self semantics: the operation's

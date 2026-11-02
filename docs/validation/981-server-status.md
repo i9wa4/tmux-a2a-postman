@@ -32,26 +32,29 @@ count, not an operator cache that may legitimately lag after skipped refresh.
 
 Five samples per group, two native sleep panes, 30 retained request/archive
 pairs and four simultaneous POP processes. Timings below are median / p95 in
-milliseconds; this small private-fixture sample describes this runner only.
+milliseconds; this small private-fixture sample describes this shared runner
+only. Other development processes were running; these are descriptive
+observations, not a controlled hardware-independent speedup claim.
 
 | Operation                               | Baseline        | Candidate       |
 | --------------------------------------- | --------------- | --------------- |
-| POP, no history                         | 116.96 / 121.41 | 68.20 / 72.43   |
-| get-status, no history                  | 39.58 / 49.20   | 2.15 / 3.28     |
-| Four simultaneous POP, no history       | 317.82 / 411.86 | 226.69 / 243.40 |
-| POP, 30 retained messages               | 117.60 / 128.12 | 73.55 / 77.20   |
-| get-status, 30 retained messages        | 43.66 / 46.62   | 2.80 / 3.56     |
-| Four simultaneous POP, retained history | 326.41 / 413.50 | 242.47 / 285.66 |
-| Cached oneline                          | —               | 2.92 / 3.15     |
-| Idle refresh (no captures due)          | —               | 10.95 / 11.32   |
-| Due refresh (two panes)                 | —               | 15.30 / 17.95   |
+| POP, no history                         | 131.53 / 134.93 | 70.92 / 72.63   |
+| get-status, no history                  | 45.03 / 58.34   | 3.26 / 4.51     |
+| Four simultaneous POP, no history       | 512.48 / 643.37 | 242.40 / 283.06 |
+| POP, 30 retained messages               | 112.97 / 118.78 | 78.65 / 83.00   |
+| get-status, 30 retained messages        | 40.13 / 47.21   | 2.24 / 3.24     |
+| Four simultaneous POP, retained history | 291.37 / 386.91 | 252.33 / 275.01 |
+| Cached oneline                          | —               | 1.89 / 2.98     |
+| Idle refresh (no captures due)          | —               | 8.49 / 10.03    |
+| Due refresh (two panes)                 | —               | 15.77 / 17.50   |
 
-For equivalent normal operations, total private state was 534 files / 836,581
-bytes at baseline versus 252 files / 642,174 bytes for the candidate, with no
-incomplete diagnostic logs in either run. The candidate retained 12 raw pane
-observations / 4,234 bytes (the forced due samples plus initial captures). Raw
-history remains unbounded over time by explicit user policy; cadence reduces
-redundant captures but does not provide a storage ceiling.
+For equivalent normal operations, total private state was 526 files / 833,152
+bytes at baseline versus 252 files / 690,780 bytes for the candidate, with no
+incomplete diagnostic logs in either run. The baseline retained 178 raw pane
+observations / 62,818 bytes. The candidate retained 12 raw pane observations /
+4,233 bytes (the forced due samples plus initial captures). Raw history remains
+unbounded over time by explicit user policy; cadence reduces redundant captures
+but does not provide a storage ceiling.
 
 ```sh
 python3 scripts/validation/benchmark-invocations.py \

@@ -304,10 +304,7 @@ func TestServerRefreshNativeNumberGapsNamesAndTwoSockets(t *testing.T) {
 	// Await the owned process boundary; tmux may retain its stale socket path.
 	// Do not delete the socket or retry a runtime operation.
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if processLiveness(a.Server.PID) == Dead {
-			break
-		}
+	for processLiveness(a.Server.PID) != Dead {
 		if time.Now().After(deadline) {
 			t.Fatal("owned server did not exit before restart")
 		}
@@ -437,5 +434,70 @@ func TestServerRefreshPartialCapacityIsNotGlobalFreshness(t *testing.T) {
 	r2, _ := m.RefreshServerStatus(context.Background(), ServerContext{Socket: f.socket}, f.home, RefreshOptions{now: func() time.Time { return at.Add(time.Second) }})
 	if r2.Coverage == nil || r2.Coverage.Captured == 0 || r2.Coverage.Reused == 0 {
 		t.Fatal("partial sweep postponed missing panes", r2)
+	}
+}
+
+func TestServerRefreshAutomaticWindowRenameDoesNotInvalidateNativeIdentity(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	server := ServerContext{Socket: f.socket}
+	f.run(t, "rename-window", "-t", f.pane, "initial-display-name")
+	result, err := m.RefreshServerStatus(context.Background(), server, f.home, RefreshOptions{phaseStarted: func(phase string) {
+		if phase == "capture" {
+			f.run(t, "rename-window", "-t", f.pane, "updated-display-name")
+		}
+	}})
+	if err != nil || result.Status != "updated" {
+		t.Fatal(result, err)
+	}
+	before, snapshot, err := m.Store.ReadServerStatus(server)
+	if err != nil || snapshot.Sessions[0].Windows[0].Name != "updated-display-name" {
+		t.Fatal(snapshot, err)
+	}
+	// Permitting display renames must not permit process or routing replacement.
+	result, err = m.RefreshServerStatus(context.Background(), server, f.home, RefreshOptions{phaseStarted: func(phase string) {
+		if phase == "capture" {
+			f.run(t, "respawn-pane", "-k", "-t", f.pane, "exec sleep 120")
+		}
+	}})
+	if err == nil || result.Status != "error" {
+		t.Fatal("process replacement accepted", result, err)
+	}
+	after, _, err := m.Store.ReadServerStatus(server)
+	if err != nil || string(before) != string(after) {
+		t.Fatal("replacement overwrote prior snapshot", err)
+	}
+}
+
+func TestServerRefreshBusyMailboxKeepsVerifiedScopeWithUnknownCounts(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	rt := configuredStatusFixture(t, f, m)
+	held, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		finished <- m.Store.WithVerified(context.Background(), rt, func(*os.Root, Snapshot) error { close(held); <-release; return nil })
+	}()
+	defer func() {
+		close(release)
+		if err := <-finished; err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("fixture never acquired workspace mutation lock")
+	}
+	result, err := m.RefreshServerStatus(context.Background(), ServerContext{Socket: f.socket}, f.home, RefreshOptions{})
+	if err == nil || result.Status != "partial" || result.Coverage.UnknownNodes != 1 {
+		t.Fatal(result, err)
+	}
+	_, snapshot, err := m.Store.ReadServerStatus(ServerContext{Socket: f.socket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := firstStatusPane(t, snapshot)
+	if pane.Scope == nil || pane.Status == nil || pane.Status.Node != "worker" || pane.Status.UnreadCount != nil || !strings.Contains(pane.Status.Reason, "busy") {
+		t.Fatal("busy mail erased verified scope or invented counts", pane)
 	}
 }

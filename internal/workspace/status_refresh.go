@@ -292,6 +292,14 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 	if !sameStatusNative(snapshot, last) {
 		return result, errors.New("server layout/process identities changed during refresh; previous snapshot retained")
 	}
+	// automatic-rename can change a window's display name as a console starts
+	// or runs a tool. It is not a routing/process identity. Use closing-frame
+	// names after all native IDs, roles, directories and geometry still match.
+	for si := range snapshot.Sessions {
+		for wi := range snapshot.Sessions[si].Windows {
+			snapshot.Sessions[si].Windows[wi].Name = last.Sessions[si].Windows[wi].Name
+		}
+	}
 	snapshot.Coverage.Complete = snapshot.Coverage.Unavailable == 0 && snapshot.Coverage.UnknownNodes == 0
 	if !snapshot.Coverage.Complete {
 		snapshot.Coverage.Reason = "partial observation; individual capture times and row reasons remain authoritative"
@@ -326,7 +334,7 @@ func sameStatusNative(a, b ServerStatus) bool {
 		}
 		for j, w := range s.Windows {
 			ow := other.Windows[j]
-			if w.ID != ow.ID || w.Index != ow.Index || w.Name != ow.Name || w.Layout != ow.Layout || len(w.Panes) != len(ow.Panes) {
+			if w.ID != ow.ID || w.Index != ow.Index || w.Layout != ow.Layout || len(w.Panes) != len(ow.Panes) {
 				return false
 			}
 			for k, p := range w.Panes {

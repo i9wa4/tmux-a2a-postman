@@ -58,12 +58,16 @@ not treat cached visibility as current liveness or permission.
 
 Normal verified mutation admission saves per-pane configuration provenance in
 that workspace's private runtime directory. Its native owner/process, absolute
-source path and structural topology fingerprint are recorded. Refresh reads
-only already registered workspaces identified by native pane directories and
-saved bindings. It validates the referenced topology and compares all matching
-live registered configuration sources. Different/conflicting or changed input
-is explicit unknown until normal operations establish consistent provenance.
-The refresh caller cannot choose a global winner with `--config` or cwd.
+source path and structural topology fingerprint are recorded. Refresh reads only
+already registered workspaces identified by native pane directories and saved
+bindings. It validates the referenced topology and compares all matching live
+registered configuration sources. Configuration provenance uses only existing
+atomic private runtime records; mail counts separately require a shared
+workspace lock and rechecked binding. A busy mail writer leaves counts unknown
+without erasing independently verified scope. Different/conflicting or changed
+input is explicit unknown until normal operations establish consistent
+provenance. The refresh caller cannot choose a global winner with `--config` or
+cwd.
 
 This adds no registry, mailbox, fake caller, send route or management grant.
 New/legacy registrations lacking configuration provenance remain unknown until
@@ -93,6 +97,10 @@ idle refreshes. Only an unchanged server/session/window/pane PID/root/title can
 reuse an observation. Restarts, replacements and backwards clock observations
 reset the comparison baseline. First/equal samples do not invent a change
 timestamp.
+
+Automatic window-name changes are display metadata, taken from the closing
+frame. They never waive native process, role, session, directory or geometry
+checks.
 
 Unavailable/due panes remain due. Partial publication contains actual coverage,
 old individual times and reasons; it never advances a whole-server capture

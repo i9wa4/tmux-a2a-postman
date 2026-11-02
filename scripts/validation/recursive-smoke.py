@@ -371,8 +371,11 @@ def run_case(case):
         if not existed and (cold.returncode == 0 or cold.stdout != "?\n" or state.exists()):
             raise RuntimeError("cold cached reader hid unavailable state or initialized storage")
         # Collection is explicit: operator reads never manufacture a refresh.
+        native_format = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_name}\t#{window_layout}\t#{pane_id}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}\t#{pane_dead}\t#{window_linked}\t#{pane_top}\t#{pane_left}"
+        report["operator_native_before"] = tmux("list-panes", "-a", "-F", native_format).splitlines()
         refreshed = subprocess.run([postman, "refresh-status"], env=status_env,
                                    text=True, capture_output=True, timeout=5)
+        report["operator_native_after"] = tmux("list-panes", "-a", "-F", native_format).splitlines()
         outcome = json.loads(refreshed.stdout)
         if outcome["status"] not in {"updated", "partial"}:
             raise RuntimeError("initial explicit refresh failed: " + refreshed.stderr)
