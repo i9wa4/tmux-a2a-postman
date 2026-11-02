@@ -35,7 +35,9 @@ refresh. A different live session cannot act as this workspace; only verified
 stale ownership permits takeover without erasing history. Unknown ownership
 fails explicitly. No legacy daemon lock or configuration gate is involved.
 
-First mutation creates only needed private directories (0700) and files
+An existing application state root may remain 0755. It must be an owned real
+directory without group/other write access; Postman does not chmod it.
+First mutation creates only needed private child directories (0700) and files
 (0600). `get-status` reads saved facts without initialization or capture.
 
 ## 2. Mail and exact replies

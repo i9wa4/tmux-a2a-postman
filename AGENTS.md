@@ -2,6 +2,9 @@
 
 Project-specific instructions for tmux-a2a-postman.
 
+For iterative cloud/tmux investigation, follow the
+[AI development runbook](docs/development/cloud-tmux-debugging.md).
+
 ## 1. Development Checks
 
 After implementation work:
