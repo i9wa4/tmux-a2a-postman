@@ -127,7 +127,9 @@ absorbed-Enter negative control checks three spaced attempts per message, one
 paste per ID, no claims and no persistent gate blocking the next sender. The
 concurrent and approval-burst editors also absorb the first Enter and presses
 less than 500ms apart. The concurrent senders start 300ms apart, reproducing
-constant-rate interleaving; increasing retry cooldown must recover. Complete
+constant-rate interleaving; observed retry settlement must recover. Unit
+negative controls also cover newline-driven reflow across many rows, viewport
+prefix loss and blank redraws exceeding the old line-only threshold. Complete
 notification texts, claims and effects remain required. The newline-retry case
 checks actual submission on the second Enter and all four
 full-read/correlated-reply steps, in plain and bracketed editors.

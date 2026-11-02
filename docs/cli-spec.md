@@ -306,11 +306,20 @@ captures the whole pane and sends C-m; after another 600ms it captures again. A
 bounded line diff counts inserted/deleted lines, ignoring trailing terminal
 padding. A replacement counts as two lines; a one-row scroll does not make every
 subsequent row different. At most four changed lines is small enough to retry
-Enter, with at least 600ms between presses and a maximum of three. Retry
-cooldown adds 300ms per attempt: paste-to-first Enter is at least 600ms;
-subsequent Enter intervals are at least 900ms and 1200ms. This breaks
-constant-rate interleaving across senders. Capture again immediately before each
-retry. Substantial change stops extra Enter. No prompt glyph, cursor prefix,
+Enter, with a maximum of three presses. A larger diff still requires new text:
+whitespace-only reflow, a viewport losing only an old prefix, a blank redraw or
+a small background-text update cannot establish submission. The content check
+removes whitespace and common prefix/suffix and ignores up to four changed
+characters.
+
+Before a retry, compare whole-pane observations at least 600ms apart. Visible
+newline/reflow input or a large redraw restarts this settlement; a small
+changing status text need not block a busy TUI. This lets the final senders
+observe a quiet interval after competing Enter presses instead of independently
+repeating the same cadence. Paste-to-first Enter is at least 600ms; retry
+spacing includes the preceding confirmation and settlement. All observations
+share the existing input deadline, and settlement can exhaust it before three
+presses. Substantial change stops extra Enter. No prompt glyph, cursor prefix,
 input area, provider name or model API is inspected. An identical screen can
 mean newline or accepted input; the retry heuristic deliberately permits extra
 Enter and never establishes recipient acceptance or processing. `accepted`
