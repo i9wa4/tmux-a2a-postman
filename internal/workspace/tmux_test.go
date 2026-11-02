@@ -119,7 +119,7 @@ func TestTmuxSendLeavesPendingRecipientInputUntouched(t *testing.T) {
 	}
 }
 
-func TestTmuxSnapshotUsesNativeIdentityAndStableSessionRoot(t *testing.T) {
+func TestTmuxSnapshotUsesNativeIdentityAndAgentPaneDirectory(t *testing.T) {
 	f := newTmuxFixture(t)
 	adapter := f.adapter()
 	first, err := adapter.Snapshot(context.Background())
@@ -143,12 +143,12 @@ func TestTmuxSnapshotUsesNativeIdentityAndStableSessionRoot(t *testing.T) {
 		t.Fatal("fixture did not change pane directory")
 	}
 	second, err := adapter.Snapshot(context.Background())
-	if err != nil || second.Root != first.Root || second.Caller.Role != first.Caller.Role || second.Caller.Owner != first.Caller.Owner || second.Caller.PanePID == first.Caller.PanePID {
-		t.Fatalf("pane cd redirected workspace: %#v %v", second, err)
+	if err != nil || second.Root != "~/elsewhere" || second.Caller.Role != first.Caller.Role || second.Caller.Owner != first.Caller.Owner || second.Caller.PanePID == first.Caller.PanePID {
+		t.Fatalf("replacement agent did not select its native directory: %#v %v", second, err)
 	}
 	adapter.Home = t.TempDir()
 	if _, err := adapter.Snapshot(context.Background()); err == nil {
-		t.Fatal("outside-HOME session root accepted")
+		t.Fatal("outside-HOME pane directory accepted")
 	}
 }
 
@@ -512,7 +512,7 @@ func TestTmuxInterruptedCrossSendDoesNotBlockOtherRoutes(t *testing.T) {
 
 func TestTmuxSnapshotRejectsAmbiguousAndUnboundPanes(t *testing.T) {
 	f := newTmuxFixture(t)
-	second := f.run(t, "split-window", "-d", "-t", f.pane, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	second := f.run(t, "split-window", "-d", "-t", f.pane, "-c", f.repo, "-P", "-F", "#{pane_id}", "exec sleep 120")
 	f.run(t, "select-pane", "-t", second, "-T", "approver")
 	adapter := f.adapter()
 	snapshot, err := adapter.Snapshot(context.Background())

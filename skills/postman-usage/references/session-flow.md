@@ -54,3 +54,15 @@ Route topology, recipient, interface, ownership, or configuration issues to
 runtime files manually, broaden routes, kill unrelated sessions, or blindly
 resend uncertain deliveries. A task-level BLOCKED report names the original
 failing requirement, evidence, and remaining blocker.
+
+## 5. Investigate latency when requested
+
+For a concrete delivery/performance problem, inspect only your own authorized
+per-invocation logs under `agents/<node>/logs/<UTC-start-date>/`. Use the
+[diagnostic procedure](../../../docs/invocation-diagnostics.md) for schema,
+read-only analysis and exact existing message/notice/receipt/audit joins.
+Compare equivalent builds/configuration/workloads, including failed and
+incomplete samples. Missing end events or old dates do not authorize replay,
+prove a live process, or establish task state. Logs carry no mail bodies or
+child streams and remain until the user deletes them. No log scan belongs in
+normal status display or passive waiting.

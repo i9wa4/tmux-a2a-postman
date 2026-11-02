@@ -43,6 +43,10 @@ type protocolOutput struct {
 }
 
 func newPublicApprovalFixture(t *testing.T) *publicApprovalFixture {
+	return newPublicApprovalFixtureAtHome(t, false)
+}
+
+func newPublicApprovalFixtureAtHome(t *testing.T, startAtHome bool) *publicApprovalFixture {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux unavailable")
@@ -67,14 +71,20 @@ func newPublicApprovalFixture(t *testing.T) *publicApprovalFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.worker = f.tmux("-f", "/dev/null", "new-session", "-d", "-s", "work", "-c", work, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	if startAtHome {
+		initial := f.tmux("-f", "/dev/null", "new-session", "-d", "-s", "work", "-c", f.home, "-P", "-F", "#{pane_id}", "exec sleep 120")
+		f.tmux("select-pane", "-t", initial, "-T", "pane")
+		f.worker = f.tmux("new-window", "-d", "-t", "work", "-c", work, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	} else {
+		f.worker = f.tmux("-f", "/dev/null", "new-session", "-d", "-s", "work", "-c", work, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_ = exec.CommandContext(ctx, "tmux", "-S", f.socket, "kill-server").Run()
 	})
 	f.tmux("select-pane", "-t", f.worker, "-T", "worker")
-	f.peer = f.tmux("split-window", "-d", "-t", f.worker, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.peer = f.tmux("split-window", "-d", "-t", f.worker, "-c", work, "-P", "-F", "#{pane_id}", "exec sleep 120")
 	f.tmux("select-pane", "-t", f.peer, "-T", "peer")
 	if shell, err := exec.LookPath("bash"); err == nil {
 		f.tmux("set-option", "-g", "default-shell", shell)

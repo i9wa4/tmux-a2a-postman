@@ -75,9 +75,11 @@ Implement assigned work and report evidence.
 Review execution requests.
 ````
 
-Start each agent in a pane titled with its configured role. The tmux session's
-creation directory must be below canonical HOME and is the workspace root;
-later `cd` does not redirect mail. Separate worktrees remain independent.
+Start each agent in a pane titled with its configured role. Postman uses that
+native agent pane's working directory below canonical HOME as the workspace.
+The directory where the tmux session was first created does not select it.
+A tool subprocess's cwd does not redirect mail; separate worktrees remain
+independent when their agent panes run there. No launch wrapper is required.
 A live independent session cannot also own the same workspace. Verified runtime
 replacement preserves mail; unknown ownership does not silently transfer.
 

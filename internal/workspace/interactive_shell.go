@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+
 	"github.com/creack/pty"
 )
 
@@ -65,6 +67,9 @@ func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'
 // run. The command's two output streams use separate inherited pipes. Only
 // control framing uses the PTY; the source is never typed into another pane.
 func runInteractive(ctx context.Context, invocation ShellInvocation, stdout, stderr io.Writer) (code int, started bool, retErr error) {
+	trace := diagnostic.From(ctx)
+	initSpan := trace.Start("shell_initialization")
+	defer func() { initSpan.Error(retErr) }()
 	if err := validateShell(invocation.Shell); err != nil {
 		return 127, false, err
 	}
@@ -197,6 +202,9 @@ ready:
 		}
 	}
 dispatch:
+	initSpan.End("ok")
+	childSpan := trace.Start("child_execution")
+	defer func() { childSpan.Error(retErr) }()
 	wrapper := builtin + "printf '" + nonce + ":started\\n' >&5; ( . " + shellQuote(source) + " ) >&3 2>&4; postman_execution_code=$?; " + builtin + "printf '" + nonce + ":exit:%s\\n' \"$postman_execution_code\" >&5; " + builtin + "exit\n"
 	if _, err = io.WriteString(terminal, wrapper); err != nil {
 		return 127, false, err

@@ -16,7 +16,7 @@ directly from that binding:
 ```sh
 tmux-a2a-postman get-status
 tmux -u -S "${TMUX%%,*}" display-message -p -t "$TMUX_PANE" \
-  'socket=#{socket_path}; pid=#{pid}; start=#{start_time}; session=#{session_id}; pane=#{pane_id}; pane_pid=#{pane_pid}; root=#{session_path}'
+  'socket=#{socket_path}; pid=#{pid}; start=#{start_time}; session=#{session_id}; pane=#{pane_id}; pane_pid=#{pane_pid}; root=#{pane_current_path}'
 ```
 
 Use the explicit absolute socket from `TMUX` and native pane from `TMUX_PANE`;
@@ -33,8 +33,11 @@ against the existing private `runtime/binding.json`:
   a matching pane number or PID alone is insufficient. The runtime record's
   owner and all binding owners must identify the same server incarnation and
   native session. Do not match the runtime owner's pane to every agent.
-- Verify the canonical initial session root below canonical HOME against the
-  status `workspace` and `workspace.json`. Changing cwd does not change it.
+- Verify the canonical native agent-pane directory below canonical HOME against
+  the status `workspace` and `workspace.json`. The CLI subprocess cwd and the
+  session's old creation directory do not select it. A change to the agent
+  pane's own directory selects another workspace; do not merge old history or
+  infer identity from a directory alone.
   Recheck native facts/status after locating the record; any replacement,
   ambiguous binding or unavailable proof stops the workflow.
 

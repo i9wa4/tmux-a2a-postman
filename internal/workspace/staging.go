@@ -74,7 +74,9 @@ type mailStepError struct{ error }
 
 func (e *mailStepError) Unwrap() error { return e.error }
 
-func (m Mail) stage(ws *os.Root, msg Message) error {
+func (m Mail) stage(ws *os.Root, msg Message) (retErr error) {
+	span := m.Diagnostics.Start("mail_staging")
+	defer func() { span.Error(retErr) }()
 	draft, err := mailBox(ws, msg.From, "draft")
 	if err != nil {
 		return err

@@ -41,11 +41,21 @@ options, unexpected positional arguments and removed options are errors.
 similarly named fixture-copy option is a separate development interface.
 
 The workspace value is the canonical HOME-relative identity (`~` or `~/path`).
-The caller comes from verified native tmux identity. Mail remains bound to the
-original HOME-relative workspace across `cd`; execution uses its explicit,
-captured cwd. Runtime replacement preserves durable mail. Unknown ownership
-never grants permission to mutate or execute. No daemon startup, registration,
-model API or recurring POP loop is required.
+The caller comes from verified native tmux identity. The workspace directory is
+the verified agent pane's native `pane_current_path`, canonicalized below HOME.
+It is independent of the session's old creation directory and the CLI
+subprocess's cwd. Only configured live role panes in that same canonical
+directory supply local bindings. A present role elsewhere or with an unknown
+directory is not proven absent; a configured approver in that state cannot
+permit advisory execution. Execution uses its explicit, captured tool cwd.
+Actual changes to the agent pane's own directory select a different workspace;
+ordinary tool subprocess cd does not. No launcher-specific setup is required.
+Runtime replacement preserves durable mail. Existing files under an older
+session-directory workspace remain unchanged; this correction never migrates or
+deletes them automatically. Inspect the original records explicitly when
+recovering earlier mail. Unknown ownership never grants permission to mutate or
+execute. No daemon startup, registration, model API or recurring POP loop is
+required.
 
 Except for execution's child streams and the human `get-status-oneline` view,
 outputs are JSON. Times are UTC RFC3339.
@@ -454,29 +464,38 @@ its archive. A notification never exposes the body.
 
 ### 10.3. Every log and persisted record destination
 
-| Destination                                                                    | Purpose, audience and decision                                                                                                          |
-| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| stdout, operational CLI                                                        | One compact JSON result for agents, except the human get-status-oneline view; no banners, raw mail or debug prose                       |
-| stdout, execution child                                                        | Exact child stream for user pipelines; no Postman prose                                                                                 |
-| stderr, execution                                                              | Exact child stream plus short waiting notice and final JSON line; add only a necessary line boundary                                    |
-| stderr, global/help/output errors                                              | One human diagnostic when structured output cannot be emitted or parsing is global; no duplicate emoji/error line after JSON            |
-| `workspace.json`, `runtime/binding.json`, lock files                           | Ownership/current state, not diagnostic logs; native evidence is revalidated                                                            |
-| `agents/*/{draft,inbox,read,sent,failed}/*.md`                                 | Complete durable mail for its participants; independent copies and stable IDs, never diagnostic truncation                              |
-| `read/*.pop.json`                                                              | Minimal successful-claim receipt and actual claim time; empty POP never rewrites it                                                     |
-| `draft/*.unknown.json`                                                         | Unavailable interface delivery preserves a complete candidate and reason without a replay queue or confirmed-failure claim              |
-| `failed/*.failure.json`                                                        | Confirmed non-delivery reason, separate from uncertain input or task failure                                                            |
-| `transactions/*.json`                                                          | Bounded interrupted file-operation intent; remove only on completed recovery, never run commands or enqueue notifications               |
-| `runtime/notices/*.json`                                                       | Per-message input attempt/receipt prevents replay; accepted/unknown are separate from POP                                               |
-| `runtime/notice-locks/*`, `runtime/input-guards/*`                             | Per-recipient serialization and pending input evidence survives process death; current state can be updated, no queued delivery service |
-| `runtime/observations/s-*.json`                                                | Immutable native text and coverage, private; no role/model identity invention                                                           |
-| `runtime/observations/index.json`, capture lock                                | Bounded current pointers and generation fencing; history is never rescanned or pruned for status                                        |
-| `agents/*/executions/<operation>.json`                                         | Minimal invocation, pinned parties, decision and outcome; never a reusable grant or automatic retry                                     |
-| execution `decisions/` and `waiters/`                                          | Immutable reserved choice and exact waiter metadata; waiter authority additionally requires its live OS lock                            |
-| Private shell source/PTY/pipes                                                 | Transient execution plumbing, cleaned after completion; no permanent stdout/stderr files                                                |
-| Fixture reports, input traces and transcripts                                  | Development evidence only, at the printed owned temporary paths; no production model server or second diagnostic destination            |
-| `--debug`, `--verbose`, `--log-file`, daemon event logs                        | No reachable knobs or emission path retained; no new log-level or full-output platform                                                  |
-| Former related-capture receipts, leases and pruning                            | Remove code and automatic deletion; historical user files are left untouched                                                            |
-| `registry/workspaces.json`, `journal/events.jsonl`, fake pane/agent registries | Do not create unused infrastructure; current workspace/native binding plus necessary mail/audit records supply the required facts       |
+Operational `send-heredoc`, `pop` (including empty), `execute-heredoc`,
+`approve-execution` and `decline-execution` also write best-effort private
+per-invocation diagnostics after verified native identity. These logs never own
+mail or execution recovery. Read-only/status/help/version/usage commands create
+no logs. See the
+[versioned timing schema and analysis procedure](invocation-diagnostics.md) for
+boundaries, privacy, limits and measured cost.
+
+| Destination                                                                    | Purpose, audience and decision                                                                                                                                                |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stdout, operational CLI                                                        | One compact JSON result for agents, except the human get-status-oneline view; no banners, raw mail or debug prose                                                             |
+| stdout, execution child                                                        | Exact child stream for user pipelines; no Postman prose                                                                                                                       |
+| stderr, execution                                                              | Exact child stream plus short waiting notice and final JSON line; add only a necessary line boundary                                                                          |
+| stderr, global/help/output errors                                              | One human diagnostic when structured output cannot be emitted or parsing is global; no duplicate emoji/error line after JSON                                                  |
+| `workspace.json`, `runtime/binding.json`, lock files                           | Ownership/current state, not diagnostic logs; native evidence is revalidated                                                                                                  |
+| `agents/*/{draft,inbox,read,sent,failed}/*.md`                                 | Complete durable mail for its participants; independent copies and stable IDs, never diagnostic truncation                                                                    |
+| `read/*.pop.json`                                                              | Minimal successful-claim receipt and actual claim time; empty POP never rewrites it                                                                                           |
+| `draft/*.unknown.json`                                                         | Unavailable interface delivery preserves a complete candidate and reason without a replay queue or confirmed-failure claim                                                    |
+| `failed/*.failure.json`                                                        | Confirmed non-delivery reason, separate from uncertain input or task failure                                                                                                  |
+| `transactions/*.json`                                                          | Bounded interrupted file-operation intent; remove only on completed recovery, never run commands or enqueue notifications                                                     |
+| `runtime/notices/*.json`                                                       | Per-message input attempt/receipt prevents replay; accepted/unknown are separate from POP                                                                                     |
+| `runtime/notice-locks/*`, `runtime/input-guards/*`                             | Per-recipient serialization and pending input evidence survives process death; current state can be updated, no queued delivery service                                       |
+| `runtime/observations/s-*.json`                                                | Immutable native text and coverage, private; no role/model identity invention                                                                                                 |
+| `runtime/observations/index.json`, capture lock                                | Bounded current pointers and generation fencing; history is never rescanned or pruned for status                                                                              |
+| `agents/*/executions/<operation>.json`                                         | Minimal invocation, pinned parties, decision and outcome; never a reusable grant or automatic retry                                                                           |
+| `agents/<verified-node>/logs/YYYY-MM-DD/inv-<random-id>.jsonl`                 | Versioned timing/outcome/correlation diagnostics; invocation UTC start-date partition, 0700/0600, no expiry, no content/stream copies; recording failures never grant retries |
+| execution `decisions/` and `waiters/`                                          | Immutable reserved choice and exact waiter metadata; waiter authority additionally requires its live OS lock                                                                  |
+| Private shell source/PTY/pipes                                                 | Transient execution plumbing, cleaned after completion; no permanent stdout/stderr files                                                                                      |
+| Fixture reports, input traces and transcripts                                  | Development evidence only, at the printed owned temporary paths; no production model server or second diagnostic destination                                                  |
+| `--debug`, `--verbose`, `--log-file`, daemon event logs                        | No reachable knobs or emission path retained; no new log-level or full-output platform                                                                                        |
+| Former related-capture receipts, leases and pruning                            | Remove code and automatic deletion; historical user files are left untouched                                                                                                  |
+| `registry/workspaces.json`, `journal/events.jsonl`, fake pane/agent registries | Do not create unused infrastructure; current workspace/native binding plus necessary mail/audit records supply the required facts                                             |
 
 Workspace directories are 0700 and records 0600, with bounded private-file
 readers and symlink refusal. Mail scans admit at most 2048 entries per mailbox;
