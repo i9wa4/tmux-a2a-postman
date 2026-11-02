@@ -10,8 +10,9 @@ import termios
 import threading
 import tty
 
-nonce, mode = sys.argv[1:]
-helper = str(pathlib.Path(__file__).with_name("notification_recipient.py"))
+nonce, mode = sys.argv[1:3]
+helper = (sys.argv[3] if len(sys.argv) == 4 else
+          str(pathlib.Path(__file__).with_name("notification_recipient.py")))
 evidence = pathlib.Path(os.environ["POSTMAN_SMOKE_EVIDENCE"])
 role = os.environ["POSTMAN_SMOKE_ROLE"]
 submitted = queue.Queue()

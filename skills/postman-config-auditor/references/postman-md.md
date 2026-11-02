@@ -48,12 +48,20 @@ The send/execution adapters include their applicable presentation text in the
 recipient Markdown. Read-only topology/status paths do not render instructions
 or open catalogs. Other node headings still require valid, unique role names.
 
-`command_approver_node` belongs in Mermaid; legacy frontmatter approval keys
-are rejected. YAML `interface_node` can explicitly designate the local role.
-Unknown frontmatter does not install hooks. The configured common contract,
-selected recipient role, catalog and contact summaries are rendered into every
-new archive, including replies, before the exact sender-authored Markdown.
-Postman does not launch an agent or evaluate shell substitutions in policy.
+`command_approver_node` belongs in Mermaid; legacy frontmatter approval keys are
+rejected. YAML `interface_node` can explicitly designate the local role. Unknown
+frontmatter does not install hooks. The configured common contract, selected
+recipient role, catalog and contact summaries are rendered into every new
+archive, including replies, before the exact sender-authored Markdown. Policy
+rendering does not launch an agent or evaluate shell substitutions. Optional
+YAML `presets` are separate startup data: only an explicit
+`launch-agents <preset>` evaluates their commands. Each preset has ordered
+`columns`, each containing `panes` of existing, unique `role` and shell
+`command` pairs. `launch-agents --list` and `--dry-run` are inert. This does not
+add a startup policy message, daemon, or supervisor. Newly launched consoles
+inherit the documented absolute `TMUX_A2A_POSTMAN_CONFIG` selection; explicit
+`--config` takes precedence, followed by this variable, then the usual XDG/HOME
+default.
 
 `skill_path` retains ordinary catalog syntax: a path string, a list of paths,
 or path entries with `skills: all` / a selected name list. Relative paths use
