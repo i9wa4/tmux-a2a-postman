@@ -4,8 +4,13 @@
 
 Each foreground CLI resolves its native tmux server socket/incarnation,
 session and pane. The configured role is the unique live pane title in that
-session. The session creation directory, canonicalized below HOME, supplies
-the original workspace root; a later `cd` cannot redirect mail.
+workspace. The verified native pane's current directory, canonicalized below
+HOME, supplies the workspace root. The CLI subprocess cwd and the session's old
+creation directory do not select it. An agent launched after navigation uses
+its actual directory regardless of launcher; tool subprocess cd leaves it
+unchanged. A role present in another directory is neither a local binding nor
+verified absent, so it cannot silently remove a configured approval gate.
+Native identity and ownership are still required; cwd alone grants no identity.
 
 State lives below `${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman`:
 

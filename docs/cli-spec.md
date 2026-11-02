@@ -41,11 +41,21 @@ options, unexpected positional arguments and removed options are errors.
 similarly named fixture-copy option is a separate development interface.
 
 The workspace value is the canonical HOME-relative identity (`~` or `~/path`).
-The caller comes from verified native tmux identity. Mail remains bound to the
-original HOME-relative workspace across `cd`; execution uses its explicit,
-captured cwd. Runtime replacement preserves durable mail. Unknown ownership
-never grants permission to mutate or execute. No daemon startup, registration,
-model API or recurring POP loop is required.
+The caller comes from verified native tmux identity. The workspace directory is
+the verified agent pane's native `pane_current_path`, canonicalized below HOME.
+It is independent of the session's old creation directory and the CLI
+subprocess's cwd. Only configured live role panes in that same canonical
+directory supply local bindings. A present role elsewhere or with an unknown
+directory is not proven absent; a configured approver in that state cannot
+permit advisory execution. Execution uses its explicit, captured tool cwd.
+Actual changes to the agent pane's own directory select a different workspace;
+ordinary tool subprocess cd does not. No launcher-specific setup is required.
+Runtime replacement preserves durable mail. Existing files under an older
+session-directory workspace remain unchanged; this correction never migrates or
+deletes them automatically. Inspect the original records explicitly when
+recovering earlier mail. Unknown ownership never grants permission to mutate or
+execute. No daemon startup, registration, model API or recurring POP loop is
+required.
 
 Except for execution's child streams and the human `get-status-oneline` view,
 outputs are JSON. Times are UTC RFC3339.

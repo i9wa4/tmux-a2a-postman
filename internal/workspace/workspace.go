@@ -18,8 +18,8 @@ var (
 	ErrUnknown = errors.New("workspace owner liveness is unknown")
 )
 
-// CanonicalRoot resolves the trusted initial session root without consulting
-// the current working directory. Only roots within canonical HOME are allowed.
+// CanonicalRoot resolves a verified native pane directory without consulting
+// the CLI subprocess working directory. Only roots within canonical HOME are allowed.
 func CanonicalRoot(root, home string) (string, error) {
 	if !filepath.IsAbs(root) || !filepath.IsAbs(home) {
 		return "", errors.New("workspace root and home must be absolute")

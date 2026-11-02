@@ -35,7 +35,8 @@ type Snapshot struct {
 	AbsentRoles []string
 }
 
-// Snapshot uses tmux's session creation directory rather than pane_current_path.
+// Snapshot uses the verified native agent pane's working directory, rather
+// than the session's old creation directory or a tool subprocess's cwd.
 // Rechecking both native identity and socket identity rejects an intervening
 // server/session replacement. All probes have a shared two-second deadline.
 func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
@@ -68,7 +69,7 @@ func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 		return Snapshot{}, err
 	}
 	out, err := tmuxOutput(ctx, t.Socket, "list-panes", "-s", "-t", first.owner.Session,
-		"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}\t#{pane_pid}")
+		"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}\t#{pane_pid}\t#{pane_current_path}")
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("%w: list caller session panes: %v", ErrUnknown, err)
 	}
@@ -76,7 +77,7 @@ func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 	liveRoles := make(map[string]bool, len(roles))
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 5 || fields[0] != first.owner.Session || !nativeID(fields[1], '%') {
+		if len(fields) != 6 || fields[0] != first.owner.Session || !nativeID(fields[1], '%') {
 			return Snapshot{}, fmt.Errorf("%w: malformed native pane identity", ErrUnknown)
 		}
 		if !roles[fields[2]] {
@@ -87,6 +88,14 @@ func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 		}
 		if fields[3] != "0" {
 			return Snapshot{}, fmt.Errorf("%w: malformed pane liveness", ErrUnknown)
+		}
+		// A present role elsewhere is not verified absent here. In particular,
+		// an approver with unavailable/different directory cannot authorize an
+		// advisory downgrade. Only this workspace contributes local bindings.
+		liveRoles[fields[2]] = true
+		peerRoot, rootErr := CanonicalRoot(fields[5], t.Home)
+		if rootErr != nil || peerRoot != root {
+			continue
 		}
 		owner := first.owner
 		owner.Pane = fields[1]
@@ -127,7 +136,7 @@ type tmuxDescription struct {
 
 func (t Tmux) describe(ctx context.Context, socket, pane string) (tmuxDescription, error) {
 	out, err := tmuxOutput(ctx, socket, "display-message", "-p", "-t", pane,
-		"#{socket_path}\t#{pid}\t#{start_time}\t#{session_id}\t#{pane_id}\t#{session_path}\t#{pane_dead}\t#{pane_title}\t#{pane_pid}")
+		"#{socket_path}\t#{pid}\t#{start_time}\t#{session_id}\t#{pane_id}\t#{pane_current_path}\t#{pane_dead}\t#{pane_title}\t#{pane_pid}")
 	if err != nil {
 		return tmuxDescription{}, fmt.Errorf("%w: verify native tmux identity: %v", ErrUnknown, err)
 	}
