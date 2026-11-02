@@ -236,7 +236,18 @@ behavioral suites. The automated gate selects only `evals/*/trigger/eval.yaml`
 and never implicitly executes or rewrites the behavioral lane. Skill metadata
 and publishing dry-runs remain separate required checks.
 
-## 4. Releases
+## 4. Invocation timing evidence
+
+Use the [diagnostic schema and procedure](docs/invocation-diagnostics.md) to
+compare equivalent builds, configuration and workloads. The optional real-CLI
+benchmark owns its tmux socket, home, configuration and state; it needs no
+model service. Recorder/lock/failure tests run in Go, reader tests run in the
+`invocation-analysis` flake check, and process tests cover ordinary/empty POP,
+redaction, concurrent files, read-only commands, crash during approval, and
+log failure preserving a claim and the child exit code. Diagnostic failure
+never relaxes required execution audits.
+
+## 5. Releases
 
 See [RELEASING.md](RELEASING.md) for the release checklist and tag ruleset
 expectations.

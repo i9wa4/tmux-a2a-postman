@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 // Input evidence deliberately learns the current cursor prefix. It contains no
@@ -129,7 +131,8 @@ func noticePause(ctx context.Context) error {
 	}
 }
 
-func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observedNotifier, target Binding, msg Message) error {
+func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observedNotifier, target Binding, msg Message) (retErr error) {
+	trace := diagnostic.From(ctx)
 	prior, err := s.inputGuard(ctx, rt, target, nil)
 	if err != nil {
 		return err
@@ -166,9 +169,14 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 	// after the one Enter and durable receipts use the outer notice deadline.
 	inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
 	defer inputCancel()
-	if err = transport.pasteNotice(inputCtx, target, guard.Text); err != nil {
+	pasteSpan := trace.Start("notification_paste")
+	err = transport.pasteNotice(inputCtx, target, guard.Text)
+	pasteSpan.Error(err)
+	if err != nil {
 		return err
 	}
+	settleSpan := trace.Start("notification_settle")
+	defer func() { settleSpan.Error(retErr) }()
 	var stable string
 	var since time.Time
 	for {
@@ -194,12 +202,18 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 			break
 		}
 	}
+	settleSpan.End("ok")
 	// One submit only. Repeating Enter after a visual change is unsafe: it can
 	// either insert a newline or submit a different, already accepted input.
-	if err = transport.enterNotice(inputCtx, target); err != nil {
+	submitSpan := trace.Start("notification_submit")
+	err = transport.enterNotice(inputCtx, target)
+	submitSpan.Error(err)
+	if err != nil {
 		return err
 	}
 	inputCancel()
+	confirmSpan := trace.Start("notification_confirm")
+	defer func() { confirmSpan.Error(retErr) }()
 	for {
 		if err = noticePause(ctx); err != nil {
 			return errors.New("notification submit is uncertain; no repeat Enter or paste")
@@ -219,6 +233,7 @@ func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observe
 // within the caller's existing budget, but actual identity/geometry failures
 // stop immediately. This helper cannot paste or submit input.
 func noticeObservation(ctx context.Context, transport observedNotifier, target Binding) (paneFrame, error) {
+	diagnostic.From(ctx).Add("notice_observations", 1, 0)
 	for {
 		frame, err := transport.noticeFrame(ctx, target)
 		if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {

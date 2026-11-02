@@ -16,15 +16,18 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
 
 // Mail performs synchronous local-workspace file operations. Callers enforce
 // configured routing before Send; notification and Bash run only after return.
 type Mail struct {
-	Store     Store
-	Context   MessageContextBuilder
-	afterStep func(string) error
+	Diagnostics *diagnostic.Recorder
+	Store       Store
+	Context     MessageContextBuilder
+	afterStep   func(string) error
 }
 
 type Message struct {
@@ -492,7 +495,9 @@ func ensureMessage(box *os.Root, msg Message) error {
 	return writeMessage(box, msg.ID+".md", msg)
 }
 
-func (m Mail) publish(ws *os.Root, msg Message) error {
+func (m Mail) publish(ws *os.Root, msg Message) (retErr error) {
+	publishSpan := m.Diagnostics.Start("mail_publish")
+	defer func() { publishSpan.Error(retErr) }()
 	if msg.FromSession != "" || msg.ToSession != "" {
 		return errors.New("local publication cannot deliver cross-session mail")
 	}
@@ -525,6 +530,10 @@ func (m Mail) publish(ws *os.Root, msg Message) error {
 	if err := m.step("send-inbox"); err != nil {
 		return err
 	}
+	publishSpan.End("committed")
+	m.Diagnostics.Note(diagnostic.Facts{MessageID: msg.ID, InputRequestID: msg.InputRequestID, Sender: msg.From, Recipient: msg.To, Mail: "committed"})
+	archivedSpan := m.Diagnostics.Start("sender_archive")
+	defer func() { archivedSpan.Error(retErr) }()
 	sent, err := mailBox(ws, msg.From, "sent")
 	if err != nil {
 		return err
@@ -602,7 +611,9 @@ func (m Mail) Claim(ctx context.Context, rt Runtime, selected string) (*Claimed,
 	return result, err
 }
 
-func (m Mail) archive(ws *os.Root, tx mailTransaction) error {
+func (m Mail) archive(ws *os.Root, tx mailTransaction) (retErr error) {
+	span := m.Diagnostics.Start("pop_claim")
+	defer func() { span.Error(retErr) }()
 	msg := tx.Message
 	inbox, err := mailBox(ws, msg.To, "inbox")
 	if err != nil {

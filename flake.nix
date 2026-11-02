@@ -235,6 +235,13 @@
               fi
               touch "$out"
             '';
+            invocation-analysis =
+              pkgs.runCommand "invocation-analysis" { nativeBuildInputs = [ pkgs.python3 ]; }
+                ''
+                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./scripts/validation/analyze-invocations.py}
+                  python3 ${./scripts/validation/test-invocation-analysis.py}
+                  touch "$out"
+                '';
             skill-team-manager =
               pkgs.runCommand "skill-team-manager" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
