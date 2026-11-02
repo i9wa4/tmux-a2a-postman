@@ -1,0 +1,33 @@
+# get-status — return the saved server snapshot verbatim
+
+```sh
+tmux-a2a-postman get-status [--config <ignored-path>]
+```
+
+TMUX selects the explicit socket,PID,index; no agent caller is inferred and
+TMUX_PANE is unnecessary. The PID, when nonzero, must match the saved PID.
+--config is accepted but never opened and never changes the server's membership.
+
+Returns exactly the saved status.json bytes, including its original as_of.
+version/server/started_at/as_of/coverage/sessions describe one collection.
+sessions[].id/name/windows[].id/index/name/layout/panes[] retain native
+identity. Each pane carries id/pid/title/workspace, geometry, dead/linked,
+capture, status and scope. Ordinary/unregistered panes have null status/scope. A
+status row uses node, unread_count, inbound_count, outbound_count, draft_count,
+failed_count, last_pop_at, last_capture_at, last_screen_change_at and optional
+reason. Unknown counts are null, never fabricated zeroes. Scope records
+attributed configuration, outgoing edges, interface role and declared session
+relations.
+
+This is an operator-wide observation, not authority to manage/send/read any
+visible mailbox. Select your assigned server/session/native pane/workspace
+before using a row. Parent/child interface relations come from that pane's
+scope, never from a top-level parent/children field or role name alone.
+
+No native tmux query, discovery, mail scan, initialization, lock, recovery,
+refresh, persistent invocation log or pruning occurs. Missing/malformed or
+incompatible snapshots return status=unavailable plus reason, stderr and
+nonzero. A valid old snapshot stays old. Reading it does not verify live
+incarnation. Run refresh-status explicitly when collection is needed; do not
+poll empty POP. See docs/cli-spec.md and docs/design/server-status.md for the
+exact contract.

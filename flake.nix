@@ -235,7 +235,7 @@
             pname = "tmux-a2a-postman";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-wkLAGzVge9WOZdLKPB0cuW1cpzy/rXKTTmqj29uqFv0=";
+            vendorHash = "sha256-IyK8VQ6/DU5gX1N0HeiIuxDpd9ct96oYAhChQ5+nJvw=";
             nativeCheckInputs = [
               pkgs.tmux
               pkgs.bash
@@ -301,12 +301,12 @@
             skill-team-manager =
               pkgs.runCommand "skill-team-manager" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
-                  export POSTMAN_MANAGER_SKILL_ROOT=${./skills/postman-team-manager}
+                  export POSTMAN_HELP_ASSET_ROOT=${./internal/helpdocs/assets}
                   python3 ${./scripts/validation/test-skill-team-manager.py}
                   touch "$out"
                 '';
             skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-              export POSTMAN_RECALL_SKILL_ROOT=${./skills/postman-recall}
+              export POSTMAN_HELP_ASSET_ROOT=${./internal/helpdocs/assets}
               python3 ${./scripts/validation/test-skill-recall.py}
               touch "$out"
             '';

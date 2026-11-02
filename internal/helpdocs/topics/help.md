@@ -1,0 +1,10 @@
+# help — command documentation
+
+```sh
+tmux-a2a-postman help [topic]
+```
+
+Core topics: send-heredoc, pop, get-status, execute-heredoc, approve-execution,
+decline-execution. Configuration: config, directories. Other topics:
+launch-agents, commands, messaging, version, help. No Postman daemon or startup
+command is needed.

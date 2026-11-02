@@ -5,6 +5,8 @@ import "fmt"
 type Config struct{ ConfigPath string }
 
 type Handlers struct {
+	Skills           func([]string) error
+	Resources        func([]string) error
 	LaunchAgents     func([]string) error
 	ChannelSync      func([]string) error
 	ChannelReport    func([]string) error
@@ -33,6 +35,10 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 	}
 	var handler func([]string) error
 	switch command {
+	case "skills":
+		return Result{Label: "postman skills", Err: h.Skills(args)}
+	case "resources":
+		return Result{Label: "postman resources", Err: h.Resources(args)}
 	case "launch-agents":
 		handler = h.LaunchAgents
 	case "channel-sync":

@@ -1,21 +1,22 @@
+<!-- Generated from internal/helpdocs/topics/cli-spec.md; edit that source and run go generate ./internal/helpdocs. -->
+
 # CLI specification
 
 This is the canonical input/output contract for the daemonless CLI agreed in
 [issue #937](https://github.com/i9wa4/tmux-a2a-postman/issues/937).
-This document describes the implementation in this change. Skills describe
-workflows separately from this reference.
+Command and workflow HelpDocs have one Markdown editing source embedded in
+the binary. Stable thin Skills select the relevant installed help topic.
 
 The optional external binding adds `channel-sync` (no command arguments) and
 `channel-report-heredoc --to <one-claimed-external-id> --state <done|blocked|pending>`
 (quoted heredoc stdin). Pending requires `--scope <action-context-SHA256>`;
 terminal states forbid scope. Both accept common `--config`/help and reject
-duplicate options. Their
-[filesystem contract](design/external-filesystem-channel.md) defines
-provisioning, literal file input, exact decision filenames, bounded foreground
-activation, idempotency and catch-up. JSON returns success/as_of and reason on
-failure; sync includes accepted/published/pending/more, while report includes
-message_id/exchange_id and the local-publication boundary. Partial durable
-results survive errors. These commands require the configured top-level
+duplicate options. Their `tmux-a2a-postman help external-filesystem-channel`
+defines provisioning, literal file input, exact decision filenames, bounded
+foreground activation, idempotency and catch-up. JSON returns success/as_of and
+reason on failure; sync includes accepted/published/pending/more, while report
+includes message_id/exchange_id and the local-publication boundary. Partial
+durable results survive errors. These commands require the configured top-level
 interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 
 ## 1. Commands and common rules
@@ -33,6 +34,15 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 | `decline-execution`  | Send rejection for one claimed execution request            |
 | `help [topic]`       | Explain commands without initializing workspace state       |
 | `version`            | Print name, version and commit as JSON                      |
+| `skills`             | List or explicitly install/export selected thin entries     |
+| `resources`          | Explicitly materialize the offline helper bundle            |
+
+`help` and command help read Markdown directly without configuration, tmux,
+credentials, extraction or runtime mutation. `skills list` is also read-only;
+`skills install`/`export` write only explicitly selected entries after conflict
+checks. `resources` returns a validated absolute, content-identified cache path
+as plain text. See `tmux-a2a-postman help skills` and
+`tmux-a2a-postman help resources` for their complete independent interfaces.
 
 Operational commands accept `--config <absolute-postman.md>` and `--help`.
 Without an explicit override, the inherited absolute
@@ -48,7 +58,7 @@ similarly named fixture-copy option is a separate development interface.
 `--cwd`, `--session`, and inert `--dry-run`; `launch-agents --list` lists
 validated presets without creating anything. It accepts one positional preset;
 the mail/status commands retain their argument contracts. See the
-[launch contract](launch-agents.md) for exact selection, shell initialization,
+`tmux-a2a-postman help launching` for exact selection, shell initialization,
 config inheritance, native ownership, partial starts, and cleanup. It never
 injects initial mail or supervises consoles. Other commands never invoke it.
 
@@ -69,7 +79,8 @@ recovering earlier mail. Unknown ownership never grants permission to mutate or
 execute. No daemon startup, registration, model API or recurring POP loop is
 required.
 
-Except for execution's child streams and the human `get-status-oneline` view,
+Except for Markdown help, the `resources` path, execution's child streams and
+the human `get-status-oneline` view,
 outputs are JSON. Times are UTC RFC3339.
 `as_of` is when mail facts were aggregated; it is not a capture timestamp.
 Missing or unverifiable values are `null` with a useful reason, never invented
@@ -151,7 +162,7 @@ server, native session/pane and workspace before interpreting it. Operator-wide
 visibility never grants authority to manage/send/read every visible mailbox.
 There is no top-level workspace/nodes/parent/children projection.
 
-See [the complete server snapshot contract](design/server-status.md) for schema,
+See `tmux-a2a-postman help server-status` for schema,
 storage, attribution, failure/lock boundaries and the final writer/call-site
 map.
 
@@ -228,7 +239,7 @@ separates the generated content from unchanged sender bytes. Exact replies
 retain the same context but create no new obligation; typed execution requests
 use fixed decision actions. Ordinary configured footer guidance is preserved
 where applicable. See
-[the Markdown contract](design/recipient-markdown-parity.md).
+`tmux-a2a-postman help recipient-markdown`.
 
 The archive header stores a versioned context byte count and SHA256 descriptor;
 durable intents retain the full generated text. Recovery keeps that exact
@@ -432,7 +443,7 @@ main interface before this change; removed syntax is intentionally rejected.
 | `--config`                                                            | Keep one absolute override, before or after the command        | Operators/fixtures need explicit topology; defaults are cwd-independent                  |
 | `--postman-md`                                                        | Remove product alias                                           | One spelling for one input; the smoke driver's fixture-copy flag is separate             |
 | `--capture-related-panes`                                             | Remove; valid send/POP always trigger bounded session capture  | Visibility should not depend on each agent remembering a flag                            |
-| `help [topic]`, `<command> --help`, top-level `--help`                | Keep without runtime state; reject extra help arguments        | Installed syntax belongs in help, workflows in skills                                    |
+| `help [topic]`, `<command> --help`, top-level `--help`                | Keep without runtime state; reject extra help arguments        | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics         |
 | `version`, top-level `--version`                                      | Keep compact name/version/commit JSON                          | Operators need the actual installed revision                                             |
 | Bare executable                                                       | Keep usage display, no mutation                                | No implicit startup operation                                                            |
 | Duplicate/unknown flags and extra positionals                         | Reject before mail publication/execution                       | No last-value-wins decisions or hidden compatibility branches                            |
@@ -468,7 +479,7 @@ its archive. A notification never exposes the body.
 | Child stdout/stderr and exit                                        | Keep distinct streams; only final execution JSON/progress uses stderr                                   |
 | `executed`, `exit_code`, `approval`                                 | Separate run/no-run/uncertain outcome and reviewer's reason from system failure                         |
 | Emoji error prefix and repeated command error text                  | Remove after structured errors; retain a single diagnostic for global/unknown commands or broken output |
-| Help/error workflow dumps                                           | Simplify to syntax and relevant diagnosis; skills retain workflows                                      |
+| Help/error workflow dumps                                           | Keep scoped command and workflow topics in embedded canonical Markdown; thin Skills point to them       |
 
 ### 10.3. Every log and persisted record destination
 
@@ -477,7 +488,7 @@ Operational `send-heredoc`, `pop` (including empty), `execute-heredoc`,
 per-invocation diagnostics after verified native identity. These logs never own
 mail or execution recovery. Read-only/status/help/version/usage commands create
 no logs. See the
-[versioned timing schema and analysis procedure](invocation-diagnostics.md) for
+`tmux-a2a-postman help invocation-diagnostics` for
 boundaries, privacy, limits and measured cost.
 
 | Destination                                                                    | Purpose, audience and decision                                                                                                                                                |
@@ -522,7 +533,7 @@ Server refresh has a two-second total budget, one-second/64-pane capture sweep,
 retain up to 30 lines/8 KiB; partial sweeps preserve individual times and keep
 uncaptured panes due. Atomic publication and one nonblocking stable-inode lock
 replace generation/index writers; see the
-[server contract](design/server-status.md).
+`tmux-a2a-postman help server-status`.
 
 Shell initialization has a 15-second acknowledgement bound. Normal user startup
 and environment-loader trust rules apply; Postman never approves `.envrc` for
@@ -754,4 +765,4 @@ also exits with status 7 and preserves command stdout. A wrapper refusal or
 unknown outcome exits nonzero without inventing a child exit code.
 
 The implementation-to-acceptance map and measured capture costs are recorded in
-[the completion audit](validation/937-acceptance.md).
+[the completion audit](https://github.com/i9wa4/tmux-a2a-postman/blob/main/docs/validation/937-acceptance.md).

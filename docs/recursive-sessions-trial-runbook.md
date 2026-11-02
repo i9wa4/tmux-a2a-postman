@@ -4,7 +4,7 @@ Create isolated parent and child tmux sessions rooted at different directories
 below a temporary HOME. Title their interface panes with configured roles.
 Declare both sessions and their direct parent relation in Markdown frontmatter
 as shown in the
-[format reference](../skills/postman-config-auditor/references/postman-md.md).
+[format reference](../internal/helpdocs/topics/postman-md.md).
 Each session's topology declares its own local `interface_node`.
 
 Start an agent console in each interface pane. Send one reply-required message

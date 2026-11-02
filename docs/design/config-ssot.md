@@ -12,7 +12,7 @@ Mermaid `---` edges define local peers; `command_approver_node` selects a
 reviewer and `interface_node` selects an interface role. YAML `workspace_tree`
 declares direct parent/child interface routes. Native tmux evidence must still
 verify both endpoints. See the canonical
-[format reference](../../skills/postman-config-auditor/references/postman-md.md).
+[format reference](../../internal/helpdocs/topics/postman-md.md).
 
 ## 2. Agent runtime differences
 

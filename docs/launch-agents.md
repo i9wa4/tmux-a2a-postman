@@ -1,3 +1,5 @@
+<!-- Generated from internal/helpdocs/topics/launching.md; edit that source and run go generate ./internal/helpdocs. -->
+
 # Optional agent-team presets
 
 `launch-agents` expands one explicitly selected preset into a dedicated tmux
@@ -7,9 +9,10 @@ There is no daemon, startup role message, PING, supervisor, or respawn loop.
 
 ## 1. Configuration and preview
 
-The complete [example](../examples/launch/postman.md) keeps startup commands in
-YAML `presets`, separately from routing edges and Markdown cooperation policy.
-Each preset has ordered `columns`, each containing top-to-bottom `panes` with an
+The complete the bundled example
+(`$postman_resources/examples/launch/postman.md`) keeps startup commands in YAML
+`presets`, separately from routing edges and Markdown cooperation policy. Each
+preset has ordered `columns`, each containing top-to-bottom `panes` with an
 existing role and an explicit shell `command`. A role appears at most once in a
 preset; different presets may reuse it. Limits are 32 presets, 8 columns, and 64
 panes per preset. Unknown nested keys and invalid roles/commands are rejected.
@@ -88,4 +91,8 @@ reading, correlated replies, and execution approval. Additional tests cover
 quoting, non-default config continuity, concurrent setup, native collisions,
 cancellation, lost creation responses, and partial starts without replay. They
 use no model credentials or live user sessions. See
-[CONTRIBUTING](../CONTRIBUTING.md).
+[contributor checks](https://github.com/i9wa4/tmux-a2a-postman/blob/main/CONTRIBUTING.md).
+
+For filesystem references, explicitly run `tmux-a2a-postman resources` once
+and use the returned absolute directory as `postman_resources`. See
+`tmux-a2a-postman help resources` for offline prerequisites and integrity.

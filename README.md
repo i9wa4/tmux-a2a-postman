@@ -98,6 +98,12 @@ Without Nix, use the Go version selected in `go.mod` and `go install .`.
 Put the resulting binary on your consoles' `PATH`. Client installation,
 authentication and sandbox settings remain yours.
 
+The binary includes complete Markdown guidance: run
+`tmux-a2a-postman help setup` or `tmux-a2a-postman help <topic>` without a
+checkout, tmux or configuration. Thin Skills discover these installed topics;
+`tmux-a2a-postman help skills` explains selective offline installation/export.
+Updating the binary updates the detailed procedures.
+
 Follow the [first exchange](docs/quickstart.md) with the complete
 [minimal config](examples/minimal/postman.md). Then try the
 [practical team](examples/practical/postman.md),
@@ -108,7 +114,7 @@ Follow the [first exchange](docs/quickstart.md) with the complete
 
 - [Quickstart and operations](docs/quickstart.md): setup, mail, observations and
   troubleshooting.
-- [Configuration reference](skills/postman-config-auditor/references/postman-md.md):
+- [Configuration reference](internal/helpdocs/topics/postman-md.md):
   anatomy, examples and exact supported fields.
 - [CLI contract](docs/cli-spec.md) and `tmux-a2a-postman help`: command inputs
   and outputs.

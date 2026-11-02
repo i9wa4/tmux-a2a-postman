@@ -1,3 +1,5 @@
+<!-- Generated from internal/helpdocs/topics/invocation-diagnostics.md; edit that source and run go generate ./internal/helpdocs. -->
+
 # Invocation diagnostics (schema 1)
 
 Issue #964 adds diagnostic evidence to the existing file-first CLI. These
@@ -160,7 +162,7 @@ continued execution, or permission to retry an effect.
 Select only your own authorized logs, for example:
 
 ```sh
-python3 scripts/validation/analyze-invocations.py /absolute/own/agent/logs \
+python3 "$postman_resources/diagnostics/analyze-invocations.py" /absolute/own/agent/logs \
   --date 2026-11-02 --node builder --command pop --build COMMIT \
   --config sha256:FINGERPRINT --min-summary-files 100
 ```
@@ -198,4 +200,9 @@ it does not benchmark agent comprehension or notification acceptance in an AI
 TUI. Teardown touches only its owned fixture.
 
 Measured comparison and the regression budget are recorded in
-[the validation report](validation/964-invocation-timing.md).
+[the validation report](https://github.com/i9wa4/tmux-a2a-postman/blob/main/docs/validation/964-invocation-timing.md).
+
+The read-only analyzer is bundled: set `postman_resources` to the absolute
+output of `tmux-a2a-postman resources`; Python 3 is an explicit prerequisite.
+The optional development benchmark above requires the matching source checkout
+and its fixture dependencies; it is not part of the installed CLI workflow.

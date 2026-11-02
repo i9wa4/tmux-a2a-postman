@@ -1,3 +1,5 @@
+<!-- Generated from internal/helpdocs/topics/server-status.md; edit that source and run go generate ./internal/helpdocs. -->
+
 # Saved server status
 
 `refresh-status` owns finite observation of one explicitly selected tmux server.

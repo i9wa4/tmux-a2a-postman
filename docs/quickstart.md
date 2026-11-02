@@ -173,4 +173,4 @@ requirements. [CONTRIBUTING](../CONTRIBUTING.md) owns test procedures and
 limits; [RELEASING](../RELEASING.md) owns publication. This repository's
 `AGENTS.md` guides development and is distinct from your runtime `postman.md`.
 
-[config-reference]: ../skills/postman-config-auditor/references/postman-md.md
+[config-reference]: ../internal/helpdocs/topics/postman-md.md

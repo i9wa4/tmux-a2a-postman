@@ -2,10 +2,11 @@ package config
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/helpdocs"
 )
 
 func TestDocumentedConfigurations(t *testing.T) {
@@ -54,7 +55,7 @@ func TestDocumentedConfigurations(t *testing.T) {
 }
 
 func TestDocumentedInstalledReferenceContainsCompleteUsableConfig(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "postman-config-auditor", "references", "postman-md.md"))
+	raw, err := helpdocs.Read("postman-md")
 	if err != nil {
 		t.Fatal(err)
 	}
