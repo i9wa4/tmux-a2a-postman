@@ -35,7 +35,7 @@ type RefreshOptions struct {
 	now           func() time.Time
 	beforePublish func() error
 	afterRename   func() error
-	acquired      func()
+	phaseStarted  func(string)
 }
 
 func refreshNow(options RefreshOptions) time.Time {
@@ -117,16 +117,22 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 		return result, err
 	}
 	defer func() { _ = lock.Close() }()
-	if options.acquired != nil {
-		options.acquired()
-	}
 	id, err := randomName()
 	if err != nil {
 		return result, err
 	}
 	started := refreshNow(options)
 	owner := RefreshOwner{PID: os.Getpid(), Invocation: strings.TrimPrefix(id, ".new-"), AcquiredAt: started.Format(time.RFC3339Nano), Target: server.Socket}
-	phase := func(name string) error { owner.Phase = name; return replaceJSON(dir, "owner.json", owner) }
+	phase := func(name string) error {
+		owner.Phase = name
+		if err := replaceJSON(dir, "owner.json", owner); err != nil {
+			return err
+		}
+		if options.phaseStarted != nil {
+			options.phaseStarted(name)
+		}
+		return nil
+	}
 	if err := phase("enumerate"); err != nil {
 		return result, err
 	}
@@ -224,11 +230,12 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 		pane := &window.Panes[task.pane]
 		pane.Capture = task.old
 		reason := ""
-		if i >= SnapshotPaneLimit {
+		switch {
+		case i >= SnapshotPaneLimit:
 			reason = "capture pane limit"
-		} else if captureCtx.Err() != nil {
+		case captureCtx.Err() != nil:
 			reason = "capture budget exhausted"
-		} else {
+		default:
 			native := nativePane{Owner: Owner{snapshot.Server.CanonicalSocket, snapshot.Server.Incarnation, session.ID, pane.ID}, PID: pane.PID, Window: window.ID}
 			frame, e := rt.readPaneHistory(captureCtx, native)
 			if e != nil {

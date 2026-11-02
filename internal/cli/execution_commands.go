@@ -254,7 +254,7 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	} else {
 		out.facts.Approval = "rejected"
 	}
-	out.CaptureEligible = true
+	out.RefreshEligible = true
 	if !c.mail.WaitingExecutionReply(ctx, c.boundRuntime(), msg) {
 		notice := c.mail.Store.NotifyCommittedAfterCommit(ctx, c.boundRuntime(), c.runtime, msg)
 		out.facts.Notification = notice.Status

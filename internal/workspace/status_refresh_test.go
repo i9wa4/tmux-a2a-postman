@@ -345,28 +345,20 @@ func TestRefreshLockChildProcessHelper(t *testing.T) {
 	if os.Getenv("POSTMAN_REFRESH_LOCK_HELPER") != "1" {
 		return
 	}
-	store := Store{StateRoot: os.Getenv("POSTMAN_REFRESH_TEST_ROOT")}
-	dir, err := store.statusDir(ServerContext{Socket: os.Getenv("POSTMAN_REFRESH_TEST_SOCKET")}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = dir.Close() }()
-	lock, err := acquireRefresh(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = lock.Close() }()
+	m := Mail{Store: Store{StateRoot: os.Getenv("POSTMAN_REFRESH_TEST_ROOT")}}
 	phase := os.Getenv("POSTMAN_REFRESH_TEST_PHASE")
-	owner := RefreshOwner{PID: os.Getpid(), Invocation: "owned-process-death-test", AcquiredAt: time.Now().UTC().Format(time.RFC3339Nano), Target: os.Getenv("POSTMAN_REFRESH_TEST_SOCKET"), Phase: phase}
-	if err := replaceJSON(dir, "owner.json", owner); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(os.Getenv("POSTMAN_REFRESH_TEST_READY"), []byte("ready"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for {
-		time.Sleep(time.Minute)
-	}
+	_, err := m.RefreshServerStatus(context.Background(), ServerContext{Socket: os.Getenv("POSTMAN_REFRESH_TEST_SOCKET")}, os.Getenv("POSTMAN_REFRESH_TEST_HOME"), RefreshOptions{phaseStarted: func(current string) {
+		if current != phase {
+			return
+		}
+		if err := os.WriteFile(os.Getenv("POSTMAN_REFRESH_TEST_READY"), []byte("ready"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			time.Sleep(time.Minute)
+		}
+	}})
+	t.Fatal("child refresh unexpectedly finished", err)
 }
 
 func TestServerRefreshProcessDeathReleasesEveryPhaseWithoutDeletingLock(t *testing.T) {
@@ -384,7 +376,7 @@ func TestServerRefreshProcessDeathReleasesEveryPhaseWithoutDeletingLock(t *testi
 		t.Run(phase, func(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "ready")
 			child := exec.Command(os.Args[0], "-test.run=^TestRefreshLockChildProcessHelper$")
-			child.Env = append(os.Environ(), "POSTMAN_REFRESH_LOCK_HELPER=1", "POSTMAN_REFRESH_TEST_ROOT="+m.Store.StateRoot, "POSTMAN_REFRESH_TEST_SOCKET="+f.socket, "POSTMAN_REFRESH_TEST_PHASE="+phase, "POSTMAN_REFRESH_TEST_READY="+marker)
+			child.Env = append(os.Environ(), "POSTMAN_REFRESH_LOCK_HELPER=1", "POSTMAN_REFRESH_TEST_ROOT="+m.Store.StateRoot, "POSTMAN_REFRESH_TEST_SOCKET="+f.socket, "POSTMAN_REFRESH_TEST_PHASE="+phase, "POSTMAN_REFRESH_TEST_HOME="+f.home, "POSTMAN_REFRESH_TEST_READY="+marker)
 			if err := child.Start(); err != nil {
 				t.Fatal(err)
 			}

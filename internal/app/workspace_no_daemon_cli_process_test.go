@@ -240,17 +240,6 @@ func TestRebuiltCLIUsesExistingReadableStateRoot(t *testing.T) {
 	}
 }
 
-func findProtocolNode(t *testing.T, nodes []workspace.NodeStatus, name string) workspace.NodeStatus {
-	t.Helper()
-	for _, node := range nodes {
-		if node.Node == name {
-			return node
-		}
-	}
-	t.Fatalf("node %s missing from %+v", name, nodes)
-	return workspace.NodeStatus{}
-}
-
 func (f *rebuiltCLIFixture) replaceCLI(t *testing.T) {
 	t.Helper()
 	before, err := os.Stat(f.bin)

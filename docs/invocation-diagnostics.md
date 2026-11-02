@@ -39,7 +39,9 @@ is discovery, not retention, and there is no pruning/cleanup task.
 
 `get-status`, `get-status-oneline`, help, version and bare usage create no
 logs/directories/state and scan no diagnostic history. External callers can
-measure their process wall time.
+measure their process wall time. `refresh-status` uses its private server
+owner/phase metadata and compact stdout/stderr outcome, without registering an
+agent diagnostic destination.
 
 ## 2. JSONL envelope
 
@@ -73,12 +75,13 @@ events can establish a publication even when a later step becomes unavailable.
 
 Mail facts include `committed`, `claimed`, `empty`, `unknown` and
 `not_attempted`. Notification retains the existing `accepted`, `unknown` or
-`unavailable` vocabulary; accepted does not imply receipt or processing.
-Capture is `complete`, `partial` or not attempted. Approval can be `advisory`,
+`unavailable` vocabulary; accepted does not imply receipt or processing. Capture
+now records shared refresh `updated`, `skipped_busy`, `partial`, `error` or not
+attempted; historical `complete` remains readable. Approval can be `advisory`,
 `pending`, `approved` or `rejected`; pending is not authorization. Execution
 retains its actual status (`executed`, `exited`, `execution_failed`,
-`wait_timeout`, `cancelled`, `delivery_failed`, `unavailable`, etc.).
-Unknown values never become zero-duration successful work.
+`wait_timeout`, `cancelled`, `delivery_failed`, `unavailable`, etc.). Unknown
+values never become zero-duration successful work.
 
 Reason codes use only stable categories: `cancelled`, `deadline`,
 `permission_denied`, `not_found`, `lock_busy`, `short_write`, and
@@ -99,14 +102,14 @@ precede that final line. Its operation outcome and known child exit code do
 not claim that this later output write succeeded. An external process timer
 measures the complete wall time.
 
-Phases cover configuration, native identity, diagnostic destination,
-recipient context, overall mail operation, staging, receiver publication,
-sender archival, POP claim/receipt, self summary, overall notification,
-paste, settlement, single submit, confirmation, session capture, execution,
-approval wait, interactive-shell initialization and child execution.
-Ordinary mail's `result_output` includes JSON encoding and stdout write;
-execution's `result_encoding` measures JSON encoding before finalization.
-Its final stderr write is intentionally outside the internal end boundary.
+Phases cover configuration, native identity, diagnostic destination, recipient
+context, overall mail operation, staging, receiver publication, sender archival,
+POP claim/receipt, self summary, overall notification, paste, settlement, single
+submit, confirmation, shared server refresh, execution, approval wait,
+interactive-shell initialization and child execution. Ordinary mail's
+`result_output` includes JSON encoding and stdout write; execution's
+`result_encoding` measures JSON encoding before finalization. Its final stderr
+write is intentionally outside the internal end boundary.
 
 Phase spans are inclusive. A containing mail/execution/notification phase
 can overlap its smaller spans; IDs correlate starts and ends. Do not sum

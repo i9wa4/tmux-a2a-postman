@@ -8,11 +8,6 @@ type OperatorNode struct {
 	Status                     NodeStatus
 }
 
-type operatorWorkspace struct {
-	session int
-	root    string
-}
-
 func readOperatorRuntime(ws *os.Root, owner Owner) (runtimeRecord, error) {
 	var saved runtimeRecord
 	dir, err := privateDir(ws, "runtime", false)

@@ -17,7 +17,7 @@ import (
 type mailOutput struct {
 	trace             *diagnostic.Recorder
 	facts             diagnostic.Facts
-	CaptureEligible   bool                    `json:"-"`
+	RefreshEligible   bool                    `json:"-"`
 	Workspace         string                  `json:"workspace"`
 	AsOf              string                  `json:"as_of"`
 	Success           bool                    `json:"success"`
@@ -35,7 +35,7 @@ func finishMail(c *workspaceCommand, out *mailOutput, operationErr error) (retEr
 	out.Success = operationErr == nil
 	out.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 	if c != nil {
-		if out.CaptureEligible {
+		if out.RefreshEligible {
 			result := c.refreshStatusAfterOperation()
 			out.facts.Capture = result.Status
 		}
@@ -92,7 +92,7 @@ func RunWorkspacePop(args []string) (retErr error) {
 	}
 	c = &opened
 	c.attachDiagnostic(ctx, trace)
-	out.CaptureEligible = true
+	out.RefreshEligible = true
 	mailSpan := trace.Start("mail_operation")
 	var claim *workspace.Claimed
 	err = retryWorkspaceAdmission(ctx, func() (bool, error) {
@@ -215,7 +215,7 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		out.CaptureEligible = true
+		out.RefreshEligible = true
 		peer, err := c.runtime.FindNamedPeer(ctx, session, role)
 		if err != nil {
 			recoveryCtx, recoveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
@@ -245,7 +245,7 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		if !c.permits(*to) {
 			return errors.New("recipient is not a configured outgoing edge")
 		}
-		out.CaptureEligible = true
+		out.RefreshEligible = true
 		err = retryWorkspaceAdmission(ctx, func() (bool, error) {
 			var err error
 			if isReply {

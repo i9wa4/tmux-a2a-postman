@@ -49,7 +49,9 @@ func RunWorkspaceGetStatus(args []string) error {
 		raw, _, err = store.ReadServerStatus(server)
 	}
 	if err != nil {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "unavailable", "reason": err.Error()})
+		if writeErr := json.NewEncoder(os.Stdout).Encode(map[string]any{"status": "unavailable", "reason": err.Error()}); writeErr != nil {
+			return writeErr
+		}
 		return err
 	}
 	_, err = os.Stdout.Write(raw)
