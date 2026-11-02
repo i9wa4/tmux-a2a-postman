@@ -461,9 +461,17 @@ def run_case(case, terminal):
                     raise RuntimeError("duplicate or missing notification claim")
                 report["claims"] = proofs
         if case == "rally":
-            # All four claims have finished here. Approval requesters can still
-            # be processing an already-claimed decision hint after the wrapper
-            # returns; sampling their short-lived lock is not an idle boundary.
+            # All four recipient tools have finished here. Their overlapping
+            # supplemental refreshes may have saved a partial snapshot while
+            # another tool held the mailbox lock. The getter deliberately
+            # cannot repair that cache: collect once at this idle boundary.
+            # Approval requesters can still be processing a claimed hint after
+            # their wrapper returns, so they are not covered by this boundary.
+            refresh = subprocess.run([postman, "refresh-status"], env=sender_env(initiator),
+                                     text=True, capture_output=True, timeout=15)
+            report["final_refresh"] = json.loads(refresh.stdout)
+            if refresh.returncode:
+                raise RuntimeError("final refresh-status failed: " + refresh.stdout + refresh.stderr)
             status = subprocess.run([postman, "get-status", "--config", str(configs[initiator])],
                                     env=sender_env(initiator), text=True, capture_output=True, timeout=15)
             if status.returncode:
@@ -516,6 +524,7 @@ def run_case(case, terminal):
         print(json.dumps({"case": case, "result": report["result"], "report": str(root / "report.json")}), flush=True)
         if report["result"] != "pass":
             print(json.dumps({"error": report.get("error"), "screens": {r: s[-4000:] for r, s in report.get("screens", {}).items()},
+                              "final_refresh": report.get("final_refresh"), "final_status": report.get("final_status"),
                               "invocation_diagnostics": report.get("invocation_diagnostics", {}),
                               "runtime_logs": report.get("runtime_logs", {}), "notification_records": report.get("notification_records", {}),
                               "input_guards": report.get("input_guards", {}), "mailbox_counts": report.get("mailbox_counts", {})}), flush=True)
