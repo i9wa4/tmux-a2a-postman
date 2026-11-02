@@ -225,7 +225,7 @@ func (m Mail) Summaries(ctx context.Context, rt Runtime, roles []string) (string
 					return errors.New("invalid status node")
 				}
 				node := nodeSummary(ctx, ws, role)
-				node.LastCaptureAt, node.LastScreenChangeAt = readPaneTimes(ws, s, role)
+				node.LastCaptureAt, node.LastScreenChangeAt = m.readCachedPaneTimes(s, role)
 				nodes = append(nodes, node)
 			}
 			return nil

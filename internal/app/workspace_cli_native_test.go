@@ -40,16 +40,16 @@ func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 		}
 	}
 	status, err := f.run(f.worker, "", "get-status", "--config", f.config)
-	if err != nil || string(status.Parent) != "null" || len(status.Children) != 2 {
+	if err != nil || len(status.Sessions) != 3 {
 		t.Fatal(status, err)
 	}
-	var live, missing map[string]any
-	if json.Unmarshal(status.Children[0], &live) != nil || json.Unmarshal(status.Children[1], &missing) != nil {
-		t.Fatal(status.Children)
+	own := findStatusPane(t, status.Sessions, f.worker)
+	if own.Scope == nil || own.Scope.Interface != "worker" || len(own.Scope.Sessions) != 4 {
+		t.Fatal(own)
 	}
-	rows := map[string]map[string]any{live["session"].(string): live, missing["session"].(string): missing}
-	if rows["child"]["workspace"] != "~/child" || rows["child"]["unread_count"] != float64(0) || rows["missing"]["workspace"] != nil || rows["missing"]["unread_count"] != nil {
-		t.Fatal(rows)
+	childStatus := findStatusPane(t, status.Sessions, child)
+	if childStatus.Workspace != "~/child" || childStatus.Status == nil || childStatus.Status.UnreadCount == nil {
+		t.Fatal(childStatus)
 	}
 	failed, sendErr := f.run(f.worker, "preserve unavailable peer body", "send-heredoc", "--config", f.config, "--to", "missing:worker")
 	if sendErr == nil || failed.Success || failed.RecoveryMessageID == "" || failed.Self.DraftCount == nil || *failed.Self.DraftCount != 1 || failed.Self.FailedCount == nil || *failed.Self.FailedCount != 0 {
@@ -60,16 +60,14 @@ func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 		t.Fatal(draft)
 	}
 	nested, err := f.run(child, "", "get-status", "--config", f.config)
-	if err != nil || len(nested.Children) != 1 || len(nested.Parent) == 0 {
-		t.Fatal(nested, err)
+	if err != nil || len(nested.Sessions) != 3 || nested.AsOf != status.AsOf { // Failed send may publish another snapshot.
+		if err != nil || len(nested.Sessions) != 3 {
+			t.Fatal(nested, err)
+		}
 	}
-	normal, err := f.run(f.peer, "", "pop", "--config", f.config)
-	if err != nil || !normal.Success {
+	normal, err := f.run(f.peer, "", "get-status", "--config", f.config)
+	if err != nil || normal.AsOf != nested.AsOf || len(normal.Sessions) != 3 {
 		t.Fatal(normal, err)
-	}
-	normal, err = f.run(f.peer, "", "get-status", "--config", f.config)
-	if err != nil || len(normal.Parent) != 0 || normal.Children != nil {
-		t.Fatal("ordinary node got cross-workspace status", normal, err)
 	}
 }
 
@@ -251,123 +249,5 @@ exit "$status"
 				t.Fatal(err)
 			}
 		})
-	}
-}
-
-// The named caller may be pinned while the pane temporarily has a different
-// role. Peer guidance must still agree with the role in the mail-state view.
-func TestWorkspaceCLIAlternatingRetitlesClearSessionPeers(t *testing.T) {
-	realTmux, err := exec.LookPath("tmux")
-	if err != nil {
-		t.Skip("tmux unavailable")
-	}
-	dir, err := os.MkdirTemp("/tmp", "pm937-peer-retitle-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "s")
-	runTmux := func(args ...string) string {
-		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, realTmux, append([]string{"-S", socket}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("owned tmux %v: %v: %s", args, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	home := t.TempDir()
-	for _, name := range []string{"parent", "child"} {
-		if err := os.Mkdir(filepath.Join(home, name), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	parent := runTmux("-f", "/dev/null", "new-session", "-d", "-s", "parent", "-c", filepath.Join(home, "parent"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = exec.CommandContext(ctx, realTmux, "-S", socket, "kill-server").Run()
-	})
-	runTmux("select-pane", "-t", parent, "-T", "worker")
-	local := runTmux("new-window", "-d", "-t", "parent", "-c", filepath.Join(home, "parent"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", local, "-T", "local")
-	child := runTmux("new-session", "-d", "-s", "child", "-c", filepath.Join(home, "child"), "-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", child, "-T", "worker")
-
-	config := filepath.Join(t.TempDir(), "postman.md")
-	content := "---\ninterface_node: worker\nworkspace_tree:\n  - session_name: parent\n    interface_node: worker\n  - session_name: child\n    parent_session_name: parent\n    interface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- local\nalt --- worker\n```\n## `worker`\nWorker\n## `local`\nLocal\n## `alt`\nAlt\n"
-	if err := os.WriteFile(config, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	stateHome := t.TempDir()
-	root, err := workspace.DefaultStateRoot(home, stateHome)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mail := workspace.Mail{Store: workspace.Store{StateRoot: root}}
-	runtime := workspace.Tmux{Socket: socket, Pane: parent, Home: home, Roles: []string{"worker", "local", "alt"}}
-	if _, err := mail.Send(context.Background(), runtime, "local", "fixture", "", false); err != nil {
-		t.Fatal(err)
-	}
-	proxyDir := t.TempDir()
-	counter := filepath.Join(proxyDir, "count")
-	// Each Snapshot makes two long display-message calls. The flips occur
-	// after the helper's first bound Snapshot, its first named Snapshot, and
-	// the peer lookup, respectively; all earlier mail-state scans see worker.
-	proxy := fmt.Sprintf(`#!/bin/sh
-case "$1:$2:$3" in
-  -u:-S:%s) ;;
-  *) exit 97 ;;
-esac
-"%s" "$@"
-status=$?
-case "$*" in
-  *'#{socket_path}'*)
-    count=0
-    if [ -f "%s" ]; then count=$(cat "%s"); fi
-    count=$((count + 1))
-    printf '%%s' "$count" > "%s"
-    case "$count" in
-      8|20) "%s" -S "%s" select-pane -t "%s" -T alt || exit 98 ;;
-      14) "%s" -S "%s" select-pane -t "%s" -T worker || exit 98 ;;
-    esac
-    ;;
-esac
-exit "$status"
-`, socket, realTmux, counter, counter, counter, realTmux, socket, parent, realTmux, socket, parent)
-	if err := os.WriteFile(filepath.Join(proxyDir, "tmux"), []byte(proxy), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", proxyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	t.Setenv("TMUX", socket+",0,0")
-	t.Setenv("TMUX_PANE", parent)
-	readOut, writeOut, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	previousOut := os.Stdout
-	os.Stdout = writeOut
-	statusErr := cli.RunWorkspaceGetStatus([]string{"--config", config})
-	os.Stdout = previousOut
-	_ = writeOut.Close()
-	out, readErr := io.ReadAll(readOut)
-	_ = readOut.Close()
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	var result protocolOutput
-	if err := json.Unmarshal(out, &result); err != nil {
-		t.Fatal(err)
-	}
-	if statusErr == nil || result.Reason == "" {
-		t.Fatalf("alternating caller change not reported: %+v error=%v raw=%s", result, statusErr, out)
-	}
-	for _, node := range result.Nodes {
-		if node.UnreadCount != nil {
-			t.Fatal("changed caller leaked counts", node)
-		}
 	}
 }

@@ -65,16 +65,20 @@ func TestInvocationDiagnosticsRealSendPopEmptyAndReadOnlyCommands(t *testing.T) 
 	}
 	sent := invocationEvents(t, own[0])
 	last := sent[len(sent)-1]
-	if last.Facts.Mail != "committed" || last.Facts.Notification == "not_attempted" || last.Facts.Capture == "not_attempted" {
+	if last.Facts.Mail != "committed" || last.Facts.Notification == "not_attempted" || last.Facts.Capture != "updated" {
 		t.Fatal(last)
 	}
+	foundRefresh := false
 	foundID := false
 	for _, e := range sent {
+		if e.Phase == "server_refresh" && e.Event == "phase_end" && e.Outcome == "updated" {
+			foundRefresh = true
+		}
 		if e.Facts != nil && e.Facts.MessageID == original.ID {
 			foundID = true
 		}
 	}
-	if !foundID || sent[0].Identity.Node != "worker" || sent[0].Identity.ConfigFingerprint == "" {
+	if !foundRefresh || !foundID || sent[0].Identity.Node != "worker" || sent[0].Identity.ConfigFingerprint == "" {
 		t.Fatal("missing correlation/context")
 	}
 	results := map[string]int{}

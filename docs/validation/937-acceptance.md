@@ -9,6 +9,11 @@ execute-bash wording. Retention is user-managed; all saved logs and observations
 remain until user deletion. This audit does not treat the closed historical
 PRs as completion evidence.
 
+This is historical #958 evidence. Current status collection/readers and tests
+were replaced by [#981 validation](981-server-status.md) and its
+[current server contract](../design/server-status.md); the original capture
+measurements below are not current cadence/latency claims.
+
 ## 1. Acceptance evidence
 
 Test names below are in the linked source files. The entire suite runs through

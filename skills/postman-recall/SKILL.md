@@ -16,9 +16,11 @@ a read-only workflow, not a memory database, task tracker or live activity test.
 
 ## 1. Verify your scope
 
-Run `tmux-a2a-postman get-status` with the session's actual absolute `--config`
-override when needed. It authenticates the native caller and returns the
-canonical HOME-relative `workspace`; it does **not** return `self.node`.
+Run `tmux-a2a-postman get-status` in the explicit server context. The getter
+reads a saved whole-server snapshot; `--config` does not select its membership.
+Select the assigned session/native pane/workspace before reading own archives.
+Use matching installed help; a getter does not authenticate the current native
+caller. It returns dated observations, not a top-level workspace or self node.
 Resolve your logical node from the exact saved/native binding as described in
 [the procedure](references/procedure.md). Do not guess from cwd or pane title.
 Missing, changed or ambiguous identity stops recall with an actionable unknown.

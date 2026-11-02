@@ -42,7 +42,7 @@ func TestWorkspaceRebuiltCLINoDaemonEndToEnd(t *testing.T) {
 		t.Fatal(result, reply)
 	}
 	status := f.jsonResult(t, f.run(f.peer, "", "get-status", "--config", f.config))
-	peer := findProtocolNode(t, status.Nodes, "peer")
+	peer := findStatusPane(t, status.Sessions, f.peer).StatusValue()
 	if peer.OutboundCount == nil || *peer.OutboundCount != 0 || peer.UnreadCount == nil || *peer.UnreadCount != 1 {
 		t.Fatal("reply arrival did not close wait before POP", peer)
 	}

@@ -75,12 +75,41 @@ def cli(args, body=None, allow_failure=False):
         timeout=40,
     )
     output = json.loads(result.stdout)
+    if "self" in output:
+        state["last_operation_self"] = output["self"]
     failed = result.returncode or (
         args[0] != "get-status" and not output.get("success")
     )
     if not allow_failure and failed:
         raise RuntimeError("mail operation failed: " + result.stdout + result.stderr)
     return output
+
+
+def own_status(snapshot):
+    matches = [(native, pane) for native in snapshot["sessions"]
+               for window in native["windows"] for pane in window["panes"]
+               if pane["id"] == os.environ["TMUX_PANE"]]
+    if len(matches) != 1:
+        raise RuntimeError("own native pane absent/ambiguous in saved snapshot")
+    native, pane = matches[0]
+    expected = "~/" + work.relative_to(pathlib.Path.home()).as_posix()
+    if native["name"] != session or pane.get("workspace") != expected or (pane.get("status") or {}).get("node") != role or not pane.get("scope"):
+        raise RuntimeError("saved own scope unavailable or mismatched")
+    return native, pane
+
+
+def interface_scope(snapshot):
+    native, pane = own_status(snapshot)
+    scope = pane["scope"]
+    if scope["interface_node"] != role:
+        raise RuntimeError("fixture role is not its assigned interface")
+    declared = [entry for entry in scope["sessions"] if entry["name"] == native["name"]]
+    if len(declared) != 1:
+        raise RuntimeError("local declared route missing/ambiguous")
+    parent = declared[0]["parent"]
+    return {"parent": {"session": parent} if parent else None,
+            "children": [{"session": entry["name"]} for entry in scope["sessions"]
+                         if entry["parent"] == native["name"]]}
 
 
 def own_sent(wire_nonce):
@@ -282,7 +311,7 @@ def handle(msg, body):
         if not matches:
             # An old exact reply is history, never a fresh task/authorization.
             if role == "messenger" and body["kind"] == "result":
-                scope = cli(["get-status"])
+                scope = interface_scope(cli(["get-status"]))
                 if scope.get("parent") is None:
                     state.setdefault("outcomes", {})[root_id] = {
                         "message": msg,
@@ -324,7 +353,7 @@ def handle(msg, body):
         return
     if role == "messenger":
         if body["kind"] == "scope-query":
-            status = cli(["get-status"])
+            status = interface_scope(cli(["get-status"]))
             answer(
                 msg["id"],
                 packet(
@@ -527,8 +556,7 @@ def receive():
     save()
     # Read current own file facts after all nested sends/claims. Unknown stops
     # the finite batch; it never starts idle polling.
-    status = cli(["get-status"])
-    own = next(row for row in status["nodes"] if row["node"] == role)
+    own = state.get("last_operation_self", {})
     return own.get("unread_count") or 0
 
 

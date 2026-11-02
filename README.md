@@ -148,20 +148,15 @@ exact reply evidence, bounded stall recovery and a check against the caller's
 original objective. It requires no particular tracker or role names, and
 never treats a sent inquiry or screen change as task completion.
 
-`get-status` lists all configured nodes in this workspace using the same fields
-as `self`. Only the interface caller also sees its declared direct parent and
-child interface nodes. Counts come from mailbox files. Unknown values are null.
-Reply arrival closes an exact outbound wait before POP. Status reads saved
-facts without initialization, POP, capture, notification or deletion.
-
-For the human tmux status bar, `get-status-oneline` gives one line such as
-`[0]🟩💛:🟢 [1]⬛🟥` across the explicitly selected native server. Shapes show
-unread/inbound work (square), only outbound waits (heart), or zero counts
-(circle); unknown counts use `?`. Green/yellow/orange/red show observed
-screen-change age, with black for missing or stale captures. This read-only
-view needs no agent pane and leaves ordinary `get-status` scope unchanged.
-See the [CLI contract](docs/cli-spec.md#31-get-status-oneline) for the palette,
-capture freshness and an explicit-socket `#()` invocation.
+`refresh-status` collects one finite snapshot across the explicit tmux server.
+`get-status` returns its saved JSON unchanged; `get-status-oneline` renders the
+same snapshot, such as `[0]🟩💛:🟢 [3]⬛🟥 [9]`. Getters make no tmux queries,
+mail scans or state writes. Busy refresh skips immediately; stale evidence
+stays dated. Scope and permissions come from assigned roles and configured
+routes, never from every node visible in this operator-wide snapshot.
+See the [CLI contract](docs/cli-spec.md#3-get-status) and
+[server snapshot reference](docs/design/server-status.md) for schema, native
+numbering, capture cadence, diagnostics and safe external status composition.
 
 ## 3. Notification and pane observations
 
@@ -183,12 +178,11 @@ This controls Postman writers. It does not save/restore unsent human drafts or
 exclude unrelated input writers. The former #901 coordinator roadmap was
 withdrawn; these limitations remain.
 
-Every valid send and POP, including an empty POP, also saves native pane text
-across all windows of its verified session. Shared windows are excluded.
-Unconfigured panes keep native identity without fake agent mailboxes. Each
-invocation has a 64-pane, 30-line, 8-KiB-per-pane observation limit and a
-one-second capture budget, plus bounded persistence. Coverage records identify
-partial captures. No mailbox lock is held during screen reads.
+Eligible send/POP, including empty POP, attempt the shared finite server refresh
+after mail locks are released. Each pane has its own capture cadence; busy
+refreshes skip immediately. Ordinary panes never become agent mailboxes.
+Notification safety reads remain live, synchronous and recipient-only. Capture
+coverage and individual timestamps distinguish incomplete and stale evidence.
 
 All saved logs and captures remain until the user deletes them. There is no
 automatic expiry, rotation or cleanup service. Capture clocks describe sampled

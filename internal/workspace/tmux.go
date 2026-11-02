@@ -19,17 +19,21 @@ import (
 // Tmux verifies only the caller's server and session. Socket and Pane must come
 // from the invocation's established tmux context, never from a pane title.
 type Tmux struct {
-	Socket string
-	Pane   string
-	Home   string
-	Roles  []string
+	Socket            string
+	Pane              string
+	Home              string
+	Roles             []string
+	ConfigPath        string
+	ConfigFingerprint string
 }
 
 // Snapshot is fresh runtime evidence, not a durable registration or a lock.
 type Snapshot struct {
-	Root     string
-	Caller   Binding
-	Bindings []Binding
+	Root              string
+	ConfigPath        string
+	ConfigFingerprint string
+	Caller            Binding
+	Bindings          []Binding
 	// AbsentRoles are configured roles proven absent by a complete native pane
 	// enumeration. A failed enumeration returns an error instead.
 	AbsentRoles []string
@@ -73,7 +77,7 @@ func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("%w: list caller session panes: %v", ErrUnknown, err)
 	}
-	result := Snapshot{Root: root}
+	result := Snapshot{Root: root, ConfigPath: t.ConfigPath, ConfigFingerprint: t.ConfigFingerprint}
 	liveRoles := make(map[string]bool, len(roles))
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")

@@ -2,7 +2,10 @@
 
 ## 1. Actual status fields
 
-`get-status` returns `workspace`, `as_of`, and `nodes`. Each node has `node`,
+`get-status` returns the saved `server`, `as_of`, `coverage` and `sessions`.
+Select the assigned native session, then `windows[].panes[]` by exact pane ID,
+PID and workspace; each attributed pane has `status` and `scope`. The status
+object (which can be null) has `node`,
 `unread_count`, `inbound_count`, `outbound_count`, `draft_count`,
 `failed_count`, `last_pop_at`, `last_capture_at`, and
 `last_screen_change_at`. Counts can be null. Consult the
@@ -17,15 +20,23 @@
 - `last_capture_at`: when the saved observation was captured.
 - `last_screen_change_at`: most recent observed content change, not proof of
   reasoning, command success, or submission of a notification.
-- `as_of`: time this status was read, not a refresh of the above observations.
+- `as_of`: when the snapshot was collected/published, unchanged by reads.
+- `coverage` and each pane reason: partial/failed collection, independent of
+  individual capture time. Old known facts are observations, not live proof.
 
 There are no `activity`, `next_action`, `blocked` or task-state fields to
-consume. Counts are aggregates, so use your own exact sent/read references
-for the obligation being managed. A reply can close an outbound wait before
-POP; POP and read its complete archive before interpreting its content.
-Zero outbound count alone cannot establish that a particular task succeeded.
-An interface caller can also see declared direct parent/child interfaces;
-that visibility does not delegate management of every workspace or node.
+consume. Counts are aggregates, so use your own exact sent/read references for
+the obligation being managed. A reply can close an outbound wait before POP; POP
+and read its complete archive before interpreting its content. Zero outbound
+count alone cannot establish that a particular task succeeded. Both getters show
+the saved server independently of caller role. Derive direct parent/child
+interface routes only from your own attributed `scope.sessions` and local native
+session name; match related native session plus interface pane and workspace,
+retaining missing/ambiguous matches as unknown. `scope.edges` is communication
+configuration, never a list of direct management reports. Visibility does not
+delegate management of another workspace or node. An explicit permitted
+`refresh-status` can request a new finite collection; getters never refresh
+implicitly. No daemon or empty-POP polling is introduced.
 
 ## 2. One bounded investigation
 

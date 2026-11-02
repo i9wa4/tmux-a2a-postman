@@ -32,7 +32,7 @@ def bench(binary, samples, history, concurrency):
             return subprocess.check_output(["tmux", "-S", socket, *args], text=True, timeout=5).strip()
         try:
             worker = tmux("-f", "/dev/null", "new-session", "-d", "-s", "work", "-c", str(work), "-P", "-F", "#{pane_id}", "exec sleep 180")
-            peer = tmux("split-window", "-d", "-t", worker, "-P", "-F", "#{pane_id}", "exec sleep 180")
+            peer = tmux("split-window", "-d", "-t", worker, "-c", str(work), "-P", "-F", "#{pane_id}", "exec sleep 180")
             tmux("select-pane", "-t", worker, "-T", "worker")
             tmux("select-pane", "-t", peer, "-T", "peer")
             env = {**os.environ, "HOME": str(home), "ZDOTDIR": str(home), "XDG_STATE_HOME": str(root / "state"),
@@ -42,12 +42,34 @@ def bench(binary, samples, history, concurrency):
                 result = subprocess.run([str(binary), command, "--config", str(config), *extra], input=body,
                                         text=True, capture_output=True, env={**env, "TMUX_PANE": pane}, cwd=work, timeout=15)
                 elapsed = (time.perf_counter_ns() - started) / 1e6
-                output = json.loads(result.stdout)
+                output = json.loads(result.stdout) if command != "get-status-oneline" else {}
                 if result.returncode != 0:
                     raise RuntimeError(f"benchmark operation failed: {command}: {output.get('reason')}")
                 return elapsed
             invoke("pop")
+            supports_refresh = subprocess.run([str(binary), "help", "refresh-status"],
+                                               capture_output=True, env=env, timeout=5).returncode == 0
             groups = {}
+            if supports_refresh:
+                groups["refresh_idle"] = distribution([invoke("refresh-status") for _ in range(samples)])
+                groups["oneline_cached"] = distribution([invoke("get-status-oneline") for _ in range(samples)])
+                # This is an owned benchmark fixture only, not product recovery
+                # or a public force-capture option. Age just the saved clocks to
+                # make each measured sweep due without 30-second sleeps.
+                def due_refresh():
+                    paths = list((root / "state" / "tmux-a2a-postman" / "%status").glob("*/status.json"))
+                    if len(paths) != 1:
+                        raise RuntimeError("benchmark server cache unavailable")
+                    snapshot = json.loads(paths[0].read_text())
+                    for native in snapshot["sessions"]:
+                        for window in native["windows"]:
+                            for pane in window["panes"]:
+                                if pane.get("capture"):
+                                    pane["capture"]["at"] = "2000-01-01T00:00:00Z"
+                                    pane["capture"]["changed_at"] = None
+                    paths[0].write_text(json.dumps(snapshot))
+                    return invoke("refresh-status")
+                groups["refresh_due"] = distribution([due_refresh() for _ in range(samples)])
             for retained in [0, history]:
                 if retained:
                     for number in range(history):
@@ -72,7 +94,14 @@ def bench(binary, samples, history, concurrency):
                 outcomes[end.get("outcome", "incomplete")] = outcomes.get(end.get("outcome", "incomplete"), 0) + 1
                 capture = end.get("facts", {}).get("capture_result", "not_attempted")
                 captures[capture] = captures.get(capture, 0) + 1
-            return {"binary": str(binary), "samples_per_group": samples, "history_messages": history,
+            state_files = [path for path in (root / "state").rglob("*") if path.is_file()]
+            history_files = (list((root / "state" / "tmux-a2a-postman" / "%status").glob("*/history/*.json")) +
+                             list((root / "state" / "tmux-a2a-postman").glob("*/runtime/observations/*-p*.json")))
+            return {"supports_refresh": supports_refresh, "state_files": len(state_files),
+                    "state_bytes": sum(path.stat().st_size for path in state_files),
+                    "raw_capture_files": len(history_files),
+                    "raw_capture_bytes": sum(path.stat().st_size for path in history_files),
+                    "binary": str(binary), "samples_per_group": samples, "history_messages": history,
                     "concurrency": concurrency, "groups": groups, "log_files": len(files),
                     "log_bytes": sum(p.stat().st_size for p in files), "incomplete_logs": incomplete,
                     "log_outcomes": outcomes, "capture_outcomes": captures}
@@ -82,7 +111,7 @@ def bench(binary, samples, history, concurrency):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", required=True, type=Path)
+    parser.add_argument("--baseline", type=Path)
     parser.add_argument("--candidate", required=True, type=Path)
     parser.add_argument("--samples", type=int, default=12)
     parser.add_argument("--history", type=int, default=100)
@@ -91,7 +120,7 @@ def main():
     if not shutil.which("tmux") or not 2 <= args.samples <= 100 or not 1 <= args.history <= 500 or not 1 <= args.concurrency <= 16:
         parser.error("require tmux, samples 2..100, history 1..500, concurrency 1..16")
     result = {name: bench(binary.resolve(), args.samples, args.history, args.concurrency)
-              for name, binary in [("baseline", args.baseline), ("candidate", args.candidate)]}
+              for name, binary in ([("baseline", args.baseline)] if args.baseline else []) + [("candidate", args.candidate)]}
     print(json.dumps(result, indent=2))
 
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -117,16 +118,19 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 	if err != nil {
 		return c, err
 	}
-	socket, _, ok := strings.Cut(os.Getenv("TMUX"), ",")
-	if !ok || !filepath.IsAbs(socket) {
+	server, contextErr := workspace.ParseServerContext(os.Getenv("TMUX"))
+	if contextErr != nil {
 		return c, errors.New("TMUX must contain an absolute native tmux socket")
 	}
-	rt := workspace.Tmux{Socket: socket, Pane: os.Getenv("TMUX_PANE"), Home: home, Roles: topology.Nodes}
+	rt := workspace.Tmux{Socket: server.Socket, ConfigPath: path, ConfigFingerprint: workspace.StatusConfigFingerprint(topology), Pane: os.Getenv("TMUX_PANE"), Home: home, Roles: topology.Nodes}
 	identitySpan := diagnostic.From(ctx).Start("identity")
 	snapshot, err := rt.Snapshot(ctx)
 	identitySpan.Error(err)
 	if err != nil {
 		return c, err
+	}
+	if server.PID != 0 && !strings.HasPrefix(snapshot.Caller.Owner.Incarnation, fmt.Sprintf("%d:", server.PID)) {
+		return c, errors.New("explicit server PID disagrees with native caller")
 	}
 	configured := false
 	for _, node := range topology.Nodes {

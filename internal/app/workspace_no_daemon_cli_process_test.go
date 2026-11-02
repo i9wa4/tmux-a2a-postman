@@ -183,7 +183,7 @@ func (f *rebuiltCLIFixture) exerciseFourCommands(t *testing.T, phase string) {
 	}
 	status := f.run(f.worker, "", "get-status", "--config", f.config)
 	known := f.jsonResult(t, status)
-	worker := findProtocolNode(t, known.Nodes, "worker")
+	worker := findStatusPane(t, known.Sessions, f.worker).StatusValue()
 	if status.exit != 0 || worker.UnreadCount == nil || *worker.UnreadCount != 1 {
 		t.Fatal(status, known)
 	}
@@ -238,17 +238,6 @@ func TestRebuiltCLIUsesExistingReadableStateRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func findProtocolNode(t *testing.T, nodes []workspace.NodeStatus, name string) workspace.NodeStatus {
-	t.Helper()
-	for _, node := range nodes {
-		if node.Node == name {
-			return node
-		}
-	}
-	t.Fatalf("node %s missing from %+v", name, nodes)
-	return workspace.NodeStatus{}
 }
 
 func (f *rebuiltCLIFixture) replaceCLI(t *testing.T) {

@@ -365,23 +365,31 @@ def run_case(case):
         label = "[" + native[1:] + "]"
         state = pathlib.Path(env["XDG_STATE_HOME"]) / "tmux-a2a-postman"
         existed = state.exists()
+        status_env = {**env, "TMUX": socket + ",0,0"}
+        cold = subprocess.run([postman, "get-status-oneline"], env=status_env,
+                              text=True, capture_output=True, timeout=5)
+        if not existed and (cold.returncode == 0 or cold.stdout != "?\n" or state.exists()):
+            raise RuntimeError("cold cached reader hid unavailable state or initialized storage")
+        # Collection is explicit: operator reads never manufacture a refresh.
+        native_format = "#{session_id}\t#{window_id}\t#{window_index}\t#{window_name}\t#{window_layout}\t#{pane_id}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}\t#{pane_dead}\t#{window_linked}\t#{pane_top}\t#{pane_left}"
+        report["operator_native_before"] = tmux("list-panes", "-a", "-F", native_format).splitlines()
+        refreshed = subprocess.run([postman, "refresh-status"], env=status_env,
+                                   text=True, capture_output=True, timeout=5)
+        report["operator_native_after"] = tmux("list-panes", "-a", "-F", native_format).splitlines()
+        outcome = json.loads(refreshed.stdout)
+        if outcome["status"] not in {"updated", "partial"}:
+            raise RuntimeError("initial explicit refresh failed: " + refreshed.stderr)
         overview = subprocess.run(
             [postman, "get-status-oneline", "--config", str(config)],
-            env={**env, "TMUX": socket + ",0,0"},
-            text=True,
-            capture_output=True,
-            check=True,
-            timeout=5,
+            env=status_env, text=True, capture_output=True, check=True, timeout=5,
         )
         if label == "[0]" or not overview.stdout.startswith(label):
             raise RuntimeError("Postman overview lost its native session ID")
         if not existed and (
             any(char not in "[]0123456789?: \n" for char in overview.stdout)
-            or state.exists()
+            or any(path.name != "%status" for path in state.iterdir())
         ):
-            raise RuntimeError(
-                "cold operator overview invented healthy mail state or initialized storage"
-            )
+            raise RuntimeError("operator collection invented healthy mail or agent registration")
         report["operator_session_label"] = label
 
         # Initial negative sends exercise the actual parser/route admission.

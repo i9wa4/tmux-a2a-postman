@@ -1,0 +1,22 @@
+Usage: tmux-a2a-postman refresh-status [--config <path>]
+
+Collect one finite snapshot of the explicitly selected TMUX server, across all
+sessions/windows/panes. TMUX must contain socket,PID,index; PID 0 means unknown.
+No caller role or TMUX_PANE is required. --config is accepted for compatibility
+but never read or used to choose membership. Configuration attribution comes
+from provenance saved by verified normal operations in each workspace.
+
+One nonblocking OS advisory lock protects refresh; busy returns skipped_busy
+immediately with exit 0. Owner metadata is best effort. Long-held contention is
+reported with PID/invocation/phase/age; never delete, steal or force-unlock it.
+Refresh has a two-second total budget, a one-second capture sweep (64 panes,
+200ms per native frame), and a 30-second cadence for each matching live process.
+Partial coverage retains actual per-pane times; uncaptured panes remain due.
+Unknown node summaries are counted separately from unavailable captures.
+
+Atomic status.json is under the private state-root %status/socket-hash namespace.
+Raw history remains there until manually deleted. No daemon, timer or pruning.
+The prior snapshot survives prepublication failures. A post-rename sync failure
+reports uncertain durability. Output: updated, skipped_busy, partial or error.
+Partial/error exits nonzero and explains failure on stderr. Mail success and
+notification safety do not depend on this supplemental observation.

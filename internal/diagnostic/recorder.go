@@ -94,17 +94,17 @@ var (
 )
 
 func init() {
-	for _, s := range []string{"configuration", "identity", "diagnostic_destination", "recipient_context", "mail_staging", "mail_publish", "sender_archive", "pop_claim", "mail_operation", "self_summary", "notification", "notification_paste", "notification_settle", "notification_submit", "notification_confirm", "session_capture", "approval_wait", "shell_initialization", "child_execution", "execution", "result_encoding", "result_output"} {
+	for _, s := range []string{"configuration", "identity", "diagnostic_destination", "recipient_context", "mail_staging", "mail_publish", "sender_archive", "pop_claim", "mail_operation", "self_summary", "notification", "notification_paste", "notification_settle", "notification_submit", "notification_confirm", "session_capture", "server_refresh", "approval_wait", "shell_initialization", "child_execution", "execution", "result_encoding", "result_output"} {
 		phases[s] = true
 	}
-	for _, s := range []string{"mutation_lock_wait", "mutation_lock_held", "view_lock_wait", "view_lock_held", "notice_lock_wait", "notice_lock_held", "capture_lock_held", "admission_wait", "approval_observations", "notice_observations", "summary_files_scanned", "summary_body_bytes_decoded", "body_bytes", "panes_discovered", "panes_captured", "panes_skipped", "panes_failed"} {
+	for _, s := range []string{"mutation_lock_wait", "mutation_lock_held", "view_lock_wait", "view_lock_held", "notice_lock_wait", "notice_lock_held", "capture_lock_held", "admission_wait", "approval_observations", "notice_observations", "summary_files_scanned", "summary_body_bytes_decoded", "body_bytes", "panes_discovered", "panes_captured", "panes_reused", "panes_skipped", "panes_failed"} {
 		metrics[s] = true
 	}
 }
 
 func outcome(s string) string {
 	switch s {
-	case "ok", "failed", "cancelled", "timeout", "unknown", "committed", "staged", "claimed", "empty", "accepted", "unavailable", "not_attempted", "complete", "partial", "approved", "rejected", "advisory", "executed", "not_run", "exited", "dispatched", "execution_failed", "wait_timeout", "delivery_failed", "pending":
+	case "updated", "skipped_busy", "error", "ok", "failed", "cancelled", "timeout", "unknown", "committed", "staged", "claimed", "empty", "accepted", "unavailable", "not_attempted", "complete", "partial", "approved", "rejected", "advisory", "executed", "not_run", "exited", "dispatched", "execution_failed", "wait_timeout", "delivery_failed", "pending":
 		return s
 	}
 	return "unknown"

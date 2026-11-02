@@ -10,6 +10,7 @@ type Handlers struct {
 	Pop              func([]string) error
 	GetSessionStatus func([]string) error
 	GetStatusOneline func([]string) error
+	RefreshStatus    func([]string) error
 	ExecuteHeredoc   func([]string) error
 	ApproveExecution func([]string) error
 	DeclineExecution func([]string) error
@@ -39,6 +40,8 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 		handler = h.Pop
 	case "get-status":
 		handler = h.GetSessionStatus
+	case "refresh-status":
+		handler = h.RefreshStatus
 	case "get-status-oneline":
 		handler = h.GetStatusOneline
 	case "execute-heredoc":

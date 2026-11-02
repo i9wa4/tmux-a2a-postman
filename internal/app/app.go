@@ -62,8 +62,8 @@ func Main() {
 	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath}, cli.Handlers{
 		ChannelSync: cli.RunWorkspaceChannelSync, ChannelReport: cli.RunWorkspaceChannelReport,
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
-		GetStatusOneline: cli.RunWorkspaceGetStatusOneline,
-		ExecuteHeredoc:   cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		GetStatusOneline: cli.RunWorkspaceGetStatusOneline, RefreshStatus: cli.RunWorkspaceRefreshStatus,
+		ExecuteHeredoc: cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
 		ApproveExecution: cli.RunWorkspaceApproveExecution, DeclineExecution: cli.RunWorkspaceDeclineExecution,
 		Version: func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
 	})

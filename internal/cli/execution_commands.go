@@ -60,6 +60,8 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		out.Success = retErr == nil
 		out.AsOf = time.Now().UTC().Format(time.RFC3339Nano)
 		if c != nil {
+			result := c.refreshStatusAfterOperation()
+			facts.Capture = result.Status
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			summarySpan := trace.Start("self_summary")
@@ -252,7 +254,7 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	} else {
 		out.facts.Approval = "rejected"
 	}
-	out.CaptureEligible = true
+	out.RefreshEligible = true
 	if !c.mail.WaitingExecutionReply(ctx, c.boundRuntime(), msg) {
 		notice := c.mail.Store.NotifyCommittedAfterCommit(ctx, c.boundRuntime(), c.runtime, msg)
 		out.facts.Notification = notice.Status

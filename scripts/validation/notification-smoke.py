@@ -469,7 +469,7 @@ def run_case(case, terminal):
             if status.returncode:
                 raise RuntimeError("final get-status failed: " + status.stdout + status.stderr)
             report["final_status"] = json.loads(status.stdout)
-            if not all(node["unread_count"] is not None for node in report["final_status"]["nodes"]):
+            if not all(node["unread_count"] is not None for node in [pane["status"] for session in report["final_status"]["sessions"] for window in session["windows"] for pane in window["panes"] if pane.get("status")]):
                 raise RuntimeError("final mailbox status unavailable")
         report["result"] = "pass"
     except Exception as error:

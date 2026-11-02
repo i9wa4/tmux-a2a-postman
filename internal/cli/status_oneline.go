@@ -1,67 +1,17 @@
 package cli
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
 // Capture freshness is independent of the 1/5/15-minute screen-change bands.
 // This foreground-only observer has no evidence of activity between captures.
 const operatorCaptureFreshness = 2 * time.Minute
-
-// RunWorkspaceGetStatusOneline is an explicit human operator view of one
-// established tmux server. It requires no agent pane/caller identity.
-func RunWorkspaceGetStatusOneline(args []string) (retErr error) {
-	var rows []workspace.OperatorNode
-	defer func() {
-		line, diagnostics := renderStatusOneline(rows, time.Now().UTC())
-		_, outputErr := fmt.Fprintln(os.Stdout, line)
-		for _, diagnostic := range diagnostics {
-			_, _ = fmt.Fprintln(os.Stderr, diagnostic)
-		}
-		if outputErr != nil {
-			retErr = outputErr
-		}
-	}()
-	f := newWorkspaceFlags("get-status-oneline")
-	path, err := f.parse(args)
-	if err != nil {
-		return err
-	}
-	if f.fs.NArg() != 0 {
-		return errors.New("get-status-oneline takes no positional arguments")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	topology, err := config.LoadWorkspaceTopology(ctx, path)
-	if err != nil {
-		return err
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	stateRoot, err := workspace.DefaultStateRoot(home, os.Getenv("XDG_STATE_HOME"))
-	if err != nil {
-		return err
-	}
-	socket, _, ok := strings.Cut(os.Getenv("TMUX"), ",")
-	if !ok || !filepath.IsAbs(socket) {
-		return errors.New("operator overview requires an explicit native TMUX socket; pass #{socket_path} in the tmux status invocation")
-	}
-	mail := workspace.Mail{Store: workspace.Store{StateRoot: stateRoot}}
-	rows, err = mail.OperatorStatus(ctx, workspace.Tmux{Socket: socket, Home: home, Roles: topology.Nodes})
-	return err
-}
 
 func statusGlyph(node workspace.NodeStatus, now time.Time) (string, string) {
 	for _, count := range []*int{node.UnreadCount, node.InboundCount, node.OutboundCount} {
