@@ -85,6 +85,27 @@
                 --root "$PWD" --waza ${waza}/bin/waza "$@"
             '';
           };
+          recursiveSource = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./scripts/validation
+              ./skills
+            ];
+          };
+          recursiveSmoke = pkgs.writeShellApplication {
+            name = "recursive-smoke";
+            runtimeInputs = [
+              pkgs.python3
+              pkgs.bash
+              pkgs.tmux
+              pkgs.git
+              pkgs.coreutils
+            ];
+            text = ''
+              exec python3 ${recursiveSource}/scripts/validation/recursive-smoke.py \
+                --postman ${config.packages.default}/bin/tmux-a2a-postman "$@"
+            '';
+          };
           commonDevPackages =
             with pkgs;
             [
@@ -140,6 +161,11 @@
         in
         {
           apps = {
+            recursive-smoke = {
+              type = "app";
+              program = "${recursiveSmoke}/bin/recursive-smoke";
+              meta.description = "Verify recursive mail with isolated deterministic terminal teams.";
+            };
             skill-trigger-check = {
               type = "app";
               program = "${skillTriggerCheck}/bin/skill-trigger-check";
@@ -228,6 +254,14 @@
           # nix develop
           checks = {
             notification = config.packages.default;
+            recursive-teams = pkgs.runCommand "recursive-teams" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+              export HOME="$TMPDIR/home"
+              mkdir -p "$HOME"
+              python3 ${recursiveSource}/scripts/validation/test-recursive-configuration.py
+              ${recursiveSmoke}/bin/recursive-smoke --output "$TMPDIR/results.json"
+              mkdir -p "$out"
+              cp "$TMPDIR/results.json" "$out/results.json"
+            '';
             retired-task-artifacts = pkgs.runCommand "retired-task-artifacts" { } ''
               if test -e ${./.}/.task-artifacts; then
                 echo 'Retired task artifacts must not be tracked; see docs/validation/740-retired-task-artifacts.md' >&2

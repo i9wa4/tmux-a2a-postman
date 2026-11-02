@@ -32,7 +32,7 @@ jobs:
           - os: ubuntu-latest
             timeout_minutes: 15
           - os: macos-latest
-            timeout_minutes: 15
+            timeout_minutes: 25
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     permissions:
