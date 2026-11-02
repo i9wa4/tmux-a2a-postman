@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 // SendCrossWithReply publishes a declared interface message between two live
@@ -205,7 +207,9 @@ func validCrossIntent(tx mailTransaction) bool {
 	return sourceErr == nil && destinationErr == nil
 }
 
-func (m Mail) finishCross(sourceWS, destinationWS, journal *os.Root, tx mailTransaction) error {
+func (m Mail) finishCross(sourceWS, destinationWS, journal *os.Root, tx mailTransaction) (retErr error) {
+	span := m.Diagnostics.Start("mail_publish")
+	defer func() { span.Error(retErr) }()
 	msg := tx.Message
 	inbox, err := mailBox(destinationWS, msg.To, "inbox")
 	if err != nil {
@@ -236,6 +240,10 @@ func (m Mail) finishCross(sourceWS, destinationWS, journal *os.Root, tx mailTran
 	if err := m.step("cross-inbox"); err != nil {
 		return err
 	}
+	span.End("committed")
+	m.Diagnostics.Note(diagnostic.Facts{MessageID: msg.ID, InputRequestID: msg.InputRequestID, Sender: msg.From, Recipient: msg.To, Mail: "committed"})
+	archiveSpan := m.Diagnostics.Start("sender_archive")
+	defer func() { archiveSpan.Error(retErr) }()
 	sent, err := mailBox(sourceWS, msg.From, "sent")
 	if err != nil {
 		return err

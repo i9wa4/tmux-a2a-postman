@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
 // workspaceCommand is deliberately limited to the file-first commands.
 // All identity and routing inputs are rechecked by the workspace operations.
 type workspaceCommand struct {
+	trace        *diagnostic.Recorder
 	topologyPath string
 	topology     config.WorkspaceTopology
 	runtime      workspace.Tmux
@@ -101,7 +103,9 @@ func (f workspaceFlagSet) parse(args []string) (string, error) {
 
 func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, error) {
 	var c workspaceCommand
+	configSpan := diagnostic.From(ctx).Start("configuration")
 	topology, err := config.LoadWorkspaceTopology(ctx, path)
+	configSpan.Error(err)
 	if err != nil {
 		return c, err
 	}
@@ -118,7 +122,9 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 		return c, errors.New("TMUX must contain an absolute native tmux socket")
 	}
 	rt := workspace.Tmux{Socket: socket, Pane: os.Getenv("TMUX_PANE"), Home: home, Roles: topology.Nodes}
+	identitySpan := diagnostic.From(ctx).Start("identity")
 	snapshot, err := rt.Snapshot(ctx)
+	identitySpan.Error(err)
 	if err != nil {
 		return c, err
 	}
@@ -132,7 +138,7 @@ func openWorkspaceCommand(ctx context.Context, path string) (workspaceCommand, e
 	if !configured {
 		return c, errors.New("caller is not a configured topology node")
 	}
-	return workspaceCommand{path, topology, rt, workspace.Mail{Store: workspace.Store{StateRoot: root}}, snapshot}, nil
+	return workspaceCommand{topologyPath: path, topology: topology, runtime: rt, mail: workspace.Mail{Store: workspace.Store{StateRoot: root}}, caller: snapshot}, nil
 }
 
 func (c workspaceCommand) permits(to string) bool {
@@ -153,13 +159,17 @@ func retryWorkspaceAdmission(ctx context.Context, attempt func() (bool, error)) 
 		if !untouched || !errors.Is(err, workspace.ErrBusy) {
 			return err
 		}
+		trace := diagnostic.From(ctx)
+		waitStart := trace.Now()
 		timer := time.NewTimer(20 * time.Millisecond)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
+			trace.Measure("admission_wait", waitStart)
 			return ctx.Err()
 		case <-timer.C:
 		}
+		trace.Measure("admission_wait", waitStart)
 	}
 }
 

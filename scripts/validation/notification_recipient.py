@@ -81,7 +81,10 @@ def receive():
             proof["send"] = cli(["send-heredoc", "--config", config, "--to", target], body)
             proof["send"]["mail_evidence"] = sent_evidence(role, body)
         if proof["send"].get("notification"):
-            raise RuntimeError("reply notification failed: " + json.dumps(proof["send"]))
+            failure = {"reason": "reply_notification_failed", "notification": proof["send"]["notification"],
+                       "handling_message_id": msg["id"], "reply_message_id": proof["send"].get("mail_evidence", {}).get("id")}
+            (root / (role + ".error.txt")).write_text(json.dumps(failure))
+            raise RuntimeError("reply notification failed: " + json.dumps(failure))
     (root / (role + ".claim." + msg["id"] + ".json")).write_text(json.dumps(proof))
     print("CLAIMED_AND_READ", role, msg["id"], proof["full_archive_sha256"])
     state = proof.get("send", {}).get("self", pop["self"])

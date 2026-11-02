@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
 // NoticeResult is tmux input acceptance, separate from durable mail and POP.
@@ -26,13 +28,22 @@ type paneNotifier interface {
 	prepareNotice(context.Context, Binding) error
 }
 
-func (s Store) NotifyCommittedAfterCommit(ctx context.Context, source, destination Runtime, msg Message) NoticeResult {
+func (s Store) NotifyCommittedAfterCommit(ctx context.Context, source, destination Runtime, msg Message) (result NoticeResult) {
+	trace := diagnostic.From(ctx)
+	span := trace.Start("notification")
+	defer func() {
+		span.End(result.Status)
+		trace.Note(diagnostic.Facts{MessageID: msg.ID, Notification: result.Status})
+	}()
 	noticeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), PostCommitNoticeBudget)
 	defer cancel()
 	return s.notifyCommitted(noticeCtx, source, destination, msg)
 }
 
 func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime, msg Message) NoticeResult {
+	trace := diagnostic.From(ctx)
+	resume := trace.Pause()
+	defer resume()
 	result := NoticeResult{Status: "unavailable"}
 	if source == nil || destination == nil || !messageID(msg.ID) {
 		result.Reason = "committed message or runtime unavailable"
@@ -98,13 +109,13 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 	}
 	// Serialize only this recipient's paste/submit, without a mailbox lock.
 	lockCtx, lockCancel := context.WithTimeout(ctx, NoticeLockBudget)
-	lock, err := s.lockNotice(lockCtx, destination, target)
+	lock, holdStart, err := s.lockNotice(lockCtx, destination, target)
 	lockCancel()
 	if err != nil {
 		result.Reason = err.Error()
 		return result
 	}
-	defer func() { _ = lock.Close() }()
+	defer func() { _ = lock.Close(); trace.Measure("notice_lock_held", holdStart) }()
 	if err := notifier.prepareNotice(ctx, target); err != nil {
 		result.Reason = err.Error()
 		return result
@@ -180,7 +191,10 @@ func (r NamedRuntime) prepareNotice(ctx context.Context, target Binding) error {
 	return r.tmux.prepareNotice(ctx, target)
 }
 
-func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.File, error) {
+func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.File, time.Duration, error) {
+	trace := diagnostic.From(ctx)
+	var heldStart time.Duration
+	acquired := false
 	var lock *os.File
 	err := retryNoticeAdmission(ctx, func() error {
 		return s.WithVerified(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
@@ -225,12 +239,21 @@ func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	keep := false
 	defer func() {
 		if !keep {
 			_ = lock.Close()
+			if acquired {
+				trace.Measure("notice_lock_held", heldStart)
+			}
+		}
+	}()
+	waitStart := trace.Now()
+	defer func() {
+		if !acquired {
+			trace.Measure("notice_lock_wait", waitStart)
 		}
 	}()
 	// Wait on the already opened OS lock. Re-probing tmux and rewriting runtime
@@ -238,17 +261,20 @@ func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.
 	// requesters target one approver. Fresh native checks follow acquisition.
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
+			trace.Measure("notice_lock_wait", waitStart)
+			heldStart = trace.Now()
+			acquired = true
 			break
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, err
+			return nil, 0, err
 		}
 		if err := noticePause(ctx); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	err = retryNoticeAdmission(ctx, func() error {
@@ -284,10 +310,10 @@ func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	keep = true
-	return lock, nil
+	return lock, heldStart, nil
 }
 
 type noticeRecord struct {

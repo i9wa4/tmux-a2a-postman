@@ -10,7 +10,9 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
-func (c *workspaceCommand) prepareRecipientContext(ctx context.Context) error {
+func (c *workspaceCommand) prepareRecipientContext(ctx context.Context) (retErr error) {
+	span := c.trace.Start("recipient_context")
+	defer func() { span.Error(retErr) }()
 	policy, err := c.topology.RecipientPolicy(ctx, c.topologyPath)
 	if err != nil {
 		return err
