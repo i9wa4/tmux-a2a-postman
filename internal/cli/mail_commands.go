@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -21,9 +22,9 @@ type mailOutput struct {
 	Workspace         string                  `json:"workspace"`
 	AsOf              string                  `json:"as_of"`
 	Success           bool                    `json:"success"`
+	Self              workspace.NodeStatus    `json:"self"`
 	MarkdownPath      **string                `json:"markdown_absolute_path,omitempty"`
 	Instruction       string                  `json:"instruction,omitempty"`
-	Self              workspace.NodeStatus    `json:"self"`
 	Notification      *workspace.NoticeResult `json:"notification,omitempty"`
 	RecoveryMessageID string                  `json:"recovery_message_id,omitempty"`
 	Reason            string                  `json:"reason,omitempty"`
@@ -57,6 +58,9 @@ func finishMail(c *workspaceCommand, out *mailOutput, operationErr error) (retEr
 	}
 	if operationErr != nil {
 		out.Reason = operationErr.Error()
+	}
+	if out.Success && out.MarkdownPath != nil && *out.MarkdownPath != nil && out.Self.UnreadCount != nil && *out.Self.UnreadCount > 0 {
+		out.Instruction += fmt.Sprintf(" Remaining unread messages after this POP: %d (self.unread_count). After fully reading and handling this archive, run `tmux-a2a-postman pop` again without waiting for another notification. Continue only while the latest operation reports a positive self.unread_count; stop on zero, unknown, or an empty POP. Do not poll an empty inbox.", *out.Self.UnreadCount)
 	}
 	outputSpan := trace.Start("result_output")
 	writeErr := json.NewEncoder(os.Stdout).Encode(out)

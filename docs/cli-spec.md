@@ -218,6 +218,12 @@ read of that Markdown through EOF before processing, replying or deciding that
 no action is needed. A truncated view, summary, notification, metadata or reply
 guidance does not substitute for the full file. Empty POP omits this field.
 
+`self.unread_count` counts messages remaining after this POP, excluding the
+claimed message. A known positive count is also named in `instruction`: fully
+read and handle this archive, then POP the next mail without waiting for another
+notification. Continue only while the latest operation reports a positive
+count. Zero, unknown or an empty POP ends the batch; never poll an empty inbox.
+
 A successful claim returns the absolute existing final Markdown path. Empty
 POP succeeds with a null path and unchanged last_pop_at. Read the complete
 Markdown through EOF: sender, identity and reply guidance come from that file,
