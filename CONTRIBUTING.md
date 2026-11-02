@@ -51,6 +51,25 @@ adding a shorter wall-clock threshold that can reject healthy concurrent sends
 on a loaded CI runner. Notification acceptance, exact claims/replies and
 complete-file digests remain mandatory.
 
+Recursive team validation is also owned here:
+
+```sh
+nix run .#recursive-smoke
+nix run .#recursive-smoke -- --case chain
+```
+
+The `recursive-teams` flake check runs the same development fixture: a root,
+four-level chain with restart and stale replies, branching six-level tree with
+independent simultaneous requests, rejection and a missing child. Real terminal
+input drives every recipient's POP/full read/reply and exact execution decision.
+The default policy, Skill metadata and test artifacts are Postman-owned; no
+dotfiles checkout, installed Skill, client launcher or Logbook program is
+needed. These are fixed test actors, not a product task runtime or proof of
+model review. See the
+[recursive trial guide](docs/recursive-sessions-trial-runbook.md) for an
+explicit optional consumer-policy check. CLI commands and their flags do not
+change.
+
 Generated test topologies include numbered `common_template` and
 `message_footer` sections. Additional regression cases use a production-shaped
 configuration with role prose, skill metadata and the full role graph for
