@@ -2,6 +2,13 @@
 
 Project-specific instructions for tmux-a2a-postman.
 
+Follow the
+[system-wide design principles](docs/design/project-design-philosophy.md).
+Before adding a mechanism, examine total complexity across code, configuration,
+instructions, assets and operation; reuse, simplify or remove existing
+mechanisms. These are repository development instructions, separate from the
+optional user notification bootstrap.
+
 For iterative cloud/tmux investigation, follow the
 [AI development runbook](docs/development/cloud-tmux-debugging.md).
 
