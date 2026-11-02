@@ -9,7 +9,7 @@ execute-heredoc    Run source in an initialized shell after needed approval
 approve-execution  Approve one own POP'd execution request, with a reason
 decline-execution  Decline one own POP'd execution request, with a reason
 help [topic]       Read embedded Markdown syntax and operating procedures
-skills             List, selectively install or export stable Skill entries
+skills             List or display stable Skill entry-point Markdown
 resources          Explicitly materialize the offline helper bundle
 version            Print build version JSON
 ```

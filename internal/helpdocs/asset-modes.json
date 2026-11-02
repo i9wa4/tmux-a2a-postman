@@ -1,10 +1,7 @@
 {
   "diagnostics/analyze-invocations.py": "0555",
   "examples/launch/postman.md": "0444",
-  "licenses/go-yaml.txt": "0444",
   "licenses/postman.txt": "0444",
-  "licenses/skillsmith.txt": "0444",
-  "licenses/x-mod.txt": "0444",
   "recall/select_day.py": "0444",
   "team-manager/next_step.py": "0444"
 }

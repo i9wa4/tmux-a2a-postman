@@ -17,5 +17,5 @@ trust in arbitrary mail or a grant of OS permissions. Postman never rewrites
 AGENTS/CLAUDE files, injects an initial prompt or starts a daemon. Repository
 contributor instructions are separate.
 
-Run `tmux-a2a-postman help skills` for explicit offline entry-point installation
+Run `tmux-a2a-postman help skills` for the consumer-owned Skill setup boundary
 and `tmux-a2a-postman help config` for the selected configuration contract.

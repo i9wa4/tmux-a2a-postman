@@ -101,8 +101,8 @@ authentication and sandbox settings remain yours.
 The binary includes complete Markdown guidance: run
 `tmux-a2a-postman help setup` or `tmux-a2a-postman help <topic>` without a
 checkout, tmux or configuration. Thin Skills discover these installed topics;
-`tmux-a2a-postman help skills` explains selective offline installation/export.
-Updating the binary updates the detailed procedures.
+`tmux-a2a-postman help skills` explains the thin entries and consumer-owned
+setup. Updating the binary updates the detailed procedures.
 
 Follow the [first exchange](docs/quickstart.md) with the complete
 [minimal config](examples/minimal/postman.md). Then try the

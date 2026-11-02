@@ -32,13 +32,13 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 | `decline-execution`  | Send rejection for one claimed execution request            |
 | `help [topic]`       | Explain commands without initializing workspace state       |
 | `version`            | Print name, version and commit as JSON                      |
-| `skills`             | List or explicitly install/export selected thin entries     |
+| `skills`             | List or display the complete thin entry-point Markdown      |
 | `resources`          | Explicitly materialize the offline helper bundle            |
 
 `help` and command help read Markdown directly without configuration, tmux,
-credentials, extraction or runtime mutation. `skills list` is also read-only;
-`skills install`/`export` write only explicitly selected entries after conflict
-checks. `resources` returns a validated absolute, content-identified cache path
+credentials, extraction or runtime mutation. `skills list` and `skills show`
+are also read-only; the consumer's Skill manager owns installation and updates.
+`resources` returns a validated absolute, content-identified cache path
 as plain text. See `tmux-a2a-postman help skills` and
 `tmux-a2a-postman help resources` for their complete independent interfaces.
 

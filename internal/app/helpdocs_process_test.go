@@ -66,19 +66,30 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if _, diagnostic, err := run("skills", "list"); err != nil {
 		t.Fatal(string(diagnostic), err)
 	}
+	for _, name := range helpdocs.EntryNames() {
+		want, err := helpdocs.Entry(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, diagnostic, err := run("skills", "show", name)
+		if err != nil || !bytes.Equal(out, want) {
+			t.Fatal("Skill display did not return complete embedded Markdown", name, string(diagnostic), err)
+		}
+	}
+	for _, args := range [][]string{
+		{"skills", "install", "--client", "codex", "--scope", "project", "--project", project, "postman-usage"},
+		{"skills", "export", "--to", filepath.Join(home, "export"), "postman-usage"},
+		{"skills", "show", "../topics/overview"},
+		{"skills", "show", "missing-entry"},
+	} {
+		if _, _, err := run(args...); err == nil {
+			t.Fatal("unsupported installation or invalid Skill was accepted", args)
+		}
+	}
 	if !reflect.DeepEqual(before, statusTree(t, home)) {
-		t.Fatal("help/list created state, credentials or extracted resources")
+		t.Fatal("help/Skill reads or rejected operations created files")
 	}
-	out, diagnostic, err := run("skills", "install", "--client", "codex", "--scope", "project", "--project", project, "postman-usage")
-	if err != nil {
-		t.Fatal(string(out), string(diagnostic), err)
-	}
-	entry := filepath.Join(project, ".agents", "skills", "postman-usage", "SKILL.md")
-	data, err := os.ReadFile(entry)
-	if err != nil || !strings.Contains(string(data), "tmux-a2a-postman help usage") {
-		t.Fatal("offline entry did not point to the installed HelpDoc", err)
-	}
-	out, diagnostic, err = run("resources")
+	out, diagnostic, err := run("resources")
 	if err != nil {
 		t.Fatal(string(out), string(diagnostic), err)
 	}
@@ -86,7 +97,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if !filepath.IsAbs(resource) || filepath.Base(resource) != helpdocs.BundleID() {
 		t.Fatal("resource path is not a content-identified absolute generation", resource)
 	}
-	for _, name := range []string{"recall/select_day.py", "team-manager/next_step.py", "diagnostics/analyze-invocations.py", "examples/launch/postman.md", "licenses/postman.txt", "licenses/skillsmith.txt", "licenses/go-yaml.txt", "licenses/x-mod.txt"} {
+	for _, name := range []string{"recall/select_day.py", "team-manager/next_step.py", "diagnostics/analyze-invocations.py", "examples/launch/postman.md", "licenses/postman.txt"} {
 		if info, err := os.Stat(filepath.Join(resource, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatal("bundled resource missing", name, err)
 		}

@@ -63,6 +63,30 @@ func Entries() fs.FS {
 	return result
 }
 
+// EntryNames lists the authored entries without inspecting client directories.
+func EntryNames() []string {
+	entries, _ := fs.ReadDir(Entries(), ".")
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
+}
+
+// Entry provides complete Markdown; installation belongs to the consumer.
+func Entry(name string) ([]byte, error) {
+	if !validName(name) {
+		return nil, fmt.Errorf("invalid Skill name %q", name)
+	}
+	data, err := fs.ReadFile(Entries(), name+"/SKILL.md")
+	if err != nil {
+		return nil, fmt.Errorf("unknown Skill %q; use skills list: %w", name, err)
+	}
+	return data, nil
+}
+
 // Assets are the only files eligible for explicit resource materialization.
 func Assets() fs.FS {
 	result, _ := fs.Sub(content, "assets")
