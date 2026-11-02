@@ -211,6 +211,35 @@ func (f *rebuiltCLIFixture) exerciseFourCommands(t *testing.T, phase string) {
 	}
 }
 
+func TestRebuiltCLIUsesExistingReadableStateRoot(t *testing.T) {
+	f := newRebuiltCLIFixture(t)
+	if err := os.Mkdir(f.stateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.stateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.exerciseFourCommands(t, "readable-state-root")
+	if info, err := os.Stat(f.stateRoot); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatal("CLI changed application root permissions", info, err)
+	}
+	if err := filepath.Walk(f.stateRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || path == f.stateRoot {
+			return err
+		}
+		want := os.FileMode(0o600)
+		if info.IsDir() {
+			want = 0o700
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("non-private state child %s: %s", path, info.Mode())
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func findProtocolNode(t *testing.T, nodes []workspace.NodeStatus, name string) workspace.NodeStatus {
 	t.Helper()
 	for _, node := range nodes {
