@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
@@ -48,6 +50,8 @@ func (w *lineBoundaryWriter) Write(p []byte) (int, error) {
 }
 
 func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
+	trace := invocationDiagnostic("execute-heredoc")
+	facts := diagnostic.Facts{Execution: "not_run", Notification: "not_attempted", Approval: "not_attempted"}
 	no := false
 	out := executionOutput{Executed: &no}
 	var c *workspaceCommand
@@ -58,7 +62,13 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		if c != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
-			out.Workspace, out.AsOf, out.Self = c.mail.Summary(ctx, c.boundRuntime(), c.caller.Caller.Role)
+			summarySpan := trace.Start("self_summary")
+			out.Workspace, out.AsOf, out.Self = c.mail.Summary(diagnostic.With(ctx, trace), c.boundRuntime(), c.caller.Caller.Role)
+			summaryOutcome := "ok"
+			if out.Self.Reason != "" {
+				summaryOutcome = "unknown"
+			}
+			summarySpan.End(summaryOutcome)
 			if out.Workspace == "" {
 				out.Workspace = c.caller.Root
 			}
@@ -69,8 +79,23 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		if boundary.wrote && boundary.last != '\n' {
 			_, _ = os.Stderr.Write([]byte{'\n'})
 		}
-		if err := json.NewEncoder(os.Stderr).Encode(out); err != nil {
-			retErr = err
+		encodingSpan := trace.Start("result_encoding")
+		encoded, encodingErr := json.Marshal(out)
+		encodingSpan.Error(encodingErr)
+		terminalErr := retErr
+		if encodingErr != nil {
+			terminalErr = encodingErr
+		}
+		// End before final JSON: bounded warnings must precede that last line.
+		trace.End(diagnostic.ErrorOutcome(terminalErr), facts)
+		diagnosticWarning(boundary, trace)
+		if encodingErr != nil {
+			retErr = encodingErr
+		} else {
+			encoded = append(encoded, '\n')
+			if _, err := os.Stderr.Write(encoded); err != nil {
+				retErr = err
+			}
 		}
 		if retErr != nil {
 			retErr = reportedError{retErr}
@@ -86,6 +111,7 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		return errors.New("execute-heredoc requires --reason (1 to 4096 bytes) and a quoted heredoc; no positional arguments")
 	}
 	source, err := readHeredoc(os.Stdin)
+	trace.Add("body_bytes", int64(len(source)), 0)
 	if err != nil {
 		return err
 	}
@@ -93,12 +119,14 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		return errors.New("execution source must contain a command and cannot contain NUL")
 	}
 	ctx, cancel := defaultInterruptContext()
+	ctx = diagnostic.With(ctx, trace)
 	defer cancel()
 	opened, err := openWorkspaceCommand(ctx, path)
 	if err != nil {
 		return err
 	}
 	c = &opened
+	c.attachDiagnostic(ctx, trace)
 	if err := c.prepareRecipientContext(ctx); err != nil {
 		return err
 	}
@@ -112,7 +140,19 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 	}
 	invocation := workspace.ShellInvocation{Source: source, Reason: *reason, CWD: cwd, Shell: shell}
 	executor := workspace.Executor{Mail: c.mail, Resolve: workspace.ConfiguredApprovalResolver(path), Stdout: os.Stdout, Stderr: boundary, Invocation: &invocation, Notifier: c.runtime}
+	executionSpan := trace.Start("execution")
 	result, err := executor.Execute(ctx, c.boundRuntime(), source)
+	executionSpan.Error(err)
+	facts = diagnostic.Facts{RequestID: result.RequestID, ReplyID: result.ReplyID, OperationID: result.OperationID, InputRequestID: result.InputRequestID, Counterparty: result.Reviewer, Executed: result.Executed, ChildExitCode: result.ExitStatus, Execution: result.Status, Approval: result.ApprovalDecision, Notification: "not_attempted"}
+	if result.Reviewer == "" && result.OperationID != "" {
+		facts.Approval = "advisory"
+	}
+	if result.Reviewer != "" && result.ApprovalDecision == "" {
+		facts.Approval = "pending"
+	}
+	if result.Notice != nil {
+		facts.Notification = result.Notice.Status
+	}
 	out.Executed, out.ExitCode, out.Reason = result.Executed, result.ExitStatus, result.Reason
 	if result.Executed == nil {
 		out.RecoveryOperationID = result.OperationID
@@ -146,13 +186,14 @@ func RunWorkspaceApproveExecution(args []string) error { return runExecutionDeci
 func RunWorkspaceDeclineExecution(args []string) error { return runExecutionDecision(args, false) }
 
 func runExecutionDecision(args []string, approve bool) (retErr error) {
-	var c *workspaceCommand
-	out := mailOutput{}
-	defer func() { retErr = finishMail(c, &out, retErr) }()
 	name := "decline-execution"
 	if approve {
 		name = "approve-execution"
 	}
+	trace := invocationDiagnostic(name)
+	var c *workspaceCommand
+	out := mailOutput{trace: trace, facts: diagnostic.Facts{Mail: "not_attempted", Notification: "not_attempted", Capture: "not_attempted"}}
+	defer func() { retErr = finishMail(c, &out, retErr) }()
 	f := newWorkspaceFlags(name)
 	to := f.fs.String("to", "", "own POP'd execution request ID")
 	reason := f.fs.String("reason", "", "reason for this decision")
@@ -164,7 +205,7 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	if err != nil || !isReply || len(ids) != 1 || f.fs.NArg() != 0 || strings.TrimSpace(*reason) == "" {
 		return errors.New(name + " requires --to <one POP'd execution request ID> and --reason")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(diagnostic.With(context.Background(), trace), 10*time.Second)
 	defer cancel()
 	if !defaultStdinIsTerminal(os.Stdin) {
 		data, err := io.ReadAll(io.LimitReader(os.Stdin, 1))
@@ -180,6 +221,7 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 		return err
 	}
 	c = &opened
+	c.attachDiagnostic(ctx, trace)
 	if c.topology.Reviewer != c.caller.Caller.Role {
 		return errors.New("caller is not the configured command approver")
 	}
@@ -203,9 +245,17 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 		out.RecoveryMessageID = msg.ID
 		return err
 	}
+	noteMessage(trace, msg, c.caller.Caller.Role)
+	out.facts.Mail = "committed"
+	if approve {
+		out.facts.Approval = "approved"
+	} else {
+		out.facts.Approval = "rejected"
+	}
 	out.CaptureEligible = true
 	if !c.mail.WaitingExecutionReply(ctx, c.boundRuntime(), msg) {
 		notice := c.mail.Store.NotifyCommittedAfterCommit(ctx, c.boundRuntime(), c.runtime, msg)
+		out.facts.Notification = notice.Status
 		if notice.Status != "accepted" {
 			out.Notification = &notice
 		}
