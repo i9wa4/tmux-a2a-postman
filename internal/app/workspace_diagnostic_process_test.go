@@ -217,6 +217,30 @@ func TestInvocationDiagnosticCrashDuringApprovalLeavesPartialEvidence(t *testing
 	if bytes.Contains(raw, []byte(`"event":"end"`)) {
 		t.Fatal("crash invented a completed invocation")
 	}
+	request, found := f.requestExcept(map[string]bool{})
+	if !found {
+		t.Fatal("missing durable approval request")
+	}
+	var body struct {
+		OperationID string `json:"operation_id"`
+	}
+	if err := json.Unmarshal([]byte(request.Body), &body); err != nil || body.OperationID == "" {
+		t.Fatal("missing exact execution operation", err)
+	}
+	correlated := false
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
+		var event diagnostic.Event
+		if json.Unmarshal(line, &event) != nil {
+			t.Fatal("crash left invalid complete diagnostic line")
+		}
+		if event.Facts != nil && event.Facts.OperationID == body.OperationID && event.Facts.RequestID == request.ID {
+			correlated = true
+		}
+	}
+	if !correlated {
+		t.Fatal("approval interruption lost its operation/request correlation")
+	}
+
 	if _, err := os.Stat(filepath.Join(f.home, "work", "must-not-execute")); !os.IsNotExist(err) {
 		t.Fatal("unapproved command executed", err)
 	}

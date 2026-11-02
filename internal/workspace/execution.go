@@ -370,6 +370,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 		return fail("unavailable", err)
 	}
 	result.OperationID = "m-" + strings.TrimPrefix(nonce, ".new-")
+	trace.Note(diagnostic.Facts{OperationID: result.OperationID, Counterparty: role})
 	audit = pinned
 	dispatchCtx := ctx
 	var deadline time.Time
@@ -395,6 +396,7 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 			return sendErr
 		})
 		result.RequestID, result.InputRequestID = req.ID, req.InputRequestID
+		trace.Note(diagnostic.Facts{OperationID: result.OperationID, RequestID: req.ID, InputRequestID: req.InputRequestID, Counterparty: role, Approval: "pending"})
 		if err != nil {
 			return fail("delivery_failed", err)
 		}
