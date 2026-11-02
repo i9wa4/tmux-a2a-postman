@@ -89,7 +89,7 @@ func (s Store) withReadWorkspace(ctx context.Context, root string, fn func(*os.R
 	if err != nil {
 		return err
 	}
-	if !privateInfo(info, true) {
+	if !stateRootInfo(info) {
 		return ErrUnknown
 	}
 	base, err := os.OpenRoot(s.StateRoot)
