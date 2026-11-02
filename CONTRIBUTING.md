@@ -219,6 +219,14 @@ reported metadata or intended routing case, then rerun the command. Adding
 `postman-recall` also requires its own trigger suite; retired skill names do
 not become coverage requirements.
 
+`postman-team-manager` also has offline decision scenarios in
+`scripts/validation/test-skill-team-manager.py`, enforced by the
+`skill-team-manager` flake check. They exercise its pure advisory reference:
+exact outstanding inquiries, uncertainty, long work, missing result reports,
+blockers, direction checks and sufficient-evidence stop conditions. They do
+not run a model, infer ownership, send mail or prove instruction compliance.
+The skill documents the matching evidence procedure and actual status fields.
+
 Existing `evals/<name>/eval.yaml` and `evals/<name>/tasks/` remain manual
 behavioral suites. The automated gate selects only `evals/*/trigger/eval.yaml`
 and never implicitly executes or rewrites the behavioral lane. Skill metadata

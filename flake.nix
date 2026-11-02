@@ -235,6 +235,13 @@
               fi
               touch "$out"
             '';
+            skill-team-manager =
+              pkgs.runCommand "skill-team-manager" { nativeBuildInputs = [ pkgs.python3 ]; }
+                ''
+                  export POSTMAN_MANAGER_SKILL_ROOT=${./skills/postman-team-manager}
+                  python3 ${./scripts/validation/test-skill-team-manager.py}
+                  touch "$out"
+                '';
             skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
               export POSTMAN_RECALL_SKILL_ROOT=${./skills/postman-recall}
               python3 ${./scripts/validation/test-skill-recall.py}
