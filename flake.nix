@@ -64,6 +64,7 @@
           goToolchain = pkgs.go_1_26;
           buildGoModuleWithToolchain = pkgs.buildGoModule.override { go = goToolchain; };
           waza = pkgs.callPackage ./nix/packages/waza.nix { inherit system; };
+          actionsLock = pkgs.callPackage ./nix/packages/gh-actions-lock.nix { };
           triggerPython = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
           triggerSource = pkgs.lib.fileset.toSource {
             root = ./.;
@@ -230,25 +231,28 @@
           };
 
           # nix build
-          packages.waza = waza;
-          packages.default = buildGoModuleWithToolchain {
-            pname = "tmux-a2a-postman";
-            inherit version;
-            src = ./.;
-            vendorHash = "sha256-wkLAGzVge9WOZdLKPB0cuW1cpzy/rXKTTmqj29uqFv0=";
-            nativeCheckInputs = [
-              pkgs.tmux
-              pkgs.bash
-              pkgs.zsh
-              pkgs.direnv
-              pkgs.python3
-            ];
-            ldflags = [
-              "-s"
-              "-w"
-              "-X github.com/i9wa4/tmux-a2a-postman/internal/version.Version=${version}"
-              "-X github.com/i9wa4/tmux-a2a-postman/internal/version.Commit=${commit}"
-            ];
+          packages = {
+            inherit waza;
+            gh-actions-lock = actionsLock;
+            default = buildGoModuleWithToolchain {
+              pname = "tmux-a2a-postman";
+              inherit version;
+              src = ./.;
+              vendorHash = "sha256-wkLAGzVge9WOZdLKPB0cuW1cpzy/rXKTTmqj29uqFv0=";
+              nativeCheckInputs = [
+                pkgs.tmux
+                pkgs.bash
+                pkgs.zsh
+                pkgs.direnv
+                pkgs.python3
+              ];
+              ldflags = [
+                "-s"
+                "-w"
+                "-X github.com/i9wa4/tmux-a2a-postman/internal/version.Version=${version}"
+                "-X github.com/i9wa4/tmux-a2a-postman/internal/version.Commit=${commit}"
+              ];
+            };
           };
 
           # nix develop
@@ -404,6 +408,16 @@
 
               # === GitHub Actions linters ===
               actionlint.enable = true;
+
+              actions-lock = {
+                enable = true;
+                entry = "${pkgs.writeShellScript "actions-lock-verify-local" ''
+                  export GH_ACTIONS_LOCK_REPO_ROOT="$PWD"
+                  exec ${actionsLock}/bin/gh-actions-lock --verify-local
+                ''}";
+                files = "^\\.github/workflows/(.*\\.(yml|yaml)|actions\\.lock)$";
+                pass_filenames = false;
+              };
 
               ghalint = {
                 enable = true;

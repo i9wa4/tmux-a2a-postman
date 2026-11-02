@@ -173,6 +173,31 @@ When changing Go dependencies, `go.mod`, `go.sum`, Go major.minor versions, or
 - If Nix reports a `vendorHash` mismatch, copy the reported `got:` hash into
   `flake.nix` and rerun the build
 
+### 1.1. GitHub Actions dependency locks
+
+Both workflows are onboarded to `.github/workflows/actions.lock`. Keep existing
+full-SHA action pins and regenerate the lockfile after changing dependencies:
+
+```sh
+nix run '.#gh-actions-lock' -- --no-narrow
+nix run '.#gh-actions-lock' -- --verify-local
+nix run '.#gh-actions-lock' -- --verify
+```
+
+`--no-narrow` keeps literal SHA references matched to lockfile keys. Update SHA
+pins first, then regenerate; never hand-edit the generated lockfile. The offline
+coverage check runs in commit/Nix hooks. PR CI also checks upstream provenance
+using its existing read-only token; local network verification uses existing gh
+authentication. All commands use the same Nix-pinned v0.4.0 tool.
+
+The existing Dependabot `github-actions` entry updates onboarded workflow pins
+and matching lockfile entries in the same PR, without extra configuration.
+Reusable workflow calls and container images still need their own SHA/digest
+pins. This does not change action versions, release permissions or publication.
+See [GitHub's lockfile contract][actions-lock-docs].
+
+[actions-lock-docs]: https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles
+
 ## 2. Markdown Formatting
 
 `markdown-formatter` covers all tracked Markdown files with its default
