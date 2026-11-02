@@ -284,7 +284,7 @@
                 ''
                   export HOME="$TMPDIR/home"
                   mkdir -p "$HOME" "$out"
-                  python3 ${./scripts/validation/benchmark-invocations.py} \
+                  python3 ${./scripts/validation}/benchmark-invocations.py \
                     --candidate ${config.packages.default}/bin/tmux-a2a-postman \
                     --samples 3 --history 10 --concurrency 4 > "$out/results.json"
                   python3 - "$out/results.json" <<'PYTHON'
