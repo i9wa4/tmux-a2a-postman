@@ -83,8 +83,8 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 		return err
 	}
 	info, err := os.Lstat(s.StateRoot)
-	if err != nil || !privateInfo(info, true) {
-		return errors.New("state root is not a private real directory")
+	if err != nil || !stateRootInfo(info) {
+		return errors.New("state root must be an owned real directory without group or other write access")
 	}
 	base, err := os.OpenRoot(s.StateRoot)
 	if err != nil {
@@ -217,6 +217,16 @@ func validateSnapshot(s Snapshot) (string, error) {
 		absent[role] = true
 	}
 	return name, nil
+}
+
+// The application root is a namespace, not a mailbox. Existing mode 0755
+// roots are valid; private child directories and records retain stricter modes.
+func stateRootInfo(info os.FileInfo) bool {
+	if info == nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 {
+		return false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid())
 }
 
 func privateInfo(info os.FileInfo, directory bool) bool {

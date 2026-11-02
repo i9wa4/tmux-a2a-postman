@@ -497,7 +497,9 @@ boundaries, privacy, limits and measured cost.
 | Former related-capture receipts, leases and pruning                            | Remove code and automatic deletion; historical user files are left untouched                                                                                                  |
 | `registry/workspaces.json`, `journal/events.jsonl`, fake pane/agent registries | Do not create unused infrastructure; current workspace/native binding plus necessary mail/audit records supply the required facts                                             |
 
-Workspace directories are 0700 and records 0600, with bounded private-file
+An existing application state root may remain 0755; it must be an owned real
+directory without group/other write access. Postman preserves its permissions.
+Workspace/lock directories are 0700 and records 0600, with bounded private-file
 readers and symlink refusal. Mail scans admit at most 2048 entries per mailbox;
 sidecars consume scan entries but are not message counts. Oversized/damaged
 boxes are unknown with a reason, without deleting history to satisfy the bound.
