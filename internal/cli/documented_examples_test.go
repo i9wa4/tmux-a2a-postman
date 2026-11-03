@@ -25,7 +25,7 @@ func TestDocumentedPracticalConfigRendersRecipientSpecificContext(t *testing.T) 
 	}
 	msg := workspace.Message{ID: "m-example", From: "manager", To: "builder", NeedsReply: true}
 	rendered := renderRecipientContext(policy, topology, path, "team", msg)
-	for _, want := range []string{policy.Common, policy.Nodes["builder"].Instructions, "`postman-usage`", "You can talk to:", "Review exact execution requests", "--to m-example", "Allowed contacts: approver, manager", "through EOF"} {
+	for _, want := range []string{generatedSection(policy.Common), generatedSection(policy.Nodes["builder"].Instructions), "`postman-usage`", "You can talk to:", "Review exact execution requests", "--to m-example", "Allowed contacts: approver, manager", "through EOF"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("missing %q in %s", want, rendered)
 		}
