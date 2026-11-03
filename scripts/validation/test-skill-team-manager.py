@@ -5,8 +5,8 @@ from pathlib import Path
 import runpy
 import unittest
 
-ASSETS = Path(os.environ.get("POSTMAN_HELP_ASSET_ROOT", Path(__file__).resolve().parents[2] / "docs/assets"))
-DECIDE = runpy.run_path(str(ASSETS / "team-manager/next_step.py"))["next_step"]
+ASSETS = Path(os.environ.get("POSTMAN_SKILLS_ROOT", Path(__file__).resolve().parents[2] / "skills"))
+DECIDE = runpy.run_path(str(ASSETS / "postman-team-manager/scripts/next_step.py"))["next_step"]
 
 
 def decide(**facts):

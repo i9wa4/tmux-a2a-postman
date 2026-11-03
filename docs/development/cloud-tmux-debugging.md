@@ -7,7 +7,7 @@ decides what to change next. This procedure preserves those decisions; it does
 not make the whole investigation one fixed command or a new CI system.
 
 [AGENTS](../../AGENTS.md) owns development requirements.
-[Contributing](../../CONTRIBUTING.md) owns the full test matrix, flags and
+[Contributing](contributing.md) owns the full test matrix, flags and
 limitations. Use their current versions rather than copying an old session's
 tool paths, container names or checkout state.
 

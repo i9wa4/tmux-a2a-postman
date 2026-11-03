@@ -43,7 +43,8 @@ operational steps? What can an existing owner absorb, and what verified benefit
 justifies the remainder? A short rationale in the existing issue or PR is
 enough; no new template, metric or reporting system is required.
 
-The [CLI inventory](../cli-spec.md#10-complete-interface-and-logging-inventory)
+The
+[CLI inventory](../../help/cli-spec.md#10-complete-interface-and-logging-inventory)
 and [configuration contract](config-ssot.md) retain their detailed decisions.
 Apply these principles to HelpDoc/Skill/default-team packaging and optional
 launch presets as well as Go changes; do not duplicate their operating manuals.

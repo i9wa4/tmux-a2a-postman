@@ -9,8 +9,9 @@ instructions, assets and operation; reuse, simplify or remove existing
 mechanisms. These development rules are separate from the optional user
 notification bootstrap.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and complete check procedures.
-For iterative cloud/tmux investigation, follow the
+Read [docs/development/contributing.md](docs/development/contributing.md) for
+setup and complete check procedures. For iterative cloud/tmux investigation,
+follow the
 [AI development runbook](docs/development/cloud-tmux-debugging.md).
 
 - Stage new files before Nix checks; flakes only see Git-tracked files.
@@ -27,5 +28,6 @@ For iterative cloud/tmux investigation, follow the
   Liveness alone does not establish native incarnation, ownership or workspace.
 - Release, tag and Skill publishing require an explicit release request. Normal
   PR work stops at branch/PR publication and validation. Follow
-  [RELEASING.md](RELEASING.md), the single owner of release/tag procedures;
-  do not create a second publisher or infer release intent from passing checks.
+  [docs/development/releasing.md](docs/development/releasing.md), the single
+  owner of release/tag procedures; do not create a second publisher or infer
+  release intent from passing checks.
