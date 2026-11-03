@@ -83,20 +83,21 @@ delete them.
 
 ## 3. Install and try
 
-Requires tmux and an agent console able to run shell tools. These docs describe
-this checkout; older release tags may expose a different CLI. Build the same
-source you are reading:
+Requires Go (the version specified in [go.mod](go.mod)), tmux and an agent
+console able to run shell tools. Install from `main` to match these docs:
 
 ```sh
-git clone https://github.com/i9wa4/tmux-a2a-postman.git
-cd tmux-a2a-postman
-nix build
-./result/bin/tmux-a2a-postman version
+go install github.com/i9wa4/tmux-a2a-postman@main
 ```
 
-Without Nix, use the Go version selected in `go.mod` and `go install .`.
-Put the resulting binary on your consoles' `PATH`. Client installation,
-authentication and sandbox settings remain yours.
+Add Go's install directory (`GOBIN`, or `GOPATH/bin` when `GOBIN` is unset) to
+your consoles' `PATH`, then check the installed version:
+
+```sh
+tmux-a2a-postman version
+```
+
+Client installation, authentication and sandbox settings remain yours.
 
 Follow the [first exchange](docs/quickstart.md) with the complete
 [minimal config](examples/minimal/postman.md). Then try the
