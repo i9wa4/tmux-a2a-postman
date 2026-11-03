@@ -13,7 +13,6 @@ import (
 	configdata "github.com/i9wa4/tmux-a2a-postman/config"
 	"github.com/i9wa4/tmux-a2a-postman/docs"
 	helpdata "github.com/i9wa4/tmux-a2a-postman/help"
-	"github.com/i9wa4/tmux-a2a-postman/skills"
 )
 
 var roots = []struct {
@@ -21,22 +20,30 @@ var roots = []struct {
 	files fs.FS
 }{
 	{"help", helpdata.Content},
-	{"skills", skills.Content},
 	{"config", configdata.Content},
 	{"docs", docs.Content},
 }
 
 // Read returns a complete authored topic without accessing mutable state.
-func Read(topic string) ([]byte, error) {
+func Read(topic string, refs ...string) ([]byte, error) {
 	if topic == "" {
 		topic = "overview"
 	}
-	if !validName(topic) {
+	if !validName(topic) || len(refs) > 1 {
 		return nil, fmt.Errorf("unknown help topic %q", topic)
 	}
-	data, err := helpdata.Content.ReadFile(topic + ".md")
+	filename := topic + ".md"
+	if len(refs) == 1 {
+		if !validName(refs[0]) {
+			return nil, fmt.Errorf("invalid help reference %q", refs[0])
+		}
+		filename = topic + "/references/" + refs[0] + ".md"
+	} else if data, err := helpdata.Content.ReadFile(topic + "/SKILL.md"); err == nil {
+		return data, nil
+	}
+	data, err := helpdata.Content.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("unknown help topic %q; use tmux-a2a-postman help for installed topics: %w", topic, err)
+		return nil, fmt.Errorf("unknown help topic or reference %q; use tmux-a2a-postman help for installed topics: %w", filename, err)
 	}
 	return data, nil
 }
@@ -46,7 +53,11 @@ func Topics() []string {
 	entries, _ := helpdata.Content.ReadDir(".")
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() {
+			if _, err := helpdata.Content.ReadFile(entry.Name() + "/SKILL.md"); err == nil {
+				names = append(names, entry.Name())
+			}
+		} else if strings.HasSuffix(entry.Name(), ".md") {
 			names = append(names, strings.TrimSuffix(entry.Name(), ".md"))
 		}
 	}
@@ -64,47 +75,6 @@ func validName(name string) bool {
 		}
 	}
 	return true
-}
-
-// Entries supplies the same authored thin Skills used by declarative installs.
-func Entries() fs.FS {
-	return skills.Content
-}
-
-// EntryNames lists the authored entries without inspecting client directories.
-func EntryNames() []string {
-	entries, _ := fs.ReadDir(Entries(), ".")
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			names = append(names, entry.Name())
-		}
-	}
-	return names
-}
-
-// Entry provides complete Markdown; installation belongs to the consumer.
-func Entry(name string) ([]byte, error) {
-	if !validName(name) {
-		return nil, fmt.Errorf("invalid Skill name %q", name)
-	}
-	data, err := fs.ReadFile(Entries(), name+"/SKILL.md")
-	if err != nil {
-		return nil, fmt.Errorf("unknown Skill %q; use tmux-a2a-postman skills: %w", name, err)
-	}
-	return data, nil
-}
-
-// Reference returns one complete, named reference from an authored Skill.
-func Reference(name, ref string) ([]byte, error) {
-	if !validName(name) || !validName(ref) {
-		return nil, fmt.Errorf("invalid Skill or reference name")
-	}
-	data, err := fs.ReadFile(Entries(), name+"/references/"+ref+".md")
-	if err != nil {
-		return nil, fmt.Errorf("unknown reference %q for Skill %q; use tmux-a2a-postman skills %s: %w", ref, name, name, err)
-	}
-	return data, nil
 }
 
 type bundledFiles struct{}

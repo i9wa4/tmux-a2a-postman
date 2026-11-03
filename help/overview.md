@@ -8,8 +8,7 @@ send-heredoc       Send a new request or reply to claimed message IDs
 execute-heredoc    Run source in an initialized shell after needed approval
 approve-execution  Approve one own POP'd execution request, with a reason
 decline-execution  Decline one own POP'd execution request, with a reason
-help [topic]       Read embedded Markdown CLI usage
-skills             List Skills, display an entry or read a named reference
+help [topic [ref]] Read embedded Markdown commands and workflows
 resources          Explicitly materialize the offline helper bundle
 version            Print build version JSON
 ```

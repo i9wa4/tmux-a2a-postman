@@ -1,0 +1,12 @@
+id: postman-recall-3
+name: sending boundary
+inputs:
+  prompt: Quote an outgoing heredoc delimiter to preserve dollar signs and backticks.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-recall/SKILL.md
+    mode: negative

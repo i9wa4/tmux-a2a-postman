@@ -213,7 +213,7 @@ permissions before activation. The external producer explicitly invokes
 `channel-sync` after publishing files and on reconnect. The interface POPs and
 uses the generated report/decision guidance. Declaration alone starts no service
 and grants no host permissions. Installed external operating instructions live
-in `tmux-a2a-postman skills postman-usage external`.
+in `tmux-a2a-postman help postman-usage external`.
 
 Optional YAML `presets` maps names to `columns`, each with ordered `panes` of
 existing unique `role` and exact shell `command` pairs. `launch-agents --list`

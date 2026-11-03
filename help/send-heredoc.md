@@ -35,5 +35,5 @@ Notification lock admission waits at most 5 seconds. After acquisition, input
 settlement/submit observation gets up to 2 seconds; total post-commit work is
 bounded to 8 seconds. Approval waits never hold the notification lock.
 
-For the operating procedure, run `tmux-a2a-postman skills postman-send-message`
+For the operating procedure, run `tmux-a2a-postman help postman-send-message`
 and read the matching references.

@@ -160,7 +160,7 @@ continued execution, or permission to retry an effect.
 Select only your own authorized logs, for example:
 
 ```sh
-python3 "$postman_resources/skills/postman-usage/scripts/analyze-invocations.py" /absolute/own/agent/logs \
+python3 "$postman_resources/help/postman-usage/scripts/analyze-invocations.py" /absolute/own/agent/logs \
   --date 2026-11-02 --node builder --command pop --build COMMIT \
   --config sha256:FINGERPRINT --min-summary-files 100
 ```

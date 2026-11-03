@@ -1,0 +1,12 @@
+id: postman-send-message-2
+name: positive 2
+inputs:
+  prompt: Reply to claimed IDs with exact correlation and the authorized return route.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-send-message/SKILL.md
+    mode: positive
