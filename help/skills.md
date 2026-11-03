@@ -16,6 +16,11 @@ order; a row marked Always is required. Run the command shown in the entry for
 each selected reference and read its complete output before acting. Detailed
 procedures have one authored home under `skills/<name>/references/`.
 
+To inspect the complete builtin team configuration, run
+`tmux-a2a-postman skills postman-config-auditor default`. This data reference
+reads the same embedded `config/postman.md`, independently of user
+configuration, without filesystem extraction or configuration changes.
+
 `help`, `help skills` and `skills --help` explain CLI usage. Skill entries and
 workflows are read through `skills`, independently of CLI help. All these reads
 work offline without configuration, tmux, extraction or file changes. A missing

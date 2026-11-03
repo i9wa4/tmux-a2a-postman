@@ -134,7 +134,9 @@ tmux-a2a-postman launch-agents preset-p --dry-run
 ```
 
 Remove `--dry-run` to launch. Existing consoles can instead start with a send.
-Read `help config` to inspect/export a complete custom configuration.
+Inspect the builtin `postman.md` with
+`tmux-a2a-postman skills postman-config-auditor default`.
+Read `help config` to export a custom copy and select it.
 
 Follow the [first exchange](skills/postman-usage/references/quickstart.md) and
 the [configuration reference](help/postman-md.md) to choose roles and routes.

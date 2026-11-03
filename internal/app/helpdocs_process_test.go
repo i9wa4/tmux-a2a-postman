@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,10 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	custom := filepath.Join(project, "custom-postman.md")
+	if err := os.WriteFile(custom, []byte("A different user configuration."), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +40,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, self, "-test.run=^TestIssue937PublicCLIChild$")
 		cmd.Dir = project
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME=relative-and-unused", "XDG_STATE_HOME=relative-and-unused", "XDG_CACHE_HOME="+filepath.Join(home, "cache"), "TMUX=", "TMUX_PANE=", "TMUX_A2A_POSTMAN_CONFIG=", "PATH="+filepath.Join(home, "no-tools"), "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME=relative-and-unused", "XDG_STATE_HOME=relative-and-unused", "XDG_CACHE_HOME="+filepath.Join(home, "cache"), "TMUX=", "TMUX_PANE=", "TMUX_A2A_POSTMAN_CONFIG="+custom, "PATH="+filepath.Join(home, "no-tools"), "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
 		var out, diagnostic bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &diagnostic
 		err = cmd.Run()
@@ -86,7 +91,16 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 			t.Fatal("reference display did not return complete Markdown", ref, string(diagnostic), err)
 		}
 	}
+	wantConfig, err := fs.ReadFile(helpdocs.Assets(), "config/postman.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outConfig, diagnostic, err := run("skills", "postman-config-auditor", "default")
+	if err != nil || len(diagnostic) != 0 || !bytes.Equal(outConfig, wantConfig) {
+		t.Fatal("default reference did not return the complete builtin Markdown", string(diagnostic), err)
+	}
 	for _, args := range [][]string{
+		{"skills", "postman-usage", "default"},
 		{"skills", "install", "--client", "codex", "--scope", "project", "--project", project, "postman-usage"},
 		{"skills", "export", "--to", filepath.Join(home, "export"), "postman-usage"},
 		{"skills", "../topics/overview"},

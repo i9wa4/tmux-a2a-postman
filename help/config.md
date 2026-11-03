@@ -79,9 +79,7 @@ change, never permission to switch or execute.
 Inspect the exact installed default without selecting or modifying it:
 
 ```sh
-postman_resources=$(tmux-a2a-postman resources)
-cat "$postman_resources/config/postman.md"
-tmux-a2a-postman skills
+tmux-a2a-postman skills postman-config-auditor default
 ```
 
 To customize, explicitly copy that complete file to a new chosen path with
@@ -89,7 +87,7 @@ noclobber semantics, inspect/edit it, then select the absolute path. For
 example:
 
 ```sh
-(set -C; cat "$postman_resources/config/postman.md" > /absolute/new-postman.md)
+(set -C; tmux-a2a-postman skills postman-config-auditor default > /absolute/new-postman.md)
 ```
 
 This example refuses an existing destination. No command overwrites a user's

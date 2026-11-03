@@ -100,6 +100,9 @@ func Reference(name, ref string) ([]byte, error) {
 	if !validName(name) || !validName(ref) {
 		return nil, fmt.Errorf("invalid Skill or reference name")
 	}
+	if name == "postman-config-auditor" && ref == "default" {
+		return configdata.Content.ReadFile("postman.md")
+	}
 	data, err := fs.ReadFile(Entries(), name+"/references/"+ref+".md")
 	if err != nil {
 		return nil, fmt.Errorf("unknown reference %q for Skill %q; use tmux-a2a-postman skills %s: %w", ref, name, name, err)
