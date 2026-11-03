@@ -61,11 +61,6 @@ jobs:
       - name: Check selected Go toolchain
         run: nix develop .#ci --command bash scripts/validation/check-go-toolchain.sh
 
-      - name: Verify GitHub Actions lockfile provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: nix run .#gh-actions-lock -- --verify
-
       - name: Run nix flake check
         run: nix flake check --print-build-logs
 
@@ -93,6 +88,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install Nix
@@ -106,6 +102,11 @@ jobs:
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
           primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+
+      - name: Verify GitHub Actions lockfile provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: nix run .#gh-actions-lock -- --verify
 
       - name: Run govulncheck
         run: nix develop .#ci --command govulncheck ./...
