@@ -1,0 +1,12 @@
+id: postman-review-2
+name: negative 2
+inputs:
+  prompt: Approve a typed shell execution request without substantive artifact review.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-review/SKILL.md
+    mode: negative

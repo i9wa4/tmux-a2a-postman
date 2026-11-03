@@ -54,9 +54,9 @@ func (t WorkspaceTopology) RecipientPolicy(ctx context.Context, path string) (Re
 	}
 	if t.builtin {
 		var catalog strings.Builder
-		catalog.WriteString("### Available Skills\n\nThese embedded entry points need no installed Skill tree. Read each selected reference through EOF before the workflow. Inspect the entry and its reference table with `tmux-a2a-postman skills <name>`.\n\n")
-		for _, name := range helpdocs.EntryNames() {
-			raw, readErr := helpdocs.Entry(name)
+		catalog.WriteString("### Available Skills\n\nThese embedded entry points need no installed Skill tree. Read each selected reference through EOF before the workflow. Inspect the entry and its reference table with `tmux-a2a-postman help <name>`.\n\n")
+		for _, name := range helpdocs.WorkflowNames() {
+			raw, readErr := helpdocs.Read(name)
 			if readErr != nil {
 				return result, readErr
 			}

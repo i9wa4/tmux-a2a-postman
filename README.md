@@ -112,11 +112,12 @@ gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
-name from `tmux-a2a-postman skills` to install another entry. Each Skill
-reads its detailed references with `tmux-a2a-postman skills <name> <ref>`.
+workflow name listed by `tmux-a2a-postman help` to install another entry.
+Read the full procedure with `tmux-a2a-postman help <name>`, then matching
+references with `tmux-a2a-postman help <name> <ref>`.
 
 Start with the [builtin standard team](config/postman.md) and
-`tmux-a2a-postman skills postman-orchestrate`; no dotfiles or Skill installation
+`tmux-a2a-postman help postman-orchestrate`; no dotfiles or Skill installation
 is required. That same default `postman.md` contains all startup presets:
 
 | Preset             | Consoles and layout                                                   |
@@ -135,29 +136,30 @@ tmux-a2a-postman launch-agents preset-p --dry-run
 
 Remove `--dry-run` to launch. Existing consoles can instead start with a send.
 Inspect the builtin `postman.md` with
-`tmux-a2a-postman skills postman-config-auditor default`.
+`tmux-a2a-postman help config default`.
 Read `help config` to export a custom copy and select it.
 
-Follow the [first exchange](skills/postman-usage/references/quickstart.md) and
+Follow the [first exchange](help/postman-usage/references/quickstart.md) and
 the [configuration reference](help/postman-md.md) to choose roles and routes.
 
 The repository mirrors the installed interface:
 
 ```text
 help/                 CLI usage: help <topic>
-config/               bundled configuration assets
+  <name>/SKILL.md      canonical workflow: help <name>
+  <name>/references/   detailed procedures: help <name> <ref>
+  <name>/scripts/      optional helpers
+  <name>/evals/        workflow evaluation fixtures
 skills/<name>/
-  SKILL.md            short entry: skills <name>
-  references/         workflows: skills <name> <ref>
-  scripts/            optional helpers
-  evals/              offline validation
+  SKILL.md            generated header + one-line help instruction
+config/               bundled configuration assets
 docs/                design, research, development and validation
 testdata/            test-only fixtures
 ```
 
 ## 4. Guides and references
 
-- [Quickstart and operations](skills/postman-usage/references/quickstart.md):
+- [Quickstart and operations](help/postman-usage/references/quickstart.md):
   setup, mail, observations and troubleshooting.
 - [Configuration reference](help/postman-md.md):
   anatomy, examples and exact supported fields.
@@ -168,10 +170,10 @@ testdata/            test-only fixtures
   [external file integration](help/external-filesystem-channel.md).
 - [Installable Skills](skills/): usage, sending, recall, configuration audit and
   team management, planning, records, orchestration and review.
-- [Operating procedures](skills/postman-orchestrate/references/intake.md),
-  [planning](skills/postman-plan/references/investigation.md),
-  [records](skills/postman-records/references/selection.md), and
-  [review](skills/postman-review/references/routing.md): the canonical Skill
+- [Operating procedures](help/postman-orchestrate/references/intake.md),
+  [planning](help/postman-plan/references/investigation.md),
+  [records](help/postman-records/references/selection.md), and
+  [review](help/postman-review/references/routing.md): the canonical Skill
   references available in the binary.
 - [Migration inventory](docs/design/standard-team-migration.md): source
   ownership, portability and verification boundaries.

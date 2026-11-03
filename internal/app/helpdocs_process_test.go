@@ -49,11 +49,12 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	before := statusTree(t, home)
 	for _, topic := range helpdocs.Topics() {
 		out, diagnostic, err := run("help", topic)
-		if err != nil || !bytes.HasPrefix(out, []byte("# ")) {
+		want, readErr := helpdocs.Read(topic)
+		if err != nil || readErr != nil || !bytes.HasPrefix(out, want) {
 			t.Fatalf("offline help %s: %s %s (%v)", topic, out, diagnostic, err)
 		}
 	}
-	for _, command := range []string{"send-heredoc", "pop", "get-status", "execute-heredoc", "skills", "resources"} {
+	for _, command := range []string{"send-heredoc", "pop", "get-status", "execute-heredoc", "resources"} {
 		want, _, err := run("help", command)
 		if err != nil {
 			t.Fatal(err)
@@ -68,25 +69,12 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if _, diagnostic, err := run("help", "missing-installed-topic"); err == nil || !bytes.Contains(diagnostic, []byte("unknown help topic")) {
 		t.Fatal("missing topic lacked an actionable error", string(diagnostic), err)
 	}
-	if _, diagnostic, err := run("skills"); err != nil {
-		t.Fatal(string(diagnostic), err)
-	}
-	for _, name := range helpdocs.EntryNames() {
-		want, err := helpdocs.Entry(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out, diagnostic, err := run("skills", name)
-		if err != nil || !bytes.Equal(out, want) {
-			t.Fatal("Skill display did not return complete embedded Markdown", name, string(diagnostic), err)
-		}
-	}
 	for _, ref := range []string{"mailbox", "sending", "status", "session-flow", "external", "quickstart"} {
-		want, err := helpdocs.Reference("postman-usage", ref)
+		want, err := helpdocs.Read("postman-usage", ref)
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, diagnostic, err := run("skills", "postman-usage", ref)
+		out, diagnostic, err := run("help", "postman-usage", ref)
 		if err != nil || !bytes.Equal(out, want) {
 			t.Fatal("reference display did not return complete Markdown", ref, string(diagnostic), err)
 		}
@@ -95,21 +83,21 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outConfig, diagnostic, err := run("skills", "postman-config-auditor", "default")
+	outConfig, diagnostic, err := run("help", "config", "default")
 	if err != nil || len(diagnostic) != 0 || !bytes.Equal(outConfig, wantConfig) {
 		t.Fatal("default reference did not return the complete builtin Markdown", string(diagnostic), err)
 	}
 	for _, args := range [][]string{
-		{"skills", "postman-usage", "default"},
+		{"help", "postman-usage", "default"},
+		{"help", "postman-config-auditor", "default"},
 		{"skills", "install", "--client", "codex", "--scope", "project", "--project", project, "postman-usage"},
 		{"skills", "export", "--to", filepath.Join(home, "export"), "postman-usage"},
-		{"skills", "../topics/overview"},
-		{"skills", "missing-entry"},
-		{"skills", "postman-usage", "../mailbox"},
-		{"skills", "postman-usage", "missing-reference"},
-		{"skills", "list"},
-		{"skills", "show", "postman-usage"},
-		{"skills", "postman-usage", "mailbox", "extra"},
+		{"skills"},
+		{"skills", "--help"},
+		{"help", "../topics/overview"},
+		{"help", "postman-usage", "../mailbox"},
+		{"help", "postman-usage", "missing-reference"},
+		{"help", "postman-usage", "mailbox", "extra"},
 	} {
 		if _, _, err := run(args...); err == nil {
 			t.Fatal("unsupported installation or invalid Skill was accepted", args)
@@ -126,7 +114,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if !filepath.IsAbs(resource) || filepath.Base(resource) != helpdocs.BundleID() {
 		t.Fatal("resource path is not a content-identified absolute generation", resource)
 	}
-	for _, name := range []string{"skills/postman-recall/scripts/select_day.py", "skills/postman-team-manager/scripts/next_step.py", "skills/postman-usage/scripts/analyze-invocations.py", "docs/licenses/postman.txt"} {
+	for _, name := range []string{"help/postman-recall/scripts/select_day.py", "help/postman-team-manager/scripts/next_step.py", "help/postman-usage/scripts/analyze-invocations.py", "docs/licenses/postman.txt"} {
 		if info, err := os.Stat(filepath.Join(resource, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatal("bundled resource missing", name, err)
 		}

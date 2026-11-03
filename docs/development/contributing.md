@@ -25,19 +25,22 @@ and iterative debugging in a cloud environment, follow the
 [cloud development runbook](cloud-tmux-debugging.md).
 
 README is the product entry point;
-[quickstart](../../skills/postman-usage/references/quickstart.md),
+[quickstart](../../help/postman-usage/references/quickstart.md),
 [configuration reference](../../help/postman-md.md)
 and [CLI specification](../../help/cli-spec.md) own current user contracts. Keep
 developer check commands, fixture matrices and evidence limits here or in the
-linked development/validation documents. CLI help lives in `help/`; Skill entry
-points and detailed procedures live in `skills/<name>/SKILL.md` and
-`skills/<name>/references/`. `config/` owns bundled configuration assets.
-`docs/` holds design, research, development, validation and license records.
-Test-only topologies live in `testdata/config/`. Go embeds these authored
-sources directly; no generated copies exist. Optional Skill helpers live in
-their Skill's `scripts/` directory and ship with license notices in the explicit
-offline resource bundle. `CLAUDE.md` points to the one repository instruction
-owner, AGENTS; runtime `postman.md` is a separate user configuration surface.
+linked development/validation documents. Command HelpDocs live in `help/*.md`.
+Each workflow is a normal Skill package at `help/<name>/`: its `SKILL.md` owns
+metadata and workflow entry instructions, `references/` owns full procedures,
+`scripts/` owns optional helpers and `evals/` owns evaluation fixtures. The
+binary embeds those authored manuals and helpers directly.
+`skills/<name>/SKILL.md` is only the generated installable discovery entry; no
+references, helpers or evals are copied there. `config/` owns bundled
+configuration assets. `docs/` holds design, research, development, validation
+and license records. Test-only configurations live in `testdata/config/`.
+License notices ship with the explicit offline resource bundle. `CLAUDE.md`
+points to the one repository instruction owner, AGENTS; runtime `postman.md` is
+a separate user configuration surface.
 
 Validate maintained example configurations and their first exchange with
 `go test ./internal/config ./internal/cli ./internal/app -run 'TestDocumented'`.
@@ -283,30 +286,85 @@ on a developer's HOME. Ignored generated files such as
 
 ## 3. Agent Skills
 
-Validate publishable skill metadata with:
+### 3.1. Edit, generate and read
+
+Keep user-facing specifications in `help/` even when they are long or detailed.
+For example, `help/postman-md.md` owns configuration fields and constraints
+(`help postman-md`), while `help/postman-config-auditor/` owns the audit
+workflow and refers to that specification. `config/postman.md` is the actual
+builtin configuration data. Do not copy the format specification into an
+installed Skill or confuse it with the default configuration. Contributor design
+and research documents remain under `docs/`.
+
+Edit the canonical `help/<name>/SKILL.md`, never its generated counterpart. Use
+the same `<name>` for the directory, frontmatter `name`, installed Skill and
+help topic. Keep the entry's `Read when | ref` table consistent with the
+complete Markdown files under `references/`; read matching rows in order. A row
+marked Always is mandatory. CLI usage remains `help <command>` or
+`<command> --help`. Workflow and reference reads are:
 
 ```sh
-nix run '.#skill-check'
+tmux-a2a-postman help postman-usage
+tmux-a2a-postman help postman-usage mailbox
 ```
 
-The local/CI skill check validates `skills/*/SKILL.md` frontmatter,
-name-to-directory matching, license and description metadata, `USE FOR` /
-`DO NOT USE FOR` discovery text, then Waza readiness and the GitHub skill
+The shared YAML header also owns the one-line discovery instruction:
+
+```yaml
+metadata:
+  postman-skill-body: >-
+    Read and follow `tmux-a2a-postman help postman-usage`.
+```
+
+Generate after changing a source header or adding a workflow, then stage both
+source and generated entries before Nix checks:
+
+```sh
+nix run .#generate-skills
+git add help skills
+nix run .#generate-skills -- --check
+nix run .#skill-check
+```
+
+Generation copies the original YAML header without reserialization and uses
+only `metadata.postman-skill-body` as the distribution body. That field must be
+one nonempty line; the generator does not invent command names or prose. The
+tracked output makes ordinary `gh skill install` and declarative consumers work
+without a generator at installation time. Remove the generated directory when
+retiring a workflow; unexpected distribution files fail validation so stale
+references or helpers cannot ship accidentally.
+
+The commit hook regenerates changed entries automatically. Read-only `--check`,
+`skill-check` and the Nix checks reject missing or edited generated entries.
+`skill-check` checks metadata in both trees, Waza readiness and the GitHub skill
 publish dry-run. Waza checks specification compliance, links and the existing
-500-token entry budget; detailed references have no entry-token budget. The
-`skill-waza` hook reuses the same gate for changed Skill directories. Offline
-Nix builders skip network link checks only. `nix flake check` also runs the
-metadata validation through pre-commit.
+500-token entry budget; references have no entry-token budget. The `skill-waza`
+hook checks changed packages in both trees. Offline Nix builders skip network
+link checks only.
+
+All Markdown, including canonical manuals, generated entries, references,
+configuration and fixtures, is covered by rumdl and markdown-formatter. Run
+`nix fmt` after generation. Vale and Harper remain advisory over the same set.
+See the tool commands above; do not exclude generated Markdown from formatting.
+
+### 3.2. Distribution
+
+A normal binary build directly embeds the canonical HelpDocs. The same release
+contains the committed thin `skills/` tree. Updating the binary updates
+operating procedures, while installed entries retain only their discovery
+metadata and one help instruction. `resources` explicitly materializes optional
+helpers at `help/<name>/scripts/` in the content-identified bundle. No live
+client directory or user configuration is modified by a build or validation.
 
 Do not use `gh skill publish --tag` in the tag-push release workflow. That
 command creates a tag and GitHub Release itself. The repository release flow
 uses the pushed `v*` tag plus GoReleaser, while `gh skill install` resolves
 skills from the published repository tag or release.
 
-### 3.1. Deterministic trigger expectations
+### 3.3. Deterministic trigger expectations
 
-Every `skills/<name>/SKILL.md` needs a corresponding
-`skills/<name>/evals/trigger/eval.yaml` and positive/negative YAML tasks under
+Every `help/<name>/SKILL.md` needs a corresponding
+`help/<name>/evals/trigger/eval.yaml` and positive/negative YAML tasks under
 that suite's `tasks/` directory. CI enforces this through `nix flake check`; the
 local hook responds to both skill and trigger-fixture changes.
 
@@ -317,15 +375,18 @@ python3 scripts/validation/validate-skill-triggers.py --preflight-only
 python3 scripts/validation/test-skill-triggers.py
 ```
 
-The repository provisions Waza CLI v0.39.1 with fixed release hashes for
-Linux x86_64/aarch64 and macOS aarch64. All suites explicitly select its
-`mock` executor and `offline-mock` model label, one serial trial and bounded
-timeouts. Waza's update check is disabled. No model SDK, credentials or model
-API is needed. The selected release's trigger grader scores local skill
-keywords and USE FOR phrases, including the skill body. It does not simulate
-real-model routing or prove task success/comprehension. Overlapping vocabulary
-can produce heuristic false positives; use concrete responsibility boundaries
-and inspect feedback rather than flipping an authored expectation to pass.
+The repository provisions Waza CLI v0.39.1 with fixed release hashes for Linux
+x86_64/aarch64 and macOS aarch64. All suites explicitly select its `mock`
+executor and `offline-mock` model label, one serial trial and bounded timeouts.
+Waza's update check is disabled. No model SDK, credentials or model API is
+needed. Both manual and trigger suites explicitly target their canonical HelpDoc
+Skill using `config.skill_directories`, relative to the suite. Trigger graders
+point to `help/<name>/SKILL.md`. The selected release's trigger grader scores
+local skill keywords and USE FOR phrases, including the skill body. It does not
+simulate real-model routing or prove task success/comprehension. Overlapping
+vocabulary can produce heuristic false positives; use concrete responsibility
+boundaries and inspect feedback rather than flipping an authored expectation to
+pass.
 
 The validator preflights **all** discovered trigger suites before starting any
 executor. It rejects zero/missing/orphan coverage, empty tasks, implicit or
@@ -351,9 +412,9 @@ blockers, direction checks and sufficient-evidence stop conditions. They do
 not run a model, infer ownership, send mail or prove instruction compliance.
 The skill documents the matching evidence procedure and actual status fields.
 
-Existing `skills/<name>/evals/eval.yaml` and `skills/<name>/evals/tasks/` remain
+Existing `help/<name>/evals/eval.yaml` and `help/<name>/evals/tasks/` remain
 manual behavioral suites. The automated gate selects only
-`skills/*/evals/trigger/eval.yaml` and never implicitly executes or rewrites the
+`help/*/evals/trigger/eval.yaml` and never implicitly executes or rewrites the
 behavioral lane. Skill metadata and publishing dry-runs remain separate required
 checks.
 

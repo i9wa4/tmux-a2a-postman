@@ -1,0 +1,12 @@
+id: postman-records-1
+name: positive 1
+inputs:
+  prompt: Resume a task from its verified canonical work record.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-records/SKILL.md
+    mode: positive

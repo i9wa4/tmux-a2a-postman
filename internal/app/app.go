@@ -66,7 +66,7 @@ func Main() {
 		}
 	})
 	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath, ConfigProvided: configProvided}, cli.Handlers{
-		Skills: cli.RunSkills, Resources: cli.RunResources,
+		Resources:    cli.RunResources,
 		LaunchAgents: cli.RunLaunchAgents, ChannelSync: cli.RunWorkspaceChannelSync, ChannelReport: cli.RunWorkspaceChannelReport,
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
 		GetStatusOneline: cli.RunWorkspaceGetStatusOneline, RefreshStatus: cli.RunWorkspaceRefreshStatus,

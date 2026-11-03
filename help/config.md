@@ -79,7 +79,7 @@ change, never permission to switch or execute.
 Inspect the exact installed default without selecting or modifying it:
 
 ```sh
-tmux-a2a-postman skills postman-config-auditor default
+tmux-a2a-postman help config default
 ```
 
 To customize, explicitly copy that complete file to a new chosen path with
@@ -87,7 +87,7 @@ noclobber semantics, inspect/edit it, then select the absolute path. For
 example:
 
 ```sh
-(set -C; tmux-a2a-postman skills postman-config-auditor default > /absolute/new-postman.md)
+(set -C; tmux-a2a-postman help config default > /absolute/new-postman.md)
 ```
 
 This example refuses an existing destination. No command overwrites a user's
@@ -96,7 +96,7 @@ content-identified cache bundle. Its default, licenses, optional record helper
 and review prompts are portable and require no dotfiles checkout.
 
 A complete custom file may explicitly direct a role/common section to read an
-installed Skill such as `tmux-a2a-postman skills postman-review`, or explicitly
+installed Skill such as `tmux-a2a-postman help postman-review`, or explicitly
 select consumer-owned thin Skill metadata with the existing `skill_path` syntax.
 The binary never silently adds builtin workflow policy/catalogs to a custom
 file.

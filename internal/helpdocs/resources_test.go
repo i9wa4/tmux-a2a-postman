@@ -133,7 +133,7 @@ func TestHelpReadsNeverMaterialize(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "absent-cache"))
 	for _, name := range Topics() {
 		data, err := Read(name)
-		if err != nil || !strings.HasPrefix(string(data), "# ") {
+		if err != nil || (!strings.HasPrefix(string(data), "# ") && !strings.HasPrefix(string(data), "---\n")) {
 			t.Fatalf("topic %q: %v", name, err)
 		}
 	}

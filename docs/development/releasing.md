@@ -31,7 +31,7 @@ or `gh skill publish --dry-run`.
 
 Do not run `gh skill publish --tag` from the tag-push workflow. That command
 owns tag and release creation, so it fails when the pushed release tag already
-exists. The tag-push release path validates `skills/*/SKILL.md` with
+exists. The tag-push release path validates generated `skills/*/SKILL.md` with
 `gh skill publish --dry-run`; the published Git tag and GitHub Release are
 enough for `gh skill install` to resolve versions.
 

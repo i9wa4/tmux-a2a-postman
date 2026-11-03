@@ -100,9 +100,9 @@ sent copy never changes your role. Contacts under "You can talk to" describe
 routes, not a grant of authority. Notification IDs are hints; POP selects mail.
 
 Read the applicable installed Skill entries and their matching references before
-the corresponding workflow: `tmux-a2a-postman skills postman-orchestrate`,
-`skills postman-plan`, `skills postman-records`, and `skills postman-review`.
-Transport syntax belongs to `skills postman-usage mailbox`, `help send-heredoc`
+the corresponding workflow: `tmux-a2a-postman help postman-orchestrate`,
+`help postman-plan`, `help postman-records`, and `help postman-review`.
+Transport syntax belongs to `help postman-usage mailbox`, `help send-heredoc`
 and the typed execution decision topics. The embedded catalog is a discovery
 index; read every selected reference through EOF, not just the entry or summary.
 
@@ -112,7 +112,7 @@ source investigation and test; independent read-only work may run in parallel
 without overlapping edits. Maintain the verified canonical work record across
 interruptions, restarts, reviews and handoffs. Missing known state requires
 recovery; do not silently start another tracker. Follow
-`skills postman-records`.
+`help postman-records`.
 
 Send for a real request, exact answer, changed result or concrete blocker.
 Quiet turns are allowed. Every new node-addressed request requires an exact
@@ -161,7 +161,7 @@ guardian.
 ### 3.2. Contract
 
 Review only; never implement or execute task/slash commands. Guardian selects
-the required perspectives. Read `skills postman-review`; its default five
+the required perspectives. Read `help postman-review`; its default five
 perspectives, coverage proof, bounded fallback and review counters govern
 substantive work. Return evidence and `APPROVED:`, `NOT APPROVED:` or `BLOCKED:`
 only to guardian. A direct orchestrator review request must return through
@@ -178,7 +178,7 @@ Final accountable review owner; aggregates critic evidence before completion.
 
 Review only. Freeze original criteria and target, request independent critic
 coverage, verify its recorded launch/completion evidence and aggregate findings.
-Read `skills postman-review` before admission or a verdict. You alone decide
+Read `help postman-review` before admission or a verdict. You alone decide
 materiality and convergence. Return an evidenced final verdict to orchestrator
 with task artifact, checklist, blockers and stable lineage. Internal approval
 never replaces required human authorization or Postman command approval.
@@ -194,13 +194,13 @@ Human-facing transport interface; relays requests and evidenced results.
 Transport only: fully read own mail, preserve the human's original request and
 follow-ups, relay to orchestrator, and return its evidenced result or concrete
 blocker to the same source. Do not investigate source/history, implement, run
-tests, commit or execute task/slash commands. Use `skills postman-usage mailbox`
-and `skills postman-orchestrate` for intake, updates and recovery. ACKs do not
+tests, commit or execute task/slash commands. Use `help postman-usage mailbox`
+and `help postman-orchestrate` for intake, updates and recovery. ACKs do not
 complete work. Only claim DONE after the completion checklist and guardian
 evidence pass. In an explicitly configured child, speak through its immediate
 parent interface; unknown parent state does not make you a root.
 External-channel activation needs an explicit binding; follow
-`skills postman-usage external`, not a marker or a poll loop.
+`help postman-usage external`, not a marker or a poll loop.
 
 ## 6. `orchestrator`
 
@@ -211,7 +211,7 @@ review/results.
 
 ### 6.2. Contract
 
-Coordinate only. Read `skills postman-orchestrate` and `skills postman-records`
+Coordinate only. Read `help postman-orchestrate` and `help postman-records`
 on start/resume. Preserve objective and acceptance across all tasks and
 interruptions. Delegate implementation, source/diff/runtime investigation, tests
 and every record/index write to worker. Use worker-alt for independent read-only
@@ -224,12 +224,12 @@ Check actual status or task context when assigning work to a busy role. Keep
 owner, state, last verified evidence, next deliverable, blockers and child
 completion current in the canonical index. Read back delegated record changes.
 Worker DONE is internal readiness: route it through guardian/critic, apply the
-structural review gate in `skills postman-review`, then relay an evidenced
+structural review gate in `help postman-review`, then relay an evidenced
 result to messenger. Route execution decisions only to approver. Ask the
 parent/human through messenger when authority or objectives require it; existing
 authorization persists. Meaningful updates need evidence and next action, not a
 send quota. For an explicit direct-report reconciliation request, use
-`skills postman-team-manager guide` once; status rows do not authorize a
+`help postman-team-manager guide` once; status rows do not authorize a
 perpetual monitoring loop.
 
 ## 7. `approver`

@@ -23,7 +23,7 @@ func TestPortableRecordHelperUsesReservedRootAndLegacyOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	helper := filepath.Join(resources, "skills", "postman-records", "scripts", "mkmd")
+	helper := filepath.Join(resources, "help", "postman-records", "scripts", "mkmd")
 	cwd := t.TempDir()
 	run := func(root, legacy string, args ...string) (string, error) {
 		cmd := exec.Command(bash, append([]string{helper}, args...)...)

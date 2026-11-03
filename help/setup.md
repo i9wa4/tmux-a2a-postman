@@ -2,7 +2,7 @@
 
 Use an installed Postman binary and already-running tmux-hosted AI consoles.
 Invoke the `postman-send-message` Skill with the intended destination and task;
-read `tmux-a2a-postman skills postman-send-message` and its matching references.
+read `tmux-a2a-postman help postman-send-message` and its matching references.
 `launch-agents` is optional. Postman does not configure client authentication or
 sandbox permissions.
 
@@ -26,6 +26,6 @@ default `postman.md`. `launch-agents --list` lists plain `codex`/`claude` teams
 and the existing vde-layout `preset-p`/`preset-w` teams. The latter retain their
 original model, effort and permission arguments; preview the exact commands with
 `launch-agents <preset> --dry-run`. No initial prompt is injected. `help config`
-explains inspecting/customizing a full copy; `skills postman-orchestrate`
+explains inspecting/customizing a full copy; `help postman-orchestrate`
 describes the end-to-end workflow. Thin Skills are optional discovery entries;
 the installed Skill references are the detailed workflow authority.

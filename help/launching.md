@@ -109,4 +109,4 @@ The vde-layout presets preserve their original model, effort and permission
 arguments. Preview with `--dry-run` to inspect the exact declared commands.
 All presets are in that one default file; no separate preset configuration is
 needed. A custom `postman.md` remains a complete replacement. See `help config`
-to inspect/export the default and `skills postman-orchestrate` for the workflow.
+to inspect/export the default and `help postman-orchestrate` for the workflow.

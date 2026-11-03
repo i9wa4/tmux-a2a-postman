@@ -213,7 +213,7 @@ permissions before activation. The external producer explicitly invokes
 `channel-sync` after publishing files and on reconnect. The interface POPs and
 uses the generated report/decision guidance. Declaration alone starts no service
 and grants no host permissions. Installed external operating instructions live
-in `tmux-a2a-postman skills postman-usage external`.
+in `tmux-a2a-postman help postman-usage external`.
 
 Optional YAML `presets` maps names to `columns`, each with ordered `panes` of
 existing unique `role` and exact shell `command` pairs. `launch-agents --list`
@@ -247,5 +247,5 @@ An absent automatic XDG/HOME path selects the embedded complete standard team. A
 custom file replaces it completely; there is no implicit role/catalog merge. Use
 `tmux-a2a-postman help config` for precedence, error handling and explicit
 read-only inspection/export of the installed default.
-`skills postman-orchestrate`, `skills postman-plan`, `skills postman-records`
-and `skills postman-review` own its portable workflows.
+`help postman-orchestrate`, `help postman-plan`, `help postman-records`
+and `help postman-review` own its portable workflows.
