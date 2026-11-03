@@ -1,0 +1,12 @@
+id: postman-send-message-4
+name: negative 4
+inputs:
+  prompt: Interpret bounded file-based status and sampled screen-change times.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-send-message/SKILL.md
+    mode: negative

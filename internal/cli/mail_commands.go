@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
@@ -145,13 +146,8 @@ func replyTarget(value string) ([]string, bool, error) {
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
-		if len(id) != 34 || !strings.HasPrefix(id, "m-") || seen[id] {
+		if !messageid.Valid(id) || seen[id] {
 			return nil, true, errors.New("invalid or duplicate reply ID")
-		}
-		for _, ch := range id[2:] {
-			if !strings.ContainsRune("0123456789abcdef", ch) {
-				return nil, true, errors.New("invalid reply ID")
-			}
 		}
 		seen[id] = true
 	}

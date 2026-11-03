@@ -6,6 +6,8 @@ import shlex
 import threading
 import uuid
 
+from mail_fixture import MESSAGE_ID_PATTERN
+
 
 class ModelFixture:
     def __init__(self, handler, trace):
@@ -33,7 +35,7 @@ class ModelFixture:
                     self.send_error(400, "missing smoke conversation context")
                     return
                 role, nonce = match.groups()
-                notices = re.findall(r"You've got mail: (m-[a-f0-9]{32})\.md", text)
+                notices = re.findall(r"You've got mail: (" + MESSAGE_ID_PATTERN + r")\.md", text)
                 completed = {x.get("call_id") for x in data.get("input", []) if x.get("type") == "function_call_output"}
                 pending = [m for m in dict.fromkeys(notices) if "smoke-" + role + "-" + m not in completed]
                 message = pending[0] if pending else (notices[-1] if notices else "setup")

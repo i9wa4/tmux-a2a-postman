@@ -45,12 +45,12 @@ func TestWorkspaceMailRetainsRecipientPolicyCatalogContactsAndLiteralBody(t *tes
 	}
 	context := archive.Context.Markdown
 	for _, wanted := range []string{
-		"To: `worker`", "### COMMON_POLICY", "Full common contract.", "Literal $HOME and $(not-executed).",
+		"To: `worker`", "#### COMMON_POLICY", "Full common contract.", "Literal $HOME and $(not-executed).",
 		"```sh\n# keep code headings literal\n```", "WORKER_POLICY through final worker instruction.",
-		"### Available Skills", "- `alpha`: First description line and its continuation.", "- `zeta`:",
-		"You can talk to:\n- guardian: Final review owner.\n- peer: Command reviewer and sender.",
+		"\n### Common contract\n", "\n### worker instructions\n", "\n### Available Skills\n", "- `alpha`: First description line and its continuation.", "- `zeta`:",
+		"You can talk to:\n\n- guardian: Final review owner.\n- peer: Command reviewer and sender.",
 		"send-heredoc --config '", " --to " + sent.ID, "Configured note for " + sent.ID,
-		"## Sender Message\n", "Read this complete archived Markdown through EOF",
+		"\n## Sender Message\n", "Read this complete archived Markdown through EOF",
 	} {
 		if !strings.Contains(context, wanted) {
 			t.Fatalf("generated recipient context lacks %q:\n%s", wanted, context)

@@ -59,7 +59,7 @@ func TestRecipientPolicyFencedHeadingsDoNotCreateRoles(t *testing.T) {
 	if err != nil || !strings.Contains(policy.Common, "## `impostor`") || !strings.Contains(policy.Common, "## `worker`") {
 		t.Fatal("fenced common policy was split or lost", policy, err)
 	}
-	if got := MarkdownSectionContent("# Outside\n\n" + policy.Common + "\n\n## After"); got != "### Outside\n\n"+policy.Common+"\n\n### After" {
+	if got := MarkdownSectionContent("# Outside\n\n" + policy.Common + "\n\n## After"); got != "#### Outside\n\n"+policy.Common+"\n\n#### After" {
 		t.Fatal("generated heading normalization changed fenced code", got)
 	}
 }

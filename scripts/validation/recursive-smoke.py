@@ -16,7 +16,7 @@ import tempfile
 import time
 import uuid
 
-from mail_fixture import read_archive
+from mail_fixture import MESSAGE_ID_PATTERN, read_archive
 from recursive_team.configuration import compile_config
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -42,7 +42,7 @@ if not 4 <= args.depth <= 12:
     )
 repo = pathlib.Path(__file__).resolve().parents[2]
 terminal = repo / "scripts/validation/recursive_team/terminal.py"
-template = (args.postman_md or terminal.with_name("postman.md")).resolve()
+template = (args.postman_md or repo / "testdata/config/recursive.md").resolve()
 roles = ["messenger", "orchestrator", "worker", "approver", "guardian", "critic"]
 postman = str(pathlib.Path(args.postman).resolve())
 skill_roots = [path.resolve() for path in args.skill_root] + [repo / "skills"]
@@ -210,9 +210,25 @@ def run_case(case):
             actions = path.with_name(
                 path.name.replace(".input.jsonl", ".actions.jsonl")
             )
-            if not actions.exists() or len(actions.read_text().splitlines()) != len(
-                path.read_text().splitlines()
-            ):
+            progress = path.with_name(
+                path.name.replace(".input.jsonl", ".terminal-progress.json")
+            )
+            if not actions.exists() or not progress.exists():
+                return False
+            try:
+                inputs = [json.loads(line) for line in path.read_text().splitlines()]
+                submitted = [
+                    hint
+                    for item in inputs
+                    for hint in re.findall(r"You've got mail: (" + MESSAGE_ID_PATTERN + r")\.md", item["text"])
+                ]
+                completed = [json.loads(line)["hint"] for line in actions.read_text().splitlines()]
+                current = json.loads(progress.read_text())
+            except json.JSONDecodeError:
+                return False
+            # Several complete hints can share one submitted terminal buffer.
+            # Require every exact hinted action and actual helper-process exit.
+            if sorted(submitted) != sorted(completed) or current["submitted"] != current["completed"]:
                 return False
         return True
 
@@ -456,6 +472,7 @@ def run_case(case):
 
         if case == "chain":
             # Respawn a completed child scope with the same durable mail/index.
+            wait_for("terminal tools complete before planned restart", actors_finished)
             leaf = active[-1]
             for role in ["messenger", "orchestrator", "worker"]:
                 ready = evidence / leaf / (role + ".ready.json")

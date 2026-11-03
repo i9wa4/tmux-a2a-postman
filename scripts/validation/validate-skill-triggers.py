@@ -70,12 +70,12 @@ def local_file(root, path):
 
 
 def preflight(root):
-    skills = sorted((root / "skills").glob("*/SKILL.md"))
-    suites = sorted((root / "evals").glob("*/trigger/eval.yaml"))
+    skills = sorted((root / "help").glob("*/SKILL.md"))
+    suites = sorted((root / "help").glob("*/evals/trigger/eval.yaml"))
     if not skills or not suites:
         raise InvalidSuite("zero shipped skills or deterministic trigger suites discovered")
     names = {path.parent.name for path in skills}
-    suite_names = {path.parent.parent.name for path in suites}
+    suite_names = {path.parents[2].name for path in suites}
     if names != suite_names:
         raise InvalidSuite(f"suite coverage mismatch: missing={sorted(names - suite_names)}, orphan={sorted(suite_names - names)}")
     for skill in skills:
@@ -83,7 +83,7 @@ def preflight(root):
     inventory = []
     for spec in suites:
         local_file(root, spec)
-        name = spec.parent.parent.name
+        name = spec.parents[2].name
         suite = mapping(load(spec), ["name", "description", "skill", "version", "config", "tasks", "metrics", "graders"],
                         ["name", "skill", "config", "tasks"], str(spec))
         metadata(suite, spec)
@@ -93,10 +93,10 @@ def preflight(root):
         # an SDK/model-backed lane. Tasks own one verified trigger grader each.
         if suite.get("graders", []) != [] or suite.get("metrics", []) != []:
             raise InvalidSuite(f"{spec}: suite graders/metrics are outside the supported trigger contract")
-        config = mapping(suite["config"], ["executor", "model", "trials_per_task", "timeout_seconds", "parallel"],
-                         ["executor", "model", "trials_per_task", "timeout_seconds", "parallel"], str(spec))
+        config = mapping(suite["config"], ["executor", "model", "trials_per_task", "timeout_seconds", "parallel", "skill_directories"],
+                         ["executor", "model", "trials_per_task", "timeout_seconds", "parallel", "skill_directories"], str(spec))
         if config != {"executor": "mock", "model": "offline-mock", "trials_per_task": 1,
-                      "timeout_seconds": 30, "parallel": False}:
+                      "timeout_seconds": 30, "parallel": False, "skill_directories": ["../.."]}:
             raise InvalidSuite(f"{spec}: require the explicit bounded offline mock configuration")
         if type(config["parallel"]) is not bool or type(config["trials_per_task"]) is not int or type(config["timeout_seconds"]) is not int:
             raise InvalidSuite(f"{spec}: invalid configuration scalar types")
@@ -129,7 +129,7 @@ def preflight(root):
             if grader["type"] != "trigger" or not isinstance(grader["name"], str) or not grader["name"].strip():
                 raise InvalidSuite(f"{task_path}: only the verified trigger grader is allowed")
             params = mapping(grader["config"], ["skill_path", "mode"], ["skill_path", "mode"], str(task_path))
-            if params != {"skill_path": f"skills/{name}/SKILL.md", "mode": "positive" if expected else "negative"}:
+            if params != {"skill_path": f"help/{name}/SKILL.md", "mode": "positive" if expected else "negative"}:
                 raise InvalidSuite(f"{task_path}: grader source/mode must match the skill and boolean expectation")
         if expectations != {True, False}:
             raise InvalidSuite(f"{spec}: both positive and negative cases are required")

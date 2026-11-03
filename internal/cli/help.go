@@ -1,27 +1,12 @@
 package cli
 
 import (
-	"embed"
 	"fmt"
 	"io"
 	"os"
-	"sort"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/helpdocs"
 )
-
-//go:embed helptext/*.txt
-var helpTextFS embed.FS
-
-var helpTopicFiles = map[string]string{
-	"launch-agents": "helptext/launch-agents.txt",
-	"channel-sync":  "helptext/channel-sync.txt", "channel-report-heredoc": "helptext/channel-report-heredoc.txt",
-	"": "helptext/overview.txt", "commands": "helptext/commands.txt", "config": "helptext/config.txt",
-	"directories": "helptext/directories.txt", "help": "helptext/help.txt", "messaging": "helptext/messaging.txt",
-	"send-heredoc": "helptext/send-heredoc.txt", "pop": "helptext/pop.txt", "get-status": "helptext/get-status.txt",
-	"execute-heredoc": "helptext/execute-heredoc.txt", "version": "helptext/version.txt",
-	"approve-execution": "helptext/approve-execution.txt", "decline-execution": "helptext/decline-execution.txt",
-	"get-status-oneline": "helptext/get-status-oneline.txt",
-	"refresh-status":     "helptext/refresh-status.txt",
-}
 
 func RunHelp(args []string) {
 	if err := WriteHelp(os.Stdout, os.Stderr, args); err != nil {
@@ -34,44 +19,40 @@ func WriteHelp(stdout, stderr io.Writer, args []string) error {
 }
 
 func runHelp(stdout, stderr io.Writer, args []string) error {
-	if len(args) > 1 {
-		_, _ = fmt.Fprintln(stderr, "help takes at most one topic")
-		return fmt.Errorf("help takes at most one topic")
+	if len(args) > 2 {
+		_, _ = fmt.Fprintln(stderr, "usage: tmux-a2a-postman help [topic [reference]]")
+		return fmt.Errorf("usage: tmux-a2a-postman help [topic [reference]]")
 	}
 	topic := ""
 	if len(args) > 0 {
 		topic = args[0]
 	}
 
-	path, ok := helpTopicFiles[topic]
-	if !ok {
-		_, _ = fmt.Fprintf(stderr, "unknown help topic: %q\n", topic)
+	data, err := helpdocs.Read(topic, args[min(1, len(args)):]...)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
 		_, _ = fmt.Fprintln(stderr, "")
 		_, _ = fmt.Fprintln(stderr, "Available topics:")
 		for _, t := range sortedHelpTopics() {
 			_, _ = fmt.Fprintf(stderr, "  %s\n", t)
 		}
-		return fmt.Errorf("unknown help topic: %q", topic)
-	}
-
-	data, err := helpTextFS.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("reading help topic %q: %w", topic, err)
+		return err
 	}
 	_, err = stdout.Write(data)
+	if err == nil && (topic == "" || topic == "overview" || topic == "help") && len(args) < 2 {
+		_, err = fmt.Fprint(stdout, "\n## Available HelpDoc topics\n\n")
+		for _, name := range sortedHelpTopics() {
+			if err != nil {
+				break
+			}
+			_, err = fmt.Fprintf(stdout, "- `tmux-a2a-postman help %s`\n", name)
+		}
+	}
 	return err
 }
 
 func sortedHelpTopics() []string {
-	topics := make([]string, 0, len(helpTopicFiles)-1)
-	for topic := range helpTopicFiles {
-		if topic == "" {
-			continue
-		}
-		topics = append(topics, topic)
-	}
-	sort.Strings(topics)
-	return topics
+	return helpdocs.Topics()
 }
 
 func isSubcommandHelpRequest(args []string) bool {
@@ -87,6 +68,13 @@ func isSubcommandHelpRequest(args []string) bool {
 }
 
 func hasCommandHelpTopic(command string) bool {
-	_, ok := helpTopicFiles[command]
-	return ok && command != ""
+	if command == "" {
+		return false
+	}
+	for _, topic := range helpdocs.Topics() {
+		if command == topic {
+			return true
+		}
+	}
+	return false
 }

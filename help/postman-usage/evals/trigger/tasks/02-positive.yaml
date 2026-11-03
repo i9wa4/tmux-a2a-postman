@@ -1,0 +1,12 @@
+id: postman-usage-2
+name: positive 2
+inputs:
+  prompt: Interpret bounded file-based status and sampled pane evidence.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-usage/SKILL.md
+    mode: positive

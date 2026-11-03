@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 )
 
 const (
@@ -111,7 +113,6 @@ func outcome(s string) string {
 }
 
 var (
-	messageID     = regexp.MustCompile(`^m-[0-9a-f]{32}$`)
 	inputID       = regexp.MustCompile(`^ireq_[0-9a-f]{32}$`)
 	node          = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$`)
 	observationID = regexp.MustCompile(`^[a-zA-Z0-9-]{1,80}$`)
@@ -119,7 +120,7 @@ var (
 
 func clean(f Facts) Facts {
 	for _, p := range []*string{&f.MessageID, &f.RequestID, &f.ReplyID, &f.OperationID} {
-		if !messageID.MatchString(*p) {
+		if !messageid.Valid(*p) {
 			*p = ""
 		}
 	}
@@ -128,7 +129,7 @@ func clean(f Facts) Facts {
 	}
 	ids := []string{}
 	for _, id := range f.ReplyToIDs {
-		if len(ids) < 16 && messageID.MatchString(id) {
+		if len(ids) < 16 && messageid.Valid(id) {
 			ids = append(ids, id)
 		}
 	}

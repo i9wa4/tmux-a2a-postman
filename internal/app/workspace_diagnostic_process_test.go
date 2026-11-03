@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
 func invocationFiles(t *testing.T, f *publicApprovalFixture, role string) []string {
@@ -183,7 +184,7 @@ func TestInvocationDiagnosticParallelProcessesUseSeparateFiles(t *testing.T) {
 
 func TestInvocationDiagnosticCrashDuringApprovalLeavesPartialEvidence(t *testing.T) {
 	f := newPublicApprovalFixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	cmd := f.execution(ctx, "touch must-not-execute\n")
 	if err := cmd.Start(); err != nil {
@@ -196,8 +197,12 @@ func TestInvocationDiagnosticCrashDuringApprovalLeavesPartialEvidence(t *testing
 			_ = cmd.Wait()
 		}
 	}()
+	// The approval-wait phase starts after the durable request's bounded
+	// notification. Its eight-second budget must fit inside this observation;
+	// five seconds from process startup could kill a healthy macOS invocation.
+	f.waitRequest()
 	var path string
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+	for deadline := time.Now().Add(workspace.PostCommitNoticeBudget + 5*time.Second); time.Now().Before(deadline); {
 		files := invocationFiles(t, f, "worker")
 		if len(files) == 1 {
 			b, _ := os.ReadFile(files[0])

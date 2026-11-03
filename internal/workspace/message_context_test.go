@@ -91,3 +91,32 @@ func TestOversizedRecipientInstructionsDoNotPublishTruncatedMail(t *testing.T) {
 		t.Fatal("partial instructions were published", err)
 	}
 }
+
+func TestLegacyContextHeadingsRemainClaimableAndReplyable(t *testing.T) {
+	m := mailFixture(t)
+	oldPrefix := "# Message\n\n## Recipient Instructions\n\n### Common contract\n\nOld captured policy.\n\n## Sender Message\n\n"
+	m.Context = func(context.Context, Snapshot, Message) (string, error) { return oldPrefix, nil }
+	ctx := context.Background()
+	original, err := m.Send(ctx, mailRuntime("worker"), "peer", "# Literal body\n```markdown\n## unchanged\n```\n", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(mailPath(m, "worker", "sent", original.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPrefix := "# Message\n\n## Recipient Instructions\n\n### Common contract\n\nNew policy.\n\n## Sender Message\n\n"
+	m.Context = func(context.Context, Snapshot, Message) (string, error) { return newPrefix, nil }
+	claim, err := m.Claim(ctx, mailRuntime("peer"), "")
+	if err != nil || claim == nil || claim.Message.Context.Markdown != oldPrefix || claim.Message.Body != original.Body {
+		t.Fatal("new renderer must not reinterpret historical captured Markdown", claim, err)
+	}
+	reply, err := m.SendWithReply(ctx, mailRuntime("peer"), "worker", "Exact result\n", original.ID, original.InputRequestID, false)
+	if err != nil || reply.ReplyTo != original.ID || reply.Context.Markdown != newPrefix {
+		t.Fatal("legacy context lost exact reply correlation", reply, err)
+	}
+	after, err := os.ReadFile(mailPath(m, "worker", "sent", original.ID))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("heading change rewrote the original archive", err)
+	}
+}

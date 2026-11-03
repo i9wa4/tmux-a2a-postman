@@ -1,0 +1,13 @@
+name: postman-team-manager-trigger
+description: Deterministic management invocation boundaries; no model API.
+skill: postman-team-manager
+version: '1.0'
+config:
+  skill_directories: ["../.."]
+  executor: mock
+  model: offline-mock
+  trials_per_task: 1
+  timeout_seconds: 30
+  parallel: false
+tasks:
+- tasks/*.yaml

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 )
 
 func decodeExecutionRequest(msg Message) (ApprovalRequest, error) {
@@ -90,11 +89,11 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 		if err != nil {
 			return err
 		}
-		nonce, err := randomName()
+		identity, err := newMailIdentity()
 		if err != nil {
 			return err
 		}
-		result = Message{Kind: "execution-decision", ID: "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, To: original.From, Replies: replyReferences(sources), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: string(raw), GuidanceVersion: 1}
+		result = Message{Kind: "execution-decision", ID: identity.ID, From: s.Caller.Role, To: original.From, Replies: replyReferences(sources), CreatedAt: identity.CreatedAt, Body: string(raw), GuidanceVersion: 1}
 		if err := m.addMessageContext(ctx, s, &result); err != nil {
 			return err
 		}

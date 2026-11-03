@@ -18,9 +18,7 @@ State lives below `${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman`:
 locks/<workspace>.lock
 <workspace>/workspace.json
 <workspace>/runtime/binding.json
-<workspace>/runtime/notice-locks/<role>.lock
 <workspace>/runtime/notices/<message-id>.json
-<workspace>/runtime/input-guards/<role>.json
 <workspace>/agents/<role>/{draft,inbox,read,sent,failed}/
 <workspace>/agents/<role>/read/<message-id>.pop.json
 <workspace>/agents/<role>/executions/<operation-id>.json
@@ -72,7 +70,7 @@ no persistent Postman worker or model API adapter is introduced.
 
 ## 4. Commands and observations
 
-[Command approval](../command-approvals.md) uses the same mail and notification
+[Command approval](../../help/execution.md) uses the same mail and notification
 path. The synchronous wrapper consumes only its own exactly matched decision.
 No mailbox lock spans approval waiting or Bash execution. Audit records never
 become a resumable execution queue or reusable authority.
@@ -91,5 +89,5 @@ establish model identity or continuous work.
 
 Herdr support is discontinued. Historical research is not a current setup gate
 or a future support commitment. Old histories are not migrated, deleted or used
-as execution authority. See the [CLI specification](../cli-spec.md) for the
-complete current interface and keep/simplify/remove inventory.
+as execution authority. See the [CLI specification](../../help/cli-spec.md) for
+the complete current interface and keep/simplify/remove inventory.

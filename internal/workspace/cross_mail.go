@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
@@ -79,21 +78,21 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 					return errors.New("reply fills a different request")
 				}
 			}
-			nonce, err := randomName()
+			identity, err := newMailIdentity()
 			if err != nil {
 				return err
 			}
 			msg = Message{
-				ID:   "m-" + strings.TrimPrefix(nonce, ".new-"),
+				ID:   identity.ID,
 				From: from.Caller.Role, FromSession: source.Name(),
 				To: to.Caller.Role, ToSession: destination.Name(),
 				ReplyTo: replyTo, FillsInputRequestID: fills,
-				NeedsReply: needsReply, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body,
+				NeedsReply: needsReply, CreatedAt: identity.CreatedAt, Body: body,
 				GuidanceVersion: 1,
 				Replies:         refs,
 			}
 			if needsReply {
-				msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
+				msg.InputRequestID = inputRequestID(msg.ID)
 			}
 			if err := m.addMessageContext(ctx, to, &msg); err != nil {
 				return err

@@ -4,6 +4,10 @@ import json
 import os
 import pathlib
 
+# Transport validation remains in Go. Fixtures accept both canonical wire shapes
+# while retaining the complete exact notification ID in their evidence.
+MESSAGE_ID_PATTERN = r"m-(?:[0-9]{8}T[0-9]{6}\.[0-9]{9}Z-)?[a-f0-9]{32}"
+
 
 def read_archive(path):
     raw = pathlib.Path(path).read_bytes()

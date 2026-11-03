@@ -500,10 +500,10 @@ def receive():
     msg = read_archive(archive)
     context = msg.get("recipient_context", "")
     required = [
-        "## Recipient Instructions",
-        "### Available Skills",
+        "\n## Recipient Instructions\n",
+        "\n### Available Skills\n",
         "You can talk to:",
-        "## Sender Message",
+        "\n## Sender Message\n",
         "Read this complete archived Markdown through EOF",
     ]
     if any(part not in context for part in required):

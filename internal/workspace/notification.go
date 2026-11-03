@@ -5,13 +5,12 @@ import (
 	"errors"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
-// NoticeResult is tmux input acceptance, separate from durable mail and POP.
+// NoticeResult is a terminal submission heuristic, separate from durable mail and POP.
 type NoticeResult struct {
 	Status string `json:"status"`
 	Pane   string `json:"pane,omitempty"`
@@ -19,9 +18,8 @@ type NoticeResult struct {
 }
 
 const (
-	NoticeLockBudget       = 5 * time.Second
-	NoticeInputBudget      = 2 * time.Second
-	PostCommitNoticeBudget = NoticeLockBudget + NoticeInputBudget + time.Second
+	NoticeInputBudget      = 5 * time.Second
+	PostCommitNoticeBudget = 8 * time.Second
 )
 
 type paneNotifier interface {
@@ -107,15 +105,6 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 		result.Reason = "recipient runtime has no tmux input transport"
 		return result
 	}
-	// Serialize only this recipient's paste/submit, without a mailbox lock.
-	lockCtx, lockCancel := context.WithTimeout(ctx, NoticeLockBudget)
-	lock, holdStart, err := s.lockNotice(lockCtx, destination, target)
-	lockCancel()
-	if err != nil {
-		result.Reason = err.Error()
-		return result
-	}
-	defer func() { _ = lock.Close(); trace.Measure("notice_lock_held", holdStart) }()
 	if err := notifier.prepareNotice(ctx, target); err != nil {
 		result.Reason = err.Error()
 		return result
@@ -147,12 +136,12 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 		result.Reason = inputErr.Error()
 		return result
 	}
-	if err := s.acceptNotice(ctx, source, msg, target); err != nil {
-		result.Reason = "tmux accepted input but receipt persistence failed: " + err.Error()
+	if err := s.acceptNotice(ctx, source, destination, msg, target); err != nil {
+		result.Reason = "terminal observation completed but receipt persistence failed: " + err.Error()
 		return result
 	}
 	result.Status = "accepted"
-	result.Reason = "notification left the observed input area after one C-m; recipient processing is not implied"
+	result.Reason = "Enter sent and substantial whole-pane change observed; this heuristic does not prove receipt or processing"
 	return result
 }
 
@@ -189,131 +178,6 @@ func (t Tmux) prepareNotice(ctx context.Context, target Binding) error {
 
 func (r NamedRuntime) prepareNotice(ctx context.Context, target Binding) error {
 	return r.tmux.prepareNotice(ctx, target)
-}
-
-func (s Store) lockNotice(ctx context.Context, rt Runtime, target Binding) (*os.File, time.Duration, error) {
-	trace := diagnostic.From(ctx)
-	var heldStart time.Duration
-	acquired := false
-	var lock *os.File
-	err := retryNoticeAdmission(ctx, func() error {
-		return s.WithVerified(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
-			found := false
-			for _, b := range snapshot.Bindings {
-				if b == target {
-					found = true
-				}
-			}
-			if !found {
-				return ErrUnknown
-			}
-			runtime, err := privateDir(ws, "runtime", false)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = runtime.Close() }()
-			dir, err := privateDir(runtime, "notice-locks", true)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = dir.Close() }()
-			f, err := dir.OpenFile(target.Role+".lock", os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
-			if errors.Is(err, os.ErrExist) {
-				f, err = dir.OpenFile(target.Role+".lock", os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-			}
-			if err != nil {
-				return err
-			}
-			info, err := f.Stat()
-			if err != nil || !privateInfo(info, false) {
-				_ = f.Close()
-				return errors.New("unsafe notification lock")
-			}
-			pathInfo, err := dir.Lstat(target.Role + ".lock")
-			if err != nil || !os.SameFile(info, pathInfo) {
-				_ = f.Close()
-				return ErrUnknown
-			}
-			lock = f
-			return nil
-		})
-	})
-	if err != nil {
-		return nil, 0, err
-	}
-	keep := false
-	defer func() {
-		if !keep {
-			_ = lock.Close()
-			if acquired {
-				trace.Measure("notice_lock_held", heldStart)
-			}
-		}
-	}()
-	waitStart := trace.Now()
-	defer func() {
-		if !acquired {
-			trace.Measure("notice_lock_wait", waitStart)
-		}
-	}()
-	// Wait on the already opened OS lock. Re-probing tmux and rewriting runtime
-	// state on every contention tick would flood the server when many execution
-	// requesters target one approver. Fresh native checks follow acquisition.
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
-		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			trace.Measure("notice_lock_wait", waitStart)
-			heldStart = trace.Now()
-			acquired = true
-			break
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, 0, err
-		}
-		if err := noticePause(ctx); err != nil {
-			return nil, 0, err
-		}
-	}
-	err = retryNoticeAdmission(ctx, func() error {
-		return s.withView(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
-			found := false
-			for _, b := range snapshot.Bindings {
-				if b == target {
-					found = true
-				}
-			}
-			if !found {
-				return ErrUnknown
-			}
-			runtime, err := privateDir(ws, "runtime", false)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = runtime.Close() }()
-			dir, err := privateDir(runtime, "notice-locks", false)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = dir.Close() }()
-			info, err := lock.Stat()
-			if err != nil {
-				return err
-			}
-			path, err := dir.Lstat(target.Role + ".lock")
-			if err != nil || !os.SameFile(info, path) {
-				return ErrUnknown
-			}
-			return nil
-		})
-	})
-	if err != nil {
-		return nil, 0, err
-	}
-	keep = true
-	return lock, heldStart, nil
 }
 
 type noticeRecord struct {
@@ -373,8 +237,22 @@ func (s Store) reserveNotice(ctx context.Context, rt Runtime, msg Message, targe
 	return s.noticeTransition(ctx, rt, msg, target, false)
 }
 
-func (s Store) acceptNotice(ctx context.Context, rt Runtime, msg Message, target Binding) error {
+func (s Store) acceptNotice(ctx context.Context, rt, destination Runtime, msg Message, target Binding) error {
 	return retryAcceptedNoticeState(ctx, func() error {
+		// Recheck the pinned recipient on every receipt-only retry. A native
+		// timeout must not let a replacement pane inherit this attempt.
+		if err := retryNoticeAdmission(ctx, func() error {
+			return s.withView(ctx, destination, func(_ *os.Root, snapshot Snapshot) error {
+				for _, binding := range snapshot.Bindings {
+					if binding == target {
+						return nil
+					}
+				}
+				return ErrUnknown
+			})
+		}); err != nil {
+			return err
+		}
 		_, err := s.noticeTransition(ctx, rt, msg, target, true)
 		return err
 	})
