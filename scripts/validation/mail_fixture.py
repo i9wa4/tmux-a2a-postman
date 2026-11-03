@@ -9,6 +9,15 @@ import pathlib
 MESSAGE_ID_PATTERN = r"m-(?:[0-9]{8}T[0-9]{6}\.[0-9]{9}Z-)?[a-f0-9]{32}"
 
 
+def workspace_files(state, pattern):
+    """Enumerate real fixture workspaces once; display aliases duplicate none."""
+    state = pathlib.Path(state)
+    if state.exists():
+        for workspace in state.iterdir():
+            if not workspace.is_symlink() and workspace.is_dir():
+                yield from workspace.glob(pattern)
+
+
 def read_archive(path):
     raw = pathlib.Path(path).read_bytes()
     header, body = raw.split(b" -->\n\n", 1)
@@ -34,7 +43,7 @@ def read_archive(path):
 
 def sent_evidence(role, body, state_home=None):
     state = pathlib.Path(state_home or os.environ["XDG_STATE_HOME"]) / "tmux-a2a-postman"
-    found = [read_archive(path) for path in state.glob("*/agents/" + role + "/sent/*.md")]
+    found = [read_archive(path) for path in workspace_files(state, "agents/" + role + "/sent/*.md")]
     found = [message for message in found if message["body"] == body]
     if len(found) != 1:
         raise RuntimeError("cannot identify unique own sent evidence")

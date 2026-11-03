@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import runpy
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -64,6 +66,25 @@ class AnalysisTests(unittest.TestCase):
         self.assertTrue(READ(self.path)["incomplete"])
         self.path.write_bytes(b"x" * (128 * 1024 + 1))
         self.assertEqual(READ(self.path)["reason"], "oversized")
+
+    def test_aliases_count_one_file_and_final_symlinks_remain_unknown(self):
+        base = Path(self.directory.name)
+        logs = base / "canonical/logs"
+        day = logs / "2026-11-02"
+        day.mkdir(parents=True)
+        self.path = day / "inv-example.jsonl"
+        self.write(self.events)
+        alias = base / "readable--alias"
+        alias.symlink_to("canonical", target_is_directory=True)
+        unsafe = base / "symlink.jsonl"
+        unsafe.symlink_to(self.path)
+        result = subprocess.run(
+            [sys.executable, str(SOURCE), str(logs), str(alias / "logs"), str(unsafe)],
+            text=True, capture_output=True, check=True,
+        )
+        report = json.loads(result.stdout)
+        self.assertEqual((report["samples"], report["complete"], report["incomplete"]), (2, 1, 1))
+        self.assertEqual(report["incomplete_files"][0]["path"], str(unsafe))
 
 
 if __name__ == "__main__":

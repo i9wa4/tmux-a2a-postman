@@ -53,7 +53,7 @@ def run_case(case, terminal):
     # disagreeing with the agent's trusted-project cwd.
     root = pathlib.Path(tempfile.mkdtemp(prefix="pm-input-", dir="/tmp")).resolve()
     home, evidence = root / "home", root / "evidence"
-    work, ch = home / "work", home / ".codex"
+    work, ch = home / "work-tree", home / ".codex"
     work.mkdir(parents=True)
     if codex:
         ch.mkdir(mode=0o700)
@@ -89,7 +89,7 @@ def run_case(case, terminal):
                       "  - session_name: work\n    interface_node: orchestrator\n"
                       "  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n---\n" + config)
         if case in EXTERNAL_CASES:
-            config = ("---\ninterface_node: orchestrator\nexternal_workspace: ~/work\n"
+            config = ("---\ninterface_node: orchestrator\nexternal_workspace: ~/work-tree\n"
                       "external_session: work\nexternal_mailbox_root: " + str(root / "external") + "\n---\n" + config)
         if args.postman_md:
             content = args.postman_md.read_text()

@@ -16,7 +16,7 @@ import tempfile
 import time
 import uuid
 
-from mail_fixture import MESSAGE_ID_PATTERN, read_archive
+from mail_fixture import MESSAGE_ID_PATTERN, read_archive, workspace_files
 from recursive_team.configuration import compile_config
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -177,8 +177,8 @@ def run_case(case):
                 "root initial send failed: " + result.stdout + result.stderr
             )
         matches = []
-        for path in (root / "state").glob(
-            "tmux-a2a-postman/*/agents/messenger/sent/*.md"
+        for path in workspace_files(
+            root / "state" / "tmux-a2a-postman", "agents/messenger/sent/*.md"
         ):
             msg = read_archive(path)
             try:

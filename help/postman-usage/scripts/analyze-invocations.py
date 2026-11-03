@@ -84,11 +84,20 @@ def main():
         elif root.is_dir() and not root.is_symlink():
             paths.update(root.glob("*/inv-*.jsonl"))
     selected, excluded, unreadable = [], Counter(), []
+    seen_files = set()
     for path in sorted(paths):
         if args.date and path.parent.name != args.date:
             excluded["date"] += 1
             continue
         try:
+            # Explicit roots may name the same file through a workspace alias.
+            # Keep final-file/day symlink rejection in read_invocation intact.
+            if not path.is_symlink() and not path.parent.is_symlink():
+                info = path.stat()
+                identity = (info.st_dev, info.st_ino)
+                if identity in seen_files:
+                    continue
+                seen_files.add(identity)
             row = read_invocation(path)
         except OSError:
             unreadable.append(str(path))

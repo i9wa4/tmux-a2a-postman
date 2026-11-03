@@ -12,7 +12,7 @@ import tempfile
 import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from mail_fixture import read_archive
+from mail_fixture import read_archive, workspace_files
 from recursive_team.configuration import role_sections
 
 phase, nonce = sys.argv[1:]
@@ -113,8 +113,9 @@ def interface_scope(snapshot):
 
 
 def own_sent(wire_nonce):
-    files = pathlib.Path(os.environ["XDG_STATE_HOME"]).glob(
-        "tmux-a2a-postman/*/agents/" + role + "/sent/*.md"
+    files = workspace_files(
+        pathlib.Path(os.environ["XDG_STATE_HOME"]) / "tmux-a2a-postman",
+        "agents/" + role + "/sent/*.md",
     )
     found = []
     for path in files:
