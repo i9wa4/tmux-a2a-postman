@@ -111,29 +111,31 @@ gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
-name from `tmux-a2a-postman skills` to install another entry. Each Skill
-reads its detailed references with `tmux-a2a-postman skills <name> <ref>`.
+workflow name listed by `tmux-a2a-postman help` to install another entry.
+Read the full procedure with `tmux-a2a-postman help <name>`, then matching
+references with `tmux-a2a-postman help <name> <ref>`.
 
-Follow the [first exchange](skills/postman-usage/references/quickstart.md) and
+Follow the [first exchange](help/postman-usage/references/quickstart.md) and
 the [configuration reference](help/postman-md.md) to choose roles and routes.
 
 The repository mirrors the installed interface:
 
 ```text
 help/                 CLI usage: help <topic>
-config/               bundled configuration assets
+  <name>/SKILL.md      canonical workflow: help <name>
+  <name>/references/   detailed procedures: help <name> <ref>
+  <name>/scripts/      optional helpers
+  <name>/evals/        workflow evaluation fixtures
 skills/<name>/
-  SKILL.md            short entry: skills <name>
-  references/         workflows: skills <name> <ref>
-  scripts/            optional helpers
-  evals/              offline validation
+  SKILL.md            generated header + one-line help instruction
+config/               bundled configuration assets
 docs/                design, research, development and validation
 testdata/            test-only fixtures
 ```
 
 ## 4. Guides and references
 
-- [Quickstart and operations](skills/postman-usage/references/quickstart.md):
+- [Quickstart and operations](help/postman-usage/references/quickstart.md):
   setup, mail, observations and troubleshooting.
 - [Configuration reference](help/postman-md.md):
   anatomy, examples and exact supported fields.

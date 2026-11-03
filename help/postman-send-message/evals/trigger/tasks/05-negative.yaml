@@ -1,0 +1,12 @@
+id: postman-send-message-5
+name: negative 5
+inputs:
+  prompt: Recall the latest recorded day's correspondence in chronological order.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-send-message/SKILL.md
+    mode: negative
