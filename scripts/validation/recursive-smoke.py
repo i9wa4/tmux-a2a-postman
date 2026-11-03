@@ -42,7 +42,7 @@ if not 4 <= args.depth <= 12:
     )
 repo = pathlib.Path(__file__).resolve().parents[2]
 terminal = repo / "scripts/validation/recursive_team/terminal.py"
-template = (args.postman_md or terminal.with_name("postman.md")).resolve()
+template = (args.postman_md or repo / "testdata/config/recursive.md").resolve()
 roles = ["messenger", "orchestrator", "worker", "approver", "guardian", "critic"]
 postman = str(pathlib.Path(args.postman).resolve())
 skill_roots = [path.resolve() for path in args.skill_root] + [repo / "skills"]

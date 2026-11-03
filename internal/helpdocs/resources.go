@@ -28,7 +28,7 @@ func ResourcePath(ctx context.Context) (string, error) {
 	if err != nil || !filepath.IsAbs(cache) {
 		return "", errors.New("resources require an absolute user cache directory")
 	}
-	modes, err := content.ReadFile("asset-modes.json")
+	modes, err := fs.ReadFile(Assets(), "config/asset-modes.json")
 	if err != nil {
 		return "", err
 	}
@@ -40,22 +40,19 @@ func assetList(source fs.FS, modeJSON []byte) ([]asset, error) {
 	if err := json.Unmarshal(modeJSON, &modes); err != nil {
 		return nil, fmt.Errorf("invalid embedded resource modes: %w", err)
 	}
+	if len(modes) == 0 || len(modes) > 256 {
+		return nil, errors.New("embedded resource manifest has invalid size")
+	}
+	names := make([]string, 0, len(modes))
+	for name := range modes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	var result []asset
-	visited := make(map[string]bool)
 	total := 0
-	err := fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if visited[name] || len(visited) >= 512 || !fs.ValidPath(name) || strings.ContainsAny(name, "\\\x00") || strings.Count(name, "/") > 16 {
-			return fmt.Errorf("invalid or repeated resource path %q", name)
-		}
-		visited[name] = true
-		if entry.IsDir() {
-			return nil
-		}
-		if !fs.ValidPath(name) || strings.ContainsAny(name, "\\\x00") || entry.Type() != 0 {
-			return fmt.Errorf("invalid embedded resource %q", name)
+	for _, name := range names {
+		if !fs.ValidPath(name) || strings.ContainsAny(name, "\\\x00") || strings.Count(name, "/") > 16 {
+			return nil, fmt.Errorf("invalid embedded resource %q", name)
 		}
 		mode := fs.FileMode(0)
 		switch modes[name] {
@@ -64,24 +61,24 @@ func assetList(source fs.FS, modeJSON []byte) ([]asset, error) {
 		case "0555":
 			mode = 0o555
 		default:
-			return fmt.Errorf("resource %q has no valid declared mode", name)
+			return nil, fmt.Errorf("resource %q has no valid declared mode", name)
+		}
+		info, err := fs.Stat(source, name)
+		if err != nil {
+			return nil, fmt.Errorf("invalid embedded resource %q: %w", name, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("embedded resource %q must be a regular file", name)
 		}
 		data, err := fs.ReadFile(source, name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		total += len(data)
 		if len(data) > 1024*1024 || total > 8*1024*1024 || len(result) >= 256 {
-			return errors.New("embedded resource set exceeds its bounds")
+			return nil, errors.New("embedded resource set exceeds its bounds")
 		}
 		result = append(result, asset{name, data, mode})
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(result) != len(modes) || len(result) == 0 {
-		return nil, errors.New("embedded resource manifest does not match its files")
 	}
 	return result, nil
 }

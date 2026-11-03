@@ -10,20 +10,20 @@ import (
 	"sort"
 	"strings"
 
+	configdata "github.com/i9wa4/tmux-a2a-postman/config"
 	"github.com/i9wa4/tmux-a2a-postman/docs"
+	helpdata "github.com/i9wa4/tmux-a2a-postman/help"
 	"github.com/i9wa4/tmux-a2a-postman/skills"
 )
 
-var content = docs.Content
-
-// Existing guides and design references are served from their authored paths.
-var topicFiles = map[string]string{
-	"cli-spec":                    "cli-spec.md",
-	"server-status":               "design/server-status.md",
-	"recipient-markdown":          "design/recipient-markdown-parity.md",
-	"external-filesystem-channel": "design/external-filesystem-channel.md",
-	"invocation-diagnostics":      "invocation-diagnostics.md",
-	"launching":                   "launch-agents.md",
+var roots = []struct {
+	name  string
+	files fs.FS
+}{
+	{"help", helpdata.Content},
+	{"skills", skills.Content},
+	{"config", configdata.Content},
+	{"docs", docs.Content},
 }
 
 // Read returns a complete authored topic without accessing mutable state.
@@ -34,11 +34,7 @@ func Read(topic string) ([]byte, error) {
 	if !validName(topic) {
 		return nil, fmt.Errorf("unknown help topic %q", topic)
 	}
-	name := topicFiles[topic]
-	if name == "" {
-		name = "help/" + topic + ".md"
-	}
-	data, err := content.ReadFile(name)
+	data, err := helpdata.Content.ReadFile(topic + ".md")
 	if err != nil {
 		return nil, fmt.Errorf("unknown help topic %q; use tmux-a2a-postman help for installed topics: %w", topic, err)
 	}
@@ -47,15 +43,12 @@ func Read(topic string) ([]byte, error) {
 
 // Topics is sorted and does not resolve configuration, native tmux or resources.
 func Topics() []string {
-	entries, _ := content.ReadDir("help")
+	entries, _ := helpdata.Content.ReadDir(".")
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
 			names = append(names, strings.TrimSuffix(entry.Name(), ".md"))
 		}
-	}
-	for name := range topicFiles {
-		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
@@ -97,34 +90,62 @@ func Entry(name string) ([]byte, error) {
 	}
 	data, err := fs.ReadFile(Entries(), name+"/SKILL.md")
 	if err != nil {
-		return nil, fmt.Errorf("unknown Skill %q; use skills list: %w", name, err)
+		return nil, fmt.Errorf("unknown Skill %q; use tmux-a2a-postman skills: %w", name, err)
 	}
 	return data, nil
 }
 
-// Assets are the only files eligible for explicit resource materialization.
+// Reference returns one complete, named reference from an authored Skill.
+func Reference(name, ref string) ([]byte, error) {
+	if !validName(name) || !validName(ref) {
+		return nil, fmt.Errorf("invalid Skill or reference name")
+	}
+	data, err := fs.ReadFile(Entries(), name+"/references/"+ref+".md")
+	if err != nil {
+		return nil, fmt.Errorf("unknown reference %q for Skill %q; use tmux-a2a-postman skills %s: %w", ref, name, name, err)
+	}
+	return data, nil
+}
+
+type bundledFiles struct{}
+
+func (bundledFiles) Open(name string) (fs.File, error) {
+	if fs.ValidPath(name) {
+		prefix, relative, ok := strings.Cut(name, "/")
+		if ok {
+			for _, root := range roots {
+				if prefix == root.name {
+					return root.files.Open(relative)
+				}
+			}
+		}
+	}
+	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+}
+
+// Assets reads canonical repository-relative paths from the embedded packages.
+// The manifest selects which files need explicit filesystem materialization.
 func Assets() fs.FS {
-	result, _ := fs.Sub(content, "assets")
-	return result
+	return bundledFiles{}
 }
 
 // BundleID binds paths and bytes of every embedded topic, entry and asset. It
 // does not trust release labels: different development builds cannot collide.
 func BundleID() string {
 	hash := sha256.New()
-	for _, source := range []fs.FS{content, skills.Content} {
-		_ = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
+	for _, root := range roots {
+		_ = fs.WalkDir(root.files, ".", func(name string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if entry.IsDir() {
 				return nil
 			}
-			data, readErr := fs.ReadFile(source, name)
+			data, readErr := fs.ReadFile(root.files, name)
 			if readErr != nil {
 				return readErr
 			}
-			_, _ = fmt.Fprintf(hash, "%s\x00%d\x00", path.Clean(name), len(data))
+			_, _ = fmt.Fprintf(hash, "%s\x00%d\x00", path.Join(root.name, name), len(data))
 			_, _ = hash.Write(data)
 			return nil
 		})

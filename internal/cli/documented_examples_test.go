@@ -11,7 +11,7 @@ import (
 )
 
 func TestDocumentedPracticalConfigRendersRecipientSpecificContext(t *testing.T) {
-	path, err := filepath.Abs(filepath.Join("..", "..", "examples", "practical", "postman.md"))
+	path, err := filepath.Abs(filepath.Join("..", "..", "testdata", "config", "practical.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
