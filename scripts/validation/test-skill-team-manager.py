@@ -5,7 +5,7 @@ from pathlib import Path
 import runpy
 import unittest
 
-ASSETS = Path(os.environ.get("POSTMAN_HELP_ASSET_ROOT", Path(__file__).resolve().parents[2] / "internal/helpdocs/assets"))
+ASSETS = Path(os.environ.get("POSTMAN_HELP_ASSET_ROOT", Path(__file__).resolve().parents[2] / "docs/assets"))
 DECIDE = runpy.run_path(str(ASSETS / "team-manager/next_step.py"))["next_step"]
 
 

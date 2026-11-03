@@ -1,5 +1,3 @@
-<!-- Generated from internal/helpdocs/topics/recipient-markdown.md; edit that source and run go generate ./internal/helpdocs. -->
-
 # Recipient Markdown compatibility
 
 The maintainer requested restoring the daemon-era generated message context,
