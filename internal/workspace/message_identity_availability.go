@@ -75,15 +75,25 @@ func mailIdentityExists(ws *os.Root, id string) (bool, error) {
 					name = id + ".json"
 				}
 				_, statErr := box.Lstat(name)
-				_ = box.Close()
 				if statErr == nil {
+					_ = box.Close()
 					_ = agent.Close()
 					return true, nil
 				}
 				if !errors.Is(statErr, os.ErrNotExist) {
+					_ = box.Close()
 					_ = agent.Close()
 					return false, statErr
 				}
+				if boxName == "executions" {
+					found, err := decisionIdentityExists(box, id)
+					if err != nil || found {
+						_ = box.Close()
+						_ = agent.Close()
+						return found, err
+					}
+				}
+				_ = box.Close()
 			}
 			_ = agent.Close()
 		}
@@ -102,6 +112,43 @@ func mailIdentityExists(ws *os.Root, id string) (bool, error) {
 	}
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), "-"+id+".json") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// A decision reserves its outgoing message ID before mail staging begins.
+// Its filename is the request ID, so inspect the immutable payload as well.
+func decisionIdentityExists(executions *os.Root, id string) (bool, error) {
+	decisions, err := privateDir(executions, "decisions", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = decisions.Close() }()
+	entries, err := boundedEntries(decisions)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		requestID := strings.TrimSuffix(entry.Name(), ".json")
+		if entry.Name() != requestID+".json" || !messageID(requestID) {
+			return false, ErrUnknown
+		}
+		var reservation struct {
+			MessageID string           `json:"message_id"`
+			Decision  ApprovalDecision `json:"decision"`
+		}
+		if err := readJSON(decisions, entry.Name(), &reservation); err != nil {
+			return false, err
+		}
+		if !messageID(reservation.MessageID) {
+			return false, ErrUnknown
+		}
+		if reservation.MessageID == id {
 			return true, nil
 		}
 	}

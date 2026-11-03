@@ -11,10 +11,10 @@ import (
 func TestAvailableMailIdentityChecksAllHistoricalBoxesAndOperations(t *testing.T) {
 	const occupied = "m-20261103T173802.482076000Z-ABC123"
 	const free = "m-20261103T173802.482076000Z-DEF456"
-	for _, box := range []string{"draft", "inbox", "read", "sent", "failed", "executions", "transactions"} {
+	for _, box := range []string{"draft", "inbox", "read", "sent", "failed", "executions", "decisions", "transactions"} {
 		t.Run(box, func(t *testing.T) {
 			m := mailFixture(t)
-			sendMail(t, m) // Initialize the verified workspace and both roles.
+			request := sendMail(t, m) // Initialize the verified workspace and both roles.
 			root := filepath.Join(m.Store.StateRoot, "repo")
 			dir := filepath.Join(root, "agents", "peer", box)
 			name := occupied + ".md"
@@ -25,10 +25,23 @@ func TestAvailableMailIdentityChecksAllHistoricalBoxesAndOperations(t *testing.T
 				dir = filepath.Join(root, box)
 				name = "send-" + occupied + ".json"
 			}
+			content := []byte("occupied")
+			if box == "decisions" {
+				dir = filepath.Join(root, "agents", "peer", "executions", "decisions")
+				name = request.ID + ".json"
+				var err error
+				content, err = json.Marshal(struct {
+					MessageID string           `json:"message_id"`
+					Decision  ApprovalDecision `json:"decision"`
+				}{occupied, ApprovalDecision{Version: 2, Command: "printf once", Decision: "approved", OperationID: request.ID, Reason: "reviewed"}})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, name), []byte("occupied"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			attempts := 0
