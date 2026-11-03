@@ -78,7 +78,7 @@ func shortEntropy(s string) bool {
 func Timestamp(id string) (time.Time, bool) {
 	const end = 2 + len(Layout)
 	if len(id) <= end+1 || !strings.HasPrefix(id, "m-") || id[end] != '-' ||
-		!(shortEntropy(id[end+1:]) || legacyEntropy(id[end+1:])) {
+		(!shortEntropy(id[end+1:]) && !legacyEntropy(id[end+1:])) {
 		return time.Time{}, false
 	}
 	stamp := id[2:end]
