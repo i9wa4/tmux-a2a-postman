@@ -299,25 +299,38 @@ Send completes a bounded foreground notification attempt before returning. It
 does not await POP, understanding, a reply or task completion. The target is a
 verified recipient pane; ordinary shells and tmux copy/input modes are rejected.
 
-Postman processes one target pane's input at a time, with an OS file lock shared
-by all senders to that destination. It pastes one short hint, observes the full
-hint at the cursor, allows a short settling period and sends one real C-m.
-Observe after submission before admitting another hint. Lock waiting is bounded
-to five seconds; paste/settlement/submit get a fresh two seconds after
-acquisition, with an eight-second total post-commit bound. Waiting does not
-repeatedly refresh native bindings. No fixed Codex/Claude prompt symbols or
-model APIs determine acceptance. Unknown results are retained and do not cause
-blind re-paste or repeated Enter. A lock released by process exit does not erase
-a pending/unknown input record. Human drafts and unrelated writers remain
-outside this Postman-only serialization contract. Issue #901's former
-coordinator roadmap was withdrawn; the limitation remains.
+The foreground sender pastes one short hint once. After at least 600ms it
+captures the whole pane and sends C-m; after another 600ms it captures again. A
+bounded line diff counts inserted/deleted lines, ignoring trailing terminal
+padding. A replacement counts as two lines; a one-row scroll does not make every
+subsequent row different. At most four changed lines is small enough to retry
+Enter, with at least 600ms between presses and a maximum of three. Retry
+cooldown adds 300ms per attempt: paste-to-first Enter is at least 600ms;
+subsequent Enter intervals are at least 900ms and 1200ms. This breaks
+constant-rate interleaving across senders. Capture again immediately before each
+retry. Substantial change stops extra Enter. No prompt glyph, cursor prefix,
+input area, provider name or model API is inspected. An identical screen can
+mean newline or accepted input; the retry heuristic deliberately permits extra
+Enter and never establishes recipient acceptance or processing. `accepted`
+retains its transport-only compatibility name for a substantially changed
+screen; `unknown` includes exhausted small-change retries. POP/full reads/exact
+replies and execution effects require their own evidence.
 
-The two-second input budget begins after the pending guard is durably written.
-It covers paste, settlement and C-m. After the single C-m, read-only submission
-observations, native ownership checks and guard/receipt persistence share the
-outer eight-second deadline. A shorter native read timeout may retry only the
-read; no retry pastes input or repeats Enter. Actual identity/geometry failures
-stop immediately. The input deadline never cancels post-submit evidence.
+Independent messages do not acquire a destination notification lock or
+read/write persistent input guards. Concurrent senders can paste complete hints
+before the last process submits them. There is no last-sender registry, queue,
+replay worker or daemon. Per-message attempt reservation and short workspace
+mailbox locks still prevent duplicate paste/claim and protect durable mail.
+Uncertain attempts are not re-pasted. Historical guard/lock files remain
+untouched and are ignored. Human drafts and unrelated terminal writers remain
+outside this Postman transport's control.
+
+Paste, waits, Enter retries and synchronous native captures have a five-second
+input budget within the eight-second total post-commit deadline. Every key
+revalidates native ownership and shell/tmux-mode rejection. Observation timeout
+may retry only the read within that budget; actual native identity/geometry
+failures stop input immediately. Receipt persistence uses the remaining outer
+budget and may retry only its idempotent transition, never paste or Enter.
 
 Eligible send/POP (including empty POP), decisions, execution and external
 operations attempt the same bounded whole-server refresh after primary locks.
@@ -508,7 +521,7 @@ boundaries, privacy, limits and measured cost.
 | `failed/*.failure.json`                                                        | Confirmed non-delivery reason, separate from uncertain input or task failure                                                                                                  |
 | `transactions/*.json`                                                          | Bounded interrupted file-operation intent; remove only on completed recovery, never run commands or enqueue notifications                                                     |
 | `runtime/notices/*.json`                                                       | Per-message input attempt/receipt prevents replay; accepted/unknown are separate from POP                                                                                     |
-| `runtime/notice-locks/*`, `runtime/input-guards/*`                             | Per-recipient serialization and pending input evidence survives process death; current state can be updated, no queued delivery service                                       |
+| `runtime/notice-locks/*`, `runtime/input-guards/*`                             | Historical only: retained untouched, never read/written or used to block current notification input                                                                           |
 | `runtime/observations/s-*.json`                                                | Immutable native text and coverage, private; no role/model identity invention                                                                                                 |
 | `runtime/observations/index.json`, capture lock                                | Historical files retained; no current writer; server %status snapshot/history replaces them                                                                                   |
 | `agents/*/executions/<operation>.json`                                         | Minimal invocation, pinned parties, decision and outcome; never a reusable grant or automatic retry                                                                           |

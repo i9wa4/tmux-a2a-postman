@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/mattn/go-runewidth"
 )
 
 type nativePane struct {
@@ -132,35 +130,16 @@ func (t Tmux) readFrame(ctx context.Context, target nativePane, history bool) (p
 	return frame, nil
 }
 
-func (f paneFrame) beforeCursor() string {
-	lines := strings.Split(f.Screen, "\n")
-	if f.CursorY < 0 || f.CursorX < 0 || f.CursorY >= len(lines) {
-		return ""
-	}
-	row := runewidth.Truncate(lines[f.CursorY], f.CursorX, "")
-	return strings.Join(append(append([]string{}, lines[:f.CursorY]...), row), "\n")
-}
-
-func (f paneFrame) cursorPrefix() string {
-	lines := strings.Split(f.Screen, "\n")
-	if f.CursorY < 0 || f.CursorX < 0 || f.CursorY >= len(lines) {
-		return ""
-	}
-	return runewidth.Truncate(lines[f.CursorY], f.CursorX, "")
-}
-
 func (f paneFrame) sameGeometry(other paneFrame) bool {
 	return f.Pane.Owner == other.Pane.Owner && f.Pane.PID == other.Pane.PID && f.Width == other.Width && f.Height == other.Height
 }
-
-func packedScreen(text string) string { return strings.Join(strings.Fields(text), "") }
 
 func (t Tmux) noticeFrame(ctx context.Context, target Binding) (paneFrame, error) {
 	frame, err := t.readPaneFrame(ctx, nativePane{Owner: target.Owner, PID: target.PanePID})
 	if err != nil {
 		return frame, err
 	}
-	if frame.InputMode || !frame.CursorVisible {
+	if frame.InputMode {
 		return frame, fmt.Errorf("%w: recipient editor cannot be observed", ErrUnknown)
 	}
 	return frame, nil

@@ -66,22 +66,22 @@ python3 scripts/validation/notification-smoke.py \
   --postman "$(command -v tmux-a2a-postman)" --agent fixture --terminal both
 ```
 
-The default matrix has twenty-six cases: plain editor input and bracketed-paste
-input, each covering rally, busy recipient, concurrent independent messages,
-parent-to-child, child-to-parent, approval, rejection, blocked notification,
-an Enter absorbed as newline, an eight-request approval burst, and external
-done/blocked/exact-decision round trips.
-`TestNotificationDrivenTerminalAgents` runs it
-during `go test` and `nix build`. Nix flake checks also build this package.
-Default checks require no AI client or model server. `--case` selects a single
-case.
+The default matrix has thirty cases: plain editor input and
+bracketed-paste input, each covering rally, busy recipient, concurrent
+independent messages, parent-to-child, child-to-parent, approval, rejection,
+blocked notification, an always-absorbed Enter, a first-Enter newline recovered
+by a spaced retry, an eight-request approval burst, and external
+done/blocked/exact-decision round trips. `TestNotificationDrivenTerminalAgents`
+runs it during `go test` and `nix build`. Nix flake checks also build this
+package. Default checks require no AI client or model server. `--case` selects a
+single case.
 
 Sends retain a 15-second subprocess deadline and record elapsed time. The busy
-case withholds recipient processing until the sender returns, then verifies
-the full round trip. This proves sending does not wait for a response without
-adding a shorter wall-clock threshold that can reject healthy concurrent sends
-on a loaded CI runner. Notification acceptance, exact claims/replies and
-complete-file digests remain mandatory.
+case withholds recipient processing until the sender returns, then verifies the
+full round trip. This proves sending does not wait for a response without adding
+a shorter wall-clock threshold that can reject healthy concurrent sends on a
+loaded CI runner. The notification heuristic is recorded separately; exact
+claims/replies and complete-file digests remain mandatory.
 
 Recursive team validation is also owned here:
 
@@ -128,8 +128,26 @@ Durable claim receipts and saved decisions count as progress before the final
 tool proof exists. Burst idle admission allows at least 20 seconds for bounded
 post-commit/dispatch phases; it still has a finite overall batch deadline and
 requires every final proof and execution marker.
-Unavailable hints can coexist with successful batch processing; uncertain
-input remains a separate guarded outcome.
+Unavailable or uncertain hints can coexist with successful batch processing;
+terminal line-diff observations never replace exact recipient evidence. The
+absorbed-Enter negative control checks three spaced attempts per message, one
+paste per ID, no claims and no persistent gate blocking the next sender. The
+concurrent and approval-burst editors also absorb the first Enter and presses
+less than 500ms apart. The concurrent senders start 300ms apart, reproducing
+constant-rate interleaving; increasing retry cooldown must recover. Complete
+notification texts, claims and effects remain required. The newline-retry case
+checks actual submission on the second Enter and all four
+full-read/correlated-reply steps, in plain and bracketed editors.
+
+The default terminal actor makes a substantial redraw after a genuine submitted
+buffer; `minimal-redraw` retains the one-row echo of a minimal line editor.
+Both must complete receiver-owned full reads and exact replies. The latter may
+report an uncertain hint and receive bounded extra Enter. No fixture renders a
+submission or queues a helper merely because the screen changed. Terminal work
+publishes queued/completed buffer counts after actual helper exit. The
+controller waits for that completion barrier before final diagnostic refresh;
+a full-read proof alone may precede a later genuine hint's empty POP. The
+controller never supplies that POP or treats partial status as complete.
 
 Go fault tests cover duplicate/concurrent same-message attempts, ambiguous
 transport outcomes, pre-paste rejection, mailbox-lock independence,

@@ -129,12 +129,14 @@ Logs and captures remain until you delete them; there is no expiry service. See
 server status (`tmux-a2a-postman help server-status`) for scope, diagnostics and
 external status-line composition.
 
-Notifications serialize Postman writers for the destination pane. A doubtful
-submission leaves an input guard; subsequent writers do not blindly paste or
-repeat Enter. Copy mode and shell prompts are rejected. This does not preserve
-unsent human drafts or exclude unrelated input writers. An uncertain hint never
-deletes durable mail, and a lost command response is not permission to resend.
-Inspect the recorded outcome and recover using the CLI's exact error guidance.
+Notification writers independently paste a hint and use bounded, spaced Enter
+attempts guided by whole-screen capture differences. Small line edits may be
+newlines; substantial changes stop extra Enter, but do not prove acceptance.
+There is no destination notification lock or persistent input guard. Unknown
+submission leaves durable mail intact. Shell prompts, input modes and changed
+native ownership/geometry stop input. Human drafts and unrelated writers are
+not exclusively controlled. Read `tmux-a2a-postman help send-heredoc` for the
+current intervals and bounds.
 
 ## 5. Review commands and recover context
 

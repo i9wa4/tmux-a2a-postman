@@ -14,12 +14,12 @@ version            Print build version JSON
 ```
 
 Each workspace command accepts one absolute --config override. Default:
-$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or
-$HOME/.config/tmux-a2a-postman/postman.md. No daemon startup is needed.
-Send and execute accept quoted heredoc stdin. POP takes no message ID.
-Generic tmux paste and one C-m notify existing agent consoles. No model API,
-registration or provider-specific parser is used. Notification uncertainty
-never reverses durable mail. Read the complete POP archive before acting.
+$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or $HOME/.config/tmux-a2a-postman/postman.md.
+No daemon startup is needed. Send and execute accept quoted heredoc stdin. POP
+takes no message ID. Generic tmux paste and bounded, spaced C-m retries notify
+existing agent consoles. No model API, registration or provider-specific parser
+is used. Notification uncertainty never reverses durable mail. Read the complete
+POP archive before acting.
 
 Use help <command> or <command> --help for details. Help/version need no tmux.
 

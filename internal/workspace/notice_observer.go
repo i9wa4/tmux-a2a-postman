@@ -3,29 +3,19 @@ package workspace
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
 )
 
-// Input evidence deliberately learns the current cursor prefix. It contains no
-// model names, prompt glyphs or assumptions about a provider's API. A terminal
-// observation is evidence, never proof of model processing. Ambiguity stops input.
+// Observe whole terminal frames without identifying a TUI input area, prompt or
+// provider. Small line changes guide bounded Enter retries; even a large change
+// is only a submission heuristic, never proof of recipient processing.
 type observedNotifier interface {
 	noticeFrame(context.Context, Binding) (paneFrame, error)
 	pasteNotice(context.Context, Binding, string) error
 	enterNotice(context.Context, Binding) error
-}
-
-type inputGuard struct {
-	Version   int       `json:"version"`
-	MessageID string    `json:"message_id"`
-	Recipient Binding   `json:"recipient"`
-	Baseline  paneFrame `json:"baseline"`
-	Text      string    `json:"text"`
-	Status    string    `json:"status"`
 }
 
 func (r NamedRuntime) noticeFrame(ctx context.Context, target Binding) (paneFrame, error) {
@@ -66,60 +56,6 @@ func (t Tmux) enterNotice(ctx context.Context, target Binding) error {
 	return err
 }
 
-// The recipient lock is held by the caller, including all observation and
-// persistence. The mailbox lock is held only for short guarded file operations.
-func (s Store) inputGuard(ctx context.Context, rt Runtime, target Binding, write *inputGuard) (*inputGuard, error) {
-	var guard *inputGuard
-	err := retryNoticeAdmission(ctx, func() error {
-		return s.WithVerified(ctx, rt, func(ws *os.Root, snapshot Snapshot) error {
-			found := false
-			for _, b := range snapshot.Bindings {
-				if b == target {
-					found = true
-				}
-			}
-			if !found {
-				return ErrUnknown
-			}
-			runtime, err := privateDir(ws, "runtime", false)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = runtime.Close() }()
-			dir, err := privateDir(runtime, "input-guards", true)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = dir.Close() }()
-			name := target.Role + ".json"
-			if write != nil {
-				return replaceJSON(dir, name, *write)
-			}
-			var old inputGuard
-			err = readJSON(dir, name, &old)
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if old.Version != 1 || !messageID(old.MessageID) || (old.Status != "pending" && old.Status != "accepted") {
-				return ErrUnknown
-			}
-			guard = &old
-			return nil
-		})
-	})
-	return guard, err
-}
-
-func inputAccepted(base, now paneFrame, text string) bool {
-	prefix := base.cursorPrefix()
-	return strings.TrimSpace(prefix) != "" && base.sameGeometry(now) && !now.InputMode && now.CursorVisible &&
-		now.cursorPrefix() == prefix && strings.Contains(packedScreen(now.Screen), packedScreen(text)) &&
-		!strings.HasSuffix(packedScreen(now.beforeCursor()), packedScreen(text))
-}
-
 func noticePause(ctx context.Context) error {
 	timer := time.NewTimer(25 * time.Millisecond)
 	defer timer.Stop()
@@ -131,102 +67,160 @@ func noticePause(ctx context.Context) error {
 	}
 }
 
-func (s Store) observedNotice(ctx context.Context, rt Runtime, transport observedNotifier, target Binding, msg Message) (retErr error) {
+const (
+	// Separate paste from Enter, and successive Enter presses from each other.
+	// Closely spaced presses can become literal newlines in otherwise generic
+	// terminal editors. These bounds are shared by every provider.
+	noticeEnterInterval    = 600 * time.Millisecond
+	noticeMaxEnters        = 3
+	noticeSmallChangeLines = 4
+)
+
+func (s Store) observedNotice(ctx context.Context, _ Runtime, transport observedNotifier, target Binding, msg Message) error {
+	inputCtx, cancel := context.WithTimeout(ctx, NoticeInputBudget)
+	defer cancel()
 	trace := diagnostic.From(ctx)
-	prior, err := s.inputGuard(ctx, rt, target, nil)
+	base, err := noticeObservation(inputCtx, transport, target)
 	if err != nil {
 		return err
 	}
-	if prior != nil && prior.Recipient == target && prior.Status == "pending" {
-		frame, err := noticeObservation(ctx, transport, target)
-		if err != nil || !inputAccepted(prior.Baseline, frame, prior.Text) {
-			return errors.New("previous notification input remains uncertain; no additional paste or Enter")
-		}
-		prior.Status = "accepted"
-		if err = s.acceptInputGuard(ctx, rt, target, prior); err != nil {
-			return err
-		}
-	}
-	base, err := noticeObservation(ctx, transport, target)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(base.cursorPrefix()) == "" {
-		return errors.New("recipient input prefix cannot be distinguished from a newline")
-	}
-	// The durable guard needs only the learned prefix and native geometry, not
-	// the recipient's conversation screen. Do not copy terminal history here.
-	minimal := base
-	minimal.Screen = base.cursorPrefix()
-	minimal.CursorY = 0
-	guard := inputGuard{Version: 1, MessageID: msg.ID, Recipient: target, Baseline: minimal, Text: noticePrompt(msg), Status: "pending"}
-	// Persist before the first input byte. A crash cannot permit the next sender
-	// to append another notice to an unresolved draft.
-	if _, err = s.inputGuard(ctx, rt, target, &guard); err != nil {
-		return err
-	}
-	// The input budget bounds paste/settlement/submit. Read-only confirmation
-	// after the one Enter and durable receipts use the outer notice deadline.
-	inputCtx, inputCancel := context.WithTimeout(ctx, NoticeInputBudget)
-	defer inputCancel()
 	pasteSpan := trace.Start("notification_paste")
-	err = transport.pasteNotice(inputCtx, target, guard.Text)
+	err = transport.pasteNotice(inputCtx, target, noticePrompt(msg))
 	pasteSpan.Error(err)
 	if err != nil {
 		return err
 	}
+	// Paste once. Concurrent messages can share the destination terminal; no
+	// destination-wide lock or persisted draft guard can block later messages.
 	settleSpan := trace.Start("notification_settle")
-	defer func() { settleSpan.Error(retErr) }()
-	var stable string
-	var since time.Time
-	for {
-		if err = noticePause(inputCtx); err != nil {
-			return errors.New("notification paste was not observed settling; no Enter sent")
-		}
-		frame, err := noticeObservation(inputCtx, transport, target)
-		if err != nil || !base.sameGeometry(frame) {
-			return errors.New("recipient changed during notification paste")
-		}
-		content := packedScreen(frame.beforeCursor())
-		input := packedScreen(base.cursorPrefix() + guard.Text)
-		if !strings.HasSuffix(content, input) {
-			stable = ""
-			continue
-		}
-		if input != stable {
-			stable = input
-			since = time.Now()
-			continue
-		}
-		if time.Since(since) >= 180*time.Millisecond {
-			break
-		}
-	}
-	settleSpan.End("ok")
-	// One submit only. Repeating Enter after a visual change is unsafe: it can
-	// either insert a newline or submit a different, already accepted input.
-	submitSpan := trace.Start("notification_submit")
-	err = transport.enterNotice(inputCtx, target)
-	submitSpan.Error(err)
+	err = noticeWait(inputCtx, noticeEnterInterval)
+	settleSpan.Error(err)
 	if err != nil {
 		return err
 	}
-	inputCancel()
-	confirmSpan := trace.Start("notification_confirm")
-	defer func() { confirmSpan.Error(retErr) }()
-	for {
-		if err = noticePause(ctx); err != nil {
-			return errors.New("notification submit is uncertain; no repeat Enter or paste")
+	before, err := noticeObservation(inputCtx, transport, target)
+	if err != nil {
+		return err
+	}
+	if !base.sameGeometry(before) || before.InputMode {
+		return errors.New("recipient changed during notification paste")
+	}
+	for attempt := range noticeMaxEnters {
+		if attempt > 0 {
+			// Increasing cooldown breaks interleaved Enter bursts from
+			// independent senders without a shared destination lock.
+			if err := noticeWait(inputCtx, time.Duration(attempt)*300*time.Millisecond); err != nil {
+				return err
+			}
+			before, err = noticeObservation(inputCtx, transport, target)
+			if err != nil {
+				return err
+			}
+			if !base.sameGeometry(before) || before.InputMode {
+				return errors.New("recipient changed during notification retry")
+			}
 		}
-		frame, err := noticeObservation(ctx, transport, target)
+		submitSpan := trace.Start("notification_submit")
+		err = transport.enterNotice(inputCtx, target)
+		submitSpan.Error(err)
 		if err != nil {
 			return err
 		}
-		if inputAccepted(base, frame, guard.Text) {
-			guard.Status = "accepted"
-			return s.acceptInputGuard(ctx, rt, target, &guard)
+		confirmSpan := trace.Start("notification_confirm")
+		err = noticeWait(inputCtx, noticeEnterInterval)
+		if err != nil {
+			confirmSpan.Error(err)
+			return err
 		}
+		after, err := noticeObservation(inputCtx, transport, target)
+		confirmSpan.Error(err)
+		if err != nil {
+			return err
+		}
+		if !before.sameGeometry(after) || after.InputMode {
+			return errors.New("recipient changed during notification submission")
+		}
+		if screenLineChanges(before.Screen, after.Screen) > noticeSmallChangeLines {
+			return nil
+		}
+		// A replacement is two changed lines. Inserting a newline (including
+		// scrolling one row off-screen) is a small edit, not a changed screen
+		// at every subsequent row. Compare the entire frames, not row positions.
+		before = after
 	}
+	return errors.New("notification submission remains uncertain after bounded Enter retries; no more input sent")
+}
+
+func noticeWait(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// screenLineChanges counts inserted/deleted lines up to the retry threshold + 1.
+// A bounded edit-distance band avoids quadratic work even for unusually tall
+// panes. Trailing terminal padding is ignored; internal blank rows are retained.
+func screenLineChanges(before, after string) int {
+	lines := func(text string) []string {
+		rows := strings.Split(text, "\n")
+		for i := range rows {
+			rows[i] = strings.TrimRight(rows[i], " \t\r")
+		}
+		for len(rows) > 0 && rows[len(rows)-1] == "" {
+			rows = rows[:len(rows)-1]
+		}
+		return rows
+	}
+	a, b := lines(before), lines(after)
+	for len(a) > 0 && len(b) > 0 && a[0] == b[0] {
+		a, b = a[1:], b[1:]
+	}
+	for len(a) > 0 && len(b) > 0 && a[len(a)-1] == b[len(b)-1] {
+		a, b = a[:len(a)-1], b[:len(b)-1]
+	}
+	limit := noticeSmallChangeLines + 1
+	if len(a) == 0 || len(b) == 0 {
+		return min(limit, len(a)+len(b))
+	}
+	if len(a)-len(b) >= limit || len(b)-len(a) >= limit {
+		return limit
+	}
+	previous, current := make([]int, len(b)+1), make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = min(j, limit)
+	}
+	for i := 1; i <= len(a); i++ {
+		current[0] = min(i, limit)
+		low, high := max(1, i-noticeSmallChangeLines), min(len(b), i+noticeSmallChangeLines)
+		if low > 1 {
+			current[low-1] = limit
+		}
+		best := limit
+		if low == 1 {
+			best = current[0]
+		}
+		for j := low; j <= high; j++ {
+			value := min(limit, previous[j]+1, current[j-1]+1)
+			if a[i-1] == b[j-1] {
+				value = min(value, previous[j-1])
+			}
+			current[j] = value
+			best = min(best, value)
+		}
+		if high < len(b) {
+			current[high+1] = limit
+		}
+		if best == limit {
+			return limit
+		}
+		previous, current = current, previous
+	}
+	return previous[len(b)]
 }
 
 // A native frame has its own short read deadline. A slow read may be repeated
@@ -243,14 +237,4 @@ func noticeObservation(ctx context.Context, transport observedNotifier, target B
 			return paneFrame{}, err
 		}
 	}
-}
-
-func (s Store) acceptInputGuard(ctx context.Context, rt Runtime, target Binding, guard *inputGuard) error {
-	if guard == nil || guard.Status != "accepted" {
-		return ErrUnknown
-	}
-	return retryAcceptedNoticeState(ctx, func() error {
-		_, err := s.inputGuard(ctx, rt, target, guard)
-		return err
-	})
 }

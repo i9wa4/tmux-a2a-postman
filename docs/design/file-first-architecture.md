@@ -18,9 +18,7 @@ State lives below `${XDG_STATE_HOME:-$HOME/.local/state}/tmux-a2a-postman`:
 locks/<workspace>.lock
 <workspace>/workspace.json
 <workspace>/runtime/binding.json
-<workspace>/runtime/notice-locks/<role>.lock
 <workspace>/runtime/notices/<message-id>.json
-<workspace>/runtime/input-guards/<role>.json
 <workspace>/agents/<role>/{draft,inbox,read,sent,failed}/
 <workspace>/agents/<role>/read/<message-id>.pop.json
 <workspace>/agents/<role>/executions/<operation-id>.json

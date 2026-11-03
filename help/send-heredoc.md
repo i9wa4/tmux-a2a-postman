@@ -23,17 +23,29 @@ receiver-inbox and sender-sent copies; it does not mean POP or task completion.
 Confirmed non-delivery retains full failed mail; uncertainty retains a draft
 and recovery identity. Do not blindly resend an uncertain operation.
 
-A destination file lock serializes Postman writers. Generic capture observations
-check settled text and the input area after exactly one C-m; no model names or
-prompt glyph rules are used. Ambiguity retains a pending input guard and blocks
-further paste/Enter until safely observable. Shell prompts and tmux input modes
-are rejected. Human drafts/other input writers are not exclusively controlled.
-Notification failure leaves committed mail intact. A bounded session snapshot
-also runs; it never changes delivery success. Send does not wait for a reply.
+The sender pastes one short hint, waits at least 600ms, then sends C-m. It
+compares the whole capture-pane immediately before Enter and at least 600ms
+after it. Up to four inserted/deleted lines is a small change: after the same
+minimum interval it retries Enter, at most three presses total. A substantial
+change stops extra Enter. Retry cooldown grows by 300ms per retry, making Enter
+intervals at least 600ms, 900ms and 1200ms from the preceding paste/key. This
+breaks repeated interleaving between independent senders. A newline or viewport
+scroll is counted as a line edit, not a change at every later row. There are no
+prompt, cursor/input-area, Codex/Claude or other provider rules. Screen change
+is a retry heuristic and cannot prove submission, POP, understanding or a
+response. An exhausted or unobservable attempt reports unknown, leaving durable
+mail intact.
 
-Notification lock admission waits at most 5 seconds. After acquisition, input
-settlement/submit observation gets up to 2 seconds; total post-commit work is
-bounded to 8 seconds. Approval waits never hold the notification lock.
+There is no destination notification lock or persistent input guard. Independent
+senders may paste into one terminal; each uses the same bounded observation
+procedure, and the last sender can submit the collected hints. Message-ID
+attempt records still prevent re-pasting the same uncertain message. Old guard
+and lock files remain untouched and cannot block fresh messages. Short mailbox
+transaction/claim locks remain. Human drafts and unrelated writers are not
+exclusively controlled. Shell prompts, tmux input modes and changed native
+ownership/geometry stop input. Notification input has a five-second budget;
+total post-commit work remains bounded to eight seconds. A separate bounded
+session snapshot never changes delivery success. Send does not wait for a reply.
 
 For the operating procedure, run `tmux-a2a-postman help postman-send-message`
 and read the matching references.

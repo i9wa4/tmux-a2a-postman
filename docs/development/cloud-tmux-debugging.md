@@ -137,7 +137,7 @@ fixture; production sessions are not its test subjects.
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Failure before a Go test or agent starts       | Inspect Nix/network/CA/tool availability and process reaping first.                                                                                        |
 | Wrong workspace or unavailable identity        | Compare the owned native pane/session evidence, configuration and binary revision; changing the CLI subprocess cwd is not a workspace repair.              |
-| Mail committed, hint uncertain                 | Inspect that message's notification record/input guard and before/after pane captures; do not resend a committed body.                                     |
+| Mail committed, hint uncertain                 | Inspect that message's notification attempt record and before/after whole-pane captures; do not resend a committed body.                                   |
 | Text present in the input editor               | Check submission/consumption evidence. An Enter can be absorbed as newline; moving text is not proof of acceptance.                                        |
 | Notification accepted, no exact final response | Follow recipient-owned claim/read/proof files and exact IDs to the first missing step. Do not call POP or supply its response from the controller.         |
 | Concurrent requests or approvals fail          | Correlate every independent ID and decision, lock/admission evidence and actual execution marker. Never use one successful request as proof for the batch. |
@@ -145,7 +145,8 @@ fixture; production sessions are not its test subjects.
 
 The driver prints a per-case report path. Read the JSON and linked fixture
 evidence, including captured screens, archive digests, claims, notification
-records and input guards when available. Inspect the failing step before
+records and spaced Enter timing. Historical input guards are ignored by current
+transport and retained untouched. Inspect the failing step before
 changing timeouts. Completed scenarios clean up their tmux server while
 retaining reports; use saved captures afterward. During an owned live probe,
 use its explicit socket and pane IDs, never the user's default tmux server.

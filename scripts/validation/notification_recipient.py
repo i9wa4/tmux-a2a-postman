@@ -80,7 +80,7 @@ def receive():
         else:
             proof["send"] = cli(["send-heredoc", "--config", config, "--to", target], body)
             proof["send"]["mail_evidence"] = sent_evidence(role, body)
-        if proof["send"].get("notification"):
+        if proof["send"].get("notification", {}).get("status") == "unavailable":
             failure = {"reason": "reply_notification_failed", "notification": proof["send"]["notification"],
                        "handling_message_id": msg["id"], "reply_message_id": proof["send"].get("mail_evidence", {}).get("id")}
             (root / (role + ".error.txt")).write_text(json.dumps(failure))
