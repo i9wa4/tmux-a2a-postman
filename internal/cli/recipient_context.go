@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
@@ -39,14 +40,23 @@ func contextShellWord(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+func localTimestamp(created string, location *time.Location) string {
+	at, err := time.Parse(time.RFC3339Nano, created)
+	if err != nil {
+		return created
+	}
+	return at.In(location).Format("2006-01-02T15:04:05.999999999-07:00")
+}
+
 func renderRecipientContext(policy config.RecipientPolicy, topology config.WorkspaceTopology, path, localSession string, msg workspace.Message) string {
+	displayTime := localTimestamp(msg.CreatedAt, time.Local)
 	session, from, to := localSession, msg.From, msg.To
 	if msg.ToSession != "" {
 		session = msg.ToSession
 		from, to = msg.FromSession+":"+from, msg.ToSession+":"+to
 	}
 	var text strings.Builder
-	fmt.Fprintf(&text, "<!-- postman recipient context v1 -->\n# Message\n\nFrom: `%s`\nTo: `%s`\nSession: `%s`\nMessage ID: `%s`\nTimestamp: `%s`\nReply required: %t\n", from, to, session, msg.ID, msg.CreatedAt, msg.NeedsReply)
+	fmt.Fprintf(&text, "<!-- postman recipient context v1 -->\n# Message\n\nFrom: `%s`\nTo: `%s`\nSession: `%s`\nMessage ID: `%s`\nTimestamp: `%s`\nReply required: %t\n", from, to, session, msg.ID, displayTime, msg.NeedsReply)
 	if identity := topology.PolicyIdentity(); identity != "" {
 		fmt.Fprintf(&text, "Configuration policy: `%s`\n", identity)
 	}
@@ -132,7 +142,7 @@ func renderRecipientContext(policy config.RecipientPolicy, topology config.Works
 			"{recipient}", to,
 			"{node}", msg.To,
 			"{session_name}", session,
-			"{timestamp}", msg.CreatedAt,
+			"{timestamp}", displayTime,
 			"{required_reply_completion_gate}", completionGate,
 		)
 		text.WriteString("\n### Configured guidance\n\n" + generatedSection(vars.Replace(policy.Footer)) + "\n")

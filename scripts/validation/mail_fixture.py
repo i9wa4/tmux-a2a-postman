@@ -6,7 +6,7 @@ import pathlib
 
 # Transport validation remains in Go. Fixtures accept both canonical wire shapes
 # while retaining the complete exact notification ID in their evidence.
-MESSAGE_ID_PATTERN = r"m-(?:[0-9]{8}T[0-9]{6}\.[0-9]{9}Z-)?[a-f0-9]{32}"
+MESSAGE_ID_PATTERN = r"m-(?:[0-9a-f]{32}|[0-9]{8}T[0-9]{6}\.[0-9]{9}Z-(?:[a-f0-9]{32}|[A-Za-z0-9]{6}))"
 
 
 def workspace_files(state, pattern):

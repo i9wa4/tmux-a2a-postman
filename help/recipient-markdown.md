@@ -16,7 +16,7 @@ The reference is the shipped v0.9.5 behavior, especially:
 
 | Historical content                                          | Current rendering contract                                                                                              |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Sender, recipient, session, UTC time and message ID         | Retain immutable machine metadata and a readable message header                                                         |
+| Sender, recipient, session, time and message ID             | Retain immutable UTC machine metadata and a readable message header with local time and numeric offset                  |
 | common_template followed by the selected recipient template | Include the complete configured policy on every generated mail, including replies                                       |
 | Available Skills from ordinary skill_path entries           | Include configured paths and ordered name/description bullets; read applicable skills before acting                     |
 | You can talk to and role summaries                          | Use the recipient's routes and immediate interface relationships; first nonempty role line, at most 120 runes as before |
@@ -44,8 +44,8 @@ bracketed placeholders; those placeholders are not summaries used in production.
 From: orchestrator
 To: worker
 Session: project
-Message ID: m-0123456789abcdef0123456789abcdef
-Timestamp: 2026-11-01T12:00:00Z
+Message ID: m-20261101T120000.000000000Z-Ab12Cd
+Timestamp: 2026-11-01T21:00:00+09:00
 Reply policy: required
 
 ## Recipient Instructions
@@ -77,7 +77,7 @@ Read this complete archived Markdown through EOF before handling it.
 A reply is required. Reply to this actual message ID with quoted heredoc:
 
 ```sh
-tmux-a2a-postman send-heredoc --to m-0123456789abcdef0123456789abcdef <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to m-20261101T120000.000000000Z-Ab12Cd <<'POSTMAN_BODY'
 <your reply>
 POSTMAN_BODY
 ```

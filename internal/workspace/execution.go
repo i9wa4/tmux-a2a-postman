@@ -221,10 +221,15 @@ func (e Executor) save(ctx context.Context, rt Runtime, result ExecutionResult, 
 			return errors.New("execution audit record exceeds bound")
 		}
 		if create {
-			if err = writeJSON(box, result.OperationID+".json", result); err != nil {
-				return err
+			var reserved ExecutionResult
+			if readJSON(box, result.OperationID+".json", &reserved) != nil ||
+				reserved.Status != "reserved" || reserved.OperationID != result.OperationID ||
+				reserved.Version != result.Version || reserved.Command != result.Command ||
+				reserved.Requester != result.Requester || reserved.Reviewer != result.Reviewer ||
+				!sameInvocation(reserved.Invocation, result.Invocation) {
+				return ErrUnknown
 			}
-			return syncDirectory(box)
+			return replaceJSON(box, result.OperationID+".json", result)
 		}
 		var prior ExecutionResult
 		if readJSON(box, result.OperationID+".json", &prior) != nil || prior.Status != "dispatched" ||
@@ -243,6 +248,44 @@ func (e Executor) saveTerminal(ctx context.Context, rt Runtime, result Execution
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
 	return e.save(auditCtx, rt, result, create)
+}
+
+// reserveOperation claims the existing execution-audit filename before an
+// approval request can publish its OperationID. A crash leaves an inert,
+// visible reserved record; recovery never dispatches it.
+func (e Executor) reserveOperation(ctx context.Context, rt Runtime, result ExecutionResult, generate func() (mailIdentity, error)) (string, error) {
+	var id string
+	err := e.Mail.Store.WithVerified(ctx, rt, func(ws *os.Root, s Snapshot) error {
+		if s.Caller.Role != result.Requester {
+			return ErrUnknown
+		}
+		box, err := executionBox(ws, s.Caller.Role)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = box.Close() }()
+		for range 64 {
+			identity, err := availableMailIdentity(generate, ws)
+			if err != nil {
+				return err
+			}
+			reserved := result
+			reserved.OperationID = identity.ID
+			reserved.Status = "reserved"
+			if err := writeJSON(box, identity.ID+".json", reserved); errors.Is(err, os.ErrExist) {
+				continue
+			} else if err != nil {
+				return err
+			}
+			if err := syncDirectory(box); err != nil {
+				return err
+			}
+			id = identity.ID
+			return nil
+		}
+		return errors.New("unable to reserve a unique execution operation ID")
+	})
+	return id, err
 }
 
 // claimDecision scans only this caller's inbox, and archives only an exact,
@@ -365,11 +408,22 @@ func (e Executor) Execute(ctx context.Context, rt Runtime, command string) (Exec
 	if len(raw) > 48*1024 {
 		return fail("unavailable", errors.New("command exceeds audit bound"))
 	}
-	identity, err := newMailIdentity()
+	reserveCtx, reserveCancel := context.WithTimeout(ctx, executionAuditAdmissionBudget)
+	var id string
+	for {
+		id, err = e.reserveOperation(reserveCtx, pinned, result, newMailIdentity)
+		if !errors.Is(err, ErrBusy) {
+			break
+		}
+		if err = e.pause(reserveCtx); err != nil {
+			break
+		}
+	}
+	reserveCancel()
 	if err != nil {
 		return fail("unavailable", err)
 	}
-	result.OperationID = identity.ID
+	result.OperationID = id
 	trace.Note(diagnostic.Facts{OperationID: result.OperationID, Counterparty: role})
 	audit = pinned
 	dispatchCtx := ctx

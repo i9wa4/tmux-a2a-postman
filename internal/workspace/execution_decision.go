@@ -89,7 +89,7 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 		if err != nil {
 			return err
 		}
-		identity, err := newMailIdentity()
+		identity, err := newAvailableMailIdentity(ws)
 		if err != nil {
 			return err
 		}

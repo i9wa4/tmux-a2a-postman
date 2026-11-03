@@ -118,7 +118,7 @@ func TestExternalDecisionFilenameAdmitsOnlyTheExactExtendedShape(t *testing.T) {
 	}
 	scope := strings.Repeat("a", 64)
 	name := decisionFilename(id, scope, "approve")
-	if !externalFilename(name) || len(name) <= 128 || !externalFilename("task-v2_3.md") {
+	if !externalFilename(name) || len(name) >= 128 || !externalFilename("task-v2_3.md") {
 		t.Fatal("valid decision/input rejected", name)
 	}
 	for _, bad := range []string{

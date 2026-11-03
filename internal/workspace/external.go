@@ -175,8 +175,8 @@ func decisionFilename(id, scope, choice string) string {
 	return "answer--" + id + "--" + scope + "--" + choice + ".md"
 }
 
-func externalInput(b ExternalBinding, name, body string, reports []Message) (Message, error) {
-	identity, err := newMailIdentity()
+func externalInput(ws *os.Root, b ExternalBinding, name, body string, reports []Message) (Message, error) {
+	identity, err := newAvailableMailIdentity(ws)
 	if err != nil {
 		return Message{}, err
 	}
@@ -400,7 +400,7 @@ func (m Mail) acceptExternal(ctx context.Context, ws *os.Root, s Snapshot, b Ext
 	if !published {
 		return Message{}, errors.New("external read archive has no durable accepted mail; restore mail state rather than replay it")
 	}
-	msg, err := externalInput(b, name, body, reports)
+	msg, err := externalInput(ws, b, name, body, reports)
 	if err != nil {
 		return Message{}, err
 	}
@@ -530,7 +530,7 @@ func (m Mail) ReportExternal(ctx context.Context, rt ExternalRuntime, b External
 			return errors.New("report source is not this external binding's claimed mail")
 		}
 		x := &ExternalMessage{Binding: b.key(), Direction: "out", ExchangeID: source.External.ExchangeID, State: state, Scope: scope, Filename: source.External.Filename, SourceMessageID: source.ID}
-		identity, err := newMailIdentity()
+		identity, err := newAvailableMailIdentity(ws)
 		if err != nil {
 			return err
 		}

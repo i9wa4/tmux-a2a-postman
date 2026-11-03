@@ -3,29 +3,53 @@ package messageid
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
+	"io"
 	"strings"
 	"time"
 )
 
-const Layout = "20060102T150405.000000000Z"
+const (
+	Layout        = "20060102T150405.000000000Z"
+	shortAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
 
-// New records UTC creation time followed by 128 bits of independent entropy.
-// Equal-time IDs are unique without promising FIFO or a monotonic wall clock.
+// New records UTC creation time followed by six uniformly sampled base62 digits.
+// Equal-time IDs are checked for collisions by the workspace before use.
 func New(at time.Time) (string, error) {
 	at = at.UTC()
 	if at.Year() < 1 || at.Year() > 9999 {
 		return "", errors.New("message creation time is outside the canonical year range")
 	}
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
+	suffix, err := randomSuffix(rand.Reader)
+	if err != nil {
 		return "", err
 	}
-	return "m-" + at.Format(Layout) + "-" + hex.EncodeToString(random[:]), nil
+	return "m-" + at.Format(Layout) + "-" + suffix, nil
 }
 
-func entropy(s string) bool {
+func randomSuffix(reader io.Reader) (string, error) {
+	var suffix [6]byte
+	var random [6]byte
+	for used := 0; used < len(suffix); {
+		if _, err := io.ReadFull(reader, random[:]); err != nil {
+			return "", err
+		}
+		for _, value := range random {
+			if value >= 248 {
+				continue // Reject the incomplete final group to avoid modulo bias.
+			}
+			suffix[used] = shortAlphabet[int(value)%len(shortAlphabet)]
+			used++
+			if used == len(suffix) {
+				break
+			}
+		}
+	}
+	return string(suffix[:]), nil
+}
+
+func legacyEntropy(s string) bool {
 	if len(s) != 32 {
 		return false
 	}
@@ -37,11 +61,24 @@ func entropy(s string) bool {
 	return true
 }
 
+func shortEntropy(s string) bool {
+	if len(s) != 6 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
 // Timestamp validates a new ID and returns its recorded creation time. Legacy
 // random-only IDs have no timestamp and return false.
 func Timestamp(id string) (time.Time, bool) {
 	const end = 2 + len(Layout)
-	if len(id) != end+1+32 || !strings.HasPrefix(id, "m-") || id[end] != '-' || !entropy(id[end+1:]) {
+	if len(id) <= end+1 || !strings.HasPrefix(id, "m-") || id[end] != '-' ||
+		!(shortEntropy(id[end+1:]) || legacyEntropy(id[end+1:])) {
 		return time.Time{}, false
 	}
 	stamp := id[2:end]
@@ -54,16 +91,19 @@ func Timestamp(id string) (time.Time, bool) {
 
 func Valid(id string) bool {
 	if strings.HasPrefix(id, "m-") && len(id) == 34 {
-		return entropy(id[2:])
+		return legacyEntropy(id[2:])
 	}
 	_, ok := Timestamp(id)
 	return ok
 }
 
-// Suffix retains the fixed-width correlation token without including time.
+// Suffix returns the random portion of a valid ID, without its recorded time.
 func Suffix(id string) string {
 	if !Valid(id) {
 		return ""
 	}
-	return id[len(id)-32:]
+	if len(id) == 34 {
+		return id[2:]
+	}
+	return id[2+len(Layout)+1:]
 }
