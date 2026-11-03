@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	helpdata "github.com/i9wa4/tmux-a2a-postman/help"
+
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
@@ -54,7 +56,15 @@ func TestRecipientContextHeadingHierarchyPreservesTemplateSubsections(t *testing
 	}
 	msg := workspace.Message{ID: "m-0123456789abcdef0123456789abcdef", From: "worker", To: "approver", Kind: "execution-request", NeedsReply: true, GuidanceVersion: 1}
 	text := renderRecipientContext(policy, config.WorkspaceTopology{}, "/tmp/postman.md", "session", msg)
-	want := []string{"# Message", "# Recipient Instructions", "## Common contract", "### Core contract", "#### Exceptions", "## Available Skills", "## approver instructions", "### `role`", "### Contract", "#### Decision", "# Delivery and Reply Guidance", "# Sender Message"}
+	want := []string{"# Message", "## Recipient Instructions", "### Common contract", "#### Core contract", "##### Exceptions", "### Available Skills", "### approver instructions", "#### `role`", "#### Contract", "##### Decision", "## Delivery and Reply Guidance", "## Sender Message"}
+	headings := recipientHeadingLines(text)
+	assertRecipientHeadingHierarchy(t, headings)
+	if !slices.Equal(headings, want) || !strings.Contains(text, "```markdown\n# literal fenced heading\n## another literal heading\n```") {
+		t.Fatal("generated hierarchy changed template structure or fenced bytes", headings, text)
+	}
+}
+
+func recipientHeadingLines(text string) []string {
 	var headings []string
 	inFence := false
 	for _, line := range strings.Split(text, "\n") {
@@ -64,7 +74,41 @@ func TestRecipientContextHeadingHierarchyPreservesTemplateSubsections(t *testing
 			headings = append(headings, line)
 		}
 	}
-	if !slices.Equal(headings, want) || !strings.Contains(text, common) || !strings.Contains(text, role) {
-		t.Fatal("generated hierarchy changed template structure or fenced bytes", headings, text)
+	return headings
+}
+
+func assertRecipientHeadingHierarchy(t *testing.T, headings []string) {
+	t.Helper()
+	h1, previous := 0, 0
+	for _, heading := range headings {
+		level := len(heading) - len(strings.TrimLeft(heading, "#"))
+		if level == 1 {
+			h1++
+		}
+		if level > previous+1 {
+			t.Fatal("generated headings skip a level", headings)
+		}
+		previous = level
 	}
+	if h1 != 1 {
+		t.Fatal("generated recipient context must have one H1", headings)
+	}
+}
+
+// Fenced examples are opaque to the repository formatter; validate their
+// Markdown structure explicitly as well as the actual renderer output above.
+func TestRecipientMarkdownDocumentedExampleHasOneTitle(t *testing.T) {
+	raw, err := helpdata.Content.ReadFile("recipient-markdown.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, example, ok := strings.Cut(string(raw), "````markdown\n")
+	if !ok {
+		t.Fatal("missing documented recipient example")
+	}
+	example, _, ok = strings.Cut(example, "\n````")
+	if !ok {
+		t.Fatal("unclosed documented recipient example")
+	}
+	assertRecipientHeadingHierarchy(t, recipientHeadingLines(example))
 }
