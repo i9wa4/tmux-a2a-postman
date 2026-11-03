@@ -38,15 +38,17 @@ func (f *markdownFence) skip(line string) bool {
 
 var generatedHeading = regexp.MustCompile(`^( {0,3})(#{1,6})([ \t]+.*|$)`)
 
-// MarkdownSectionContent keeps generated policy under its surrounding H2
-// envelope section. It leaves fenced code and literal sender content alone.
+// MarkdownSectionContent nests policy headings under its surrounding H3
+// section, retaining template subsection depth up to Markdown's H6 limit.
+// It leaves fenced code and literal sender content alone.
 func MarkdownSectionContent(value string) string {
 	var lines []string
 	var fence markdownFence
 	for _, line := range strings.Split(strings.TrimSpace(value), "\n") {
 		if !fence.skip(line) {
-			if match := generatedHeading.FindStringSubmatch(line); match != nil && len(match[2]) < 3 {
-				line = match[1] + "###" + match[3]
+			if match := generatedHeading.FindStringSubmatch(line); match != nil {
+				level := min(max(len(match[2]), 3)+1, 6)
+				line = match[1] + strings.Repeat("#", level) + match[3]
 			}
 		}
 		lines = append(lines, line)

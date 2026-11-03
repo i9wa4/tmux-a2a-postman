@@ -62,13 +62,14 @@ the configured skill roots.
 - `postman-send-message`: [configured SKILL.md description]
 - `postman-usage`: [configured SKILL.md description]
 
-### Worker instructions
+### worker instructions
 
 [Complete configured recipient policy, preserving fenced code.]
 
 ## Delivery and Reply Guidance
 
 You can talk to:
+
 - orchestrator: Task coordinator.
 - approver: Command approval owner.
 
@@ -88,7 +89,7 @@ original checklist and actual evidence.
 
 ---
 
-# Requested change
+### Requested change
 
 This entire sender-authored region is preserved literally, through EOF.
 ````
@@ -99,6 +100,21 @@ describe the recipient's permitted routes, not the sender's contact list.
 Archived context records the configuration used for that send and grants no
 additional route or human authority. Ordinary sends, exact replies and command
 review traffic all retain their appropriate recipient context.
+
+The generated context has one H1, `Message`. Recipient Instructions, Delivery
+and Reply Guidance and Sender Message are H2 siblings. Common contract,
+Available Skills and role instructions are H3 within Recipient Instructions;
+Configured guidance is H3 within Delivery and Reply Guidance. Policy headings
+start at H4, retaining nested subsections up to Markdown's H6 limit. Fenced code
+is preserved literally.
+
+The sender body is a separate, exact byte region. It may contain its own H1 or
+other Markdown; Postman does not rewrite it to impose a heading convention.
+The single-H1 guarantee applies to generated context, not arbitrary sender
+content. A formatter is not run over received archives or historical mail.
+Captured Markdown is stored verbatim with its existing byte count and digest,
+so this layout change applies to new mail without rewriting old archives or
+changing envelope/context versions.
 
 ## 3. POP contract
 
