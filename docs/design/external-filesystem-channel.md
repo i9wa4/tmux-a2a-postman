@@ -1,5 +1,3 @@
-<!-- Generated from internal/helpdocs/topics/external-filesystem-channel.md; edit that source and run go generate ./internal/helpdocs. -->
-
 # External filesystem channel (#767)
 
 ## 1. Current implementation and ownership

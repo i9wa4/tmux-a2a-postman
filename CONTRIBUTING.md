@@ -22,14 +22,15 @@ and iterative debugging in a cloud environment, follow the
 [cloud development runbook](docs/development/cloud-tmux-debugging.md).
 
 README is the product entry point; [quickstart](docs/quickstart.md),
-[configuration reference](internal/helpdocs/topics/postman-md.md)
+[configuration reference](docs/help/postman-md.md)
 and [CLI specification](docs/cli-spec.md) own current user contracts. Keep
 developer check commands, fixture matrices and evidence limits here or in the
 linked development/validation documents. Canonical operating instructions live
-in `internal/helpdocs/topics/` and are embedded in the binary.
-`internal/helpdocs/entries/` owns the thin Skills;
-`go generate ./internal/helpdocs` refreshes their checked public `skills/`
-copies and the readable documentation/helper mirrors. Go tests reject drift.
+in `docs/help/`; shared guides and design references keep their authored paths
+under `docs/`. All installed help reads these sources directly.
+`skills/` owns the thin Skills. These authored files are embedded directly;
+there are no generated documentation or Skill copies. `docs/assets/` owns the
+offline helpers, examples and license notices.
 Required filesystem helpers and license notices ship in the same embedded
 resource bundle; no checkout is needed to use installed help or procedures.
 `CLAUDE.md` points to the one repository instruction owner, AGENTS; runtime

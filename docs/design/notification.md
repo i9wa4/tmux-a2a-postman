@@ -23,7 +23,7 @@ scroll; comparing rows by position would mistake scrolling for a large redraw.
 Small differences permit another spaced Enter. Substantial change stops extra
 keys. Both the attempt count and elapsed input time are bounded. The exact
 interval, threshold and limits belong to the embedded
-[send-heredoc HelpDoc](../../internal/helpdocs/topics/send-heredoc.md).
+[send-heredoc HelpDoc](../help/send-heredoc.md).
 
 The algorithm never locates an input area, learns cursor prefixes or branches
 on Codex/Claude prompt conventions. Equal-looking screens may have different
