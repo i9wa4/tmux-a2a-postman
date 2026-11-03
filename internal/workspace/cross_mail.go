@@ -78,7 +78,7 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 					return errors.New("reply fills a different request")
 				}
 			}
-			identity, err := newMailIdentity()
+			identity, err := newAvailableMailIdentity(sourceWS, destinationWS)
 			if err != nil {
 				return err
 			}

@@ -125,7 +125,9 @@ try:
                     rapid = now - last_enter_at < 0.5
                     last_enter_at = now
                     case = os.environ["POSTMAN_SMOKE_CASE"]
-                    if role in ["worker", "approver"] and (case == "absorbed-enter" or (case == "newline-retry" and draft_enters == 0 and draft) or (case in ["concurrent", "approval-burst"] and draft and (draft_enters == 0 or rapid))):
+                    absorb_first = case in ["newline-retry", "concurrent", "approval-burst"] and draft and draft_enters == 0
+                    absorb_rapid = case == "concurrent" and draft and rapid
+                    if role in ["worker", "approver"] and (case == "absorbed-enter" or absorb_first or absorb_rapid):
                         absorbed_enters += 1
                         draft_enters += 1
                         draft.append(10)

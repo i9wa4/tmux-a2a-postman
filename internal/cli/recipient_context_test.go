@@ -4,12 +4,48 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+	_ "time/tzdata"
 
 	helpdata "github.com/i9wa4/tmux-a2a-postman/help"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
+
+func TestLocalTimestampShowsOffsetAcrossDateAndDSTBoundaries(t *testing.T) {
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ recorded, want string }{
+		{"2026-01-01T01:30:00Z", "2025-12-31T20:30:00-05:00"},
+		{"2026-03-08T06:59:59Z", "2026-03-08T01:59:59-05:00"},
+		{"2026-03-08T07:00:00Z", "2026-03-08T03:00:00-04:00"},
+	} {
+		if got := localTimestamp(tc.recorded, newYork); got != tc.want {
+			t.Fatalf("local timestamp for %s: got %s, want %s", tc.recorded, got, tc.want)
+		}
+	}
+	if got := localTimestamp("2026-01-01T00:00:00Z", time.UTC); got != "2026-01-01T00:00:00+00:00" {
+		t.Fatal("UTC display requires an explicit numeric offset", got)
+	}
+}
+
+func TestRecipientContextUsesLocalDisplayOnlyForHumanFields(t *testing.T) {
+	previous := time.Local
+	time.Local = time.FixedZone("JST", 9*60*60)
+	t.Cleanup(func() { time.Local = previous })
+	msg := workspace.Message{ID: "m-20260101T000000.000000000Z-aA09Zz", From: "worker", To: "peer", CreatedAt: "2026-01-01T00:00:00Z"}
+	policy := config.RecipientPolicy{Footer: "Sent {timestamp}"}
+	rendered := renderRecipientContext(policy, config.WorkspaceTopology{}, "", "session", msg)
+	if !strings.Contains(rendered, "Timestamp: `2026-01-01T09:00:00+09:00`") || !strings.Contains(rendered, "Sent 2026-01-01T09:00:00+09:00") {
+		t.Fatal("recipient context did not localize both human-facing fields", rendered)
+	}
+	if msg.CreatedAt != "2026-01-01T00:00:00Z" {
+		t.Fatal("rendering changed canonical UTC metadata")
+	}
+}
 
 func TestRecipientContactsUseExactImmediateInterfaceViewpoint(t *testing.T) {
 	topology := config.WorkspaceTopology{

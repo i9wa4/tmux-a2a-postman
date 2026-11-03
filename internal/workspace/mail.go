@@ -320,7 +320,7 @@ func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, f
 				return errors.New("reply fills a different request")
 			}
 		}
-		identity, err := newMailIdentity()
+		identity, err := newAvailableMailIdentity(ws)
 		if err != nil {
 			return err
 		}

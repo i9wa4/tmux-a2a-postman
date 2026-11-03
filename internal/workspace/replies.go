@@ -112,7 +112,7 @@ func (m Mail) SendReply(ctx context.Context, rt Runtime, ids []string, body stri
 				bound = true
 			}
 		}
-		identity, err := newMailIdentity()
+		identity, err := newAvailableMailIdentity(ws)
 		if err != nil {
 			return err
 		}

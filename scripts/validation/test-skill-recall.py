@@ -27,12 +27,21 @@ class RecallDataTests(unittest.TestCase):
         fresh = record(2, "read", "2026-11-01T12:00:00.000000001+02:00")
         fresh["id"] = "m-20261101T100000.000000001Z-" + "a" * 32
         fresh["path"] = OWN + "/read/" + fresh["id"] + ".md"
-        self.assertEqual(SELECT([fresh, old], OWN)["messages"], [old, fresh])
+        short = record(3, "sent", "2026-11-01T10:00:00.000000002Z")
+        short["id"] = "m-20261101T100000.000000002Z-aA09Zz"
+        short["path"] = OWN + "/sent/" + short["id"] + ".md"
+        self.assertEqual(SELECT([short, fresh, old], OWN)["messages"], [old, fresh, short])
         for bad in [fresh["id"].replace("20261101", "20260230"),
                     fresh["id"].replace("000000001Z", "1Z"),
                     fresh["id"].replace("100000", "100001")]:
             with self.subTest(identifier=bad), self.assertRaises(ValueError):
                 malformed = fresh | {"id": bad, "path": OWN + "/read/" + bad + ".md"}
+                SELECT([old, malformed], OWN)
+        for bad in [short["id"].replace("aA09Zz", "-A09Zz"),
+                    short["id"].replace("aA09Zz", "aA09Z"),
+                    short["id"].replace("000000002Z", "000000003Z")]:
+            with self.subTest(identifier=bad), self.assertRaises(ValueError):
+                malformed = short | {"id": bad, "path": OWN + "/sent/" + bad + ".md"}
                 SELECT([old, malformed], OWN)
 
     def test_friday_is_recalled_on_monday_without_a_clock_or_mtime_window(self):

@@ -572,20 +572,24 @@ grammars fail explicitly rather than silently running source in another shell.
 
 ### 10.4. Message identity and filenames
 
-New mail uses `m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<32-lowercase-hex>.md`.
+New mail uses `m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<6-base62>.md`.
 The fixed-width UTC timestamp and `created_at` derive from the same instant;
-the suffix contains 128 bits of cryptographic randomness. The reader rejects
+the suffix is uniformly sampled from 62 ASCII letters and digits (about 35.7
+bits). The reader rejects
 invalid calendar dates and timestamp/creation-metadata mismatches. Exact
 reply/decision targets use the complete ID without `.md`.
 
 New filenames sort by recorded creation time. Equal timestamps sort by random
 suffix; a clock rollback follows recorded wall time rather than real-world
 submission order. This is not a cross-process FIFO guarantee. Legacy
-`m-<32-lowercase-hex>` IDs and their absolute archive paths remain valid and
+`m-<32-lowercase-hex>` IDs and previous timestamped IDs with a 32-hex suffix,
+with their absolute archive paths, remain valid and
 are never renamed; mixed old/new filenames do not provide one chronological
 history. Use archived `created_at` for historical selection.
 
-Input-request tokens retain `ireq_<32-lowercase-hex>` without the timestamp.
+Input-request tokens retain `ireq_<32-lowercase-hex>`. Historical IDs keep
+their exact suffix-to-token mapping; new IDs use the first 128 bits of the
+SHA-256 digest of the complete ID as that token.
 Drafts, receipts, notices, transactions and execution decisions retain the same
 complete assigned ID across recovery. External inputs and reports reuse their
 first durable assignment through existing mail records; no ID registry is
