@@ -100,6 +100,24 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 		if err := validateMessage(result); err != nil {
 			return err
 		}
+		byMessage, err := privateDir(decisions, "by-message", true)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = byMessage.Close() }()
+		if err := syncDirectory(decisions); err != nil {
+			return err
+		}
+		// Reserve the outgoing identity first. A crash here burns only that
+		// identity; a crash after the request-keyed record still blocks replay.
+		if err := writeJSON(byMessage, result.ID+".json", struct {
+			RequestID string `json:"request_id"`
+		}{id}); err != nil {
+			return err
+		}
+		if err := syncDirectory(byMessage); err != nil {
+			return err
+		}
 		if err := writeJSON(decisions, id+".json", struct {
 			MessageID string           `json:"message_id"`
 			Decision  ApprovalDecision `json:"decision"`

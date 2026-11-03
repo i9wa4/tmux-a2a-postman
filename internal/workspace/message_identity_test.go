@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,16 @@ func TestLegacyExecutionRequestRetainsExactDecisionCorrelation(t *testing.T) {
 			}
 			if _, ok := messageid.Timestamp(decision.ID); !ok {
 				t.Fatal("new decision lacks timestamp", decision.ID)
+			}
+			index := filepath.Join(m.Store.StateRoot, "repo", "agents", "peer", "executions", "decisions", "by-message", decision.ID+".json")
+			var reservation struct {
+				RequestID string `json:"request_id"`
+			}
+			if err := readJSONFile(index, &reservation); err != nil || reservation.RequestID != request.ID {
+				t.Fatal("decision identity was not durably indexed", reservation, err)
+			}
+			if _, err := m.DecideExecution(context.Background(), mailRuntime("peer"), request.ID, "second decision", !approve); err == nil {
+				t.Fatal("reserved decision was replayed")
 			}
 		})
 	}

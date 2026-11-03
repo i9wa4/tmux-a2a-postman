@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestAvailableMailIdentityChecksAllHistoricalBoxesAndOperations(t *testing.T) {
@@ -27,13 +29,12 @@ func TestAvailableMailIdentityChecksAllHistoricalBoxesAndOperations(t *testing.T
 			}
 			content := []byte("occupied")
 			if box == "decisions" {
-				dir = filepath.Join(root, "agents", "peer", "executions", "decisions")
-				name = request.ID + ".json"
+				dir = filepath.Join(root, "agents", "peer", "executions", "decisions", "by-message")
+				name = occupied + ".json"
 				var err error
 				content, err = json.Marshal(struct {
-					MessageID string           `json:"message_id"`
-					Decision  ApprovalDecision `json:"decision"`
-				}{occupied, ApprovalDecision{Version: 2, Command: "printf once", Decision: "approved", OperationID: request.ID, Reason: "reviewed"}})
+					RequestID string `json:"request_id"`
+				}{request.ID})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -66,6 +67,47 @@ func TestAvailableMailIdentityChecksAllHistoricalBoxesAndOperations(t *testing.T
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestDecisionIdentityLookupDoesNotScanRetainedDecisions(t *testing.T) {
+	m := mailFixture(t)
+	request := sendMail(t, m)
+	root := filepath.Join(m.Store.StateRoot, "repo", "agents", "peer", "executions", "decisions")
+	if err := os.MkdirAll(filepath.Join(root, "by-message"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 2050 {
+		name := filepath.Join(root, request.ID+"-"+strconv.Itoa(i)+".json")
+		if err := os.WriteFile(name, []byte("malformed unrelated decision"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const occupied = "m-20261103T173802.482076000Z-ABC123"
+	const free = "m-20261103T173802.482076000Z-DEF456"
+	if err := os.WriteFile(filepath.Join(root, "by-message", occupied+".json"), []byte("reserved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := m.Store.WithVerified(context.Background(), mailRuntime("worker"), func(ws *os.Root, _ Snapshot) error {
+		attempts := 0
+		got, err := availableMailIdentity(func() (mailIdentity, error) {
+			attempts++
+			if attempts == 1 {
+				return mailIdentity{ID: occupied}, nil
+			}
+			return mailIdentity{ID: free}, nil
+		}, ws)
+		if err != nil || got.ID != free || attempts != 2 {
+			t.Fatalf("retained decisions blocked allocation or hid a collision: %q, attempts=%d, err=%v", got.ID, attempts, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("identity allocation held the workspace lock too long: %s", elapsed)
 	}
 }
 

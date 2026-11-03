@@ -119,7 +119,9 @@ func mailIdentityExists(ws *os.Root, id string) (bool, error) {
 }
 
 // A decision reserves its outgoing message ID before mail staging begins.
-// Its filename is the request ID, so inspect the immutable payload as well.
+// The direct index keeps allocation independent of retained decision history.
+// Older releases only produced 32-character suffixes, so their request-keyed
+// decisions cannot contain a six-character candidate.
 func decisionIdentityExists(executions *os.Root, id string) (bool, error) {
 	decisions, err := privateDir(executions, "decisions", false)
 	if errors.Is(err, os.ErrNotExist) {
@@ -129,28 +131,17 @@ func decisionIdentityExists(executions *os.Root, id string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = decisions.Close() }()
-	entries, err := boundedEntries(decisions)
+	byMessage, err := privateDir(decisions, "by-message", false)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	for _, entry := range entries {
-		requestID := strings.TrimSuffix(entry.Name(), ".json")
-		if entry.Name() != requestID+".json" || !messageID(requestID) {
-			return false, ErrUnknown
-		}
-		var reservation struct {
-			MessageID string           `json:"message_id"`
-			Decision  ApprovalDecision `json:"decision"`
-		}
-		if err := readJSON(decisions, entry.Name(), &reservation); err != nil {
-			return false, err
-		}
-		if !messageID(reservation.MessageID) {
-			return false, ErrUnknown
-		}
-		if reservation.MessageID == id {
-			return true, nil
-		}
+	defer func() { _ = byMessage.Close() }()
+	_, err = byMessage.Lstat(id + ".json")
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	return false, nil
+	return err == nil, err
 }
