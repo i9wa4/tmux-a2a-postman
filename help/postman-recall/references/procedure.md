@@ -60,8 +60,9 @@ For the verified logical node, inspect only:
 <state>/<workspace-name>/agents/<node>/sent/<message-id>.md
 ```
 
-Accept legacy `m-<32 lowercase hex>` and new
-`m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<32 lowercase hex>` IDs. Validate the complete
+Accept legacy `m-<32 lowercase hex>`, previous timestamped
+`m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<32 lowercase hex>`, and current timestamped
+`m-YYYYMMDDTHHMMSS.NNNNNNNNNZ-<6 base62 characters>` IDs. Validate the complete
 calendar/time shape and require a new ID's timestamp to match `created_at`.
 Do not rename an old archive or select history by mixed-format filename order.
 

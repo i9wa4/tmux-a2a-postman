@@ -25,7 +25,7 @@ def id_creation_instant(identifier):
         raise ValueError("invalid message ID")
     if re.fullmatch(r"m-[0-9a-f]{32}", identifier):
         return None
-    match = re.fullmatch(r"m-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{9})Z-[0-9a-f]{32}", identifier)
+    match = re.fullmatch(r"m-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})\.(\d{9})Z-(?:[0-9a-f]{32}|[A-Za-z0-9]{6})", identifier)
     if not match:
         raise ValueError("invalid message ID")
     year, month, day, hour, minute, second, fraction = match.groups()

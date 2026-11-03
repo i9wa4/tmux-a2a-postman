@@ -30,7 +30,7 @@ func (m Mail) StageUnavailableCross(ctx context.Context, source NamedRuntime, to
 				}
 				refs = replyReferences(sources)
 			}
-			identity, err := newMailIdentity()
+			identity, err := newAvailableMailIdentity(ws)
 			if err != nil {
 				return err
 			}

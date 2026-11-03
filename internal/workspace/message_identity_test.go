@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -30,12 +31,29 @@ func TestTimestampedMailMatchesCreationMetadataAndFixedInputToken(t *testing.T) 
 	msg := sendMail(t, m)
 	stamp, ok := messageid.Timestamp(msg.ID)
 	created, err := time.Parse(time.RFC3339Nano, msg.CreatedAt)
-	if err != nil || !ok || !stamp.Equal(created) || !requestID(msg.InputRequestID) || msg.InputRequestID != "ireq_"+messageid.Suffix(msg.ID) {
+	if err != nil || !ok || !stamp.Equal(created) || !requestID(msg.InputRequestID) || msg.InputRequestID != inputRequestID(msg.ID) {
 		t.Fatal("message filename, metadata and input correlation disagree", msg, err)
 	}
 	msg.CreatedAt = created.Add(time.Nanosecond).Format(time.RFC3339Nano)
 	if err := validateMessage(msg); err == nil {
 		t.Fatal("timestamp/metadata mismatch was accepted")
+	}
+}
+
+func TestInputRequestIDKeepsOldMappingAndHashesNewFullID(t *testing.T) {
+	legacy := "m-" + strings.Repeat("a", 32)
+	oldTimestamped := "m-20260101T000000.000000000Z-" + strings.Repeat("b", 32)
+	for _, tc := range []struct{ id, want string }{
+		{legacy, "ireq_" + strings.Repeat("a", 32)},
+		{oldTimestamped, "ireq_" + strings.Repeat("b", 32)},
+	} {
+		if got := inputRequestID(tc.id); got != tc.want {
+			t.Fatalf("old mapping changed: %s => %s", tc.id, got)
+		}
+	}
+	newID := "m-20260101T000000.000000000Z-aA09Zz"
+	if got := inputRequestID(newID); !requestID(got) || got != inputRequestID(newID) || got == inputRequestID("m-20260101T000000.000000001Z-aA09Zz") {
+		t.Fatal("new correlation token is invalid, unstable, or does not cover the full ID", got)
 	}
 }
 
@@ -112,6 +130,16 @@ func TestLegacyExecutionRequestRetainsExactDecisionCorrelation(t *testing.T) {
 			}
 			if _, ok := messageid.Timestamp(decision.ID); !ok {
 				t.Fatal("new decision lacks timestamp", decision.ID)
+			}
+			index := filepath.Join(m.Store.StateRoot, "repo", "agents", "peer", "executions", "decisions", "by-message", decision.ID+".json")
+			var reservation struct {
+				RequestID string `json:"request_id"`
+			}
+			if err := readJSONFile(index, &reservation); err != nil || reservation.RequestID != request.ID {
+				t.Fatal("decision identity was not durably indexed", reservation, err)
+			}
+			if _, err := m.DecideExecution(context.Background(), mailRuntime("peer"), request.ID, "second decision", !approve); err == nil {
+				t.Fatal("reserved decision was replayed")
 			}
 		})
 	}

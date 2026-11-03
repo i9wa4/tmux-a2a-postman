@@ -89,7 +89,7 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 		if err != nil {
 			return err
 		}
-		identity, err := newMailIdentity()
+		identity, err := newAvailableMailIdentity(ws)
 		if err != nil {
 			return err
 		}
@@ -98,6 +98,24 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 			return err
 		}
 		if err := validateMessage(result); err != nil {
+			return err
+		}
+		byMessage, err := privateDir(decisions, "by-message", true)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = byMessage.Close() }()
+		if err := syncDirectory(decisions); err != nil {
+			return err
+		}
+		// Reserve the outgoing identity first. A crash here burns only that
+		// identity; a crash after the request-keyed record still blocks replay.
+		if err := writeJSON(byMessage, result.ID+".json", struct {
+			RequestID string `json:"request_id"`
+		}{id}); err != nil {
+			return err
+		}
+		if err := syncDirectory(byMessage); err != nil {
 			return err
 		}
 		if err := writeJSON(decisions, id+".json", struct {
