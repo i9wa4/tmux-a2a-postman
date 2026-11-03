@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,9 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	}
 	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "messenger" || len(topology.Sessions) != 0 {
 		t.Fatal(topology)
+	}
+	if !slices.Contains(topology.Edges["critic"], "approver") || slices.Contains(topology.Edges["agent"], "approver") {
+		t.Fatal("unexpected builtin approval routes", topology.Edges)
 	}
 	policy, err := topology.RecipientPolicy(ctx, path)
 	if err != nil {
