@@ -12,10 +12,7 @@ import (
 func TestDocumentedConfigurations(t *testing.T) {
 	for _, name := range []string{"minimal", "practical", "hierarchy", "launch"} {
 		t.Run(name, func(t *testing.T) {
-			path, err := filepath.Abs(filepath.Join("..", "..", "examples", name, "postman.md"))
-			if name == "launch" {
-				path, err = filepath.Abs(filepath.Join("..", "..", "docs", "assets", "examples", name, "postman.md"))
-			}
+			path, err := filepath.Abs(filepath.Join("..", "..", "testdata", "config", name+".md"))
 			if err != nil {
 				t.Fatal(err)
 			}

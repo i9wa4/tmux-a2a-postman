@@ -23,7 +23,7 @@ scroll; comparing rows by position would mistake scrolling for a large redraw.
 Small differences permit another spaced Enter. Substantial change stops extra
 keys. Both the attempt count and elapsed input time are bounded. The exact
 interval, threshold and limits belong to the embedded
-[send-heredoc HelpDoc](../help/send-heredoc.md).
+[send-heredoc HelpDoc](../../help/send-heredoc.md).
 
 The algorithm never locates an input area, learns cursor prefixes or branches
 on Codex/Claude prompt conventions. Equal-looking screens may have different
@@ -73,5 +73,5 @@ controller never supplies those receiver actions.
 Optional real Codex tests replace model decisions with a local deterministic
 Responses fixture, exercising the actual TUI and recipient tools without
 account authentication. These tests do not prove live Claude or model behavior.
-[Contributing](../../CONTRIBUTING.md) owns the matrix and commands; the
-[CLI specification](../cli-spec.md) owns the observable result contract.
+[Contributing](../development/contributing.md) owns the matrix and commands; the
+[CLI specification](../../help/cli-spec.md) owns the observable result contract.

@@ -6,8 +6,8 @@ from pathlib import Path
 import runpy
 import unittest
 
-ASSETS = Path(os.environ.get("POSTMAN_HELP_ASSET_ROOT", Path(__file__).resolve().parents[2] / "docs/assets"))
-REFERENCE = runpy.run_path(str(ASSETS / "recall/select_day.py"))
+ASSETS = Path(os.environ.get("POSTMAN_SKILLS_ROOT", Path(__file__).resolve().parents[2] / "skills"))
+REFERENCE = runpy.run_path(str(ASSETS / "postman-recall/scripts/select_day.py"))
 SELECT = REFERENCE["latest_day"]
 INSTANT = REFERENCE["recorded_instant"]
 OWN = "/home/example/.local/state/tmux-a2a-postman/work/agents/worker"
