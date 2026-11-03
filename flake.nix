@@ -69,11 +69,20 @@
           triggerSource = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
+              ./help
               ./skills
-              ./evals
               ./scripts/validation/validate-skill-triggers.py
               ./scripts/validation/test-skill-triggers.py
+              ./scripts/generate-skills.py
+              ./scripts/validation/test-generated-skills.py
             ];
+          };
+          generateSkills = pkgs.writeShellApplication {
+            name = "generate-skills";
+            runtimeInputs = [ triggerPython ];
+            text = ''
+              exec python3 ${./scripts/generate-skills.py} --root "$PWD" "$@"
+            '';
           };
           skillTriggerCheck = pkgs.writeShellApplication {
             name = "skill-trigger-check";
@@ -90,6 +99,8 @@
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
               ./scripts/validation
+              ./testdata
+              ./help
               ./skills
             ];
           };
@@ -112,10 +123,14 @@
             [
               gh
               goToolchain
+              rumdl
+              vale
+              harper
             ]
             ++ [
               waza
               triggerPython
+              inputs.markdown-formatter.packages.${system}.default
             ];
           goDevPackages = with pkgs; [
             gopls
@@ -138,8 +153,18 @@
               pkgs.findutils
               pkgs.gnugrep
             ]
-          } ${pkgs.bash}/bin/bash scripts/validation/validate-skill-metadata.sh skills";
+          } ${pkgs.bash}/bin/bash scripts/validation/validate-skill-metadata.sh";
+          skillWazaCheck = pkgs.writeShellScript "skill-waza-check" ''
+            export WAZA_BIN=${waza}/bin/waza
+            export JQ_BIN=${pkgs.jq}/bin/jq
+            if [ -n "''${NIX_BUILD_TOP:-}" ]; then
+              export SKILL_WAZA_CHECK_LINKS=0
+            fi
+            exec ${pkgs.bash}/bin/bash scripts/validation/validate-skill-waza.sh "$@"
+          '';
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
+            disable = ["MD041"]
+
             [MD013]
             code-blocks = false
             headings = false
@@ -162,6 +187,11 @@
         in
         {
           apps = {
+            generate-skills = {
+              type = "app";
+              program = "${generateSkills}/bin/generate-skills";
+              meta.description = "Generate thin installable Skills from HelpDoc metadata.";
+            };
             recursive-smoke = {
               type = "app";
               program = "${recursiveSmoke}/bin/recursive-smoke";
@@ -214,7 +244,10 @@
               type = "app";
               program = "${pkgs.writeShellScriptBin "skill-check" ''
                 set -euo pipefail
-                ${skillMetadataCheck}
+                ${generateSkills}/bin/generate-skills --check
+                ${skillMetadataCheck} help
+                ${skillMetadataCheck} skills
+                ${skillWazaCheck} help/*/SKILL.md skills/*/SKILL.md
                 exec ${pkgs.gh}/bin/gh skill publish --dry-run "$@"
               ''}/bin/skill-check";
               meta.description = "Validate agent skill metadata and publish packaging without publishing.";
@@ -298,19 +331,19 @@
             invocation-analysis =
               pkgs.runCommand "invocation-analysis" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
-                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./scripts/validation/analyze-invocations.py}
+                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./help/postman-usage/scripts/analyze-invocations.py}
                   python3 ${./scripts/validation/test-invocation-analysis.py}
                   touch "$out"
                 '';
             skill-team-manager =
               pkgs.runCommand "skill-team-manager" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
-                  export POSTMAN_MANAGER_SKILL_ROOT=${./skills/postman-team-manager}
+                  export POSTMAN_SKILLS_ROOT=${./help}
                   python3 ${./scripts/validation/test-skill-team-manager.py}
                   touch "$out"
                 '';
             skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-              export POSTMAN_RECALL_SKILL_ROOT=${./skills/postman-recall}
+              export POSTMAN_SKILLS_ROOT=${./help}
               python3 ${./scripts/validation/test-skill-recall.py}
               touch "$out"
             '';
@@ -326,6 +359,8 @@
                   export HOME="$TMPDIR/home"
                   mkdir -p "$HOME"
                   export WAZA_BIN=${waza}/bin/waza
+                  python3 ${triggerSource}/scripts/generate-skills.py --root ${triggerSource} --check
+                  python3 ${triggerSource}/scripts/validation/test-generated-skills.py
                   python3 ${triggerSource}/scripts/validation/test-skill-triggers.py
                   python3 ${triggerSource}/scripts/validation/validate-skill-triggers.py --root ${triggerSource}
                   touch "$out"
@@ -471,18 +506,33 @@
               };
 
               # === Agent skills ===
+              skill-generated = {
+                enable = true;
+                name = "generate thin Skills from HelpDoc metadata";
+                entry = "${generateSkills}/bin/generate-skills";
+                files = "^(help/[^/]+/SKILL\\.md|skills/|scripts/generate-skills\\.py$)";
+                pass_filenames = false;
+                require_serial = true;
+              };
               skill-metadata = {
                 enable = true;
                 name = "validate agent skill metadata";
-                entry = skillMetadataCheck;
-                files = "^skills/[^/]+/SKILL\\.md$";
+                entry = "${pkgs.bash}/bin/bash -c '${skillMetadataCheck} help && ${skillMetadataCheck} skills'";
+                files = "^(help|skills)/[^/]+/SKILL\\.md$";
                 pass_filenames = false;
+              };
+              skill-waza = {
+                enable = true;
+                name = "Waza skill readiness";
+                entry = "${skillWazaCheck}";
+                files = "^(help/postman-|skills/)";
+                require_serial = true;
               };
               skill-triggers = {
                 enable = true;
                 name = "deterministic skill triggers";
                 entry = "${skillTriggerCheck}/bin/skill-trigger-check";
-                files = "^(skills/|evals/[^/]+/trigger/)";
+                files = "^(help/postman-|skills/|scripts/validation/(validate|test)-skill-triggers\\.py$)";
                 pass_filenames = false;
                 require_serial = true;
               };

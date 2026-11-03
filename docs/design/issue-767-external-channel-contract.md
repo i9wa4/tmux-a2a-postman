@@ -5,8 +5,9 @@
 > [file-first architecture](file-first-architecture.md) and
 > [notification](notification.md).
 > Current daemonless behavior is in the
-> [filesystem channel](external-filesystem-channel.md). The latest ownership
-> clarification removes the historical #901 prerequisite described below.
+> [filesystem channel](../../help/external-filesystem-channel.md). The latest
+> ownership clarification removes the historical #901 prerequisite described
+> below.
 
 Documentation-only design artifact. No production code in this PR.
 Defines the channel-independent contract #767 requires before any

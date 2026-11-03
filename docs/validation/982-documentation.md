@@ -7,16 +7,16 @@ their PRs must land before this documentation is merged as the main entry point.
 
 ## 1. Ownership decisions
 
-| Surface                    | Decision                                                                                                                                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| README                     | Keep value, organization, architecture, request/reply diagrams, source installation and direct navigation.                                                              |
-| User operations            | Move detailed first-use, capture/notification caveats and workflow orientation to `docs/quickstart.md`; link existing exact contracts instead of copying schemas.       |
-| Configuration              | Keep the canonical reference inside the installed config-auditor Skill; add anatomy, a self-contained example, exact substitutions and progressive repository examples. |
-| CONTRIBUTING               | Own check commands, fixture matrices, dependency procedure and evidence limits; retain links to dated validation and cloud debugging.                                   |
-| AGENTS / CLAUDE            | Keep essential development checks, isolation, portability and release boundaries in AGENTS; CLAUDE remains its pointer. Remove repeated long recipes.                   |
-| RELEASING                  | Retain as the single owner of release authorization, tags and publishing. No procedural rewrite needed.                                                                 |
-| Skills                     | Keep mandatory operating instructions/references installable; remove the obsolete README setup anchor without adding a checkout requirement.                            |
-| Historical design/research | Retain dated evidence and retired proposals; identify research as experiments, not setup or a shipped platform.                                                         |
+| Surface                    | Decision                                                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| README                     | Keep value, organization, architecture, request/reply diagrams, source installation and direct navigation.                                                                                 |
+| User operations            | Move detailed first-use, capture/notification caveats and workflow orientation to `help/postman-usage/references/quickstart.md`; link existing exact contracts instead of copying schemas. |
+| Configuration              | Keep the canonical reference inside the installed config-auditor Skill; add anatomy, a self-contained example, exact substitutions and progressive repository examples.                    |
+| CONTRIBUTING               | Own check commands, fixture matrices, dependency procedure and evidence limits; retain links to dated validation and cloud debugging.                                                      |
+| AGENTS / CLAUDE            | Keep essential development checks, isolation, portability and release boundaries in AGENTS; CLAUDE remains its pointer. Remove repeated long recipes.                                      |
+| RELEASING                  | Retain as the single owner of release authorization, tags and publishing. No procedural rewrite needed.                                                                                    |
+| Skills                     | Keep mandatory operating instructions/references installable; remove the obsolete README setup anchor without adding a checkout requirement.                                               |
+| Historical design/research | Retain dated evidence and retired proposals; identify research as experiments, not setup or a shipped platform.                                                                            |
 
 The pre-edit map was recorded in the task's existing private tracker. No second
 public specification, documentation platform or runtime instruction surface was

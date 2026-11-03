@@ -1,0 +1,25 @@
+# version — print the build version
+
+Usage:
+
+```sh
+tmux-a2a-postman version
+tmux-a2a-postman --version
+tmux-a2a-postman help version
+```
+
+Output:
+
+```sh
+JSON
+```
+
+Shape:
+
+```sh
+{"name":"tmux-a2a-postman","version":"vX.Y.Z","commit":"unknown"}
+```
+
+Tagged module installs populate version from Go build info when release ldflags
+are not present. Commit is populated from release ldflags or VCS build info
+when available.

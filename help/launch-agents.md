@@ -1,0 +1,44 @@
+# launch-agents — expand one explicit agent-team preset, then exit
+
+```sh
+tmux-a2a-postman launch-agents <preset> [--config /absolute/postman.md]
+  [--socket /absolute/tmux.sock] [--cwd /absolute/team-directory]
+  [--session dedicated-name] [--dry-run]
+tmux-a2a-postman launch-agents --list [--config /absolute/postman.md]
+```
+
+YAML presets contain ordered columns, each with panes of existing role/command
+pairs. All presets are validated before tmux mutation. --list and --dry-run are
+inert: no commands, tmux creation, state registration or persistent logs.
+Commands are explicit user shell source, not words to split or message policy.
+
+Launch selects the explicit TMUX server unless --socket is supplied. A new
+socket requires an existing parent directory. The default target is a dedicated
+preset/workspace-derived session; an existing target or live workspace owner is
+rejected without modifying it. --cwd defaults to the invocation directory and
+must resolve below HOME. Columns are left-to-right; panes top-to-bottom.
+
+Only the new session/panes are created. Native titles, cwd and config continuity
+are established before configured commands. The existing server's default-shell
+(or SHELL, then /bin/sh for a new server) loads interactive/login initialization
+and evaluates each declared command. First-prompt-only hooks are not promised;
+use an explicit environment-loader command when needed. No private state of an
+already running shell is copied. No model credentials or bypass flags are added.
+
+The new consoles inherit TMUX_A2A_POSTMAN_CONFIG, an absolute routing/policy
+selection. Operational CLI precedence is explicit --config, this inherited
+selection, then the normal XDG/HOME default. Commands which clear inherited
+environment must preserve it or pass --config. Both status getters remain
+cache-only and ignore configuration selection. No generated config is needed.
+
+There is no initial role message, PING, synthetic mail, supervisor or respawn
+loop. Successful exit leaves the team alive; created processes are not proof of
+authentication or readiness. Ordinary manually/external-launched agents work.
+
+One nonblocking workspace setup lock and scoped ownership receipts prevent
+concurrent/repeated starts. A prior/uncertain started target is never replayed;
+inspect its outcome and deliberately choose a new target for a new launch.
+Partial failure cleans only positively owned new resources. Commands already
+started may have irreversible effects; stopping panes does not undo them.
+A killed launcher may leave resources/uncertain receipts: no force-reset,
+force-unlock or automatic repair is provided.

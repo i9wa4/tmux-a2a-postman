@@ -1,0 +1,17 @@
+# channel-report-heredoc --to <one-POP'd-external-id> --state <done|blocked|pending>
+
+```sh
+[--scope <exact-action-and-context-SHA256>] [--config <absolute-postman.md>]
+```
+
+Read literal non-terminal UTF-8 heredoc stdin. Only the active top-level
+external interface may report on its binding's claimed mail. done/blocked are
+terminal; pending requires --scope and a complete description of the exact
+decision. Scope is forbidden for terminal reports. An exact rerun is idempotent.
+Changed terminal results and stale/conflicting decisions fail without a second
+action.
+
+JSON includes success/as_of/message_id/exchange_id/reason. Durable mail precedes
+atomic outbox publication; channel-sync recovers the publication gap.
+Publication never proves external/human receipt. This command grants no
+execution approval.
