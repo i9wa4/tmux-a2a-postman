@@ -116,7 +116,7 @@ name from `tmux-a2a-postman skills list` to install another entry. Each Skill
 reads its detailed procedure from the installed binary's Markdown HelpDocs.
 
 Start with the
-[builtin standard team](internal/helpdocs/assets/defaults/postman.md) and
+[builtin standard team](docs/assets/defaults/postman.md) and
 `tmux-a2a-postman help orchestration`; no dotfiles or Skill installation is
 required. That same default `postman.md` contains all startup presets:
 
@@ -146,7 +146,7 @@ The [first exchange](docs/quickstart.md) also offers a complete
 
 - [Quickstart and operations](docs/quickstart.md): setup, mail, observations and
   troubleshooting.
-- [Configuration reference](internal/helpdocs/topics/postman-md.md):
+- [Configuration reference](docs/help/postman-md.md):
   anatomy, examples and exact supported fields.
 - [CLI contract](docs/cli-spec.md) and `tmux-a2a-postman help`: command inputs
   and outputs.
@@ -155,10 +155,10 @@ The [first exchange](docs/quickstart.md) also offers a complete
   [external file integration](docs/design/external-filesystem-channel.md).
 - [Installable Skills](skills/): usage, sending, recall, configuration audit and
   team management, planning, records, orchestration and review.
-- [Operating procedures](internal/helpdocs/topics/orchestration.md),
-  [planning](internal/helpdocs/topics/planning.md),
-  [records](internal/helpdocs/topics/records.md), and
-  [review](internal/helpdocs/topics/reviews.md): the same canonical HelpDocs
+- [Operating procedures](docs/help/orchestration.md),
+  [planning](docs/help/planning.md),
+  [records](docs/help/records.md), and
+  [review](docs/help/reviews.md): the same canonical HelpDocs
   available in the binary.
 - [Migration inventory](docs/design/standard-team-migration.md): source
   ownership, portability and verification boundaries.

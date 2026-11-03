@@ -26,13 +26,11 @@ gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code and replace `postman-usage` with the
-desired name from `skills list`. GitHub CLI handles the client's installation;
-Postman supplies the entry and its detailed installed HelpDocs. Existing Nix
-users can continue installing the checked repository `skills/` directories
-through their declarative Skill source.
+desired name from `skills list`. Existing Nix users can continue installing
+the same repository `skills/` directories through their declarative source.
 
-The authored entries are under `internal/helpdocs/entries/`; generated
-repository copies are checked for drift. Detailed operating procedures have
-one owner in the binary's HelpDocs. A missing installed topic is an explicit
+The authored entries are under `skills/` and are embedded directly from that
+one source. Detailed procedures live under `docs/help/` and ship in the binary.
+A missing installed topic is an explicit
 incompatibility, not permission to fetch instructions for another version.
 Client authentication, permissions and discovery remain with the client.

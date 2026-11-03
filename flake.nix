@@ -308,19 +308,19 @@
             invocation-analysis =
               pkgs.runCommand "invocation-analysis" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
-                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./scripts/validation/analyze-invocations.py}
+                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./docs/assets/diagnostics/analyze-invocations.py}
                   python3 ${./scripts/validation/test-invocation-analysis.py}
                   touch "$out"
                 '';
             skill-team-manager =
               pkgs.runCommand "skill-team-manager" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
-                  export POSTMAN_HELP_ASSET_ROOT=${./internal/helpdocs/assets}
+                  export POSTMAN_HELP_ASSET_ROOT=${./docs/assets}
                   python3 ${./scripts/validation/test-skill-team-manager.py}
                   touch "$out"
                 '';
             skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-              export POSTMAN_HELP_ASSET_ROOT=${./internal/helpdocs/assets}
+              export POSTMAN_HELP_ASSET_ROOT=${./docs/assets}
               python3 ${./scripts/validation/test-skill-recall.py}
               touch "$out"
             '';

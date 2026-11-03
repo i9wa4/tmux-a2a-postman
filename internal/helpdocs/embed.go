@@ -3,19 +3,28 @@ package helpdocs
 
 import (
 	"crypto/sha256"
-	"embed"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/i9wa4/tmux-a2a-postman/docs"
+	"github.com/i9wa4/tmux-a2a-postman/skills"
 )
 
-//go:generate go run ./generate/main.go -root ../..
+var content = docs.Content
 
-//go:embed topics/*.md entries/*/SKILL.md assets asset-modes.json
-var content embed.FS
+// Existing guides and design references are served from their authored paths.
+var topicFiles = map[string]string{
+	"cli-spec":                    "cli-spec.md",
+	"server-status":               "design/server-status.md",
+	"recipient-markdown":          "design/recipient-markdown-parity.md",
+	"external-filesystem-channel": "design/external-filesystem-channel.md",
+	"invocation-diagnostics":      "invocation-diagnostics.md",
+	"launching":                   "launch-agents.md",
+}
 
 // Read returns a complete authored topic without accessing mutable state.
 func Read(topic string) ([]byte, error) {
@@ -25,7 +34,11 @@ func Read(topic string) ([]byte, error) {
 	if !validName(topic) {
 		return nil, fmt.Errorf("unknown help topic %q", topic)
 	}
-	data, err := content.ReadFile("topics/" + topic + ".md")
+	name := topicFiles[topic]
+	if name == "" {
+		name = "help/" + topic + ".md"
+	}
+	data, err := content.ReadFile(name)
 	if err != nil {
 		return nil, fmt.Errorf("unknown help topic %q; use tmux-a2a-postman help for installed topics: %w", topic, err)
 	}
@@ -34,12 +47,15 @@ func Read(topic string) ([]byte, error) {
 
 // Topics is sorted and does not resolve configuration, native tmux or resources.
 func Topics() []string {
-	entries, _ := content.ReadDir("topics")
+	entries, _ := content.ReadDir("help")
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
 			names = append(names, strings.TrimSuffix(entry.Name(), ".md"))
 		}
+	}
+	for name := range topicFiles {
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
@@ -59,8 +75,7 @@ func validName(name string) bool {
 
 // Entries supplies the same authored thin Skills used by declarative installs.
 func Entries() fs.FS {
-	result, _ := fs.Sub(content, "entries")
-	return result
+	return skills.Content
 }
 
 // EntryNames lists the authored entries without inspecting client directories.
@@ -97,20 +112,22 @@ func Assets() fs.FS {
 // does not trust release labels: different development builds cannot collide.
 func BundleID() string {
 	hash := sha256.New()
-	_ = fs.WalkDir(content, ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
+	for _, source := range []fs.FS{content, skills.Content} {
+		_ = fs.WalkDir(source, ".", func(name string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			data, readErr := fs.ReadFile(source, name)
+			if readErr != nil {
+				return readErr
+			}
+			_, _ = fmt.Fprintf(hash, "%s\x00%d\x00", path.Clean(name), len(data))
+			_, _ = hash.Write(data)
 			return nil
-		}
-		data, readErr := content.ReadFile(name)
-		if readErr != nil {
-			return readErr
-		}
-		_, _ = fmt.Fprintf(hash, "%s\x00%d\x00", path.Clean(name), len(data))
-		_, _ = hash.Write(data)
-		return nil
-	})
+		})
+	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
