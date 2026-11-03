@@ -150,6 +150,85 @@ func launchShellWord(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+func TestLaunchAgentsFromPaneCreatesWindowInInvokingSession(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	f.tmux("select-pane", "-t", f.worker, "-T", "shell")
+	f.tmux("select-pane", "-t", f.peer, "-T", "other")
+	marker := filepath.Join(f.home, "window-started")
+	path := launchConfig(t, f, map[string]string{
+		"worker": "printf started > " + launchShellWord(marker) + "; exec sleep 120",
+		"peer":   "exec sleep 120", "reviewer": "exec sleep 120",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+	cmd := f.child(ctx, f.worker, "launch-agents", "single", "--config", path)
+	var out, diagnostics bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &diagnostics
+	err := cmd.Run()
+	var got launchProtocol
+	if json.Unmarshal(out.Bytes(), &got) != nil || err != nil || !got.Success {
+		t.Fatalf("launch: %s %s (%v)", out.Bytes(), diagnostics.Bytes(), err)
+	}
+	originalSession := f.tmux("display-message", "-p", "-t", f.worker, "#{session_id}")
+	if got.Launch.SessionID != originalSession || got.Launch.Window == "" {
+		t.Fatalf("launched outside invoking session: %+v; original=%s", got.Launch, originalSession)
+	}
+	if got.Launch.Window == f.tmux("display-message", "-p", "-t", f.worker, "#{window_id}") {
+		t.Fatal("reused invoking window")
+	}
+	if got := f.tmux("list-sessions", "-F", "#{session_name}"); got != "work" {
+		t.Fatal("created another session", got)
+	}
+	if got := f.tmux("display-message", "-p", "-t", f.worker, "#{pane_title}"); got != "shell" {
+		t.Fatal("changed invoking pane", got)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if raw, err := os.ReadFile(marker); err == nil && string(raw) == "started" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("new window command did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestLaunchAgentsExplicitTargetsRemainDedicatedFromPane(t *testing.T) {
+	for _, mode := range []string{"session", "socket"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newPublicApprovalFixture(t)
+			f.tmux("select-pane", "-t", f.worker, "-T", "shell")
+			f.tmux("select-pane", "-t", f.peer, "-T", "other")
+			path := launchConfig(t, f, map[string]string{
+				"worker": "exec sleep 120", "peer": "exec sleep 120", "reviewer": "exec sleep 120",
+			})
+			args := []string{"launch-agents", "single", "--config", path}
+			if mode == "session" {
+				args = append(args, "--session", "explicit-team")
+			} else {
+				args = append(args, "--socket", f.socket)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+			defer cancel()
+			cmd := f.child(ctx, f.worker, args...)
+			var out, diagnostics bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &out, &diagnostics
+			err := cmd.Run()
+			var got launchProtocol
+			if json.Unmarshal(out.Bytes(), &got) != nil || err != nil || !got.Success {
+				t.Fatalf("launch: %s %s (%v)", out.Bytes(), diagnostics.Bytes(), err)
+			}
+			if got.Launch.SessionID == f.tmux("display-message", "-p", "-t", f.worker, "#{session_id}") {
+				t.Fatal("explicit dedicated target reused invoking session")
+			}
+			if names := strings.Split(f.tmux("list-sessions", "-F", "#{session_name}"), "\n"); len(names) != 2 {
+				t.Fatal("dedicated target not created", names)
+			}
+		})
+	}
+}
+
 func TestLaunchedTerminalAgentsOwnFullReadRepliesAndExecutionApproval(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
