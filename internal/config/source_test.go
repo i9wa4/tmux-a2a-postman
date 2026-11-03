@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -37,18 +38,35 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"codex", "claude"} {
-		count := 0
+	if len(presets) != 3 {
+		t.Fatal("unexpected builtin preset set", presets)
+	}
+	dev := presets["dev"]
+	if len(dev.Columns) != 2 || len(dev.Columns[0].Panes) != 1 || len(dev.Columns[1].Panes) != 1 ||
+		dev.Columns[0].Panes[0] != (LaunchPane{Title: "editor"}) ||
+		dev.Columns[1].Panes[0] != (LaunchPane{Title: "agent", Role: "agent", Command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"}) {
+		t.Fatal("builtin dev differs from original two-pane layout", dev)
+	}
+	for name, want := range map[string][][]string{
+		"preset-p": {
+			{"messenger|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "orchestrator|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", "worker|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium", "worker-alt|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"},
+			{"approver|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "guardian|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", "critic|codex --yolo --no-alt-screen --no-daemon --model gpt-5.6-sol --config model_reasoning_effort=high"},
+		},
+		"preset-w": {
+			{"messenger|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "orchestrator|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium", "worker|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "worker-alt|claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model sonnet --effort medium"},
+			{"approver|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "guardian|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", "critic|claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model \"opus[1m]\" --effort medium"},
+		},
+	} {
+		var got [][]string
 		for _, column := range presets[name].Columns {
+			var panes []string
 			for _, pane := range column.Panes {
-				count++
-				if pane.Command != "exec "+name {
-					t.Fatal("personal launch flags", pane)
-				}
+				panes = append(panes, pane.Role+"|"+pane.Command)
 			}
+			got = append(got, panes)
 		}
-		if count != 8 {
-			t.Fatal("incomplete team", name, count)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatal("builtin seven-role layout changed", name, got)
 		}
 	}
 	if _, err := os.Lstat(filepath.Dir(path)); !os.IsNotExist(err) {

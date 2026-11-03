@@ -53,7 +53,8 @@ bindings use separate private roots. See help channel-sync and
 `tmux-a2a-postman help external-filesystem-channel` for producer activation and
 recovery.
 
-Optional YAML presets define ordered columns of panes with role/command pairs.
+Optional YAML presets define ordered columns of agent role/command panes and
+title-only interactive shell panes. A shell title is not a communication role.
 Only explicit launch-agents executes those commands; --list and --dry-run are
 inert. See help launch-agents and `tmux-a2a-postman help launching`.
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -66,10 +67,10 @@ func TestBuiltinStatusUsesRegisteredSourceAcrossCollectorEnvironment(t *testing.
 }
 
 func TestBuiltinLaunchOverridesStaleServerConfigWithoutPrompt(t *testing.T) {
-	for _, client := range []string{"codex", "claude"} {
-		t.Run(client, func(t *testing.T) {
+	for _, preset := range []string{"preset-p", "preset-w"} {
+		t.Run(preset, func(t *testing.T) {
 			f := newTmuxFixture(t)
-			plan := nativeLaunchPlan(t, f, "builtin-"+client)
+			plan := nativeLaunchPlan(t, f, "builtin-"+preset)
 			plan.Config = filepath.Join(f.home, "chosen-config", "tmux-a2a-postman", "postman.md")
 			plan.BuiltinConfig = true
 			topology, err := (config.Source{Path: plan.Config, Builtin: true}).Load(context.Background())
@@ -81,15 +82,17 @@ func TestBuiltinLaunchOverridesStaleServerConfigWithoutPrompt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan.Columns = presets[client].Columns
-			plan.Preset = client
+			plan.Columns = presets[preset].Columns
+			plan.Preset = preset
 			bin := filepath.Join(f.home, "fixture-bin")
 			if err := os.Mkdir(bin, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			script := "#!/bin/sh\nprintf '%s\\n%s\\n' \"${TMUX_A2A_POSTMAN_CONFIG-unset}\" \"$XDG_CONFIG_HOME\" > " + shellQuote(filepath.Join(plan.CWD, "env-")) + "\"$TMUX_PANE\"\nexec sleep 120\n"
-			if err := os.WriteFile(filepath.Join(bin, client), []byte(script), 0o700); err != nil {
-				t.Fatal(err)
+			for _, client := range []string{"codex", "claude"} {
+				if err := os.WriteFile(filepath.Join(bin, client), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
 			}
 			// A fixture shell prevents system login startup from replacing PATH and
 			// accidentally resolving an installed real client instead of our stub.
@@ -110,7 +113,7 @@ func TestBuiltinLaunchOverridesStaleServerConfigWithoutPrompt(t *testing.T) {
 			if err != nil {
 				t.Fatal(result, err)
 			}
-			if len(result.Panes) != 8 {
+			if len(result.Panes) != 7 {
 				t.Fatal("incomplete standard launch", result)
 			}
 			for _, pane := range result.Panes {
@@ -142,5 +145,94 @@ func TestBuiltinLaunchOverridesStaleServerConfigWithoutPrompt(t *testing.T) {
 				t.Fatal("launch copied builtin to user config", err)
 			}
 		})
+	}
+}
+
+func TestBuiltinDevStartsEditorShellAndOnlyAgentCommand(t *testing.T) {
+	f := newTmuxFixture(t)
+	plan := nativeLaunchPlan(t, f, "builtin-dev")
+	plan.Config = filepath.Join(f.home, "config", "tmux-a2a-postman", "postman.md")
+	plan.BuiltinConfig = true
+	topology, err := (config.Source{Path: plan.Config, Builtin: true}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	presets, err := topology.LaunchPresets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Topology, plan.Preset, plan.Columns = topology, "dev", presets["dev"].Columns
+	bin := filepath.Join(f.home, "fixture-bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(plan.CWD, "agent-command")
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$*\" > " + shellQuote(marker) + "\nexec sleep 120\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	actualBash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureShell := filepath.Join(bin, "bash")
+	wrapper := "#!/bin/sh\nexport PATH=" + shellQuote(bin+":"+os.Getenv("PATH")) + "\ncase \"$1\" in\n  -il) exec " + shellQuote(actualBash) + " --noprofile --norc -i ;;\n  -lic) exec " + shellQuote(actualBash) + " --noprofile --norc -c \"$2\" ;;\nesac\nexit 70\n"
+	if err := os.WriteFile(fixtureShell, []byte(wrapper), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.run(t, "set-option", "-g", "default-shell", fixtureShell)
+	f.run(t, "set-environment", "-g", "PATH", bin+":"+os.Getenv("PATH"))
+	result, err := mailFixture(t).Store.LaunchAgents(context.Background(), plan)
+	if err != nil || len(result.Panes) != 2 {
+		t.Fatal(result, err)
+	}
+	left, right := result.Panes[0], result.Panes[1]
+	if left.Title != "editor" || left.Role != "" || left.Started || right.Title != "agent" || right.Role != "agent" || !right.Started || left.Column != 0 || right.Column != 1 {
+		t.Fatal("wrong dev pane roles or order", result.Panes)
+	}
+	for _, pane := range result.Panes {
+		if got := f.run(t, "display-message", "-p", "-t", pane.Pane, "#{pane_title}"); got != pane.Title {
+			t.Fatal("native title mismatch", pane, got)
+		}
+	}
+	if active := f.run(t, "display-message", "-p", "-t", left.Pane, "#{pane_active}"); active != "1" {
+		t.Fatal("editor is not focused", active)
+	}
+	leftWidth, leftErr := strconv.Atoi(f.run(t, "display-message", "-p", "-t", left.Pane, "#{pane_width}"))
+	rightWidth, rightErr := strconv.Atoi(f.run(t, "display-message", "-p", "-t", right.Pane, "#{pane_width}"))
+	if leftErr != nil || rightErr != nil || leftWidth-rightWidth > 1 || rightWidth-leftWidth > 1 {
+		t.Fatal("dev columns are not equal width", leftWidth, rightWidth)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var raw []byte
+	for {
+		raw, err = os.ReadFile(marker)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("agent stub did not start", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if string(raw) != "--yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium\n" {
+		t.Fatal("agent command changed", string(raw))
+	}
+	shellMarker := filepath.Join(plan.CWD, "editor-shell")
+	f.run(t, "send-keys", "-l", "-t", left.Pane, "printf shell-ok > "+shellQuote(shellMarker))
+	f.run(t, "send-keys", "-t", left.Pane, "Enter")
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		raw, err = os.ReadFile(shellMarker)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("editor shell did not accept input", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if string(raw) != "shell-ok" {
+		t.Fatal("editor shell output", string(raw))
 	}
 }
