@@ -104,17 +104,27 @@ checkout, tmux or configuration. Thin Skills discover these installed topics;
 `tmux-a2a-postman help skills` explains the thin entries and consumer-owned
 setup. Updating the binary updates the detailed procedures.
 
+Install a thin Skill with GitHub CLI:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
+```
+
+Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
+name from `tmux-a2a-postman skills list` to install another entry. Each Skill
+reads its detailed procedure from the installed binary's Markdown HelpDocs.
+
 Follow the [first exchange](docs/quickstart.md) with the complete
 [minimal config](examples/minimal/postman.md). Then try the
 [practical team](examples/practical/postman.md),
 [parent/child team](examples/hierarchy/postman.md), or
-[optional launch presets](examples/launch/postman.md).
+[optional launch presets](docs/assets/examples/launch/postman.md).
 
 ## 4. Guides and references
 
 - [Quickstart and operations](docs/quickstart.md): setup, mail, observations and
   troubleshooting.
-- [Configuration reference](internal/helpdocs/topics/postman-md.md):
+- [Configuration reference](docs/help/postman-md.md):
   anatomy, examples and exact supported fields.
 - [CLI contract](docs/cli-spec.md) and `tmux-a2a-postman help`: command inputs
   and outputs.

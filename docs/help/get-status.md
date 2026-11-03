@@ -29,5 +29,5 @@ refresh, persistent invocation log or pruning occurs. Missing/malformed or
 incompatible snapshots return status=unavailable plus reason, stderr and
 nonzero. A valid old snapshot stays old. Reading it does not verify live
 incarnation. Run refresh-status explicitly when collection is needed; do not
-poll empty POP. See docs/cli-spec.md and docs/design/server-status.md for the
-exact contract.
+poll empty POP. See `tmux-a2a-postman help cli-spec` and `help server-status`
+for the exact contract.
