@@ -35,9 +35,9 @@ flowchart TB
 ```
 
 Choose the organization in one file. Artifact review and command approval are
-different roles; review coordinates decisions and is not an OS sandbox.
-Direct parent/child routes require declared interfaces and distinct workspaces.
-The diagrams here explain capabilities; copy the tested configurations below.
+different roles; review coordinates decisions and is not an OS sandbox. Direct
+parent/child routes require declared interfaces and distinct workspaces. The
+diagrams explain capabilities; the configuration reference defines the fields.
 
 ## 2. Small commands, durable files
 
@@ -53,7 +53,7 @@ flowchart TB
 ```
 
 Transport uses native tmux panes and ordinary files, without model APIs.
-Optional [`launch-agents`](docs/launch-agents.md) creates one declared team and
+Optional [`launch-agents`](help/launching.md) creates one declared team and
 exits, without startup prompt injection or supervision. External services own
 their adapter and activation; no native GitHub/mobile service is implied.
 
@@ -100,9 +100,9 @@ authentication and sandbox settings remain yours.
 
 The binary includes complete Markdown guidance: run
 `tmux-a2a-postman help setup` or `tmux-a2a-postman help <topic>` without a
-checkout, tmux or configuration. Thin Skills discover these installed topics;
-`tmux-a2a-postman help skills` explains the thin entries and consumer-owned
-setup. Updating the binary updates the detailed procedures.
+checkout, tmux or configuration. Thin Skills discover installed workflow
+references; `tmux-a2a-postman help skills` explains the thin entries and
+consumer-owned setup. Updating the binary updates the detailed procedures.
 
 Install a thin Skill with GitHub CLI:
 
@@ -111,30 +111,41 @@ gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
-name from `tmux-a2a-postman skills list` to install another entry. Each Skill
-reads its detailed procedure from the installed binary's Markdown HelpDocs.
+name from `tmux-a2a-postman skills` to install another entry. Each Skill
+reads its detailed references with `tmux-a2a-postman skills <name> <ref>`.
 
-Follow the [first exchange](docs/quickstart.md) with the complete
-[minimal config](examples/minimal/postman.md). Then try the
-[practical team](examples/practical/postman.md),
-[parent/child team](examples/hierarchy/postman.md), or
-[optional launch presets](docs/assets/examples/launch/postman.md).
+Follow the [first exchange](skills/postman-usage/references/quickstart.md) and
+the [configuration reference](help/postman-md.md) to choose roles and routes.
+
+The repository mirrors the installed interface:
+
+```text
+help/                 CLI usage: help <topic>
+config/               bundled configuration assets
+skills/<name>/
+  SKILL.md            short entry: skills <name>
+  references/         workflows: skills <name> <ref>
+  scripts/            optional helpers
+  evals/              offline validation
+docs/                design, research, development and validation
+testdata/            test-only fixtures
+```
 
 ## 4. Guides and references
 
-- [Quickstart and operations](docs/quickstart.md): setup, mail, observations and
-  troubleshooting.
-- [Configuration reference](docs/help/postman-md.md):
+- [Quickstart and operations](skills/postman-usage/references/quickstart.md):
+  setup, mail, observations and troubleshooting.
+- [Configuration reference](help/postman-md.md):
   anatomy, examples and exact supported fields.
-- [CLI contract](docs/cli-spec.md) and `tmux-a2a-postman help`: command inputs
+- [CLI contract](help/cli-spec.md) and `tmux-a2a-postman help`: command inputs
   and outputs.
-- [Command review](docs/command-approvals.md),
-  [server status](docs/design/server-status.md), and
-  [external file integration](docs/design/external-filesystem-channel.md).
+- [Command review](help/execution.md),
+  [server status](help/server-status.md), and
+  [external file integration](help/external-filesystem-channel.md).
 - [Installable Skills](skills/): usage, sending, recall, configuration audit and
   team management.
-- [Contributing](CONTRIBUTING.md): development, deterministic tmux tests and
-  evidence limits.
+- [Contributing](docs/development/contributing.md): development, deterministic
+  tmux tests and evidence limits.
 
 This repository's [AGENTS.md](AGENTS.md) guides contributors. Your runtime
 `postman.md` configures your team; it is a separate instruction surface.

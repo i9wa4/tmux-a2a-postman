@@ -69,9 +69,9 @@ func renderRecipientContext(policy config.RecipientPolicy, topology config.Works
 	case msg.Kind == "execution-request":
 		text.WriteString("\nRead installed `tmux-a2a-postman help approve-execution` and `tmux-a2a-postman help decline-execution` for the fixed decision procedure.\n")
 	case msg.External != nil:
-		text.WriteString("\nRead installed `tmux-a2a-postman help external-channel` for the exact external reporting/decision procedure.\n")
+		text.WriteString("\nRead installed `tmux-a2a-postman skills postman-usage external` for the exact external reporting/decision procedure.\n")
 	default:
-		text.WriteString("\nRead installed `tmux-a2a-postman help usage` for mailbox handling and `tmux-a2a-postman help send-heredoc` for the sending/replying procedure.\n")
+		text.WriteString("\nRead installed `tmux-a2a-postman skills postman-usage mailbox` for mailbox handling and `tmux-a2a-postman skills postman-send-message` for the sending/replying procedure.\n")
 	}
 	guidance := workspace.ReplyGuidance(msg)
 	if msg.Kind == "execution-request" {

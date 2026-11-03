@@ -1,0 +1,27 @@
+# tmux-a2a-postman — daemonless mail for tmux agents
+
+```sh
+get-status         Read the saved whole-server JSON snapshot
+get-status-oneline Read a compact human overview of the selected tmux server
+pop                Claim one own unread message; return its archive path
+send-heredoc       Send a new request or reply to claimed message IDs
+execute-heredoc    Run source in an initialized shell after needed approval
+approve-execution  Approve one own POP'd execution request, with a reason
+decline-execution  Decline one own POP'd execution request, with a reason
+help [topic]       Read embedded Markdown CLI usage
+skills             List Skills, display an entry or read a named reference
+resources          Explicitly materialize the offline helper bundle
+version            Print build version JSON
+```
+
+Each workspace command accepts one absolute --config override. Default:
+$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or $HOME/.config/tmux-a2a-postman/postman.md.
+No daemon startup is needed. Send and execute accept quoted heredoc stdin. POP
+takes no message ID. Generic tmux paste and bounded, spaced C-m retries notify
+existing agent consoles. No model API, registration or provider-specific parser
+is used. Notification uncertainty never reverses durable mail. Read the complete
+POP archive before acting.
+
+Use help <command> or <command> --help for details. Help/version need no tmux.
+
+Bare tmux-a2a-postman prints usage.

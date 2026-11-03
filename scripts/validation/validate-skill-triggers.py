@@ -71,11 +71,11 @@ def local_file(root, path):
 
 def preflight(root):
     skills = sorted((root / "skills").glob("*/SKILL.md"))
-    suites = sorted((root / "evals").glob("*/trigger/eval.yaml"))
+    suites = sorted((root / "skills").glob("*/evals/trigger/eval.yaml"))
     if not skills or not suites:
         raise InvalidSuite("zero shipped skills or deterministic trigger suites discovered")
     names = {path.parent.name for path in skills}
-    suite_names = {path.parent.parent.name for path in suites}
+    suite_names = {path.parents[2].name for path in suites}
     if names != suite_names:
         raise InvalidSuite(f"suite coverage mismatch: missing={sorted(names - suite_names)}, orphan={sorted(suite_names - names)}")
     for skill in skills:
@@ -83,7 +83,7 @@ def preflight(root):
     inventory = []
     for spec in suites:
         local_file(root, spec)
-        name = spec.parent.parent.name
+        name = spec.parents[2].name
         suite = mapping(load(spec), ["name", "description", "skill", "version", "config", "tasks", "metrics", "graders"],
                         ["name", "skill", "config", "tasks"], str(spec))
         metadata(suite, spec)
