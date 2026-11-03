@@ -2,6 +2,13 @@
 
 This file guides work on Postman itself. A user's runtime `postman.md` defines
 team routing and cooperation; it is not this repository's development guide.
+Follow the
+[system-wide design principles](docs/design/project-design-philosophy.md).
+Before adding a mechanism, examine total complexity across code, configuration,
+instructions, assets and operation; reuse, simplify or remove existing
+mechanisms. These development rules are separate from the optional user
+notification bootstrap.
+
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and complete check procedures.
 For iterative cloud/tmux investigation, follow the
 [AI development runbook](docs/development/cloud-tmux-debugging.md).

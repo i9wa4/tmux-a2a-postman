@@ -1,5 +1,8 @@
 # Contributing
 
+Follow the [design principles](docs/design/project-design-philosophy.md) when
+changing code, configuration, instructions or packaged assets.
+
 ## 1. Local Checks
 
 After implementation work:
