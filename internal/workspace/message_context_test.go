@@ -105,7 +105,7 @@ func TestLegacyContextHeadingsRemainClaimableAndReplyable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newPrefix := "# Message\n\n# Recipient Instructions\n\n## Common contract\n\nNew policy.\n\n# Sender Message\n\n"
+	newPrefix := "# Message\n\n## Recipient Instructions\n\n### Common contract\n\nNew policy.\n\n## Sender Message\n\n"
 	m.Context = func(context.Context, Snapshot, Message) (string, error) { return newPrefix, nil }
 	claim, err := m.Claim(ctx, mailRuntime("peer"), "")
 	if err != nil || claim == nil || claim.Message.Context.Markdown != oldPrefix || claim.Message.Body != original.Body {
