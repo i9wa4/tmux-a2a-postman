@@ -1,9 +1,11 @@
 # Optional agent-team presets
 
-`launch-agents` expands one explicitly selected preset into a dedicated tmux
-session and exits. Ordinary manually started consoles remain supported. Reading
-configuration, sending mail, POP, and refreshing status never launch consoles.
-There is no daemon, startup role message, PING, supervisor, or respawn loop.
+`launch-agents` expands one explicitly selected preset into a new tmux window in
+the invoking session, or into a dedicated session when no invoking pane is
+available, and exits. Ordinary manually started consoles remain supported.
+Reading configuration, sending mail, POP, and refreshing status never launch
+consoles. There is no daemon, startup role message, PING, supervisor, or respawn
+loop.
 
 ## 1. Configuration and preview
 
@@ -28,12 +30,17 @@ already exist.
 
 ## 2. Cwd, server, configuration, and shell
 
-Without `--socket`, the explicit native server in `TMUX` is selected. Without
-`--cwd`, the invocation directory is used. It must resolve below `HOME` and is
-the exact cwd for every new pane; its canonical HOME-relative root identifies
-the workspace. The default dedicated session name is derived from preset and
-root; `--session` selects another dedicated target, not a session to modify or
-reuse. No existing pane is renamed, split, moved, or closed.
+Without `--socket`, the explicit native server in `TMUX` is selected. When
+`TMUX_PANE` identifies a verified pane on that server, a plain invocation
+creates a new window in that pane's session. An invalid supplied pane fails
+before mutation. Without a pane, the default dedicated session name is derived
+from preset and root. Explicit `--socket` retains dedicated-session behavior;
+`--session` names a dedicated session to create, not an existing target to
+modify. No existing pane is renamed, split, moved, or closed.
+
+Without `--cwd`, the invocation directory is used. It must resolve below
+`HOME` and is the exact cwd for every new pane; its canonical HOME-relative
+root identifies the workspace.
 
 The consoles inherit **`TMUX_A2A_POSTMAN_CONFIG`**, the absolute selected config
 path. Operational CLI selection is explicit `--config`, then that inherited
@@ -62,22 +69,22 @@ a configured command can exit immediately. Successful exit leaves the team
 alive.
 
 A nonblocking OS advisory lock serializes setup for one canonical workspace.
-Repeated targets, existing target sessions, live/unverified workspace owners,
-and existing configured role panes are refused. Scoped private receipts under
-the normal state root record each attempt; logs are retained until the user
-deletes them. Existing state-root mode 0755 is accepted; children remain
+Repeated targets, existing dedicated target sessions, live/unverified workspace
+owners, and existing configured role panes are refused. Scoped private receipts
+under the normal state root record each attempt; logs are retained until the
+user deletes them. Existing state-root mode 0755 is accepted; children remain
 private.
 
-An ordinary error or interrupt removes only a newly created session whose native
-server incarnation, session ID, and unpredictable ownership token still match.
-Borrowed servers and unrelated sessions remain alive. Already started commands
-may have irreversible effects; closing their panes does not undo those effects
-or guarantee that detached descendants have stopped. The output and receipt
-report partial/uncertain starts and any cleanup that could not be verified.
-Those targets are never automatically replayed. Only a recorded pre-command
-failure with verified removal permits a subsequent explicit attempt at that
-target. A killed launcher can leave resources and uncertain receipts; inspect
-them manually. There is no force-unlock, automatic repair, or lifecycle
+An ordinary error or interrupt removes only a newly created session or window
+whose native server incarnation, IDs, and unpredictable ownership token still
+match. Borrowed servers, sessions and unrelated windows remain alive. Already
+started commands may have irreversible effects; closing their panes does not
+undo those effects or guarantee that detached descendants have stopped. The
+output and receipt report partial/uncertain starts and any cleanup that could
+not be verified. Those targets are never automatically replayed. Only a recorded
+pre-command failure with verified removal permits a subsequent explicit attempt
+at that target. A killed launcher can leave resources and uncertain receipts;
+inspect them manually. There is no force-unlock, automatic repair, or lifecycle
 registry.
 
 ## 4. Verification

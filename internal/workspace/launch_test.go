@@ -136,6 +136,30 @@ func TestLaunchAgentsFailureAndCancellationCleanOnlyOwnedSession(t *testing.T) {
 	}
 }
 
+func TestLaunchAgentsWindowFailureCleansOnlyOwnedWindow(t *testing.T) {
+	f := newTmuxFixture(t)
+	plan := nativeLaunchPlan(t, f, "failed-window-team")
+	plan.Session = "one"
+	plan.WindowSession = f.run(t, "display-message", "-p", "-t", f.pane, "#{session_id}")
+	store := mailFixture(t).Store
+	store.beforePublish = func() error { return errors.New("injected registration failure") }
+	result, err := store.LaunchAgents(context.Background(), plan)
+	if err == nil || result.Cleanup != "owned window removed" {
+		t.Fatal("unverified window cleanup", result, err)
+	}
+	if sessions := f.run(t, "list-sessions", "-F", "#{session_name}"); sessions != "one" {
+		t.Fatal("borrowed session changed", sessions)
+	}
+	if panes := f.run(t, "list-panes", "-a", "-F", "#{pane_id}"); panes != f.pane {
+		t.Fatal("borrowed pane changed or window leaked", panes)
+	}
+	for _, role := range []string{"first", "second"} {
+		if _, err := os.Stat(filepath.Join(plan.CWD, role+".started")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("command ran before admission", role, err)
+		}
+	}
+}
+
 func TestLaunchAgentsRejectCollisionBeforeCreatingPanes(t *testing.T) {
 	f := newTmuxFixture(t)
 	plan := nativeLaunchPlan(t, f, "collision-team")
@@ -170,6 +194,34 @@ func TestLaunchAgentsLostCreationResponseCleansByNativeOwnershipToken(t *testing
 	}
 	if sessions := f.run(t, "list-sessions", "-F", "#{session_name}"); sessions != "one" {
 		t.Fatal("cleanup changed sentinel or leaked created session", sessions)
+	}
+}
+
+func TestLaunchAgentsLostWindowResponseCleansByNativeOwnershipToken(t *testing.T) {
+	f := newTmuxFixture(t)
+	plan := nativeLaunchPlan(t, f, "lost-window-response-team")
+	plan.Session = "one"
+	plan.WindowSession = f.run(t, "display-message", "-p", "-t", f.pane, "#{session_id}")
+	store := mailFixture(t).Store
+	real, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := t.TempDir()
+	source := "#!/bin/sh\ncase \"$*\" in *new-window*) " + shellQuote(real) + " \"$@\" >/dev/null; exit 74;; esac\nexec " + shellQuote(real) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(proxy, "tmux"), []byte(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", proxy+string(os.PathListSeparator)+os.Getenv("PATH"))
+	result, err := store.LaunchAgents(context.Background(), plan)
+	if err == nil || result.Window == "" || result.Cleanup != "owned window removed" {
+		t.Fatal("lost window creation response left unverified resources", result, err)
+	}
+	if sessions := f.run(t, "list-sessions", "-F", "#{session_name}"); sessions != "one" {
+		t.Fatal("borrowed session changed", sessions)
+	}
+	if panes := f.run(t, "list-panes", "-a", "-F", "#{pane_id}"); panes != f.pane {
+		t.Fatal("borrowed pane changed or window leaked", panes)
 	}
 }
 
