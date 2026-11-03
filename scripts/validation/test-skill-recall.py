@@ -6,7 +6,7 @@ from pathlib import Path
 import runpy
 import unittest
 
-ASSETS = Path(os.environ.get("POSTMAN_HELP_ASSET_ROOT", Path(__file__).resolve().parents[2] / "internal/helpdocs/assets"))
+ASSETS = Path(os.environ.get("POSTMAN_HELP_ASSET_ROOT", Path(__file__).resolve().parents[2] / "docs/assets"))
 REFERENCE = runpy.run_path(str(ASSETS / "recall/select_day.py"))
 SELECT = REFERENCE["latest_day"]
 INSTANT = REFERENCE["recorded_instant"]

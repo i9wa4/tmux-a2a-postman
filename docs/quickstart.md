@@ -86,7 +86,7 @@ Use the complete examples as separate starting points:
 | [Minimal](../examples/minimal/postman.md)     | Two roles; no optional files, catalog or designated approver.                                                                                                        |
 | [Practical](../examples/practical/postman.md) | Messenger, manager, builder, reviewer and approver. Use an absolute `--config` to this file in place; copied configs need an edited absolute installed catalog root. |
 | [Hierarchy](../examples/hierarchy/postman.md) | Both `postman-parent` and `postman-child` use the same complete file, each with gateway/builder panes, in distinct workspace roots.                                  |
-| [Launch](../examples/launch/postman.md)       | Optional shell or AI presets; preview before explicit launch. Client installation and readiness remain yours.                                                        |
+| [Launch](assets/examples/launch/postman.md)   | Optional shell or AI presets; preview before explicit launch. Client installation and readiness remain yours.                                                        |
 
 Add a role by adding its H2 section, native pane title and intended `---` edges.
 Change shared instructions in `common_template`; change a role's contract only
@@ -173,4 +173,4 @@ requirements. [CONTRIBUTING](../CONTRIBUTING.md) owns test procedures and
 limits; [RELEASING](../RELEASING.md) owns publication. This repository's
 `AGENTS.md` guides development and is distinct from your runtime `postman.md`.
 
-[config-reference]: ../internal/helpdocs/topics/postman-md.md
+[config-reference]: help/postman-md.md

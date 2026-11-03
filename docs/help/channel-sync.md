@@ -11,5 +11,6 @@ JSON success/as_of/channel/reason. accepted identifies durable mail;
 notification is terminal input evidence only. published means local
 availability, not human receipt. more=true requires another foreground scan
 after draining accepted mail. Partial results remain durable on error; retry the
-same identities unchanged. See docs/design/external-filesystem-channel.md for
-provisioning and recovery.
+same identities unchanged. See
+`tmux-a2a-postman help external-filesystem-channel` for provisioning and
+recovery.

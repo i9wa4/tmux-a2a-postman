@@ -1,5 +1,3 @@
-<!-- Generated from internal/helpdocs/topics/launching.md; edit that source and run go generate ./internal/helpdocs. -->
-
 # Optional agent-team presets
 
 `launch-agents` expands one explicitly selected preset into a dedicated tmux
