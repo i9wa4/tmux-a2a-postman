@@ -151,6 +151,8 @@ func TestBuiltinLaunchOverridesStaleServerConfigWithoutPrompt(t *testing.T) {
 func TestBuiltinDevStartsEditorShellAndOnlyAgentCommand(t *testing.T) {
 	f := newTmuxFixture(t)
 	plan := nativeLaunchPlan(t, f, "builtin-dev")
+	plan.Session = "one"
+	plan.WindowSession = f.run(t, "display-message", "-p", "-t", f.pane, "#{session_id}")
 	plan.Config = filepath.Join(f.home, "config", "tmux-a2a-postman", "postman.md")
 	plan.BuiltinConfig = true
 	topology, err := (config.Source{Path: plan.Config, Builtin: true}).Load(context.Background())
@@ -185,6 +187,9 @@ func TestBuiltinDevStartsEditorShellAndOnlyAgentCommand(t *testing.T) {
 	result, err := mailFixture(t).Store.LaunchAgents(context.Background(), plan)
 	if err != nil || len(result.Panes) != 2 {
 		t.Fatal(result, err)
+	}
+	if result.Session != "one" || result.SessionID != plan.WindowSession || result.Window == "" {
+		t.Fatal("dev did not create a window in the invoking session", result)
 	}
 	left, right := result.Panes[0], result.Panes[1]
 	if left.Title != "editor" || left.Role != "" || left.Started || right.Title != "agent" || right.Role != "agent" || !right.Started || left.Column != 0 || right.Column != 1 {
