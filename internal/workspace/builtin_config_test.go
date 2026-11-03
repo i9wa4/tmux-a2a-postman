@@ -178,7 +178,7 @@ func TestBuiltinDevStartsEditorShellAndOnlyAgentCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixtureShell := filepath.Join(bin, "bash")
-	wrapper := "#!/bin/sh\nexport PATH=" + shellQuote(bin+":"+os.Getenv("PATH")) + "\ncase \"$1\" in\n  -il) exec " + shellQuote(actualBash) + " --noprofile --norc -i ;;\n  -lic) exec " + shellQuote(actualBash) + " --noprofile --norc -c \"$2\" ;;\nesac\nexit 70\n"
+	wrapper := "#!/bin/sh\nexport PATH=" + shellQuote(bin+":"+os.Getenv("PATH")) + "\nexport HISTFILE=/dev/null\ncase \"$1\" in\n  -il) exec " + shellQuote(actualBash) + " --noprofile --norc -i ;;\n  -lic) exec " + shellQuote(actualBash) + " --noprofile --norc -c \"$2\" ;;\nesac\nexit 70\n"
 	if err := os.WriteFile(fixtureShell, []byte(wrapper), 0o700); err != nil {
 		t.Fatal(err)
 	}
