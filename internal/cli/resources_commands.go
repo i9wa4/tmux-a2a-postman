@@ -27,18 +27,21 @@ func RunResources(args []string) error {
 
 func RunSkills(args []string) error {
 	if len(args) == 0 {
-		return WriteHelp(os.Stdout, os.Stderr, []string{"skills"})
-	}
-	if args[0] == "list" && len(args) == 1 {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"skills": helpdocs.EntryNames(), "bundle_id": helpdocs.BundleID()})
 	}
-	if len(args) == 2 && args[0] == "show" {
-		data, err := helpdocs.Entry(args[1])
+	if len(args) == 1 || len(args) == 2 {
+		var data []byte
+		var err error
+		if len(args) == 1 {
+			data, err = helpdocs.Entry(args[0])
+		} else {
+			data, err = helpdocs.Reference(args[0], args[1])
+		}
 		if err != nil {
 			return err
 		}
 		_, err = os.Stdout.Write(data)
 		return err
 	}
-	return errors.New("skills supports list or show <name>; manage installation with your Skill manager")
+	return errors.New("usage: tmux-a2a-postman skills [name [ref]]; use skills --help")
 }

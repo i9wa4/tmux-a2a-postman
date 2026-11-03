@@ -18,7 +18,7 @@ func TestDocumentedMinimalFirstExchange(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, "scripts/validation/notification-smoke.py", "--postman", f.bin,
 		"--agent", "fixture", "--case", "rally", "--terminal", "both", "--timeout", "10",
-		"--postman-md", "examples/minimal/postman.md", "--output", filepath.Join(f.dir, "documented-first-exchange.json"))
+		"--postman-md", "testdata/config/minimal.md", "--output", filepath.Join(f.dir, "documented-first-exchange.json"))
 	cmd.Dir = repositorySource(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("documented config with actual recipient-owned POP/full-read/reply: %v\n%s", err, out)

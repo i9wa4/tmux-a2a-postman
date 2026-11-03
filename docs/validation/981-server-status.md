@@ -1,7 +1,7 @@
 # Server status validation — 2026-11-02
 
 The current contract and writer ownership live in
-[server-status](../design/server-status.md); this page records evidence, not a
+[server-status](../../help/server-status.md); this page records evidence, not a
 second setup guide. Baseline source is main `2fab3078`; the candidate is the
 
 ## 1. source. Neither measurement establishes installed-fleet activation or AI

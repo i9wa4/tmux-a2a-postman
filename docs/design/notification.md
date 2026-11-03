@@ -82,5 +82,5 @@ POP/replies.
 Optional real Codex TUI tests use fixed local model decisions over the same tmux
 input path. That test provider belongs only to validation. Actual Claude/model
 execution is not inferred from deterministic terminal tests. See
-[Contributing](../../CONTRIBUTING.md) and the
-[CLI specification](../cli-spec.md).
+[Contributing](../development/contributing.md) and the
+[CLI specification](../../help/cli-spec.md).
