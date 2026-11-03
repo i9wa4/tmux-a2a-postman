@@ -1,6 +1,6 @@
 {
   "docs/licenses/postman.txt": "0444",
-  "skills/postman-recall/scripts/select_day.py": "0444",
-  "skills/postman-team-manager/scripts/next_step.py": "0444",
-  "skills/postman-usage/scripts/analyze-invocations.py": "0555"
+  "help/postman-recall/scripts/select_day.py": "0444",
+  "help/postman-team-manager/scripts/next_step.py": "0444",
+  "help/postman-usage/scripts/analyze-invocations.py": "0555"
 }

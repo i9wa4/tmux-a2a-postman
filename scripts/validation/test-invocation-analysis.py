@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-SOURCE = Path(os.environ.get("POSTMAN_DIAGNOSTIC_ANALYZER", Path(__file__).resolve().parents[2] / "skills/postman-usage/scripts/analyze-invocations.py"))
+SOURCE = Path(os.environ.get("POSTMAN_DIAGNOSTIC_ANALYZER", Path(__file__).resolve().parents[2] / "help/postman-usage/scripts/analyze-invocations.py"))
 REFERENCE = runpy.run_path(str(SOURCE))
 READ = REFERENCE["read_invocation"]
 SUM = REFERENCE["summarize"]

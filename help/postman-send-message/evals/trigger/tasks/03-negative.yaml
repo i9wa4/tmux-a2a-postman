@@ -1,0 +1,12 @@
+id: postman-send-message-3
+name: negative 3
+inputs:
+  prompt: Audit a malformed Mermaid topology diagram.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-send-message/SKILL.md
+    mode: negative

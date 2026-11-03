@@ -44,10 +44,11 @@ append_skill_for_path() {
 
   path=${path#./}
   case "$path" in
-  skills/*/*)
-    rest=${path#skills/}
+  skills/*/* | help/postman-*/*)
+    skill_root=${path%%/*}
+    rest=${path#*/}
     skill_name=${rest%%/*}
-    skill_dir="skills/${skill_name}"
+    skill_dir="${skill_root}/${skill_name}"
     if [ -f "${skill_dir}/SKILL.md" ]; then
       printf '%s\n' "$skill_dir" >>"$skill_list"
     fi
