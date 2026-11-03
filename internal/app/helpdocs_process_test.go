@@ -136,7 +136,7 @@ func TestBuiltinPublicSelectionAndEmptyExplicitConfig(t *testing.T) {
 		Success bool     `json:"success"`
 		Presets []string `json:"presets"`
 	}
-	if err := json.Unmarshal(out, &listed); err != nil || !listed.Success || !reflect.DeepEqual(listed.Presets, []string{"claude", "codex"}) {
+	if err := json.Unmarshal(out, &listed); err != nil || !listed.Success || !reflect.DeepEqual(listed.Presets, []string{"claude", "codex", "preset-p", "preset-w"}) {
 		t.Fatal(string(out), err)
 	}
 	for _, args := range [][]string{{"--config=", "launch-agents", "--list"}, {"launch-agents", "--list", "--config="}, {"--config", filepath.Join(home, "missing.md"), "launch-agents", "--list"}} {

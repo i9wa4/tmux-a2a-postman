@@ -23,7 +23,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--postman", required=True)
 parser.add_argument("--postman-md", type=pathlib.Path,
                     help="read an optional consumer policy into the private fixture")
-parser.add_argument("--launch", choices=["codex", "claude"], help="start the builtin preset using private fixed-client stubs")
+parser.add_argument("--launch", choices=["codex", "claude", "preset-p", "preset-w"], help="start the builtin preset using private fixed-client stubs")
 parser.add_argument("--builtin", action="store_true", help="exercise the absent-user-config standard root team")
 parser.add_argument("--skill-root", type=pathlib.Path, action="append", default=[],
                     help="explicit metadata source for optional consumer skills")
@@ -51,7 +51,9 @@ terminal = repo / "scripts/validation/recursive_team/terminal.py"
 template = (args.postman_md or terminal.with_name("postman.md")).resolve()
 roles = ["messenger", "orchestrator", "worker", "approver", "guardian", "critic"]
 if args.launch:
-    roles += ["agent", "worker-alt"]
+    roles += ["worker-alt"]
+    if args.launch in {"codex", "claude"}:
+        roles += ["agent"]
 postman = str(pathlib.Path(args.postman).resolve())
 skill_roots = [path.resolve() for path in args.skill_root] + [repo / "skills"]
 
@@ -349,7 +351,7 @@ def run_case(case):
                     "POSTMAN_TEAM_SESSION": session,
                     "POSTMAN_SMOKE_EVIDENCE": str(role_evidence),
                 }
-                stub = fixture_bin / args.launch
+                stub = fixture_bin / "codex"
                 stub.write_text(
                     "#!" + sys.executable + "\n"
                     + "import os, subprocess, uuid\n"
@@ -365,6 +367,7 @@ def run_case(case):
                     + ", uuid.uuid4().hex, 'plain'])\n"
                 )
                 stub.chmod(0o700)
+                (fixture_bin / "claude").symlink_to(stub.name)
                 # Avoid host login files resetting PATH to real installed AIs.
                 shell = fixture_bin / "bash"
                 shell.write_text("#!/bin/sh\ncase \"$1\" in -lic) shift; set -- -ic \"$@\" ;; -il) shift; set -- -i \"$@\" ;; esac\nexport PATH="

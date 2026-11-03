@@ -7,9 +7,8 @@ There is no daemon, startup role message, PING, supervisor, or respawn loop.
 
 ## 1. Configuration and preview
 
-The complete the bundled example
-(`$postman_resources/examples/launch/postman.md`) keeps startup commands in YAML
-`presets`, separately from routing edges and Markdown cooperation policy. Each
+The default `postman.md` contains startup commands in its YAML `presets`,
+alongside routing edges and Markdown cooperation policy in the same file. Each
 preset has ordered `columns`, each containing top-to-bottom `panes` with an
 existing role and an explicit shell `command`. A role appears at most once in a
 preset; different presets may reuse it. Limits are 32 presets, 8 columns, and 64
@@ -17,8 +16,8 @@ panes per preset. Unknown nested keys and invalid roles/commands are rejected.
 Commands are not rendered into recipient policy or evaluated by config readers.
 
 ```sh
-tmux-a2a-postman launch-agents --list --config /absolute/postman.md
-tmux-a2a-postman launch-agents consoles --config /absolute/postman.md \
+tmux-a2a-postman launch-agents --list
+tmux-a2a-postman launch-agents preset-p \
   --socket /absolute/private/tmux.sock --cwd /absolute/team-directory --dry-run
 ```
 
@@ -50,8 +49,8 @@ interactive initialization runs, including aliases and functions defined there.
 First-prompt-only hooks and a running shell's private state are not reproduced.
 For environment loading that needs a prompt hook, declare an explicit command,
 for example `direnv exec . codex`; Postman never approves `.envrc` itself.
-Client/model/permission arguments are entirely user configuration. No
-credentials or provider flags are supplied by Postman.
+Client/model/permission arguments are the exact declared preset commands. The
+launcher adds no credentials or provider flags.
 
 ## 3. Outcomes and ownership
 
@@ -97,8 +96,17 @@ and use the returned absolute directory as `postman_resources`. See
 
 ## 5. Builtin presets
 
-When no automatic user configuration exists, `launch-agents --list` lists
-`codex` and `claude`. Preview either with `--dry-run` before explicit launch.
-These plain-client presets do not inject policy or grant client permissions.
-The default file and portable operating procedures ship in the binary; see
-`help config`, `help orchestration`, `help records` and `help reviews`.
+When no automatic user configuration exists, `launch-agents --list` lists all
+four presets from the embedded default `postman.md`:
+
+- `codex` and `claude`: eight roles using plain `exec codex` / `exec claude`.
+- `preset-p`: the existing vde-layout Codex team in two columns of four and
+  three roles.
+- `preset-w`: the same seven-role layout with the existing mixed Codex/Claude
+  command mapping.
+
+The vde-layout presets preserve their original model, effort and permission
+arguments. Preview with `--dry-run` to inspect the exact declared commands.
+All presets are in that one default file; no separate preset configuration is
+needed. A custom `postman.md` remains a complete replacement. See `help config`
+to inspect/export the default and `help orchestration` for the workflow.

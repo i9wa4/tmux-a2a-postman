@@ -105,19 +105,42 @@ checkout, tmux or configuration. Thin Skills discover these installed topics;
 `tmux-a2a-postman help skills` explains the thin entries and consumer-owned
 setup. Updating the binary updates the detailed procedures.
 
+Install a thin Skill with GitHub CLI:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
+```
+
+Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
+name from `tmux-a2a-postman skills list` to install another entry. Each Skill
+reads its detailed procedure from the installed binary's Markdown HelpDocs.
+
 Start with the
 [builtin standard team](internal/helpdocs/assets/defaults/postman.md) and
 `tmux-a2a-postman help orchestration`; no dotfiles or Skill installation is
-required. Existing consoles can start with a send. Optional
-`launch-agents codex` or `launch-agents claude` starts the same team without an
-initial prompt. Read `help config` to inspect/export a full custom
-configuration.
+required. That same default `postman.md` contains all startup presets:
+
+| Preset             | Consoles and layout                                                   |
+| ------------------ | --------------------------------------------------------------------- |
+| `codex` / `claude` | Eight roles using the selected plain client                           |
+| `preset-p`         | Existing vde-layout Codex team: two columns, seven roles              |
+| `preset-w`         | Existing vde-layout mixed Codex/Claude team: two columns, seven roles |
+
+The two vde-layout presets retain their original model, effort and permission
+arguments. Preview the exact commands before choosing a preset:
+
+```sh
+tmux-a2a-postman launch-agents --list
+tmux-a2a-postman launch-agents preset-p --dry-run
+```
+
+Remove `--dry-run` to launch. Existing consoles can instead start with a send.
+Read `help config` to inspect/export a complete custom configuration.
 
 The [first exchange](docs/quickstart.md) also offers a complete
 [minimal override](examples/minimal/postman.md). Then try the
-[practical team](examples/practical/postman.md),
-[parent/child team](examples/hierarchy/postman.md), or
-[optional launch presets](examples/launch/postman.md).
+[practical team](examples/practical/postman.md) or
+[parent/child team](examples/hierarchy/postman.md).
 
 ## 4. Guides and references
 

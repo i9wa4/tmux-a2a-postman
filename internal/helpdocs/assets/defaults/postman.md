@@ -26,15 +26,54 @@ presets:
           - {role: guardian, command: exec claude}
           - {role: critic, command: exec claude}
           - {role: approver, command: exec claude}
+  preset-p:
+    columns:
+      - panes:
+          - role: messenger
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high"
+          - role: orchestrator
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high"
+          - role: worker
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"
+          - role: worker-alt
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"
+      - panes:
+          - role: approver
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high"
+          - role: guardian
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high"
+          - role: critic
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-5.6-sol --config model_reasoning_effort=high"
+  preset-w:
+    columns:
+      - panes:
+          - role: messenger
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high"
+          - role: orchestrator
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"
+          - role: worker
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high"
+          - role: worker-alt
+            command: "claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model sonnet --effort medium"
+      - panes:
+          - role: approver
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high"
+          - role: guardian
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high"
+          - role: critic
+            command: "claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model \"opus[1m]\" --effort medium"
 ---
 
 # Standard Postman team
 
 This complete default needs no personal configuration, installed Skill tree,
 launcher or initial prompt. Existing consoles with these native pane titles can
-start with a send. The optional presets require the named installed clients and
-their normal permissions/authentication. Customize a complete copy to select
-other clients or local models. No daemon or constant supervisor is started.
+start with a send. The plain `codex`/`claude` presets use the named installed
+clients. The `preset-p`/`preset-w` presets retain the existing vde-layout
+seven-role layout and exact client, model, effort and permission arguments. All
+presets are in this file; inspect them with `launch-agents <preset> --dry-run`.
+Client authentication remains external. Customize a complete copy for other
+clients or local models. No daemon or constant supervisor is started.
 
 ## 1. `edges`
 

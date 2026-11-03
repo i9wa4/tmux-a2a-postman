@@ -27,8 +27,12 @@ Shared source assets: config/tmux-a2a-postman/postman.md (eight routing nodes,
 seven explicit role templates), shared AGENTS.md, agent-skills.nix and
 install-manifest.nix. Preserve the established contacts, language defaults,
 complete-file reading and exact reply obligations; update stale command/status
-descriptions. Default presets must not inherit personal model flags or bypass
-runtime permissions. Existing agents can start with a send without launch.
+descriptions. The plain `codex`/`claude` presets use client defaults. At the
+maintainer's request, the same default `postman.md` also embeds the existing
+vde-layout `preset-p`/`preset-w` layouts and exact
+client/model/effort/permission arguments from dotfiles `config/vde/layout.yml`.
+Those commands run only after explicit preset selection; the launcher adds no
+flags. Existing agents can start with a send without launch.
 
 Retain the source MIT notice (copyright 2023 i9wa4) with migrated material.
 Do not copy third-party prose-review wording without its separate notice.
@@ -78,8 +82,9 @@ English internal defaults, with explicit request/audience override. It makes
 no demand to expose private reasoning and adds no personal persona. Standard
 worktree isolation uses available Git; client-specific helpers are not assumed.
 
-Both `--builtin --case root --launch codex` and `--launch claude` use the actual
-production launcher, eight native role panes and private fixed-client stubs,
+The four builtin `--launch` selections (`codex`, `claude`, `preset-p`,
+`preset-w`) use the actual production launcher, eight or seven native role
+panes and private fixed-client stubs,
 then run the same receiver-driven task/approval/review/result exchange. Their
 fixture shell disables only host login-profile discovery to guarantee that a
 real installed client cannot replace a stub; interactive PTY execution remains

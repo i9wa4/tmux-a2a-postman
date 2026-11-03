@@ -19,10 +19,17 @@ tmux-a2a-postman skills show postman-usage
 ```
 
 Both commands are read-only and work offline, outside tmux and configuration.
-Installation and updates belong to Nix or the consumer's existing Skill
-manager. Repository consumers use the checked `skills/` directories; binary
-consumers can supply the complete `skills show` output to their chosen setup.
-Postman does not select a client directory or manage installed entries.
+Install an entry with GitHub CLI:
+
+```sh
+gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
+```
+
+Use `--agent claude-code` for Claude Code and replace `postman-usage` with the
+desired name from `skills list`. GitHub CLI handles the client's installation;
+Postman supplies the entry and its detailed installed HelpDocs. Existing Nix
+users can continue installing the checked repository `skills/` directories
+through their declarative Skill source.
 
 The authored entries are under `internal/helpdocs/entries/`; generated
 repository copies are checked for drift. Detailed operating procedures have

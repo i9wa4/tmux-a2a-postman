@@ -48,5 +48,8 @@ force-unlock or automatic repair is provided.
 
 With an absent automatic user configuration, the standard `codex` and `claude`
 presets provide all eight roles. They use plain `exec codex` / `exec claude`,
-without personal models or bypass flags. Inspect `help config` before exporting
-a complete custom preset for other clients or local models.
+without personal models or bypass flags. The same default `postman.md` also
+contains vde-layout's `preset-p` and `preset-w`: two columns of four and three
+roles, preserving their original client, model, effort and permission arguments.
+Use `--dry-run` to inspect the selected commands. Inspect `help config` before
+exporting a complete custom configuration for other clients or local models.

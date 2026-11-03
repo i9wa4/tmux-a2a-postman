@@ -95,6 +95,12 @@ model review. See the
 explicit optional consumer-policy check. CLI commands and their flags do not
 change.
 
+The recursive check also runs the builtin root exchange with existing consoles
+and each of the four presets in the default `postman.md`: plain `codex` and
+`claude` (eight roles), plus vde-layout `preset-p` and `preset-w` (seven roles).
+Private stubs replace both client binaries, including their declared arguments;
+no model API, authentication or permission configuration is exercised.
+
 Generated test topologies include numbered `common_template` and
 `message_footer` sections. Additional regression cases use a production-shaped
 configuration with role prose, skill metadata and the full role graph for
