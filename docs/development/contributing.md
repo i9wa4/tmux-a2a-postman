@@ -223,15 +223,37 @@ See [GitHub's lockfile contract][actions-lock-docs].
 
 [actions-lock-docs]: https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles
 
-## 2. Markdown Formatting
+## 2. Markdown checks
 
-`markdown-formatter` covers all tracked Markdown files with its default
-heading-numbering behavior enabled. Run `nix fmt` for treefmt-managed
-formatting and let the pre-commit hook apply `mdfmt --write` to Markdown files.
+Match dotfiles' Markdown tools and their responsibilities:
 
-The repository does not maintain separate root-doc or skill exceptions. Ignored
-or generated files such as `.pre-commit-config.yaml` are not repository
-Markdown policy surfaces.
+- `rumdl` checks Markdown structure and formats with treefmt. Both the
+  linter and formatter disable MD041 and use the same MD013 settings:
+  reflow prose, leave code blocks and headings unwrapped.
+- `markdown-formatter` applies its default heading numbering to all Markdown
+  in commit and Nix checks. Its pinned revision matches dotfiles.
+- Vale and Harper provide English prose feedback in `nix develop`. As in
+  dotfiles, these remain advisory until vocabulary and a clean baseline are
+  established. Review findings without rewriting commands, identifiers,
+  paths or Japanese prose to satisfy English advice.
+
+Run `nix fmt` for treefmt-managed formatting. The commit hook applies
+`mdfmt --write`. Both required checks cover every tracked Markdown file,
+including configuration, Skill entries/references, design and test fixtures;
+there are no root-doc or Skill exclusions.
+
+Run the supplementary tools against the same complete tracked Markdown set:
+
+```sh
+nix develop
+git ls-files -z '*.md' | xargs -0 vale --config config/vale.ini
+git ls-files -z '*.md' | xargs -0 harper-cli lint --format compact
+```
+
+Use `harper-ls --stdio` for optional editor feedback. `config/vale.ini` uses
+Vale's built-in style, matching dotfiles' global configuration without relying
+on a developer's HOME. Ignored generated files such as
+`.pre-commit-config.yaml` are not policy surfaces.
 
 ## 3. Agent Skills
 

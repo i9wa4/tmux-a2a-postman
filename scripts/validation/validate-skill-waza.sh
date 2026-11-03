@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2023 i9wa4
+# SPDX-License-Identifier: MIT
 # Validates changed skill directories with Waza readiness checks.
 # Usage:
 #   validate-skill-waza.sh <changed-path>...

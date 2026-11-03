@@ -112,10 +112,14 @@
             [
               gh
               goToolchain
+              rumdl
+              vale
+              harper
             ]
             ++ [
               waza
               triggerPython
+              inputs.markdown-formatter.packages.${system}.default
             ];
           goDevPackages = with pkgs; [
             gopls
@@ -148,6 +152,8 @@
             exec ${pkgs.bash}/bin/bash scripts/validation/validate-skill-waza.sh "$@"
           '';
           rumdlConfig = pkgs.writeText "rumdl.toml" ''
+            disable = ["MD041"]
+
             [MD013]
             code-blocks = false
             headings = false
