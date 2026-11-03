@@ -1,5 +1,3 @@
-<!-- Generated from internal/helpdocs/topics/cli-spec.md; edit that source and run go generate ./internal/helpdocs. -->
-
 # CLI specification
 
 This is the canonical input/output contract for the daemonless CLI agreed in

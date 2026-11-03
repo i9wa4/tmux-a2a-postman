@@ -1,5 +1,3 @@
-<!-- Generated from internal/helpdocs/topics/invocation-diagnostics.md; edit that source and run go generate ./internal/helpdocs. -->
-
 # Invocation diagnostics (schema 1)
 
 Issue #964 adds diagnostic evidence to the existing file-first CLI. These

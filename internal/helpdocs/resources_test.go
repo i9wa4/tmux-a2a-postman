@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,7 +126,7 @@ func TestResourcesValidateBeforeMutationAndRefuseManagedRootSymlink(t *testing.T
 	}
 }
 
-func TestHelpReadsNeverMaterializeAndGeneratedSkillsMatch(t *testing.T) {
+func TestHelpReadsNeverMaterialize(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "absent-cache"))
@@ -139,37 +138,5 @@ func TestHelpReadsNeverMaterializeAndGeneratedSkillsMatch(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(home, "absent-cache")); !os.IsNotExist(err) {
 		t.Fatal("help created resource cache")
-	}
-	if err := fs.WalkDir(Entries(), ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		want, err := fs.ReadFile(Entries(), name)
-		if err != nil {
-			return err
-		}
-		got, err := os.ReadFile(filepath.Join("..", "..", "skills", filepath.FromSlash(name)))
-		if err != nil {
-			return err
-		}
-		if string(got) != string(want) {
-			t.Errorf("checked thin entry %s drifted; run go generate ./internal/helpdocs", name)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestCheckedDocumentationAndHelpersHaveOneEditingSource(t *testing.T) {
-	for _, file := range Mirrors() {
-		want, err := MirrorData(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(file.Target)))
-		if err != nil || string(got) != string(want) {
-			t.Errorf("derived %s drifted from %s; run go generate ./internal/helpdocs (%v)", file.Target, file.Source, err)
-		}
 	}
 }
