@@ -30,7 +30,7 @@ func TestDocumentedPracticalConfigRendersRecipientSpecificContext(t *testing.T) 
 			t.Fatalf("missing %q in %s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "\n## reviewer instructions\n") || strings.Contains(rendered, "{reply_command}") || strings.Contains(rendered, "{can_talk_to}") {
+	if strings.Contains(rendered, "\n### reviewer instructions\n") || strings.Contains(rendered, "{reply_command}") || strings.Contains(rendered, "{can_talk_to}") {
 		t.Fatal("wrong role or unresolved documented substitutions", rendered)
 	}
 }
