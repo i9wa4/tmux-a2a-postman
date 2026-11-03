@@ -12,16 +12,20 @@ pairs. All presets are validated before tmux mutation. --list and --dry-run are
 inert: no commands, tmux creation, state registration or persistent logs.
 Commands are explicit user shell source, not words to split or message policy.
 
-Launch selects the explicit TMUX server unless --socket is supplied. A new
-socket requires an existing parent directory. The default target is a dedicated
-preset/workspace-derived session; an existing target or live workspace owner is
-rejected without modifying it. --cwd defaults to the invocation directory and
-must resolve below HOME. Columns are left-to-right; panes top-to-bottom.
+Launch selects the invoking TMUX server unless --socket is supplied. A new
+socket requires an existing parent directory. From a verified tmux pane, the
+default target is a new window in that pane's session. Outside tmux, the
+default is a dedicated preset/workspace-derived session. Explicit --session or
+--socket creates a dedicated session. An existing dedicated target or live
+workspace owner is rejected without modifying it. --cwd defaults to the
+invocation directory and must resolve below HOME. Columns are left-to-right;
+panes top-to-bottom.
 
-Only the new session/panes are created. Native titles, cwd and config continuity
-are established before configured commands. The existing server's default-shell
-(or SHELL, then /bin/sh for a new server) loads interactive/login initialization
-and evaluates each declared command. First-prompt-only hooks are not promised;
+Only the new window or session and its panes are created. Native titles, cwd and
+config continuity are established before configured commands. The existing
+server's default-shell (or SHELL, then /bin/sh for a new server) loads
+interactive/login initialization and evaluates each declared command.
+First-prompt-only hooks are not promised;
 use an explicit environment-loader command when needed. No private state of an
 already running shell is copied. No model credentials or bypass flags are added.
 
