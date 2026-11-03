@@ -102,6 +102,12 @@ model review. See the
 an explicit optional consumer-policy check. CLI commands and their flags do not
 change.
 
+The recursive check also runs the builtin root exchange with existing consoles
+and each of the four presets in the default `postman.md`: plain `codex` and
+`claude` (eight roles), plus vde-layout `preset-p` and `preset-w` (seven roles).
+Private stubs replace both client binaries, including their declared arguments;
+no model API, authentication or permission configuration is exercised.
+
 Generated test topologies include numbered `common_template` and
 `message_footer` sections. Additional regression cases use a production-shaped
 configuration with role prose, skill metadata and the full role graph for
@@ -437,3 +443,17 @@ source of runtime contracts or test evidence.
 [agent-research]: ../research/891-agent-environment-comparison.md
 
 Canonical agent instructions live in [AGENTS.md](../../AGENTS.md).
+
+The builtin standard-team case runs with no user configuration or installed
+personal Skills. It reuses the same deterministic terminal driver:
+
+```sh
+nix run .#recursive-smoke -- --builtin --case root
+```
+
+`recursive-teams` checks it alongside the explicit-config recursive matrix.
+The actors' private state/scope files are fixture bookkeeping; this proves
+mail/editor mechanics and complete archived policy delivery, not autonomous
+role compliance or substantive model review. Canonical workflow ownership and
+migration boundaries are recorded in
+[the standard-team inventory](../design/standard-team-migration.md).

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/helpdocs"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,7 +52,24 @@ func (t WorkspaceTopology) RecipientPolicy(ctx context.Context, path string) (Re
 			return result, errors.New("at most 256 selected skills are supported per catalog")
 		}
 	}
-	result.Catalog, err = renderSkillCatalogs(path, ordinary)
+	if t.builtin {
+		var catalog strings.Builder
+		catalog.WriteString("### Available Skills\n\nThese embedded entry points need no installed Skill tree. Read each selected reference through EOF before the workflow. Inspect the entry and its reference table with `tmux-a2a-postman help <name>`.\n\n")
+		for _, name := range helpdocs.WorkflowNames() {
+			raw, readErr := helpdocs.Read(name)
+			if readErr != nil {
+				return result, readErr
+			}
+			metadata, parseErr := parseSkillFrontmatter(string(raw))
+			if parseErr != nil {
+				return result, parseErr
+			}
+			catalog.WriteString("- `" + name + "`: " + escapeSkillListDescription(metadata["description"]) + "\n")
+		}
+		result.Catalog = catalog.String()
+	} else {
+		result.Catalog, err = renderSkillCatalogs(path, ordinary)
+	}
 	if err != nil {
 		return result, err
 	}

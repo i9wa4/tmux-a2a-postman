@@ -34,10 +34,11 @@ flowchart TB
     child --> childworker[Child worker]
 ```
 
-Choose the organization in one file. Artifact review and command approval are
-different roles; review coordinates decisions and is not an OS sandbox. Direct
-parent/child routes require declared interfaces and distinct workspaces. The
-diagrams explain capabilities; the configuration reference defines the fields.
+Use the embedded standard team without a configuration file, or customize
+the whole organization in one file. Artifact review and command approval are
+different roles; review coordinates decisions and is not an OS sandbox.
+Direct parent/child routes require declared interfaces and distinct workspaces.
+The configuration reference defines the supported fields.
 
 ## 2. Small commands, durable files
 
@@ -115,6 +116,29 @@ workflow name listed by `tmux-a2a-postman help` to install another entry.
 Read the full procedure with `tmux-a2a-postman help <name>`, then matching
 references with `tmux-a2a-postman help <name> <ref>`.
 
+Start with the [builtin standard team](config/postman.md) and
+`tmux-a2a-postman help postman-orchestrate`; no dotfiles or Skill installation
+is required. That same default `postman.md` contains all startup presets:
+
+| Preset             | Consoles and layout                                                   |
+| ------------------ | --------------------------------------------------------------------- |
+| `codex` / `claude` | Eight roles using the selected plain client                           |
+| `preset-p`         | Existing vde-layout Codex team: two columns, seven roles              |
+| `preset-w`         | Existing vde-layout mixed Codex/Claude team: two columns, seven roles |
+
+The two vde-layout presets retain their original model, effort and permission
+arguments. Preview the exact commands before choosing a preset:
+
+```sh
+tmux-a2a-postman launch-agents --list
+tmux-a2a-postman launch-agents preset-p --dry-run
+```
+
+Remove `--dry-run` to launch. Existing consoles can instead start with a send.
+Inspect the builtin `postman.md` with
+`tmux-a2a-postman help config default`.
+Read `help config` to export a custom copy and select it.
+
 Follow the [first exchange](help/postman-usage/references/quickstart.md) and
 the [configuration reference](help/postman-md.md) to choose roles and routes.
 
@@ -145,7 +169,14 @@ testdata/            test-only fixtures
   [server status](help/server-status.md), and
   [external file integration](help/external-filesystem-channel.md).
 - [Installable Skills](skills/): usage, sending, recall, configuration audit and
-  team management.
+  team management, planning, records, orchestration and review.
+- [Operating procedures](help/postman-orchestrate/references/intake.md),
+  [planning](help/postman-plan/references/investigation.md),
+  [records](help/postman-records/references/selection.md), and
+  [review](help/postman-review/references/routing.md): the canonical Skill
+  references available in the binary.
+- [Migration inventory](docs/design/standard-team-migration.md): source
+  ownership, portability and verification boundaries.
 - [Contributing](docs/development/contributing.md): development, deterministic
   tmux tests and evidence limits.
 

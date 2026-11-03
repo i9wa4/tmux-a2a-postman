@@ -2,7 +2,7 @@
 
 This is the canonical input/output contract for the daemonless CLI agreed in
 [issue #937](https://github.com/i9wa4/tmux-a2a-postman/issues/937).
-Command and workflow HelpDocs have one Markdown editing source embedded in
+CLI help and Skill references each have one Markdown editing source embedded in
 the binary. Stable thin Skills select the relevant installed help topic.
 
 The optional external binding adds `channel-sync` (no command arguments) and

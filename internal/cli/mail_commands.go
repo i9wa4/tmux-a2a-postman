@@ -82,7 +82,7 @@ func RunWorkspacePop(args []string) (retErr error) {
 	out := mailOutput{MarkdownPath: &path, trace: trace, facts: diagnostic.Facts{Mail: "not_attempted", Capture: "not_attempted", Notification: "not_attempted"}}
 	defer func() { retErr = finishMail(c, &out, retErr) }()
 	f := newWorkspaceFlags("pop")
-	configPath, err := f.parse(args)
+	configPath, err := f.source(args)
 	if err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 	defer func() { retErr = finishMail(c, &out, retErr) }()
 	f := newWorkspaceFlags("send-heredoc")
 	to := f.fs.String("to", "", "recipient node, interface route, or claimed message IDs")
-	configPath, err := f.parse(args)
+	configPath, err := f.source(args)
 	if err != nil {
 		return err
 	}

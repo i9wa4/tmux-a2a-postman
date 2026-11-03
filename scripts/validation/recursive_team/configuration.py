@@ -30,6 +30,27 @@ def role_sections(text):
     return {name: "".join(lines).strip() for name, lines in sections.items()}
 
 
+def policy_text(text):
+    """Compare complete policy text independently of ATX heading depth.
+
+    The renderer's hierarchy is tested in Go. Fenced bytes and all instruction
+    text must still match here; only heading markers outside fences differ.
+    """
+    lines, fence = [], None
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker:
+            value = marker[1]
+            if fence is None:
+                fence = value
+            elif value[0] == fence[0] and len(value) >= len(fence) and not line[marker.end():].strip():
+                fence = None
+        elif fence is None:
+            line = re.sub(r"^( {0,3})#{1,6}[ \t]+", r"\1", line)
+        lines.append(line)
+    return "".join(lines)
+
+
 def compile_config(template, tree):
     sections = role_sections(template)
     if not sections.get("common_template") or not sections.get("messenger"):

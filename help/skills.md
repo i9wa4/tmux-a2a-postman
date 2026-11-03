@@ -37,3 +37,7 @@ YAML header exactly and uses that value as the body of `skills/<name>/SKILL.md`.
 Generated entries are tracked for normal GitHub CLI installation. See the
 [maintenance guide](../docs/development/contributing.md#3-agent-skills) for
 generation, validation and release procedures.
+
+To inspect the complete builtin configuration directly, run
+`tmux-a2a-postman help config default`. This reads the canonical
+`config/postman.md`, independently of user configuration and without extraction.

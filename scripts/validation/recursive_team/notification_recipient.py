@@ -13,7 +13,7 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from mail_fixture import read_archive, workspace_files
-from recursive_team.configuration import role_sections
+from recursive_team.configuration import policy_text, role_sections
 
 phase, nonce = sys.argv[1:]
 role = os.environ["POSTMAN_SMOKE_ROLE"]
@@ -21,6 +21,7 @@ session = os.environ["POSTMAN_TEAM_SESSION"]
 evidence = pathlib.Path(os.environ["POSTMAN_SMOKE_EVIDENCE"])
 work = pathlib.Path.cwd().resolve()
 config = os.environ["POSTMAN_CONFIG"]
+config_args = ["--config", config] if config else []
 postman = os.environ["POSTMAN_BIN"]
 state_path = evidence / (role + ".state.json")
 state = (
@@ -67,7 +68,7 @@ def save():
 
 def cli(args, body=None, allow_failure=False):
     result = subprocess.run(
-        [postman, *args, "--config", config],
+        [postman, *args, *config_args],
         check=False,
         input=body,
         capture_output=True,
@@ -103,6 +104,8 @@ def interface_scope(snapshot):
     scope = pane["scope"]
     if scope["interface_node"] != role:
         raise RuntimeError("fixture role is not its assigned interface")
+    if scope.get("builtin") and not scope["sessions"]:
+        return {"parent": None, "children": []}
     declared = [entry for entry in scope["sessions"] if entry["name"] == native["name"]]
     if len(declared) != 1:
         raise RuntimeError("local declared route missing/ambiguous")
@@ -257,8 +260,7 @@ def worker_run(task):
         [
             postman,
             "execute-heredoc",
-            "--config",
-            config,
+            *config_args,
             "--reason",
             "fixture " + task["root_id"],
         ],
@@ -511,8 +513,8 @@ def receive():
         raise RuntimeError(
             "received archive omitted historical recipient policy/catalog/contact guidance"
         )
-    sections = role_sections(pathlib.Path(config).read_text())
-    if any(sections[name] not in context for name in ["common_template", role]):
+    sections = role_sections(pathlib.Path(config or os.environ["POSTMAN_BUILTIN_POLICY"]).read_text())
+    if any(policy_text(sections[name]) not in policy_text(context) for name in ["common_template", role]):
         raise RuntimeError(
             "received archive truncated or substituted full common/selected-role instructions"
         )

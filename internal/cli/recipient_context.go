@@ -26,7 +26,11 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context) (retErr 
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		return renderRecipientContext(policy, c.topology, c.topologyPath, name, msg), nil
+		path := c.topologyPath
+		if c.source.Builtin {
+			path = ""
+		}
+		return renderRecipientContext(policy, c.topology, path, name, msg), nil
 	}
 	return nil
 }
@@ -43,6 +47,9 @@ func renderRecipientContext(policy config.RecipientPolicy, topology config.Works
 	}
 	var text strings.Builder
 	fmt.Fprintf(&text, "<!-- postman recipient context v1 -->\n# Message\n\nFrom: `%s`\nTo: `%s`\nSession: `%s`\nMessage ID: `%s`\nTimestamp: `%s`\nReply required: %t\n", from, to, session, msg.ID, msg.CreatedAt, msg.NeedsReply)
+	if identity := topology.PolicyIdentity(); identity != "" {
+		fmt.Fprintf(&text, "Configuration policy: `%s`\n", identity)
+	}
 	if msg.InputRequestID != "" {
 		fmt.Fprintf(&text, "Input request ID: `%s`\n", msg.InputRequestID)
 	}
@@ -80,8 +87,12 @@ func renderRecipientContext(policy config.RecipientPolicy, topology config.Works
 	if !msg.NeedsReply && msg.Kind == "" {
 		guidance += "\nIf a material response is needed, reply to this message ID; an exact reply creates no new reply obligation:\n\n```sh\ntmux-a2a-postman send-heredoc --to " + msg.ID + " <<'POSTMAN_BODY'\n<your material response>\nPOSTMAN_BODY\n```\n"
 	}
+	configArguments := ""
+	if path != "" {
+		configArguments = " --config " + contextShellWord(path)
+	}
 	for _, command := range []string{"send-heredoc", "approve-execution", "decline-execution", "channel-report-heredoc"} {
-		guidance = strings.ReplaceAll(guidance, "tmux-a2a-postman "+command+" --to", "tmux-a2a-postman "+command+" --config "+contextShellWord(path)+" --to")
+		guidance = strings.ReplaceAll(guidance, "tmux-a2a-postman "+command+" --to", "tmux-a2a-postman "+command+configArguments+" --to")
 	}
 	text.WriteString(guidance)
 	if msg.NeedsReply && msg.Kind != "execution-request" {
@@ -110,7 +121,7 @@ func renderRecipientContext(policy config.RecipientPolicy, topology config.Works
 		vars := strings.NewReplacer(
 			"{contacts_section}", contacts,
 			"{can_talk_to}", strings.Join(recipientAddresses(topology, session, msg.To), ", "),
-			"{reply_command}", "tmux-a2a-postman send-heredoc --config "+contextShellWord(path),
+			"{reply_command}", "tmux-a2a-postman send-heredoc"+configArguments,
 			"{reply_arguments}", replyArguments,
 			"{message_id}", msg.ID,
 			"{reply_policy}", replyPolicy,

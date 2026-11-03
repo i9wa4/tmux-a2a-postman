@@ -24,6 +24,7 @@ type Tmux struct {
 	Home              string
 	Roles             []string
 	ConfigPath        string
+	BuiltinConfig     bool
 	ConfigFingerprint string
 }
 
@@ -31,6 +32,7 @@ type Tmux struct {
 type Snapshot struct {
 	Root              string
 	ConfigPath        string
+	BuiltinConfig     bool
 	ConfigFingerprint string
 	Caller            Binding
 	Bindings          []Binding
@@ -77,7 +79,7 @@ func (t Tmux) Snapshot(ctx context.Context) (snapshot Snapshot, retErr error) {
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("%w: list caller session panes: %v", ErrUnknown, err)
 	}
-	result := Snapshot{Root: root, ConfigPath: t.ConfigPath, ConfigFingerprint: t.ConfigFingerprint}
+	result := Snapshot{Root: root, ConfigPath: t.ConfigPath, BuiltinConfig: t.BuiltinConfig, ConfigFingerprint: t.ConfigFingerprint}
 	liveRoles := make(map[string]bool, len(roles))
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")

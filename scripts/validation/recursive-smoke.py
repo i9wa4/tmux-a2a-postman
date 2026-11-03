@@ -23,6 +23,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--postman", required=True)
 parser.add_argument("--postman-md", type=pathlib.Path,
                     help="read an optional consumer policy into the private fixture")
+parser.add_argument("--launch", choices=["codex", "claude", "preset-p", "preset-w"], help="start the builtin preset using private fixed-client stubs")
+parser.add_argument("--builtin", action="store_true", help="exercise the absent-user-config standard root team")
 parser.add_argument("--skill-root", type=pathlib.Path, action="append", default=[],
                     help="explicit metadata source for optional consumer skills")
 parser.add_argument(
@@ -40,10 +42,18 @@ if not 4 <= args.depth <= 12:
     parser.error(
         "--depth must be between 4 and 12; this bounds fixture cost, not production trees"
     )
+if args.launch and not args.builtin:
+    parser.error("--launch requires --builtin")
+if args.builtin and (args.case != "root" or args.postman_md or args.skill_root):
+    parser.error("--builtin requires --case root and no consumer policy/skills")
 repo = pathlib.Path(__file__).resolve().parents[2]
 terminal = repo / "scripts/validation/recursive_team/terminal.py"
 template = (args.postman_md or repo / "testdata/config/recursive.md").resolve()
 roles = ["messenger", "orchestrator", "worker", "approver", "guardian", "critic"]
+if args.launch:
+    roles += ["worker-alt"]
+    if args.launch in {"codex", "claude"}:
+        roles += ["agent"]
 postman = str(pathlib.Path(args.postman).resolve())
 skill_roots = [path.resolve() for path in args.skill_root] + [repo / "skills"]
 
@@ -77,8 +87,9 @@ def run_case(case):
     # Copy only explicitly selected source metadata into this owned HOME.
     # The default policy and skills are entirely Postman-owned.
     catalog = home / ".codex/skills"
-    catalog.mkdir(parents=True, mode=0o700)
-    selected = re.findall(
+    if not args.builtin:
+        catalog.mkdir(parents=True, mode=0o700)
+    selected = [] if args.builtin else re.findall(
         r"^\s+- ([a-z0-9][a-z0-9-]*)$",
         template.read_text().split("\n---\n", 1)[0], re.MULTILINE
     )
@@ -119,12 +130,18 @@ def run_case(case):
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",
         "POSTMAN_BIN": postman,
-        "POSTMAN_CONFIG": str(config),
+        "POSTMAN_CONFIG": "" if args.builtin else str(config),
+        "TMUX_A2A_POSTMAN_CONFIG": "",
+        "POSTMAN_BUILTIN_POLICY": "",
         "POSTMAN_SMOKE_CASE": "recursive-team",
         "POSTMAN_TEAM_APPROVAL": "rejected" if case == "declined" else "approved",
     }
     env.pop("TMUX", None)
     env.pop("TMUX_PANE", None)
+    config_args = [] if args.builtin else ["--config", str(config)]
+    if args.builtin:
+        resources = subprocess.check_output([postman, "resources"], env=env, text=True, timeout=10).strip()
+        env["POSTMAN_BUILTIN_POLICY"] = str(pathlib.Path(resources) / "config/postman.md")
     panes, commands, nonces, roots = {}, {}, {}, {}
     report = {
         "case": case,
@@ -133,6 +150,9 @@ def run_case(case):
         "parents": parents,
         "actors": "fixed deterministic decisions in real terminal editors",
         "human_trial": False,
+        "configuration": "builtin" if args.builtin else "explicit",
+        "entry": "launch-" + args.launch if args.launch else "existing-consoles",
+        "role_policy_execution": "fixed actors prove terminal/mail mechanics; not autonomous compliance",
     }
 
     def tmux(*values):
@@ -162,7 +182,7 @@ def run_case(case):
             "goal_sha256": digest(goal),
         }
         result = subprocess.run(
-            [postman, "send-heredoc", "--config", str(config), "--to", "orchestrator"],
+            [postman, "send-heredoc", *config_args, "--to", "orchestrator"],
             check=False,
             input=json.dumps(body),
             text=True,
@@ -277,7 +297,8 @@ def run_case(case):
         }
 
     try:
-        config.write_text(compile_config(template.read_text(), json.loads(tree_file.read_text())))
+        if not args.builtin:
+            config.write_text(compile_config(template.read_text(), json.loads(tree_file.read_text())))
         # A native session-ID gap must remain visible in the read-only overview.
         tmux(
             "-f",
@@ -320,6 +341,59 @@ def run_case(case):
             )
             role_evidence = evidence / session
             role_evidence.mkdir()
+            if args.launch:
+                # Stub only model decisions/client execution. Production launch
+                # owns native panes/titles/env; submitted terminal input still
+                # drives every POP/read/reply through the shared actor.
+                fixture_bin = root / "launcher-bin"
+                fixture_bin.mkdir(mode=0o700)
+                role_setup = {
+                    "POSTMAN_TEAM_SESSION": session,
+                    "POSTMAN_SMOKE_EVIDENCE": str(role_evidence),
+                }
+                stub = fixture_bin / "codex"
+                stub.write_text(
+                    "#!" + sys.executable + "\n"
+                    + "import os, subprocess, uuid\n"
+                    + "os.environ.update(" + repr(role_setup) + ")\n"
+                    + "role = subprocess.check_output(["
+                    + repr(shutil.which("tmux"))
+                    + ", '-S', " + repr(socket)
+                    + ", 'display-message', '-p', '-t', os.environ['TMUX_PANE'], '#{pane_title}'], text=True).strip()\n"
+                    + "os.environ['POSTMAN_SMOKE_ROLE'] = role\n"
+                    + "os.environ['POSTMAN_SMOKE_CONVERSATION'] = uuid.uuid4().hex\n"
+                    + "os.execv(" + repr(sys.executable) + ", ["
+                    + repr(sys.executable) + ", " + repr(str(terminal))
+                    + ", uuid.uuid4().hex, 'plain'])\n"
+                )
+                stub.chmod(0o700)
+                (fixture_bin / "claude").symlink_to(stub.name)
+                # Avoid host login files resetting PATH to real installed AIs.
+                shell = fixture_bin / "bash"
+                shell.write_text("#!/bin/sh\ncase \"$1\" in -lic) shift; set -- -ic \"$@\" ;; -il) shift; set -- -i \"$@\" ;; esac\nexport PATH="
+                                 + shlex.quote(str(fixture_bin) + os.pathsep + env["PATH"])
+                                 + "\nexec " + shlex.quote(env["SHELL"])
+                                 + " --noprofile --norc \"$@\"\n")
+                shell.chmod(0o700)
+                tmux("set-option", "-g", "default-shell", str(shell))
+                tmux("set-environment", "-g", "TMUX_A2A_POSTMAN_CONFIG", "/stale/server/postman.md")
+                tmux("set-environment", "-g", "XDG_CONFIG_HOME", "/stale/server/xdg")
+                launched = subprocess.run(
+                    [postman, "launch-agents", args.launch, "--socket", socket,
+                     "--cwd", str(work), "--session", session], env=env,
+                    text=True, capture_output=True, timeout=40,
+                )
+                launch_output = json.loads(launched.stdout)
+                if launched.returncode or not launch_output["success"]:
+                    raise RuntimeError("builtin preset launch failed: " + launched.stdout + launched.stderr)
+                report["launch"] = launch_output["launch"]
+                for item in launch_output["launch"]["panes"]:
+                    role, pane = item["role"], item["pane"]
+                    panes[(session, role)] = pane
+                    tmux("resize-window", "-t", pane, "-x", "240", "-y", "60")
+                    wait_for("preset console startup " + role,
+                             lambda p=role_evidence / (role + ".ready.json"): p.exists())
+                continue
             for index, role in enumerate(roles):
                 nonce = uuid.uuid4().hex
                 nonces[(session, role)] = nonce
@@ -396,7 +470,7 @@ def run_case(case):
         if outcome["status"] not in {"updated", "partial"}:
             raise RuntimeError("initial explicit refresh failed: " + refreshed.stderr)
         overview = subprocess.run(
-            [postman, "get-status-oneline", "--config", str(config)],
+            [postman, "get-status-oneline", *config_args],
             env=status_env, text=True, capture_output=True, check=True, timeout=5,
         )
         if label == "[0]" or not overview.stdout.startswith(label):
@@ -407,6 +481,8 @@ def run_case(case):
         ):
             raise RuntimeError("operator collection invented healthy mail or agent registration")
         report["operator_session_label"] = label
+        if args.builtin and (config.exists() or catalog.exists()):
+            raise RuntimeError("builtin fixture unexpectedly installed config or Skills")
 
         # Initial negative sends exercise the actual parser/route admission.
         # The controller never supplies a recipient POP, read, reply or decision.
@@ -418,7 +494,7 @@ def run_case(case):
         report["route_probes"] = []
         for session, role, target in probes:
             result = subprocess.run(
-                [postman, "send-heredoc", "--config", str(config), "--to", target],
+                [postman, "send-heredoc", *config_args, "--to", target],
                 check=False,
                 input="must be denied",
                 env=caller_env(session, role),

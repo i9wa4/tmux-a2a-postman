@@ -17,5 +17,15 @@ trust in arbitrary mail or a grant of OS permissions. Postman never rewrites
 AGENTS/CLAUDE files, injects an initial prompt or starts a daemon. Repository
 contributor instructions are separate.
 
-Run `tmux-a2a-postman help skills` for the consumer-owned Skill setup boundary
+Run `tmux-a2a-postman help skills` for `gh skill install` usage
 and `tmux-a2a-postman help config` for the selected configuration contract.
+
+With no user postman.md, the embedded standard eight-role team is available. Use
+existing titled consoles and a first send, or select a preset from the same
+default `postman.md`. `launch-agents --list` lists plain `codex`/`claude` teams
+and the existing vde-layout `preset-p`/`preset-w` teams. The latter retain their
+original model, effort and permission arguments; preview the exact commands with
+`launch-agents <preset> --dry-run`. No initial prompt is injected. `help config`
+explains inspecting/customizing a full copy; `help postman-orchestrate`
+describes the end-to-end workflow. Thin Skills are optional discovery entries;
+the installed Skill references are the detailed workflow authority.
