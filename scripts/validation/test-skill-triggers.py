@@ -21,12 +21,12 @@ class TriggerGateTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        shutil.copytree(ROOT / "skills", self.root / "skills")
+        shutil.copytree(ROOT / "help", self.root / "help")
         # Nix-store sources are read-only. Fault injection mutates only these
         # private copies, including when tests run as an unprivileged builder.
         for path in self.root.rglob("*"):
             path.chmod(0o700 if path.is_dir() else 0o600)
-        self.spec = self.root / "skills/postman-config-auditor/evals/trigger/eval.yaml"
+        self.spec = self.root / "help/postman-config-auditor/evals/trigger/eval.yaml"
         self.task = self.spec.parent / "tasks/01-positive.yaml"
         self.calls = self.root / "executor-called"
         self.spy = self.root / "spy"
@@ -46,13 +46,13 @@ class TriggerGateTests(unittest.TestCase):
         path.write_text(yaml.safe_dump(value, sort_keys=False))
 
     def test_current_inventory_and_manual_suites_stay_separate(self):
-        names = {path.parent.name for path in (self.root / "skills").glob("*/SKILL.md")}
-        for path in (self.root / "skills").glob("*/evals/eval.yaml"):
+        names = {path.parent.name for path in (self.root / "help").glob("*/SKILL.md")}
+        for path in (self.root / "help").glob("*/evals/eval.yaml"):
             path.write_text("executor: forbidden-model\nthis: is deliberately not a trigger suite\n")
         self.assertEqual({name for name, _, _ in PREFLIGHT(self.root)}, names)
 
     def test_zero_discovery(self):
-        for path in (self.root / "skills").glob("*/evals/trigger/eval.yaml"):
+        for path in (self.root / "help").glob("*/evals/trigger/eval.yaml"):
             path.unlink()
         self.rejected_before_executor()
 
@@ -61,7 +61,7 @@ class TriggerGateTests(unittest.TestCase):
         self.rejected_before_executor()
 
     def test_new_skill_requires_coverage(self):
-        directory = self.root / "skills/postman-uncovered-fixture"
+        directory = self.root / "help/postman-uncovered-fixture"
         directory.mkdir()
         (directory / "SKILL.md").write_text("---\nname: postman-uncovered-fixture\n---\nUncovered\n")
         self.rejected_before_executor()
@@ -104,7 +104,7 @@ class TriggerGateTests(unittest.TestCase):
         self.rejected_before_executor()
 
     def test_wrong_grader_reference(self):
-        self.edit(self.task, lambda value: value["graders"][0]["config"].update(skill_path="skills/postman-usage/SKILL.md"))
+        self.edit(self.task, lambda value: value["graders"][0]["config"].update(skill_path="help/postman-usage/SKILL.md"))
         self.rejected_before_executor()
 
     def test_duplicate_yaml_keys(self):

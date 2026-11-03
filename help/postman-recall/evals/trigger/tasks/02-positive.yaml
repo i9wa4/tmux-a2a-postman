@@ -1,0 +1,12 @@
+id: postman-recall-2
+name: latest archived day
+inputs:
+  prompt: Recall the latest recorded day of read and sent correspondence.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-recall/SKILL.md
+    mode: positive

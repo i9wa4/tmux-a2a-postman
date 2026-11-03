@@ -5,7 +5,6 @@ import "fmt"
 type Config struct{ ConfigPath string }
 
 type Handlers struct {
-	Skills           func([]string) error
 	Resources        func([]string) error
 	LaunchAgents     func([]string) error
 	ChannelSync      func([]string) error
@@ -29,16 +28,12 @@ type Result struct {
 }
 
 func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
-	if isSubcommandHelpRequest(args) && hasCommandHelpTopic(command) {
-		h.Help([]string{command})
-		return Result{}
-	}
 	var handler func([]string) error
+	workspaceCommand := true
 	switch command {
-	case "skills":
-		return Result{Label: "postman skills", Err: h.Skills(args)}
 	case "resources":
-		return Result{Label: "postman resources", Err: h.Resources(args)}
+		handler = h.Resources
+		workspaceCommand = false
 	case "launch-agents":
 		handler = h.LaunchAgents
 	case "channel-sync":
@@ -62,14 +57,19 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 	case "send-heredoc":
 		handler = h.SendHeredoc
 	case "version":
-		return Result{Label: "postman version", Err: h.Version(args)}
+		handler = h.Version
+		workspaceCommand = false
 	case "help":
 		h.Help(args)
 		return Result{}
 	default:
 		return Result{Label: "postman", Err: fmt.Errorf("unknown command %q", command), ShowUsage: true}
 	}
-	if cfg.ConfigPath != "" {
+	if isSubcommandHelpRequest(args) && hasCommandHelpTopic(command) {
+		h.Help([]string{command})
+		return Result{}
+	}
+	if workspaceCommand && cfg.ConfigPath != "" {
 		args = append([]string{"--config", cfg.ConfigPath}, args...)
 	}
 	return Result{Label: "postman " + command, Err: handler(args)}

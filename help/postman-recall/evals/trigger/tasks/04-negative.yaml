@@ -1,0 +1,12 @@
+id: postman-recall-4
+name: notification boundary
+inputs:
+  prompt: Claim unread inbox deliveries via their terminal notification.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-recall/SKILL.md
+    mode: negative
