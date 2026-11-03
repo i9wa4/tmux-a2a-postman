@@ -5,7 +5,7 @@ import unittest
 
 from recursive_team.configuration import compile_config, role_sections
 
-TEMPLATE = (Path(__file__).parent / "recursive_team/postman.md").read_text()
+TEMPLATE = (Path(__file__).resolve().parents[2] / "testdata/config/recursive.md").read_text()
 
 
 class RecursiveConfigurationTests(unittest.TestCase):

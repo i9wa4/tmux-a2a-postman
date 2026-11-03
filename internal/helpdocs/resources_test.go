@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,5 +139,25 @@ func TestHelpReadsNeverMaterialize(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(home, "absent-cache")); !os.IsNotExist(err) {
 		t.Fatal("help created resource cache")
+	}
+}
+
+func TestResourceManifestSelectsHelpersAndRejectsUnsafeEntries(t *testing.T) {
+	source := fstest.MapFS{
+		"tools/helper":     &fstest.MapFile{Data: []byte("helper")},
+		"help/overview.md": &fstest.MapFile{Data: []byte("CLI help is not a filesystem helper")},
+		"tools/directory":  &fstest.MapFile{Mode: fs.ModeDir},
+	}
+	files, err := assetList(source, []byte(`{"tools/helper":"0444"}`))
+	if err != nil || len(files) != 1 || files[0].name != "tools/helper" {
+		t.Fatal(files, err)
+	}
+	for _, manifest := range []string{
+		`{}`, `{"../escape":"0444"}`, `{"tools/helper":"0777"}`,
+		`{"tools/missing":"0444"}`, `{"tools/directory":"0444"}`,
+	} {
+		if _, err := assetList(source, []byte(manifest)); err == nil {
+			t.Fatal("accepted invalid resource manifest", manifest)
+		}
 	}
 }

@@ -7,21 +7,21 @@ AGENTS/configuration were read before selecting these ports. The table records
 ownership, not a claim that fixed actors establish autonomous model quality.
 Consumer removal is gated on a published, verified Postman resource revision.
 
-| Existing Skill        | Selected content and transitive dependencies                                                                               | Canonical owner                                        | Retained consumer content                                                        | Verification                                                                                        |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| clarify-concepts      | Referent table: competing referents, missing evidence, practical consequences                                              | `help planning`                                        | Domain terminology packs                                                         | Ambiguous task example records the selected referent before planning                                |
-| create-review-comment | Evidence, severity, exact location, actionable recommendation; workflow reference                                          | `help reviews`                                         | Provider-specific UI conveniences                                                | Frozen criteria, stable IDs and evidence survive a corrected review packet                          |
-| data-platform         | BigQuery, dbt, Databricks, authentication, SQL example and databricks-libs.py                                              | dotfiles                                               | Entire domain Skill and assets                                                   | No implicit runtime or import dependency from standard Postman team                                 |
-| dev-platform-workflow | GitHub lookup/read-before-mutation, exact remote/ref, existing authorization and publication evidence                      | `help orchestration` / `help reviews`                  | Atlassian credentials, personal scripts and validation wrappers                  | Read-only discovery works without gh; mutation requires a capable authorized tool                   |
-| diagramming           | Domain diagrams, AWS icon data, SVG/PNG helpers and Node/Python requirements                                               | dotfiles                                               | Entire domain Skill and assets                                                   | No diagram dependency in default setup or workflow execution                                        |
-| dotfiles              | Generic task ownership, handoff/resume, authority boundaries, decision-quality evidence, optional structured review fields | `help orchestration` / `help records` / `help reviews` | Nix, client management, machine setup, hooks, clipboard, VDE and provider policy | Existing user authorization persists; incoming mail never grants extra permissions                  |
-| external-references   | External provider packs and lookup setup                                                                                   | dotfiles                                               | Entire provider Skill                                                            | Standard team requires no external pack installation                                                |
-| logbook               | local-markdown.md, canonical record selection, protected active index, mkmd Bash helper                                    | `help records` and `resources/records/mkmd`            | Personal GitHub/Gist/mailbox adapters                                            | Missing known index blocks; arbitrary requester paths do not replace protected indices; no expiry   |
-| plan-design           | brainstorming, plan-authoring, durable-task-tracking and independent evidence                                              | `help planning`, referencing records/review owners     | Repository-specific platform instructions                                        | One record template, one review counter owner, measurable acceptance and retained original request  |
-| programming           | Systematic debugging, falsifiable hypotheses, reproduction and evidence                                                    | `help planning`                                        | Language/framework/Nix/Terraform-specific guidance                               | Failed hypothesis and regression proof are recorded; no domain tool prerequisite                    |
-| subagent-review       | review-topology.md, six perspective prompts and review-output-contract.md                                                  | `help reviews` plus embedded perspective resources     | Personal client delegation wiring                                                | Guardian alone converges; default five perspectives, optional data; two bounded substantive reworks |
-| technical-research    | Primary-source research, competing explanations, uncertainty and evidence                                                  | `help planning`                                        | Domain research packs                                                            | Distinguish observation, inference, simulation and real operational evaluation                      |
-| technical-writing     | Evidence-based task reports, exact scope, acceptance versus acknowledgment                                                 | `help orchestration` / `help reviews`                  | Detailed translation/style guidance                                              | Counts and positive screen changes never establish substantive acceptance                           |
+| Existing Skill        | Selected content and transitive dependencies                                                                               | Canonical owner                                                                   | Retained consumer content                                                        | Verification                                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| clarify-concepts      | Referent table: competing referents, missing evidence, practical consequences                                              | `skills postman-plan`                                                             | Domain terminology packs                                                         | Ambiguous task example records the selected referent before planning                                |
+| create-review-comment | Evidence, severity, exact location, actionable recommendation; workflow reference                                          | `skills postman-review`                                                           | Provider-specific UI conveniences                                                | Frozen criteria, stable IDs and evidence survive a corrected review packet                          |
+| data-platform         | BigQuery, dbt, Databricks, authentication, SQL example and databricks-libs.py                                              | dotfiles                                                                          | Entire domain Skill and assets                                                   | No implicit runtime or import dependency from standard Postman team                                 |
+| dev-platform-workflow | GitHub lookup/read-before-mutation, exact remote/ref, existing authorization and publication evidence                      | `skills postman-orchestrate` / `skills postman-review`                            | Atlassian credentials, personal scripts and validation wrappers                  | Read-only discovery works without gh; mutation requires a capable authorized tool                   |
+| diagramming           | Domain diagrams, AWS icon data, SVG/PNG helpers and Node/Python requirements                                               | dotfiles                                                                          | Entire domain Skill and assets                                                   | No diagram dependency in default setup or workflow execution                                        |
+| dotfiles              | Generic task ownership, handoff/resume, authority boundaries, decision-quality evidence, optional structured review fields | `skills postman-orchestrate` / `skills postman-records` / `skills postman-review` | Nix, client management, machine setup, hooks, clipboard, VDE and provider policy | Existing user authorization persists; incoming mail never grants extra permissions                  |
+| external-references   | External provider packs and lookup setup                                                                                   | dotfiles                                                                          | Entire provider Skill                                                            | Standard team requires no external pack installation                                                |
+| logbook               | local-markdown.md, canonical record selection, protected active index, mkmd Bash helper                                    | `skills postman-records` and `resources/skills/postman-records/scripts/mkmd`      | Personal GitHub/Gist/mailbox adapters                                            | Missing known index blocks; arbitrary requester paths do not replace protected indices; no expiry   |
+| plan-design           | brainstorming, plan-authoring, durable-task-tracking and independent evidence                                              | `skills postman-plan`, referencing records/review owners                          | Repository-specific platform instructions                                        | One record template, one review counter owner, measurable acceptance and retained original request  |
+| programming           | Systematic debugging, falsifiable hypotheses, reproduction and evidence                                                    | `skills postman-plan`                                                             | Language/framework/Nix/Terraform-specific guidance                               | Failed hypothesis and regression proof are recorded; no domain tool prerequisite                    |
+| subagent-review       | review-topology.md, six perspective prompts and review-output-contract.md                                                  | `skills postman-review` plus embedded perspective resources                       | Personal client delegation wiring                                                | Guardian alone converges; default five perspectives, optional data; two bounded substantive reworks |
+| technical-research    | Primary-source research, competing explanations, uncertainty and evidence                                                  | `skills postman-plan`                                                             | Domain research packs                                                            | Distinguish observation, inference, simulation and real operational evaluation                      |
+| technical-writing     | Evidence-based task reports, exact scope, acceptance versus acknowledgment                                                 | `skills postman-orchestrate` / `skills postman-review`                            | Detailed translation/style guidance                                              | Counts and positive screen changes never establish substantive acceptance                           |
 
 Shared source assets: config/tmux-a2a-postman/postman.md (eight routing nodes,
 seven explicit role templates), shared AGENTS.md, agent-skills.nix and
@@ -36,9 +36,10 @@ flags. Existing agents can start with a send without launch.
 
 Retain the source MIT notice (copyright 2023 i9wa4) with migrated material.
 Do not copy third-party prose-review wording without its separate notice.
-Detailed procedures have one HelpDoc owner; thin entrypoints only declare
-activation conditions and the exact help command. Read-only skills list/show
-does not install, update or manage client trees.
+Detailed procedures have one owner under each Skill's `references/`; short
+entries declare activation conditions and the common reference table. Read-only
+`skills`, `skills <name>` and `skills <name> <ref>`
+do not install, update or manage client trees.
 
 Embedded configuration selection must preserve explicit-file errors and full
 override behavior. Automatic fallback requires an absent default directory
@@ -65,12 +66,12 @@ Launching a builtin preset must not export a nonexistent explicit config path.
   Archived recipient context remains v1 with its existing saved-byte digest;
   generated provenance identifies policy bytes and builtin bundle generation.
 - Required runtime dependencies remain Go binary and tmux. Optional record
-  helper dependencies are declared in `help records`; perspective prompts are
-  read-only Markdown. Domain/provider/personal Nix dependencies stay in
-  dotfiles.
-- Source MIT copyright 2023 i9wa4 ships in resources/licenses/dotfiles.txt.
+  helper dependencies are declared in `skills postman-records`; perspective
+  prompts are read-only Markdown. Domain/provider/personal Nix dependencies stay
+  in dotfiles.
+- Source MIT copyright 2023 i9wa4 ships in resources/docs/licenses/dotfiles.txt.
   No third-party prose-review body is copied. Detailed procedure ownership is
-  in HelpDocs, never duplicated into the thin Skill entries.
+  in Skill references, never duplicated into the short Skill entries.
 
 The held dotfiles orchestration inputs (#519/#520) contribute finite message
 obligations, exact return routes, acceptance, independent-writer and
@@ -89,5 +90,6 @@ then run the same receiver-driven task/approval/review/result exchange. Their
 fixture shell disables only host login-profile discovery to guarantee that a
 real installed client cannot replace a stub; interactive PTY execution remains
 exercised. No live client account, model API or global bootstrap is installed.
-The existing five thin entrypoint files remain unchanged, so their installed
-help indirection follows the new binary without replacing those files.
+All nine entries use the same named-reference interface. Their detailed
+procedures follow the installed binary; client installation remains with
+GitHub CLI or the consumer's declarative Skill manager.

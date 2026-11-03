@@ -29,7 +29,7 @@ func (s Source) Load(ctx context.Context) (WorkspaceTopology, error) {
 	if _, err := os.Lstat(s.Path); !errors.Is(err, os.ErrNotExist) {
 		return WorkspaceTopology{}, errors.New("selected builtin configuration changed; select configuration again")
 	}
-	raw, err := fs.ReadFile(helpdocs.Assets(), "defaults/postman.md")
+	raw, err := fs.ReadFile(helpdocs.Assets(), "config/postman.md")
 	if err != nil {
 		return WorkspaceTopology{}, err
 	}

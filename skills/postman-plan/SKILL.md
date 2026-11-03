@@ -8,6 +8,17 @@ description: |
 
 # postman-plan
 
-Resolve the installed `tmux-a2a-postman` executable and its `version`. Read and
-follow the complete output of `tmux-a2a-postman help planning` for this request.
-If that binary lacks the topic, report incompatibility and stop this action.
+Use the installed `tmux-a2a-postman` executable and check its `version`. For
+each matching row, in table order, run:
+
+```sh
+tmux-a2a-postman skills postman-plan <ref>
+```
+
+Read the complete output before acting. If this binary lacks the reference,
+report the incompatibility; do not substitute another checkout or download.
+
+| Read when                                             | ref                                            |
+| ----------------------------------------------------- | ---------------------------------------------- |
+| Understanding the request, investigating or debugging | [`investigation`](references/investigation.md) |
+| Writing, updating or handing off a plan               | [`planning`](references/planning.md)           |

@@ -48,7 +48,7 @@ if args.builtin and (args.case != "root" or args.postman_md or args.skill_root):
     parser.error("--builtin requires --case root and no consumer policy/skills")
 repo = pathlib.Path(__file__).resolve().parents[2]
 terminal = repo / "scripts/validation/recursive_team/terminal.py"
-template = (args.postman_md or terminal.with_name("postman.md")).resolve()
+template = (args.postman_md or repo / "testdata/config/recursive.md").resolve()
 roles = ["messenger", "orchestrator", "worker", "approver", "guardian", "critic"]
 if args.launch:
     roles += ["worker-alt"]
@@ -141,7 +141,7 @@ def run_case(case):
     config_args = [] if args.builtin else ["--config", str(config)]
     if args.builtin:
         resources = subprocess.check_output([postman, "resources"], env=env, text=True, timeout=10).strip()
-        env["POSTMAN_BUILTIN_POLICY"] = str(pathlib.Path(resources) / "defaults/postman.md")
+        env["POSTMAN_BUILTIN_POLICY"] = str(pathlib.Path(resources) / "config/postman.md")
     panes, commands, nonces, roots = {}, {}, {}, {}
     report = {
         "case": case,

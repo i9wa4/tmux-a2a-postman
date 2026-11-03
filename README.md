@@ -38,7 +38,7 @@ Use the embedded standard team without a configuration file, or customize
 the whole organization in one file. Artifact review and command approval are
 different roles; review coordinates decisions and is not an OS sandbox.
 Direct parent/child routes require declared interfaces and distinct workspaces.
-The diagrams here explain capabilities; copy the tested configurations below.
+The configuration reference defines the supported fields.
 
 ## 2. Small commands, durable files
 
@@ -54,7 +54,7 @@ flowchart TB
 ```
 
 Transport uses native tmux panes and ordinary files, without model APIs.
-Optional [`launch-agents`](docs/launch-agents.md) creates one declared team and
+Optional [`launch-agents`](help/launching.md) creates one declared team and
 exits, without startup prompt injection or supervision. External services own
 their adapter and activation; no native GitHub/mobile service is implied.
 
@@ -101,9 +101,9 @@ authentication and sandbox settings remain yours.
 
 The binary includes complete Markdown guidance: run
 `tmux-a2a-postman help setup` or `tmux-a2a-postman help <topic>` without a
-checkout, tmux or configuration. Thin Skills discover these installed topics;
-`tmux-a2a-postman help skills` explains the thin entries and consumer-owned
-setup. Updating the binary updates the detailed procedures.
+checkout, tmux or configuration. Thin Skills discover installed workflow
+references; `tmux-a2a-postman help skills` explains the thin entries and
+consumer-owned setup. Updating the binary updates the detailed procedures.
 
 Install a thin Skill with GitHub CLI:
 
@@ -112,13 +112,12 @@ gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 ```
 
 Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
-name from `tmux-a2a-postman skills list` to install another entry. Each Skill
-reads its detailed procedure from the installed binary's Markdown HelpDocs.
+name from `tmux-a2a-postman skills` to install another entry. Each Skill
+reads its detailed references with `tmux-a2a-postman skills <name> <ref>`.
 
-Start with the
-[builtin standard team](docs/assets/defaults/postman.md) and
-`tmux-a2a-postman help orchestration`; no dotfiles or Skill installation is
-required. That same default `postman.md` contains all startup presets:
+Start with the [builtin standard team](config/postman.md) and
+`tmux-a2a-postman skills postman-orchestrate`; no dotfiles or Skill installation
+is required. That same default `postman.md` contains all startup presets:
 
 | Preset             | Consoles and layout                                                   |
 | ------------------ | --------------------------------------------------------------------- |
@@ -137,33 +136,45 @@ tmux-a2a-postman launch-agents preset-p --dry-run
 Remove `--dry-run` to launch. Existing consoles can instead start with a send.
 Read `help config` to inspect/export a complete custom configuration.
 
-The [first exchange](docs/quickstart.md) also offers a complete
-[minimal override](examples/minimal/postman.md). Then try the
-[practical team](examples/practical/postman.md) or
-[parent/child team](examples/hierarchy/postman.md).
+Follow the [first exchange](skills/postman-usage/references/quickstart.md) and
+the [configuration reference](help/postman-md.md) to choose roles and routes.
+
+The repository mirrors the installed interface:
+
+```text
+help/                 CLI usage: help <topic>
+config/               bundled configuration assets
+skills/<name>/
+  SKILL.md            short entry: skills <name>
+  references/         workflows: skills <name> <ref>
+  scripts/            optional helpers
+  evals/              offline validation
+docs/                design, research, development and validation
+testdata/            test-only fixtures
+```
 
 ## 4. Guides and references
 
-- [Quickstart and operations](docs/quickstart.md): setup, mail, observations and
-  troubleshooting.
-- [Configuration reference](docs/help/postman-md.md):
+- [Quickstart and operations](skills/postman-usage/references/quickstart.md):
+  setup, mail, observations and troubleshooting.
+- [Configuration reference](help/postman-md.md):
   anatomy, examples and exact supported fields.
-- [CLI contract](docs/cli-spec.md) and `tmux-a2a-postman help`: command inputs
+- [CLI contract](help/cli-spec.md) and `tmux-a2a-postman help`: command inputs
   and outputs.
-- [Command review](docs/command-approvals.md),
-  [server status](docs/design/server-status.md), and
-  [external file integration](docs/design/external-filesystem-channel.md).
+- [Command review](help/execution.md),
+  [server status](help/server-status.md), and
+  [external file integration](help/external-filesystem-channel.md).
 - [Installable Skills](skills/): usage, sending, recall, configuration audit and
   team management, planning, records, orchestration and review.
-- [Operating procedures](docs/help/orchestration.md),
-  [planning](docs/help/planning.md),
-  [records](docs/help/records.md), and
-  [review](docs/help/reviews.md): the same canonical HelpDocs
-  available in the binary.
+- [Operating procedures](skills/postman-orchestrate/references/intake.md),
+  [planning](skills/postman-plan/references/investigation.md),
+  [records](skills/postman-records/references/selection.md), and
+  [review](skills/postman-review/references/routing.md): the canonical Skill
+  references available in the binary.
 - [Migration inventory](docs/design/standard-team-migration.md): source
   ownership, portability and verification boundaries.
-- [Contributing](CONTRIBUTING.md): development, deterministic tmux tests and
-  evidence limits.
+- [Contributing](docs/development/contributing.md): development, deterministic
+  tmux tests and evidence limits.
 
 This repository's [AGENTS.md](AGENTS.md) guides contributors. Your runtime
 `postman.md` configures your team; it is a separate instruction surface.

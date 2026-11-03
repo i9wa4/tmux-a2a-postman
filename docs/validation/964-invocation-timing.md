@@ -72,5 +72,6 @@ and matched host load before attributing a tail change to the recorder.
   without repair or any permission to replay effects.
 
 The automated test commands and the Nix analysis gate are documented in
-[CONTRIBUTING.md](../../CONTRIBUTING.md). Model routing, live agent behavior and
-cross-host clock synchronization are outside these measurements.
+[docs/development/contributing.md](../development/contributing.md). Model
+routing, live agent behavior and cross-host clock synchronization are outside
+these measurements.
