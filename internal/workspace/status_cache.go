@@ -109,6 +109,7 @@ type StatusCapture struct {
 // Scope is saved configuration attribution, not permission to manage/send/read.
 type StatusScope struct {
 	Config      string              `json:"config"`
+	Builtin     bool                `json:"builtin,omitempty"`
 	Fingerprint string              `json:"fingerprint"`
 	Edges       map[string][]string `json:"edges"`
 	Interface   string              `json:"interface_node"`

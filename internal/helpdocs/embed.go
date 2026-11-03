@@ -37,6 +37,9 @@ func Read(topic string, refs ...string) ([]byte, error) {
 		if !validName(refs[0]) {
 			return nil, fmt.Errorf("invalid help reference %q", refs[0])
 		}
+		if topic == "config" && refs[0] == "default" {
+			return configdata.Content.ReadFile("postman.md")
+		}
 		filename = topic + "/references/" + refs[0] + ".md"
 	} else if data, err := helpdata.Content.ReadFile(topic + "/SKILL.md"); err == nil {
 		return data, nil
@@ -62,6 +65,15 @@ func Topics() []string {
 		}
 	}
 	sort.Strings(names)
+	return names
+}
+
+// WorkflowNames lists canonical Skill packages for the builtin role catalog.
+func WorkflowNames() []string {
+	names, _ := fs.Glob(helpdata.Content, "*/SKILL.md")
+	for i := range names {
+		names[i] = path.Dir(names[i])
+	}
 	return names
 }
 

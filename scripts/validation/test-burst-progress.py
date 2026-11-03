@@ -25,6 +25,8 @@ class BurstProgressTests(unittest.TestCase):
             self.assertEqual(approval_progress(evidence, state, 0), (1, 0, 0, 0))
             (sent / "m-decision.md").touch()
             self.assertEqual(approval_progress(evidence, state, 0), (1, 1, 0, 0))
+            (state / "readable-work--alias").symlink_to("work", target_is_directory=True)
+            self.assertEqual(approval_progress(evidence, state, 0), (1, 1, 0, 0))
             (evidence / "approver.claim.first.json").touch()
             self.assertEqual(approval_progress(evidence, state, 1), (1, 1, 1, 1))
 

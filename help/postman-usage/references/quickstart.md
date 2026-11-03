@@ -7,10 +7,15 @@ release.
 
 ## 1. Set up two consoles
 
-Create an absolute user configuration using the complete Markdown shown by
-`tmux-a2a-postman help postman-md`. Choose two connected roles named
-`orchestrator` and `worker` for this walkthrough, and save the file at
-`$XDG_CONFIG_HOME/tmux-a2a-postman/postman.md` (or the HOME default).
+With no user configuration, Postman uses its builtin standard eight-role team.
+Read `tmux-a2a-postman help postman-orchestrate` and its matching references
+for that workflow. Existing titled consoles can start with a send, or use an
+optional standard launch preset. The two-console exchange below uses the
+connected `orchestrator` and `worker` roles from that same default.
+
+If you already selected a user configuration, it fully replaces the builtin
+team; use its connected roles or read `tmux-a2a-postman help config` to inspect
+and export the standard configuration before customizing a separate file.
 
 ```sh
 mkdir -p "$HOME/postman-demo"
@@ -18,15 +23,14 @@ mkdir -p "$HOME/postman-demo"
 
 `XDG_CONFIG_HOME`, when set, must be absolute. The file is selected by explicit
 absolute `--config`, inherited `TMUX_A2A_POSTMAN_CONFIG`, then the XDG/HOME
-default. For this default-path walkthrough, unset any inherited
-`TMUX_A2A_POSTMAN_CONFIG` before creating consoles. No config is discovered by
-walking up from cwd.
+default. With an absent automatic default path, the builtin team is selected;
+no configuration is written. An explicitly selected file never falls back.
+No config is discovered by walking up from cwd.
 
 Choose an unused demo socket name. These commands create a separate tmux server
 and two ordinary shells; they do not acquire agent credentials or send mail:
 
 ```sh
-unset TMUX_A2A_POSTMAN_CONFIG
 orchestrator_pane=$(tmux -L postman-demo -f /dev/null new-session -d \
   -s postman-demo -c "$HOME/postman-demo" -P -F '#{pane_id}')
 worker_pane=$(tmux -L postman-demo split-window -h -d -t "$orchestrator_pane" \

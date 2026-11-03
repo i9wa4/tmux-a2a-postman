@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import time
 
+from mail_fixture import workspace_files
+
 
 def distribution(values):
     values = sorted(values)
@@ -84,7 +86,7 @@ def bench(binary, samples, history, concurrency):
                         list(pool.map(lambda _: invoke("pop"), range(concurrency)))
                     batches.append((time.perf_counter_ns() - started) / 1e6)
                 groups[f"parallel_{concurrency}_history_{retained}"] = distribution(batches)
-            files = sorted((root / "state").glob("tmux-a2a-postman/*/agents/*/logs/*/inv-*.jsonl"))
+            files = sorted(workspace_files(root / "state" / "tmux-a2a-postman", "agents/*/logs/*/inv-*.jsonl"))
             incomplete, outcomes, captures = 0, {}, {}
             for path in files:
                 events = [json.loads(line) for line in path.read_text().splitlines()]
@@ -96,7 +98,7 @@ def bench(binary, samples, history, concurrency):
                 captures[capture] = captures.get(capture, 0) + 1
             state_files = [path for path in (root / "state").rglob("*") if path.is_file()]
             history_files = (list((root / "state" / "tmux-a2a-postman" / "%status").glob("*/history/*.json")) +
-                             list((root / "state" / "tmux-a2a-postman").glob("*/runtime/observations/*-p*.json")))
+                             list(workspace_files(root / "state" / "tmux-a2a-postman", "runtime/observations/*-p*.json")))
             return {"supports_refresh": supports_refresh, "state_files": len(state_files),
                     "state_bytes": sum(path.stat().st_size for path in state_files),
                     "raw_capture_files": len(history_files),

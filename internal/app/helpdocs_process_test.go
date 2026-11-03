@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,10 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if err := os.Mkdir(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	custom := filepath.Join(project, "custom-postman.md")
+	if err := os.WriteFile(custom, []byte("A different user configuration."), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +40,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, self, "-test.run=^TestIssue937PublicCLIChild$")
 		cmd.Dir = project
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME=relative-and-unused", "XDG_STATE_HOME=relative-and-unused", "XDG_CACHE_HOME="+filepath.Join(home, "cache"), "TMUX=", "TMUX_PANE=", "TMUX_A2A_POSTMAN_CONFIG=", "PATH="+filepath.Join(home, "no-tools"), "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME=relative-and-unused", "XDG_STATE_HOME=relative-and-unused", "XDG_CACHE_HOME="+filepath.Join(home, "cache"), "TMUX=", "TMUX_PANE=", "TMUX_A2A_POSTMAN_CONFIG="+custom, "PATH="+filepath.Join(home, "no-tools"), "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
 		var out, diagnostic bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &diagnostic
 		err = cmd.Run()
@@ -74,7 +79,17 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 			t.Fatal("reference display did not return complete Markdown", ref, string(diagnostic), err)
 		}
 	}
+	wantConfig, err := fs.ReadFile(helpdocs.Assets(), "config/postman.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outConfig, diagnostic, err := run("help", "config", "default")
+	if err != nil || len(diagnostic) != 0 || !bytes.Equal(outConfig, wantConfig) {
+		t.Fatal("default reference did not return the complete builtin Markdown", string(diagnostic), err)
+	}
 	for _, args := range [][]string{
+		{"help", "postman-usage", "default"},
+		{"help", "postman-config-auditor", "default"},
 		{"skills", "install", "--client", "codex", "--scope", "project", "--project", project, "postman-usage"},
 		{"skills", "export", "--to", filepath.Join(home, "export"), "postman-usage"},
 		{"skills"},
@@ -108,5 +123,46 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(home, name)); !os.IsNotExist(err) {
 			t.Fatal("installation wrote unrelated global instructions/config", name, err)
 		}
+	}
+}
+
+func TestBuiltinPublicSelectionAndEmptyExplicitConfig(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	run := func(args ...string) ([]byte, error) {
+		t.Helper()
+		raw, err := json.Marshal(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, self, "-test.run=^TestIssue937PublicCLIChild$")
+		cmd.Dir = t.TempDir()
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "TMUX_A2A_POSTMAN_CONFIG=", "TMUX=", "TMUX_PANE=", "POSTMAN_TEST_PUBLIC_ARGS="+string(raw))
+		return cmd.CombinedOutput()
+	}
+	out, err := run("launch-agents", "--list")
+	if err != nil {
+		t.Fatal(string(out), err)
+	}
+	var listed struct {
+		Success bool     `json:"success"`
+		Presets []string `json:"presets"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil || !listed.Success || !reflect.DeepEqual(listed.Presets, []string{"claude", "codex", "preset-p", "preset-w"}) {
+		t.Fatal(string(out), err)
+	}
+	for _, args := range [][]string{{"--config=", "launch-agents", "--list"}, {"launch-agents", "--list", "--config="}, {"--config", filepath.Join(home, "missing.md"), "launch-agents", "--list"}} {
+		out, err := run(args...)
+		if err == nil || !bytes.Contains(out, []byte(`"success":false`)) {
+			t.Fatal("explicit configuration fell back", args, string(out), err)
+		}
+	}
+	if entries, err := os.ReadDir(home); err != nil || len(entries) != 0 {
+		t.Fatal("preview initialized user configuration/state", entries, err)
 	}
 }

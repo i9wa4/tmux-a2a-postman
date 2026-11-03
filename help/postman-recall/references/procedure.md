@@ -45,6 +45,13 @@ percent-encoding every other byte with uppercase hex, then join components by
 `-`. Thus `~/work/team-a` becomes `work-team%2Da`. A final `registry` or `locks`
 name escapes its first byte (`%72egistry`, `%6Cocks`). Verify the existing
 directory's `workspace.json` has version 1 and the exact `root` and `name`.
+Keep this real canonical directory for identity checks and archive enumeration.
+POP may return a readable compatibility alias containing literal hyphens and a
+32-hex suffix; `tmux-a2a-postman help directories` specifies it. Such an alias
+is only a presentation path, never a second mailbox or another identity source.
+If checking one, require its owner and exact relative canonical basename as
+the symlink target, then inspect the verified real directory. Never follow an
+arbitrary state symlink, count an alias twice, or initialize missing history.
 
 For the verified logical node, inspect only:
 
@@ -58,15 +65,16 @@ Accept legacy `m-<32 lowercase hex>` and new
 calendar/time shape and require a new ID's timestamp to match `created_at`.
 Do not rename an old archive or select history by mixed-format filename order.
 
-Require existing private owned directories/files and refuse symlinks or changed
-identity. Missing/unreadable directories are unknown; an existing empty pair
-is empty history. Ignore `.pop.json` receipts and non-message files. Inspect
-only a real archive's first `<!-- postman {JSON} -->` metadata comment, with its
-exact filename/`id`, `created_at`, `from`, `to`, session/return correlation and
-reply fields. A sent copy must be from your node; a read copy must be to it.
-An arbitrary comment inside a body is not another header. New archives also
-have a bounded recipient-context prefix, while legacy archives may have a
-guidance footer. Selection never strips or replaces the final Markdown file.
+Require existing private owned real directories/files and refuse symlinks or
+changed identity. Missing/unreadable directories are unknown; an existing empty
+pair is empty history. Ignore `.pop.json` receipts and non-message files.
+Inspect only a real archive's first `<!-- postman {JSON} -->` metadata comment,
+with its exact filename/`id`, `created_at`, `from`, `to`, session/return
+correlation and reply fields. A sent copy must be from your node; a read copy
+must be to it. An arbitrary comment inside a body is not another header. New
+archives also have a bounded recipient-context prefix, while legacy archives may
+have a guidance footer. Selection never strips or replaces the final Markdown
+file.
 
 Do not use `find` over all agents, filesystem mtime, a daemon's start-date
 directory, receipt `claimed_at`, or status `as_of` as the conversation date.

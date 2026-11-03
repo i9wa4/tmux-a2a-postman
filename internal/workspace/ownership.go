@@ -141,6 +141,9 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if _, err := checkReadableAlias(base, name); err != nil {
+		return err
+	}
 	ws, err := privateDir(base, name, false)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := s.createWorkspace(base, name, fresh); err != nil {
@@ -187,6 +190,9 @@ func (s Store) WithVerified(ctx context.Context, rt Runtime, fn func(*os.Root, S
 		return err
 	}
 	defer func(closeFn func() error) { _ = closeFn() }(ws.Close)
+	if err := ensureReadableAlias(base, name); err != nil {
+		return err
+	}
 	noteStatusConfigError(ctx, saveStatusConfig(ws, fresh))
 	return fn(ws, fresh)
 }

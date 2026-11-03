@@ -26,3 +26,7 @@ report the incompatibility; do not substitute another checkout or download.
 | --------------------------------------- | ------------------------------ |
 | Always when auditing or fixing topology | [`guide`](references/guide.md) |
 | Checking roles, routes and interfaces   | [`audit`](references/audit.md) |
+
+Inspect the complete builtin configuration with
+`tmux-a2a-postman help config default`. It returns the canonical
+`config/postman.md` independently of the selected user configuration.

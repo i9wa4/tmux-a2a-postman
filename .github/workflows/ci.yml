@@ -32,7 +32,8 @@ jobs:
           - os: ubuntu-latest
             timeout_minutes: 25
           - os: macos-latest
-            timeout_minutes: 25
+            # The cold native/recursive matrix took 23 minutes before final checks.
+            timeout_minutes: 35
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     permissions:
