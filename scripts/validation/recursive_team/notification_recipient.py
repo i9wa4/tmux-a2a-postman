@@ -13,7 +13,7 @@ import uuid
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from mail_fixture import read_archive, workspace_files
-from recursive_team.configuration import role_sections
+from recursive_team.configuration import policy_text, role_sections
 
 phase, nonce = sys.argv[1:]
 role = os.environ["POSTMAN_SMOKE_ROLE"]
@@ -514,7 +514,7 @@ def receive():
             "received archive omitted historical recipient policy/catalog/contact guidance"
         )
     sections = role_sections(pathlib.Path(config or os.environ["POSTMAN_BUILTIN_POLICY"]).read_text())
-    if any(sections[name] not in context for name in ["common_template", role]):
+    if any(policy_text(sections[name]) not in policy_text(context) for name in ["common_template", role]):
         raise RuntimeError(
             "received archive truncated or substituted full common/selected-role instructions"
         )

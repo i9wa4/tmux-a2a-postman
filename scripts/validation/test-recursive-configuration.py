@@ -3,7 +3,7 @@
 from pathlib import Path
 import unittest
 
-from recursive_team.configuration import compile_config, role_sections
+from recursive_team.configuration import compile_config, policy_text, role_sections
 
 TEMPLATE = (Path(__file__).resolve().parents[2] / "testdata/config/recursive.md").read_text()
 
@@ -21,6 +21,15 @@ class RecursiveConfigurationTests(unittest.TestCase):
         sections = role_sections(result)
         self.assertIn("recursive-common-EOF", sections["common_template"])
         self.assertIn("recursive-messenger-EOF", sections["messenger"])
+
+    def test_policy_comparison_allows_heading_depth_but_not_lost_text_or_code(self):
+        source = "### Contract\nComplete instructions through EOF.\n````markdown\n# literal heading\n```\n## still literal\n````\n"
+        rendered = source.replace("### Contract", "#### Contract")
+        self.assertEqual(policy_text(source), policy_text(rendered))
+        for broken in [rendered.replace("through EOF.", ""),
+                       rendered.replace("# literal heading", "literal heading"),
+                       rendered.replace("## still literal", "still literal")]:
+            self.assertNotEqual(policy_text(source), policy_text(broken))
 
     def test_invalid_or_disconnected_trees_fail(self):
         for sessions in [
