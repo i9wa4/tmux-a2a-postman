@@ -452,12 +452,14 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	defer func() { _ = lock.Close() }()
 	keySource := plan.Socket + "\x00" + plan.Session
 	if plan.WindowSession != "" {
-		keySource += "\x00" + plan.WindowSession
+		// The borrowed session can be renamed. Its native ID, unlike its name,
+		// must keep the same no-replay receipt across that rename.
+		keySource = plan.Socket + "\x00" + plan.WindowSession
 	}
 	key := statusKey(keySource) + ".json"
 	var previous launchRecord
 	if err := readJSON(dir, key, &previous); err == nil {
-		if previous.Version != 1 || previous.Invocation == "" || previous.Target != plan.Session || previous.Socket != plan.Socket || previous.Workspace != root || previous.WindowMode != (plan.WindowSession != "") {
+		if previous.Version != 1 || previous.Invocation == "" || previous.Socket != plan.Socket || previous.Workspace != root || previous.WindowMode != (plan.WindowSession != "") || previous.WindowMode && previous.SessionID != plan.WindowSession || !previous.WindowMode && previous.Target != plan.Session {
 			return result, errors.New("invalid prior launch ownership record")
 		}
 		for _, pane := range previous.Panes {

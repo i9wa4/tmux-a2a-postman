@@ -274,6 +274,59 @@ exec %s "$@"
 	}
 }
 
+func TestLaunchAgentsWindowPartialFailureAfterSessionRenameIsNotReplayed(t *testing.T) {
+	f := newTmuxFixture(t)
+	plan := nativeLaunchPlan(t, f, "partial-window-team")
+	plan.Session = "one"
+	plan.WindowSession = f.run(t, "display-message", "-p", "-t", f.pane, "#{session_id}")
+	store := mailFixture(t).Store
+	real, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := t.TempDir()
+	counter := filepath.Join(proxy, "count")
+	marker := filepath.Join(plan.CWD, "first.started")
+	source := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+ *respawn-pane*)
+  n=0
+  if [ -f %s ]; then n=$(cat %s); fi
+  n=$((n+1)); printf '%%s' "$n" > %s
+  if [ "$n" -eq 2 ]; then
+   i=0
+   while [ ! -f %s ] && [ "$i" -lt 200 ]; do i=$((i+1)); sleep 0.01; done
+   exit 75
+  fi ;;
+esac
+exec %s "$@"
+`, shellQuote(counter), shellQuote(counter), shellQuote(counter), shellQuote(marker), shellQuote(real))
+	if err := os.WriteFile(filepath.Join(proxy, "tmux"), []byte(source), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", proxy+string(os.PathListSeparator)+os.Getenv("PATH"))
+	result, err := store.LaunchAgents(context.Background(), plan)
+	if err == nil || result.Cleanup != "owned window removed" || len(result.Panes) != 2 || !result.Panes[0].Started || result.Panes[1].Started {
+		t.Fatal(result, err)
+	}
+	raw, err := os.ReadFile(marker)
+	if err != nil || strings.Count(string(raw), "once") != 1 {
+		t.Fatal(string(raw), err)
+	}
+	if panes := f.run(t, "list-panes", "-a", "-F", "#{pane_id}"); panes != f.pane {
+		t.Fatal("owned window was not removed", panes)
+	}
+	f.run(t, "rename-session", "-t", plan.WindowSession, "renamed-one")
+	plan.Session = "renamed-one"
+	if _, err := store.LaunchAgents(context.Background(), plan); err == nil || !strings.Contains(err.Error(), "prior command starts") {
+		t.Fatal("renamed session bypassed no-replay receipt", err)
+	}
+	again, err := os.ReadFile(marker)
+	if err != nil || string(again) != string(raw) {
+		t.Fatal("repeated launch duplicated command effects", string(again), err)
+	}
+}
+
 func TestLaunchAgentsIndependentWorkspacesAndLiveOwnerOnOtherSocket(t *testing.T) {
 	f := newTmuxFixture(t)
 	store := mailFixture(t).Store
