@@ -135,7 +135,9 @@ tmux-a2a-postman launch-agents --list
 tmux-a2a-postman launch-agents preset-p --dry-run
 ```
 
-Remove `--dry-run` to launch. Existing consoles can instead start with a send.
+Remove `--dry-run` to launch. From an existing tmux pane, the team opens in a
+new window of that session. `--session` or `--socket` selects dedicated-session
+behavior. Existing consoles can instead start with a send.
 Inspect the builtin `postman.md` with
 `tmux-a2a-postman help config default`.
 Read `help config` to export a custom copy and select it.

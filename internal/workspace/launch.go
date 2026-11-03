@@ -20,6 +20,7 @@ import (
 const (
 	LaunchConfigEnvironment = "TMUX_A2A_POSTMAN_CONFIG"
 	launchOwnerEnvironment  = "TMUX_A2A_POSTMAN_LAUNCH_OWNER"
+	launchWindowOwnerOption = "@tmux-a2a-postman-launch-owner"
 )
 
 type LaunchPlan struct {
@@ -30,6 +31,7 @@ type LaunchPlan struct {
 	Workspace     string                   `json:"workspace"`
 	Socket        string                   `json:"socket"`
 	Session       string                   `json:"session"`
+	WindowSession string                   `json:"window_session,omitempty"`
 	Shell         string                   `json:"shell"`
 	Columns       []config.LaunchColumn    `json:"columns"`
 	Home          string                   `json:"-"`
@@ -64,6 +66,8 @@ type launchRecord struct {
 	Workspace  string         `json:"workspace"`
 	Server     *StatusServer  `json:"server"`
 	SessionID  string         `json:"session_id"`
+	WindowID   string         `json:"window_id,omitempty"`
+	WindowMode bool           `json:"window_mode,omitempty"`
 	Panes      []LaunchedPane `json:"panes"`
 	Error      string         `json:"error,omitempty"`
 	Cleanup    string         `json:"cleanup,omitempty"`
@@ -72,6 +76,26 @@ type launchRecord struct {
 func DefaultLaunchSession(root, preset string) string {
 	sum := sha256.Sum256([]byte(root))
 	return "postman-" + preset + "-" + hex.EncodeToString(sum[:5])
+}
+
+// InvokingLaunchSession resolves only a native pane on the selected TMUX server.
+// The pane ID is a target, not evidence until the server returns it unchanged.
+func InvokingLaunchSession(ctx context.Context, server ServerContext, pane string) (string, string, error) {
+	if !nativeID(pane, '%') {
+		return "", "", errors.New("invalid TMUX_PANE")
+	}
+	if current, err := launchServer(ctx, server); err != nil || current == nil {
+		return "", "", ErrUnknown
+	}
+	out, err := tmuxOutput(ctx, server.Socket, "display-message", "-p", "-t", pane, "#{session_id}\t#{session_name}\t#{pane_id}")
+	if err != nil {
+		return "", "", err
+	}
+	fields := strings.Split(strings.TrimSuffix(out, "\n"), "\t")
+	if len(fields) != 3 || !nativeID(fields[0], '$') || fields[1] == "" || len(fields[1]) > 128 || strings.ContainsAny(fields[1], "\x00\r\n") || fields[2] != pane {
+		return "", "", ErrUnknown
+	}
+	return fields[0], fields[1], nil
 }
 
 func (s Store) launchDir(root string) (*os.Root, error) {
@@ -278,12 +302,67 @@ func verifyLaunchSession(ctx context.Context, record launchRecord) (bool, error)
 	return true, nil
 }
 
+func verifyLaunchWindow(ctx context.Context, record launchRecord) (bool, error) {
+	if record.Server == nil || !nativeID(record.SessionID, '$') || !nativeID(record.WindowID, '@') {
+		return false, ErrUnknown
+	}
+	current, err := launchServer(ctx, ServerContext{Socket: record.Socket, PID: record.Server.PID})
+	if err != nil {
+		return false, err
+	}
+	if current == nil {
+		return false, nil
+	}
+	if *current != *record.Server {
+		return false, ErrUnknown
+	}
+	out, err := tmuxOutput(ctx, record.Socket, "list-windows", "-t", record.SessionID, "-F", "#{window_id}\t#{window_name}")
+	if err != nil {
+		return false, ErrUnknown
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 || !nativeID(fields[0], '@') {
+			return false, ErrUnknown
+		}
+		if fields[0] != record.WindowID {
+			continue
+		}
+		if fields[1] == record.Invocation {
+			return true, nil // creation response was lost before the option was set
+		}
+		owner, err := tmuxOutput(ctx, record.Socket, "show-option", "-w", "-v", "-t", record.WindowID, launchWindowOwnerOption)
+		if err != nil || strings.TrimSuffix(owner, "\n") != record.Invocation {
+			return false, ErrUnknown
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 func cleanupLaunch(record launchRecord) string {
 	if record.SessionID == "" {
 		return "no verified session acquired"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	if record.WindowMode {
+		exists, err := verifyLaunchWindow(ctx, record)
+		if err != nil {
+			return "window ownership unavailable; created resources require inspection"
+		}
+		if !exists {
+			return "owned window already absent"
+		}
+		if _, err := tmuxOutput(ctx, record.Socket, "kill-window", "-t", record.WindowID); err != nil {
+			return "owned window cleanup failed: " + err.Error()
+		}
+		exists, err = verifyLaunchWindow(ctx, record)
+		if err != nil || exists {
+			return "window removal requested; absence unverified"
+		}
+		return "owned window removed"
+	}
 	exists, err := verifyLaunchSession(ctx, record)
 	if err != nil {
 		return "ownership unavailable; created resources require inspection"
@@ -312,14 +391,18 @@ func cleanupLaunch(record launchRecord) string {
 	return "owned session removed"
 }
 
-// LaunchAgents is an explicit one-shot operation. It creates only a dedicated
-// owned session, registers real native bindings before commands, and exits.
+// LaunchAgents is an explicit one-shot operation. It creates an owned window
+// in a verified invoking session or a dedicated owned session, registers real
+// native bindings before commands, and exits.
 // The command strings are executable user input, never message/role content.
 func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result LaunchResult, retErr error) {
 	result = LaunchResult{Session: plan.Session, Workspace: plan.Workspace, Panes: []LaunchedPane{}, Readiness: "not established; created processes are not authenticated or ready agents"}
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
-	if !filepath.IsAbs(plan.CWD) || !filepath.IsAbs(plan.Config) || !filepath.IsAbs(plan.Socket) || !validNativeSessionName(plan.Session) || len(plan.Columns) == 0 {
+	if !filepath.IsAbs(plan.CWD) || !filepath.IsAbs(plan.Config) || !filepath.IsAbs(plan.Socket) || len(plan.Columns) == 0 {
+		return result, errors.New("invalid complete launch plan")
+	}
+	if plan.WindowSession == "" && !validNativeSessionName(plan.Session) || plan.WindowSession != "" && (!nativeID(plan.WindowSession, '$') || plan.Session == "" || len(plan.Session) > 128 || strings.ContainsAny(plan.Session, "\x00\r\n")) {
 		return result, errors.New("invalid complete launch plan")
 	}
 	if plan.BuiltinConfig {
@@ -340,6 +423,15 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	if err != nil {
 		return result, err
 	}
+	if plan.WindowSession != "" {
+		if server == nil {
+			return result, errors.New("invoking tmux session requires a verified server")
+		}
+		name, err := tmuxOutput(ctx, plan.Socket, "display-message", "-p", "-t", plan.WindowSession, "#{session_name}")
+		if err != nil || strings.TrimSuffix(name, "\n") != plan.Session {
+			return result, errors.New("invoking tmux session changed before launch")
+		}
+	}
 	shell, err := launchShell(ctx, plan, server)
 	if err != nil {
 		return result, err
@@ -358,10 +450,16 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 		return result, err
 	}
 	defer func() { _ = lock.Close() }()
-	key := statusKey(plan.Socket+"\x00"+plan.Session) + ".json"
+	keySource := plan.Socket + "\x00" + plan.Session
+	if plan.WindowSession != "" {
+		// The borrowed session can be renamed. Its native ID, unlike its name,
+		// must keep the same no-replay receipt across that rename.
+		keySource = plan.Socket + "\x00" + plan.WindowSession
+	}
+	key := statusKey(keySource) + ".json"
 	var previous launchRecord
 	if err := readJSON(dir, key, &previous); err == nil {
-		if previous.Version != 1 || previous.Invocation == "" || previous.Target != plan.Session || previous.Socket != plan.Socket || previous.Workspace != root {
+		if previous.Version != 1 || previous.Invocation == "" || previous.Socket != plan.Socket || previous.Workspace != root || previous.WindowMode != (plan.WindowSession != "") || previous.WindowMode && previous.SessionID != plan.WindowSession || !previous.WindowMode && previous.Target != plan.Session {
 			return result, errors.New("invalid prior launch ownership record")
 		}
 		for _, pane := range previous.Panes {
@@ -370,7 +468,7 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 			}
 		}
 
-		if previous.Phase != "failed_before_start" || previous.Cleanup != "owned session removed" {
+		if previous.Phase != "failed_before_start" || previous.Cleanup != map[bool]string{false: "owned session removed", true: "owned window removed"}[previous.WindowMode] {
 			return result, errors.New("this launch target has prior or uncertain command starts; inspect its recorded outcome instead of replaying")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -380,12 +478,14 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 		return result, err
 	}
 	if server != nil {
-		id, err := launchTarget(ctx, plan.Socket, plan.Session)
-		if err != nil {
-			return result, err
-		}
-		if id != "" {
-			return result, errors.New("target session already exists; no panes or commands were changed")
+		if plan.WindowSession == "" {
+			id, err := launchTarget(ctx, plan.Socket, plan.Session)
+			if err != nil {
+				return result, err
+			}
+			if id != "" {
+				return result, errors.New("target session already exists; no panes or commands were changed")
+			}
 		}
 		native, err := rt.enumerateStatus(ctx, ServerContext{Socket: plan.Socket, PID: server.PID})
 		if err != nil {
@@ -411,18 +511,28 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	}
 	invocation = "launch-" + strings.TrimPrefix(invocation, ".new-")
 	result.Invocation = invocation
-	record := launchRecord{Version: 1, Invocation: invocation, Phase: "creating", Target: plan.Session, Socket: plan.Socket, Workspace: root, Server: server, Panes: []LaunchedPane{}}
+	record := launchRecord{Version: 1, Invocation: invocation, Phase: "creating", Target: plan.Session, Socket: plan.Socket, Workspace: root, Server: server, WindowMode: plan.WindowSession != "", Panes: []LaunchedPane{}}
+	if record.WindowMode {
+		record.SessionID = plan.WindowSession
+		result.SessionID = plan.WindowSession
+	}
 	if err := replaceJSON(dir, key, record); err != nil {
 		return result, err
 	}
 	starting := false
 	defer func() {
-		if retErr != nil && (record.SessionID == "" || record.Server == nil) {
-			recovered := recoverLaunchSession(record)
+		if retErr != nil && (record.SessionID == "" || record.WindowMode && record.WindowID == "" || record.Server == nil) {
+			recovered := record
+			if record.WindowMode {
+				recovered = recoverLaunchWindow(record)
+			} else {
+				recovered = recoverLaunchSession(record)
+			}
 			if recovered.SessionID != "" {
 				record = recovered
 				result.SessionID = record.SessionID
 				result.Server = record.Server
+				result.Window = record.WindowID
 			}
 		}
 		if retErr != nil {
@@ -437,6 +547,7 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 		record.Panes = result.Panes
 		record.Server = result.Server
 		record.SessionID = result.SessionID
+		record.WindowID = result.Window
 		finalFailure := func(err error) {
 			retErr = errors.Join(retErr, err)
 			if result.Cleanup == "" {
@@ -469,9 +580,14 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	}
 	height := max(48, maxRows*4)
 	width := max(160, len(plan.Columns)*20)
-	out, err := tmuxOutput(ctx, plan.Socket, "new-session", "-d", "-s", plan.Session, "-n", plan.Preset, "-c", plan.CWD, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height), "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), "-e", launchOwnerEnvironment+"="+invocation, "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}", sleeper, "86400")
+	var out string
+	if record.WindowMode {
+		out, err = tmuxOutput(ctx, plan.Socket, "new-window", "-d", "-t", plan.WindowSession, "-n", invocation, "-c", plan.CWD, "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), "-e", launchOwnerEnvironment+"="+invocation, "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}", sleeper, "86400")
+	} else {
+		out, err = tmuxOutput(ctx, plan.Socket, "new-session", "-d", "-s", plan.Session, "-n", plan.Preset, "-c", plan.CWD, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height), "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), "-e", launchOwnerEnvironment+"="+invocation, "-P", "-F", "#{session_id}\t#{window_id}\t#{pane_id}", sleeper, "86400")
+	}
 	if err != nil {
-		return result, fmt.Errorf("dedicated session creation failed; no launch commands dispatched: %w", err)
+		return result, fmt.Errorf("launch target creation failed; no launch commands dispatched: %w", err)
 	}
 	fields := strings.Split(strings.TrimSuffix(out, "\n"), "\t")
 	if len(fields) != 3 || !nativeID(fields[0], '$') || !nativeID(fields[1], '@') || !nativeID(fields[2], '%') {
@@ -479,6 +595,10 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	}
 	result.SessionID, result.Window = fields[0], fields[1]
 	record.SessionID = fields[0]
+	record.WindowID = fields[1]
+	if record.WindowMode && fields[0] != plan.WindowSession {
+		return result, errors.New("created window belongs to an unexpected session")
+	}
 	current, err := launchServer(ctx, ServerContext{Socket: plan.Socket})
 	if err != nil || current == nil {
 		return result, errors.New("created server identity unavailable")
@@ -491,9 +611,21 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	if err := replaceJSON(dir, key, record); err != nil {
 		return result, err
 	}
-	for _, option := range [][2]string{{"default-shell", shell}, {"automatic-rename", "off"}} {
-		if _, err := tmuxOutput(ctx, plan.Socket, "set-option", "-t", result.SessionID, option[0], option[1]); err != nil {
+	if record.WindowMode {
+		if _, err := tmuxOutput(ctx, plan.Socket, "set-option", "-w", "-t", result.Window, launchWindowOwnerOption, invocation); err != nil {
 			return result, err
+		}
+		if _, err := tmuxOutput(ctx, plan.Socket, "set-option", "-w", "-t", result.Window, "automatic-rename", "off"); err != nil {
+			return result, err
+		}
+		if _, err := tmuxOutput(ctx, plan.Socket, "rename-window", "-t", result.Window, plan.Preset); err != nil {
+			return result, err
+		}
+	} else {
+		for _, option := range [][2]string{{"default-shell", shell}, {"automatic-rename", "off"}} {
+			if _, err := tmuxOutput(ctx, plan.Socket, "set-option", "-t", result.SessionID, option[0], option[1]); err != nil {
+				return result, err
+			}
 		}
 	}
 	anchors := []string{fields[2]}
@@ -606,6 +738,38 @@ func recoverLaunchSession(record launchRecord) launchRecord {
 			record.SessionID = id
 			return record
 		}
+	}
+	return record
+}
+
+func recoverLaunchWindow(record launchRecord) launchRecord {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	server, err := launchServer(ctx, ServerContext{Socket: record.Socket, PID: record.Server.PID})
+	if err != nil || server == nil || *server != *record.Server {
+		return record
+	}
+	out, err := tmuxOutput(ctx, record.Socket, "list-windows", "-t", record.SessionID, "-F", "#{window_id}\t#{window_name}")
+	if err != nil {
+		return record
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) > 1024 {
+		return record
+	}
+	for _, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 || !nativeID(fields[0], '@') {
+			return record
+		}
+		if fields[1] != record.Invocation {
+			continue
+		}
+		if record.WindowID != "" && record.WindowID != fields[0] {
+			return record
+		}
+		record.WindowID = fields[0]
+		return record
 	}
 	return record
 }

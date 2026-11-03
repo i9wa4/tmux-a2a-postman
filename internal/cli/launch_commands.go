@@ -27,7 +27,7 @@ func RunLaunchAgents(args []string) (retErr error) {
 	f := newWorkspaceFlags("launch-agents")
 	socket := f.fs.String("socket", "", "explicit absolute tmux socket; otherwise use TMUX")
 	cwd := f.fs.String("cwd", "", "absolute team directory; otherwise the invocation cwd")
-	session := f.fs.String("session", "", "dedicated session name; otherwise preset/workspace-derived")
+	session := f.fs.String("session", "", "explicit dedicated session name; otherwise use the invoking tmux session when verified")
 	dryRun := f.fs.Bool("dry-run", false, "validate and preview only; no tmux or state changes")
 	list := f.fs.Bool("list", false, "list validated preset names without starting commands")
 	selected, flags, err := launchArguments(f.fs, args)
@@ -86,6 +86,7 @@ func RunLaunchAgents(args []string) (retErr error) {
 		return err
 	}
 	server := workspace.ServerContext{}
+	explicitSocket := *socket != ""
 	if *socket == "" {
 		server, err = workspace.ParseServerContext(os.Getenv("TMUX"))
 		if err != nil {
@@ -98,20 +99,29 @@ func RunLaunchAgents(args []string) (retErr error) {
 		}
 		server.Socket = *socket
 	}
+	windowSession := ""
+	if *session == "" && !explicitSocket && os.Getenv("TMUX_PANE") != "" {
+		windowSession, *session, err = workspace.InvokingLaunchSession(ctx, server, os.Getenv("TMUX_PANE"))
+		if err != nil {
+			return fmt.Errorf("invoking tmux pane unavailable: %w", err)
+		}
+	}
 	if *session == "" {
 		*session = workspace.DefaultLaunchSession(root, selected)
 	}
-	// Session names use the same routing selector grammar as workspace_tree.
-	for i, char := range *session {
-		allowed := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || i > 0 && (char == '_' || char == '-')
-		if !allowed {
-			return errors.New("invalid dedicated session name")
+	if windowSession == "" {
+		// Dedicated session names use the routing selector grammar.
+		for i, char := range *session {
+			allowed := char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || i > 0 && (char == '_' || char == '-')
+			if !allowed {
+				return errors.New("invalid dedicated session name")
+			}
 		}
 	}
 	if len(*session) == 0 || len(*session) > 128 {
 		return errors.New("session name must contain 1 to 128 characters")
 	}
-	plan := workspace.LaunchPlan{Preset: selected, Config: path.Path, BuiltinConfig: path.Builtin, CWD: *cwd, Workspace: root, Socket: *socket, ExpectedPID: server.PID, Session: *session, Shell: os.Getenv("SHELL"), Columns: preset.Columns, Home: home, Topology: topology}
+	plan := workspace.LaunchPlan{Preset: selected, Config: path.Path, BuiltinConfig: path.Builtin, CWD: *cwd, Workspace: root, Socket: *socket, ExpectedPID: server.PID, Session: *session, WindowSession: windowSession, Shell: os.Getenv("SHELL"), Columns: preset.Columns, Home: home, Topology: topology}
 	if *dryRun {
 		output["dry_run"] = true
 		output["plan"] = plan

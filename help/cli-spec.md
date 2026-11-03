@@ -19,20 +19,20 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 
 ## 1. Commands and common rules
 
-| Command                    | Purpose                                                     |
-| -------------------------- | ----------------------------------------------------------- |
-| `launch-agents`            | Explicitly create one preset team in a dedicated session    |
-| `refresh-status`           | Collect one finite shared server snapshot                   |
-| `get-status`               | Read the saved explicit-server JSON snapshot                |
-| `get-status-oneline`       | Render the same saved server snapshot as one human line     |
-| `pop`                      | Claim one own unread mail and return its final archive path |
-| `send-heredoc`             | Send a request or reply to claimed message IDs              |
-| `execute-heredoc`          | Review and execute source in the caller's shell environment |
-| `approve-execution`        | Send approval for one claimed execution request             |
-| `decline-execution`        | Send rejection for one claimed execution request            |
-| `help [topic [reference]]` | Explain commands without initializing workspace state       |
-| `version`                  | Print name, version and commit as JSON                      |
-| `resources`                | Explicitly materialize the offline helper bundle            |
+| Command                    | Purpose                                                      |
+| -------------------------- | ------------------------------------------------------------ |
+| `launch-agents`            | Explicitly create one preset team in a new window or session |
+| `refresh-status`           | Collect one finite shared server snapshot                    |
+| `get-status`               | Read the saved explicit-server JSON snapshot                 |
+| `get-status-oneline`       | Render the same saved server snapshot as one human line      |
+| `pop`                      | Claim one own unread mail and return its final archive path  |
+| `send-heredoc`             | Send a request or reply to claimed message IDs               |
+| `execute-heredoc`          | Review and execute source in the caller's shell environment  |
+| `approve-execution`        | Send approval for one claimed execution request              |
+| `decline-execution`        | Send rejection for one claimed execution request             |
+| `help [topic [reference]]` | Explain commands without initializing workspace state        |
+| `version`                  | Print name, version and commit as JSON                       |
+| `resources`                | Explicitly materialize the offline helper bundle             |
 
 `help` and command help read Markdown directly without configuration, tmux,
 credentials, extraction or runtime mutation. `help <name>` and
@@ -54,7 +54,9 @@ similarly named fixture-copy option is a separate development interface.
 
 `launch-agents <preset>` is an optional finite operation with `--socket`,
 `--cwd`, `--session`, and inert `--dry-run`; `launch-agents --list` lists
-validated presets without creating anything. It accepts one positional preset;
+validated presets without creating anything. A verified invoking pane selects a
+new window in its session by default; explicit `--socket` or `--session` selects
+a dedicated session. It accepts one positional preset;
 the mail/status commands retain their argument contracts. See the
 `tmux-a2a-postman help launching` for exact selection, shell initialization,
 config inheritance, native ownership, partial starts, and cleanup. It never
