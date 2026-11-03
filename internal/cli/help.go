@@ -19,18 +19,18 @@ func WriteHelp(stdout, stderr io.Writer, args []string) error {
 }
 
 func runHelp(stdout, stderr io.Writer, args []string) error {
-	if len(args) > 1 {
-		_, _ = fmt.Fprintln(stderr, "help takes at most one topic")
-		return fmt.Errorf("help takes at most one topic")
+	if len(args) > 2 {
+		_, _ = fmt.Fprintln(stderr, "usage: tmux-a2a-postman help [topic [reference]]")
+		return fmt.Errorf("usage: tmux-a2a-postman help [topic [reference]]")
 	}
 	topic := ""
 	if len(args) > 0 {
 		topic = args[0]
 	}
 
-	data, err := helpdocs.Read(topic)
+	data, err := helpdocs.Read(topic, args[min(1, len(args)):]...)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "unknown help topic: %q\n", topic)
+		_, _ = fmt.Fprintln(stderr, err)
 		_, _ = fmt.Fprintln(stderr, "")
 		_, _ = fmt.Fprintln(stderr, "Available topics:")
 		for _, t := range sortedHelpTopics() {
@@ -39,7 +39,7 @@ func runHelp(stdout, stderr io.Writer, args []string) error {
 		return err
 	}
 	_, err = stdout.Write(data)
-	if err == nil && (topic == "" || topic == "overview" || topic == "help") {
+	if err == nil && (topic == "" || topic == "overview" || topic == "help") && len(args) < 2 {
 		_, err = fmt.Fprint(stdout, "\n## Available HelpDoc topics\n\n")
 		for _, name := range sortedHelpTopics() {
 			if err != nil {

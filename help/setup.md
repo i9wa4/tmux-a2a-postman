@@ -2,7 +2,7 @@
 
 Use an installed Postman binary and already-running tmux-hosted AI consoles.
 Invoke the `postman-send-message` Skill with the intended destination and task;
-read `tmux-a2a-postman skills postman-send-message` and its matching references.
+read `tmux-a2a-postman help postman-send-message` and its matching references.
 `launch-agents` is optional. Postman does not configure client authentication or
 sandbox permissions.
 

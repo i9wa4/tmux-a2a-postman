@@ -16,10 +16,10 @@ only to use the optional Python reference helpers; Postman does not install it.
 ```sh
 postman_resources=$(tmux-a2a-postman resources)
 # Reference modules, not agents, schedulers or automatic task executors:
-# "$postman_resources/skills/postman-recall/scripts/select_day.py"
-# "$postman_resources/skills/postman-team-manager/scripts/next_step.py"
+# "$postman_resources/help/postman-recall/scripts/select_day.py"
+# "$postman_resources/help/postman-team-manager/scripts/next_step.py"
 # Read-only diagnostic analyzer (requires Python 3):
-python3 "$postman_resources/skills/postman-usage/scripts/analyze-invocations.py" --help
+python3 "$postman_resources/help/postman-usage/scripts/analyze-invocations.py" --help
 ```
 
 The bundled license notices are under `docs/licenses/` in that directory.

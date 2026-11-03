@@ -47,5 +47,5 @@ ownership/geometry stop input. Notification input has a five-second budget;
 total post-commit work remains bounded to eight seconds. A separate bounded
 session snapshot never changes delivery success. Send does not wait for a reply.
 
-For the operating procedure, run `tmux-a2a-postman skills postman-send-message`
+For the operating procedure, run `tmux-a2a-postman help postman-send-message`
 and read the matching references.

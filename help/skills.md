@@ -1,35 +1,39 @@
-# Skills and references
+# Skills — thin workflow discovery
 
-```sh
-tmux-a2a-postman skills
-tmux-a2a-postman skills postman-usage
-tmux-a2a-postman skills postman-usage mailbox
-```
-
-With no arguments, print JSON containing the sorted `skills` names and
-`bundle_id`. With a Skill name, print its complete `SKILL.md`: a short entry
-and a table of references. With a second argument, print that complete named
-reference. Names omit file extensions and directory paths.
-
-Every Skill uses the same `Read when | ref` table. Read matching rows in table
-order; a row marked Always is required. Run the command shown in the entry for
-each selected reference and read its complete output before acting. Detailed
-procedures have one authored home under `skills/<name>/references/`.
-
-`help`, `help skills` and `skills --help` explain CLI usage. Skill entries and
-workflows are read through `skills`, independently of CLI help. All these reads
-work offline without configuration, tmux, extraction or file changes. A missing
-entry or reference is an explicit version incompatibility; do not download a
-procedure from a different version.
-
-Install an ordinary Skill directory with GitHub CLI:
+Install a thin Skill with GitHub CLI:
 
 ```sh
 gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
 ```
 
-Use `--agent claude-code` for Claude Code and choose names from `skills`.
-Nix consumers can install the same repository directories declaratively.
-Installation and discovery belong to the consumer and client. Postman provides
-no installer command. Updating the binary updates detailed references without
-repeatedly updating installed entry text.
+Use `--agent claude-code` for Claude Code. Nix consumers can install the same
+`skills/<name>/` directories declaratively. Installation belongs to the
+consumer.
+
+Each installed Skill contains shared YAML metadata and one instruction to read
+`tmux-a2a-postman help <name>`. Detailed procedures, references, helpers and
+evaluations stay in the canonical `help/<name>/` package. Updating the binary
+updates the detailed procedures without updating installed entry text.
+
+```sh
+tmux-a2a-postman help postman-usage
+tmux-a2a-postman help postman-usage mailbox
+```
+
+The first command returns the complete `help/postman-usage/SKILL.md`, including
+its uniform `Read when | ref` table. Read matching references completely in
+table order; a row marked Always is required. The second command returns that
+complete reference. Names omit directory paths and file extensions. `help` lists
+the installed topics, including workflow names.
+
+All reads work offline without configuration, tmux, extraction or file changes.
+A missing topic or reference is an explicit version incompatibility; do not
+download procedures from a different version. Optional helpers use the explicit
+`resources` bundle at their canonical `help/<name>/scripts/` paths.
+
+Contributors edit `help/<name>/SKILL.md`. Its `metadata.postman-skill-body`
+supplies the one-line installable body. `nix run .#generate-skills` copies the
+YAML header exactly and uses that value as the body of `skills/<name>/SKILL.md`.
+Generated entries are tracked for normal GitHub CLI installation. See the
+[maintenance guide](../docs/development/contributing.md#3-agent-skills) for
+generation, validation and release procedures.

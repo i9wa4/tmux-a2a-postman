@@ -19,28 +19,28 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 
 ## 1. Commands and common rules
 
-| Command              | Purpose                                                     |
-| -------------------- | ----------------------------------------------------------- |
-| `launch-agents`      | Explicitly create one preset team in a dedicated session    |
-| `refresh-status`     | Collect one finite shared server snapshot                   |
-| `get-status`         | Read the saved explicit-server JSON snapshot                |
-| `get-status-oneline` | Render the same saved server snapshot as one human line     |
-| `pop`                | Claim one own unread mail and return its final archive path |
-| `send-heredoc`       | Send a request or reply to claimed message IDs              |
-| `execute-heredoc`    | Review and execute source in the caller's shell environment |
-| `approve-execution`  | Send approval for one claimed execution request             |
-| `decline-execution`  | Send rejection for one claimed execution request            |
-| `help [topic]`       | Explain commands without initializing workspace state       |
-| `version`            | Print name, version and commit as JSON                      |
-| `skills`             | List Skills, display an entry or read a named reference     |
-| `resources`          | Explicitly materialize the offline helper bundle            |
+| Command                    | Purpose                                                     |
+| -------------------------- | ----------------------------------------------------------- |
+| `launch-agents`            | Explicitly create one preset team in a dedicated session    |
+| `refresh-status`           | Collect one finite shared server snapshot                   |
+| `get-status`               | Read the saved explicit-server JSON snapshot                |
+| `get-status-oneline`       | Render the same saved server snapshot as one human line     |
+| `pop`                      | Claim one own unread mail and return its final archive path |
+| `send-heredoc`             | Send a request or reply to claimed message IDs              |
+| `execute-heredoc`          | Review and execute source in the caller's shell environment |
+| `approve-execution`        | Send approval for one claimed execution request             |
+| `decline-execution`        | Send rejection for one claimed execution request            |
+| `help [topic [reference]]` | Explain commands without initializing workspace state       |
+| `version`                  | Print name, version and commit as JSON                      |
+| `resources`                | Explicitly materialize the offline helper bundle            |
 
 `help` and command help read Markdown directly without configuration, tmux,
-credentials, extraction or runtime mutation. `skills`, `skills <name>` and
-`skills <name> <ref>` are also read-only; the consumer's Skill manager owns
-installation and updates. `resources` returns a validated absolute,
-content-identified cache path as plain text. See `tmux-a2a-postman help skills`
-and `tmux-a2a-postman help resources` for their complete independent interfaces.
+credentials, extraction or runtime mutation. `help <name>` and
+`help <name> <ref>` also read embedded workflows and references; the consumer's
+Skill manager owns installation and updates. `resources` returns a validated
+absolute, content-identified cache path as plain text. See
+`tmux-a2a-postman help skills` and `tmux-a2a-postman help resources` for their
+complete independent interfaces.
 
 Operational commands accept `--config <absolute-postman.md>` and `--help`.
 Without an explicit override, the inherited absolute
@@ -460,7 +460,7 @@ main interface before this change; removed syntax is intentionally rejected.
 | `--config`                                                            | Keep one absolute override, before or after the command        | Operators/fixtures need explicit topology; defaults are cwd-independent                  |
 | `--postman-md`                                                        | Remove product alias                                           | One spelling for one input; the smoke driver's fixture-copy flag is separate             |
 | `--capture-related-panes`                                             | Remove; valid send/POP always trigger bounded session capture  | Visibility should not depend on each agent remembering a flag                            |
-| `help [topic]`, `<command> --help`, top-level `--help`                | Keep without runtime state; reject extra help arguments        | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics         |
+| `help [topic [reference]]`, `<command> --help`, top-level `--help`    | Keep without runtime state; reject extra help arguments        | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics         |
 | `version`, top-level `--version`                                      | Keep compact name/version/commit JSON                          | Operators need the actual installed revision                                             |
 | Bare executable                                                       | Keep usage display, no mutation                                | No implicit startup operation                                                            |
 | Duplicate/unknown flags and extra positionals                         | Reject before mail publication/execution                       | No last-value-wins decisions or hidden compatibility branches                            |
