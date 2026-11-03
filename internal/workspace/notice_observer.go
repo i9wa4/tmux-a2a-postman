@@ -107,17 +107,11 @@ func (s Store) observedNotice(ctx context.Context, _ Runtime, transport observed
 	}
 	for attempt := range noticeMaxEnters {
 		if attempt > 0 {
-			// Increasing cooldown breaks interleaved Enter bursts from
-			// independent senders without a shared destination lock.
-			if err := noticeWait(inputCtx, time.Duration(attempt)*300*time.Millisecond); err != nil {
-				return err
-			}
-			before, err = noticeObservation(inputCtx, transport, target)
+			// Observe a quiet interval after other visible input. Per-process
+			// cooldown alone can still interleave eight senders' Enter presses.
+			before, err = noticeRetryFrame(inputCtx, transport, target, base, before)
 			if err != nil {
 				return err
-			}
-			if !base.sameGeometry(before) || before.InputMode {
-				return errors.New("recipient changed during notification retry")
 			}
 		}
 		submitSpan := trace.Start("notification_submit")
@@ -140,7 +134,7 @@ func (s Store) observedNotice(ctx context.Context, _ Runtime, transport observed
 		if !before.sameGeometry(after) || after.InputMode {
 			return errors.New("recipient changed during notification submission")
 		}
-		if screenLineChanges(before.Screen, after.Screen) > noticeSmallChangeLines {
+		if screenSubmissionChange(before.Screen, after.Screen) {
 			return nil
 		}
 		// A replacement is two changed lines. Inserting a newline (including
@@ -149,6 +143,57 @@ func (s Store) observedNotice(ctx context.Context, _ Runtime, transport observed
 		before = after
 	}
 	return errors.New("notification submission remains uncertain after bounded Enter retries; no more input sent")
+}
+
+// A newline can reflow many captured rows or scroll old text out of view.
+// Those layout changes do not establish submission, even with a large line
+// diff. Ignore whitespace and a small background-text update, and recognize
+// a viewport that merely lost a prefix. This never identifies a TUI input area.
+func screenSubmissionChange(before, after string) bool {
+	if screenLineChanges(before, after) <= noticeSmallChangeLines {
+		return false
+	}
+	return screenContentChange(before, after)
+}
+
+func screenContentChange(before, after string) bool {
+	a := strings.Join(strings.Fields(before), "")
+	b := strings.Join(strings.Fields(after), "")
+	if b == "" || strings.HasSuffix(a, b) {
+		return false
+	}
+	x, y := []rune(a), []rune(b)
+	for len(x) > 0 && len(y) > 0 && x[0] == y[0] {
+		x, y = x[1:], y[1:]
+	}
+	for len(x) > 0 && len(y) > 0 && x[len(x)-1] == y[len(y)-1] {
+		x, y = x[:len(x)-1], y[:len(y)-1]
+	}
+	return max(len(x), len(y)) > noticeSmallChangeLines
+}
+
+func noticeRetryFrame(ctx context.Context, transport observedNotifier, target Binding, base, previous paneFrame) (paneFrame, error) {
+	for {
+		if err := noticeWait(ctx, noticeEnterInterval); err != nil {
+			return paneFrame{}, err
+		}
+		next, err := noticeObservation(ctx, transport, target)
+		if err != nil {
+			return paneFrame{}, err
+		}
+		if !base.sameGeometry(next) || next.InputMode {
+			return paneFrame{}, errors.New("recipient changed during notification retry")
+		}
+		changes := screenLineChanges(previous.Screen, next.Screen)
+		// Small changing status text need not prevent retrying a busy TUI.
+		// Visible whitespace/reflow input and large redraws restart settlement.
+		a := strings.Join(strings.Fields(previous.Screen), "")
+		b := strings.Join(strings.Fields(next.Screen), "")
+		if changes == 0 || changes <= noticeSmallChangeLines && b != "" && !strings.HasSuffix(a, b) {
+			return next, nil
+		}
+		previous = next
+	}
 }
 
 func noticeWait(ctx context.Context, delay time.Duration) error {

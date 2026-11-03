@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
 )
@@ -82,15 +83,7 @@ type Claimed struct {
 }
 
 func messageID(id string) bool {
-	if len(id) != 34 || !strings.HasPrefix(id, "m-") {
-		return false
-	}
-	for _, c := range id[2:] {
-		if !strings.ContainsRune("0123456789abcdef", c) {
-			return false
-		}
-	}
-	return true
+	return messageid.Valid(id)
 }
 
 func validateMessage(msg Message) error {
@@ -129,8 +122,12 @@ func validateMessage(msg Message) error {
 		(msg.FillsInputRequestID != "" && (!requestID(msg.FillsInputRequestID) || msg.ReplyTo == "")) {
 		return errors.New("invalid exact reply correlation")
 	}
-	if _, err := time.Parse(time.RFC3339Nano, msg.CreatedAt); err != nil {
+	created, err := time.Parse(time.RFC3339Nano, msg.CreatedAt)
+	if err != nil {
 		return err
+	}
+	if stamp, timestamped := messageid.Timestamp(msg.ID); timestamped && !stamp.Equal(created) {
+		return errors.New("message timestamp does not match creation metadata")
 	}
 	// The durable intent is deliberately bounded by the strict record reader.
 	tx := mailTransaction{Version: 1, Kind: "send", Message: msg, Body: msg.Body}
@@ -323,19 +320,19 @@ func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, f
 				return errors.New("reply fills a different request")
 			}
 		}
-		nonce, err := randomName()
+		identity, err := newMailIdentity()
 		if err != nil {
 			return err
 		}
 		msg = Message{
 			Kind: kind,
-			ID:   "m-" + strings.TrimPrefix(nonce, ".new-"), From: s.Caller.Role, To: to,
-			ReplyTo: replyTo, NeedsReply: needsReply, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), Body: body,
+			ID:   identity.ID, From: s.Caller.Role, To: to,
+			ReplyTo: replyTo, NeedsReply: needsReply, CreatedAt: identity.CreatedAt, Body: body,
 			GuidanceVersion: 1,
 		}
 		msg.FillsInputRequestID = fills
 		if needsReply {
-			msg.InputRequestID = "ireq_" + strings.TrimPrefix(msg.ID, "m-")
+			msg.InputRequestID = inputRequestID(msg.ID)
 		}
 		if err := m.addMessageContext(ctx, s, &msg); err != nil {
 			return err

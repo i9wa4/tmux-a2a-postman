@@ -142,6 +142,13 @@ func openExternalRoot(binding ExternalBinding) (*os.Root, *os.File, error) {
 }
 
 func externalFilename(name string) bool {
+	// Exact decisions contain a complete message ID. Its timestamp adds a dot
+	// and length, so admit only this validated shape rather than broadening the
+	// arbitrary producer-filename grammar.
+	if strings.HasPrefix(name, "answer--") && strings.HasSuffix(name, ".md") {
+		parts := strings.Split(strings.TrimSuffix(name, ".md"), "--")
+		return len(parts) == 4 && messageID(parts[1]) && hashString(parts[2]) && (parts[3] == "approve" || parts[3] == "decline")
+	}
 	if !strings.HasSuffix(name, ".md") || len(name) > 128 || len(name) < 4 {
 		return false
 	}

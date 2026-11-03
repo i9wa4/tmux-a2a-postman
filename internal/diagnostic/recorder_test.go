@@ -9,7 +9,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 )
+
+func TestTimestampedFactsRetainValidIDsAndRedactMalformedDates(t *testing.T) {
+	id, err := messageid.New(time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := strings.Replace(id, "20261102", "20260230", 1)
+	facts := clean(Facts{MessageID: id, OperationID: id, ReplyID: bad, ReplyToIDs: []string{id, bad}})
+	if facts.MessageID != id || facts.OperationID != id || facts.ReplyID != "" || len(facts.ReplyToIDs) != 1 || facts.ReplyToIDs[0] != id {
+		t.Fatal("timestamped IDs were lost or malformed dates escaped redaction", facts)
+	}
+}
 
 type fakeClock struct {
 	wall time.Time

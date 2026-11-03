@@ -12,6 +12,8 @@ evidence = pathlib.Path(os.environ["POSTMAN_SMOKE_EVIDENCE"])
     json.dumps({"role": role, "initial_prompt": False, "nonce": nonce})
 )
 source = pathlib.Path(__file__).resolve().parents[1] / "terminal_agent.py"
+# The shared editor imports its sibling mail-fixture parser.
+sys.path.insert(0, str(source.parent))
 # Reuse the same terminal protocol without forking its editor.
 # Its sibling recipient action is the team actor below; no controller invokes it.
 sys.argv = [str(pathlib.Path(__file__)), nonce, mode]

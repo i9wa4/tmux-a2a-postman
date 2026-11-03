@@ -22,6 +22,19 @@ def record(number, box, timestamp, **extra):
 
 
 class RecallDataTests(unittest.TestCase):
+    def test_timestamped_ids_mix_with_legacy_and_match_creation_metadata(self):
+        old = record(1, "sent", "2026-11-01T10:00:00Z")
+        fresh = record(2, "read", "2026-11-01T12:00:00.000000001+02:00")
+        fresh["id"] = "m-20261101T100000.000000001Z-" + "a" * 32
+        fresh["path"] = OWN + "/read/" + fresh["id"] + ".md"
+        self.assertEqual(SELECT([fresh, old], OWN)["messages"], [old, fresh])
+        for bad in [fresh["id"].replace("20261101", "20260230"),
+                    fresh["id"].replace("000000001Z", "1Z"),
+                    fresh["id"].replace("100000", "100001")]:
+            with self.subTest(identifier=bad), self.assertRaises(ValueError):
+                malformed = fresh | {"id": bad, "path": OWN + "/read/" + bad + ".md"}
+                SELECT([old, malformed], OWN)
+
     def test_friday_is_recalled_on_monday_without_a_clock_or_mtime_window(self):
         # Simulated restart: Monday 2026-11-02. Source metadata is actual
         # Message.created_at, not a daemon date or a POP receipt timestamp.

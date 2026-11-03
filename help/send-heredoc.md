@@ -25,12 +25,16 @@ and recovery identity. Do not blindly resend an uncertain operation.
 
 The sender pastes one short hint, waits at least 600ms, then sends C-m. It
 compares the whole capture-pane immediately before Enter and at least 600ms
-after it. Up to four inserted/deleted lines is a small change: after the same
-minimum interval it retries Enter, at most three presses total. A substantial
-change stops extra Enter. Retry cooldown grows by 300ms per retry, making Enter
-intervals at least 600ms, 900ms and 1200ms from the preceding paste/key. This
-breaks repeated interleaving between independent senders. A newline or viewport
-scroll is counted as a line edit, not a change at every later row. There are no
+after it. Up to four inserted/deleted lines is a small change. A larger diff
+still needs new text: whitespace-only wrapping, scrolling away an old prefix,
+blank redraws and small background-text changes do not establish submission.
+Before retrying, observations at least 600ms apart must settle after visible
+newline/reflow input or large redraws; small changing status text can continue.
+This observes competing Enter activity instead of relying on each sender's
+independent cooldown. There are at most three presses, within the same input
+deadline; settlement may exhaust that deadline earlier. A substantial change
+stops extra Enter. A newline or viewport scroll is counted as a line edit,
+not a change at every later row. There are no
 prompt, cursor/input-area, Codex/Claude or other provider rules. Screen change
 is a retry heuristic and cannot prove submission, POP, understanding or a
 response. An exhausted or unobservable attempt reports unknown, leaving durable

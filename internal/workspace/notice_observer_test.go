@@ -237,3 +237,56 @@ func TestScreenLineChangesCountsInsertionsAndDeletions(t *testing.T) {
 		})
 	}
 }
+
+func TestSubmissionDiffRejectsReflowScrollingAndBlankRedraw(t *testing.T) {
+	before := "status tick 1\n" + strings.Repeat("long notification text ", 20)
+	reflow := "status tick 2\n" + strings.Repeat("long\nnotification\ntext\n", 20)
+	if screenLineChanges(before, reflow) <= noticeSmallChangeLines {
+		t.Fatal("regression fixture did not exceed the old line threshold")
+	}
+	for _, after := range []string{reflow, strings.Repeat("long\nnotification\ntext\n", 10), "\n\n"} {
+		if screenSubmissionChange(before, after) {
+			t.Fatal("layout-only change became a submission heuristic")
+		}
+	}
+	if !screenSubmissionChange(before, "notification submitted\nrecipient action queued\nnew conversation row\ntool running\nwaiting") {
+		t.Fatal("substantial new terminal text was ignored")
+	}
+}
+
+type retryFrameProbe struct {
+	*editorProbe
+	frames []string
+}
+
+func (p *retryFrameProbe) noticeFrame(ctx context.Context, target Binding) (paneFrame, error) {
+	f, err := p.editorProbe.noticeFrame(ctx, target)
+	if len(p.frames) > 0 {
+		f.Screen = p.frames[0]
+		if len(p.frames) > 1 {
+			p.frames = p.frames[1:]
+		}
+	}
+	return f, err
+}
+
+func TestRetryFrameWaitsPastCompetingVisibleNewlines(t *testing.T) {
+	_, rt, _ := committedNotice(t)
+	p := &retryFrameProbe{editorProbe: &editorProbe{target: rt.snapshot.Bindings[1]}}
+	base, err := p.editorProbe.noticeFrame(context.Background(), p.target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Screen = "draft\nfirst\nlast"
+	p.frames = []string{"draft\nfirst\n\nlast", "draft\nfirst\n\nlast"}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	started := time.Now()
+	f, err := noticeRetryFrame(ctx, p, p.target, base, base)
+	if err != nil || f.Screen != "draft\nfirst\n\nlast" || time.Since(started) < 2*noticeEnterInterval {
+		t.Fatalf("retried during competing input: %v", err)
+	}
+	if p.pastes != 0 || p.enters != 0 {
+		t.Fatal("settlement itself sent terminal input")
+	}
+}
