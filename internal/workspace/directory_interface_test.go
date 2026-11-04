@@ -2,8 +2,11 @@ package workspace
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -106,7 +109,7 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 				}
 			}
 			childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
-				"-P", "-F", "#{pane_id}", "exec sh -i")
+				"-P", "-F", "#{pane_id}", "exec env HISTFILE=/dev/null sh -i")
 			f.run(t, "select-pane", "-t", childPane, "-T", "worker")
 			ctx := context.Background()
 			parent, err := f.adapter().NamedCaller(ctx)
@@ -130,10 +133,12 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 				}
 				source, destination = child, parent.WithDirectoryRoute()
 			}
+			var beforeFiles []string
 			m.afterStep = func(step string) error {
 				if step != "cross-before-publish" {
 					return nil
 				}
+				beforeFiles = directoryTestFiles(t, m.Store.StateRoot)
 				switch tc.change {
 				case "move":
 					f.run(t, "send-keys", "-l", "-t", childPane, "cd "+otherRoot)
@@ -159,23 +164,89 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 			} else {
 				rejected, err = m.SendCrossWithReply(ctx, source, destination, "question", "", "", true)
 			}
-			if err == nil || rejected.ID == "" {
-				t.Fatalf("changed relation published: %+v %v", rejected, err)
+			if err == nil || rejected.ID != "" {
+				t.Fatalf("pre-stage rejection exposed a recovery ID: %+v %v", rejected, err)
 			}
-			sourceRoot, destinationRoot := "~/repo", "~/repo/branch/leaf"
+			if afterFiles := directoryTestFiles(t, m.Store.StateRoot); !slices.Equal(beforeFiles, afterFiles) {
+				t.Fatalf("pre-stage rejection changed durable files: before=%v after=%v", beforeFiles, afterFiles)
+			}
 			if tc.reply {
-				sourceRoot, destinationRoot = destinationRoot, sourceRoot
-			}
-			sourceName, _ := Name(sourceRoot)
-			destinationName, _ := Name(destinationRoot)
-			for _, path := range []string{
-				filepath.Join(m.Store.StateRoot, sourceName, "agents", "worker", "sent", rejected.ID+".md"),
-				filepath.Join(m.Store.StateRoot, destinationName, "agents", "worker", "inbox", rejected.ID+".md"),
-			} {
-				if _, err := os.Stat(path); !os.IsNotExist(err) {
-					t.Fatalf("rejected message was published at %s: %v", path, err)
+				childName, err := Name("~/repo/branch/leaf")
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, suffix := range []string{".md", ".pop.json"} {
+					path := filepath.Join(m.Store.StateRoot, childName, "agents", "worker", "read", request.ID+suffix)
+					if _, err := os.Stat(path); err != nil {
+						t.Fatalf("original claimed reply obligation missing at %s: %v", path, err)
+					}
 				}
 			}
 		})
+	}
+}
+
+func directoryTestFiles(t *testing.T, root string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			files = append(files, relative)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+func TestDirectoryRouteRetainsRecoveryIdentityAfterStage(t *testing.T) {
+	f := newTmuxFixture(t)
+	childRoot := filepath.Join(f.repo, "child")
+	if err := os.Mkdir(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.run(t, "select-pane", "-t", childPane, "-T", "worker")
+	ctx := context.Background()
+	parent, err := f.adapter().NamedCaller(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := f.adapter().FindNamedPeer(ctx, "child", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+	m.afterStep = func(step string) error {
+		if step == "cross-intent" {
+			return errors.New("injected interruption after durable intent")
+		}
+		return nil
+	}
+	interrupted, err := m.SendCrossWithReply(ctx, parent, child.WithDirectoryRoute(), "question", "", "", true)
+	if err == nil || interrupted.ID == "" {
+		t.Fatalf("post-stage interruption lost recovery identity: %+v %v", interrupted, err)
+	}
+	sourceName, err := Name("~/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		filepath.Join(m.Store.StateRoot, sourceName, "agents", "worker", "draft", interrupted.ID+".md"),
+		filepath.Join(m.Store.StateRoot, sourceName, "transactions", "cross_send-"+interrupted.ID+".json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("recovery identity lacks durable artifact %s: %v", path, err)
+		}
 	}
 }

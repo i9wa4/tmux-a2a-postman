@@ -29,6 +29,7 @@ func (m Mail) SendCrossReply(ctx context.Context, source, destination NamedRunti
 
 func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, body, replyTo, fills string, needsReply bool, replyIDs []string) (Message, error) {
 	var msg Message
+	publicationStarted := false
 	if source.Name() == destination.Name() || source.server != destination.server ||
 		source.incarnation != destination.incarnation || source.sessionID == destination.sessionID {
 		return msg, ErrUnknown
@@ -113,6 +114,7 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 					return err
 				}
 			}
+			publicationStarted = true
 			if err := m.stage(sourceWS, msg); err != nil {
 				return err
 			}
@@ -144,6 +146,9 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 			return m.finishCross(sourceWS, destinationWS, journal, tx)
 		})
 	})
+	if err != nil && !publicationStarted {
+		return Message{}, err
+	}
 	return msg, err
 }
 
