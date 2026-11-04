@@ -28,7 +28,9 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context) (retErr 
 		// Contact hints are advisory. An unrelated malformed session must not
 		// block a valid local send; cross-session sends repeat discovery and
 		// require a verified route before publication.
-		interfaces, _ = c.runtime.DirectoryInterfaces(ctx, c.topology.InterfaceNode)
+		advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		interfaces, _ = c.runtime.DirectoryInterfaces(advisoryCtx, c.topology.InterfaceNode)
 	}
 	c.mail.Context = func(ctx context.Context, _ workspace.Snapshot, msg workspace.Message) (string, error) {
 		if err := ctx.Err(); err != nil {
