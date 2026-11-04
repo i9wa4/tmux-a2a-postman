@@ -69,6 +69,7 @@ graph LR
     worker --- approver
     worker-alt --- approver
     guardian --- critic
+    critic --- approver
     class messenger interface_node
     class approver command_approver_node
 ```
