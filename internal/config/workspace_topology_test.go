@@ -46,7 +46,7 @@ func TestWorkspaceTopologyAcceptsExistingTemplateSections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"agent", "approver", "critic", "diplomat", "guardian", "messenger", "orchestrator", "worker", "worker-alt"}
+	want := []string{"agent", "approver", "diplomat", "guardian", "messenger", "orchestrator", "reviewer", "worker", "worker-alt"}
 	if !slices.Equal(got.Nodes, want) || got.Reviewer != "approver" || got.InterfaceNode != "messenger" || !slices.Contains(got.Edges["orchestrator"], "worker") {
 		t.Fatal("template sections changed routing or role discovery", got)
 	}

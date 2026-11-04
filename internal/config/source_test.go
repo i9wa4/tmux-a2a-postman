@@ -21,14 +21,14 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "messenger" || len(topology.Sessions) != 0 {
 		t.Fatal(topology)
 	}
-	if !slices.Contains(topology.Edges["critic"], "approver") || slices.Contains(topology.Edges["agent"], "approver") {
-		t.Fatal("unexpected builtin approval routes", topology.Edges)
-	}
 	policy, err := topology.RecipientPolicy(ctx, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"critic", "guardian", "messenger", "orchestrator", "approver", "worker", "worker-alt"} {
+	for _, name := range topology.Nodes {
+		if name == "agent" {
+			continue
+		}
 		if policy.Nodes[name].Instructions == "" || policy.Nodes[name].Role == "" {
 			t.Fatal("missing established role", name)
 		}
@@ -45,6 +45,16 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	if len(presets) != 3 {
 		t.Fatal("unexpected builtin preset set", presets)
 	}
+	reviewPreset := presets["preset-p"]
+	if len(reviewPreset.Columns) != 2 || len(reviewPreset.Columns[1].Panes) != 3 {
+		t.Fatal("unexpected builtin review preset", reviewPreset)
+	}
+	reviewRole := reviewPreset.Columns[1].Panes[2].Role
+	if reviewRole == "" || reviewRole == topology.Reviewer ||
+		!slices.Contains(topology.Edges[reviewRole], topology.Reviewer) ||
+		slices.Contains(topology.Edges["agent"], topology.Reviewer) {
+		t.Fatal("unexpected builtin approval routes", topology.Edges)
+	}
 	dev := presets["dev"]
 	if len(dev.Columns) != 2 || len(dev.Columns[0].Panes) != 1 || len(dev.Columns[1].Panes) != 1 ||
 		dev.Columns[0].Panes[0] != (LaunchPane{Title: "editor"}) ||
@@ -54,11 +64,11 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	for name, want := range map[string][][]string{
 		"preset-p": {
 			{"messenger|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "orchestrator|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", "worker|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium", "worker-alt|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"},
-			{"approver|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "guardian|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", "critic|codex --yolo --no-alt-screen --no-daemon --model gpt-5.6-sol --config model_reasoning_effort=high"},
+			{"approver|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "guardian|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", reviewRole + "|codex --yolo --no-alt-screen --no-daemon --model gpt-5.6-sol --config model_reasoning_effort=high"},
 		},
 		"preset-w": {
 			{"messenger|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "orchestrator|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium", "worker|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "worker-alt|claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model sonnet --effort medium"},
-			{"approver|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "guardian|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", "critic|claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model \"opus[1m]\" --effort medium"},
+			{"approver|codex --yolo --no-alt-screen --no-daemon --model gpt-6-luna --config model_reasoning_effort=high", "guardian|codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=high", reviewRole + "|claude --allow-dangerously-skip-permissions --dangerously-skip-permissions --model \"opus[1m]\" --effort medium"},
 		},
 	} {
 		var got [][]string
