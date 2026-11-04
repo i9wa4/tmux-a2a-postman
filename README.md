@@ -121,17 +121,19 @@ Start with the [builtin standard team](config/postman.md) and
 `tmux-a2a-postman help postman-orchestrate`; no dotfiles or Skill installation
 is required. That same default `postman.md` contains all startup presets:
 
-| Preset             | Consoles and layout                                                   |
-| ------------------ | --------------------------------------------------------------------- |
-| `codex` / `claude` | Eight roles using the selected plain client                           |
-| `preset-p`         | Existing vde-layout Codex team: two columns, seven roles              |
-| `preset-w`         | Existing vde-layout mixed Codex/Claude team: two columns, seven roles |
+| Preset     | Consoles and layout                                                   |
+| ---------- | --------------------------------------------------------------------- |
+| `dev`      | Two equal columns: focused `editor` shell and one `agent` role        |
+| `preset-p` | Existing vde-layout Codex team: two columns, seven roles              |
+| `preset-w` | Existing vde-layout mixed Codex/Claude team: two columns, seven roles |
 
-The two vde-layout presets retain their original model, effort and permission
-arguments. Preview the exact commands before choosing a preset:
+The `dev` preset runs no editor command; its agent uses the original explicit
+Codex command. The two seven-role presets retain their original model, effort
+and permission arguments. Preview the exact commands before choosing a preset:
 
 ```sh
 tmux-a2a-postman launch-agents --list
+tmux-a2a-postman launch-agents dev --dry-run
 tmux-a2a-postman launch-agents preset-p --dry-run
 ```
 

@@ -26,6 +26,22 @@ func TestLaunchPresetsAreOrderedDataAndNeverRenderCommandSource(t *testing.T) {
 	}
 }
 
+func TestLaunchPresetsKeepShellTitlesSeparateFromRoles(t *testing.T) {
+	source := "---\npresets:\n  dev:\n    columns:\n      - panes: [{title: editor}]\n      - panes: [{role: agent, command: 'codex --model gpt-6-sol'}]\n---\n## `agent`\nAgent.\n"
+	topology, err := LoadWorkspaceTopology(context.Background(), topologyFixture(t, source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	presets, err := topology.LaunchPresets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := presets["dev"].Columns[0].Panes[0], presets["dev"].Columns[1].Panes[0]
+	if left.Title != "editor" || left.Role != "" || left.Command != "" || right.Title != "agent" || right.Role != "agent" || right.Command != "codex --model gpt-6-sol" {
+		t.Fatal(left, right)
+	}
+}
+
 func TestLaunchPresetsRejectInvalidPlansBeforeExecution(t *testing.T) {
 	for _, body := range []string{
 		"presets: []", "presets: {}", "presets:\n  bad_name: {}", "presets:\n  dev: {layout: []}",
@@ -35,6 +51,11 @@ func TestLaunchPresetsRejectInvalidPlansBeforeExecution(t *testing.T) {
 		"presets:\n  dev: {columns: [{panes: [{role: worker, command: ''}]}]}",
 		"presets:\n  dev: {columns: [{panes: [{role: worker, command: codex, model: custom}]}]}",
 		"presets:\n  dev: {columns: [{panes: [{role: worker, command: codex}, {role: worker, command: claude}]}]}",
+		"presets:\n  dev: {columns: [{panes: [{title: editor, command: codex}, {role: worker, command: codex}]}]}",
+		"presets:\n  dev: {columns: [{panes: [{title: worker}, {role: worker, command: codex}]}]}",
+		"presets:\n  dev: {columns: [{panes: [{title: editor}, {title: editor}, {role: worker, command: codex}]}]}",
+		"presets:\n  dev: {columns: [{panes: [{title: editor}]}]}",
+		"presets:\n  dev: {columns: [{panes: [{role: worker, title: editor, command: codex}]}]}",
 	} {
 		t.Run(body, func(t *testing.T) {
 			path := topologyFixture(t, "---\n"+body+"\n---\n## `worker`\nWorker\n")

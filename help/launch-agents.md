@@ -7,10 +7,12 @@ tmux-a2a-postman launch-agents <preset> [--config /absolute/postman.md]
 tmux-a2a-postman launch-agents --list [--config /absolute/postman.md]
 ```
 
-YAML presets contain ordered columns, each with panes of existing role/command
-pairs. All presets are validated before tmux mutation. --list and --dry-run are
-inert: no commands, tmux creation, state registration or persistent logs.
-Commands are explicit user shell source, not words to split or message policy.
+YAML presets contain ordered columns. Agent panes have existing role/command
+pairs; a title-only pane has a unique non-role title and no command, and starts
+an ordinary interactive shell. It is not a mail recipient. All presets are
+validated before tmux mutation. --list and --dry-run are inert: no commands,
+tmux creation, state registration or persistent logs. Commands are explicit
+user shell source, not words to split or message policy.
 
 Launch selects the invoking TMUX server unless --socket is supplied. A new
 socket requires an existing parent directory. From a verified tmux pane, the
@@ -22,10 +24,10 @@ invocation directory and must resolve below HOME. Columns are left-to-right;
 panes top-to-bottom.
 
 Only the new window or session and its panes are created. Native titles, cwd and
-config continuity are established before configured commands. The existing
-server's default-shell (or SHELL, then /bin/sh for a new server) loads
-interactive/login initialization and evaluates each declared command.
-First-prompt-only hooks are not promised;
+config continuity are established before role commands. The first pane is
+focused. The existing server's default-shell (or SHELL, then /bin/sh for a new
+server) loads interactive/login initialization. A title-only pane runs that
+shell with no declared command. First-prompt-only hooks are not promised;
 use an explicit environment-loader command when needed. No private state of an
 already running shell is copied. No model credentials or bypass flags are added.
 
@@ -50,10 +52,13 @@ started may have irreversible effects; stopping panes does not undo them.
 A killed launcher may leave resources/uncertain receipts: no force-reset,
 force-unlock or automatic repair is provided.
 
-With an absent automatic user configuration, the standard `codex` and `claude`
-presets provide all eight roles. They use plain `exec codex` / `exec claude`,
-without personal models or bypass flags. The same default `postman.md` also
-contains vde-layout's `preset-p` and `preset-w`: two columns of four and three
-roles, preserving their original client, model, effort and permission arguments.
-Use `--dry-run` to inspect the selected commands. Inspect `help config` before
-exporting a complete custom configuration for other clients or local models.
+With an absent automatic user configuration, the standard `dev` preset provides
+an `editor` shell on the left and the `agent` role with its original explicit
+Codex command on the right. The original VDE `current-window` setting maps to
+a new window in the invoking session, or a dedicated session outside tmux; no
+existing window is modified. The same default `postman.md` contains
+vde-layout's `preset-p` and `preset-w`: two
+columns of four and three roles, preserving their exact client, model, effort
+and permission arguments. Use `--dry-run` to inspect the selected commands.
+Custom presets and both clients remain supported. Inspect `help config` before
+exporting a complete custom configuration.

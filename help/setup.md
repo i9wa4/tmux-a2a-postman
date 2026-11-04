@@ -22,8 +22,9 @@ and `tmux-a2a-postman help config` for the selected configuration contract.
 
 With no user postman.md, the embedded standard eight-role team is available. Use
 existing titled consoles and a first send, or select a preset from the same
-default `postman.md`. `launch-agents --list` lists plain `codex`/`claude` teams
-and the existing vde-layout `preset-p`/`preset-w` teams. The latter retain their
+default `postman.md`. `launch-agents --list` lists `dev`, `preset-p` and
+`preset-w`. `dev` opens a focused ordinary `editor` shell beside one `agent`
+running its original explicit Codex command. The seven-role presets retain their
 original model, effort and permission arguments; preview the exact commands with
 `launch-agents <preset> --dry-run`. No initial prompt is injected. `help config`
 explains inspecting/customizing a full copy; `help postman-orchestrate`

@@ -1,31 +1,12 @@
 ---
 presets:
-  codex:
+  dev:
     columns:
       - panes:
-          - {role: messenger, command: exec codex}
-          - {role: agent, command: exec codex}
+          - {title: editor}
       - panes:
-          - {role: orchestrator, command: exec codex}
-          - {role: worker, command: exec codex}
-          - {role: worker-alt, command: exec codex}
-      - panes:
-          - {role: guardian, command: exec codex}
-          - {role: critic, command: exec codex}
-          - {role: approver, command: exec codex}
-  claude:
-    columns:
-      - panes:
-          - {role: messenger, command: exec claude}
-          - {role: agent, command: exec claude}
-      - panes:
-          - {role: orchestrator, command: exec claude}
-          - {role: worker, command: exec claude}
-          - {role: worker-alt, command: exec claude}
-      - panes:
-          - {role: guardian, command: exec claude}
-          - {role: critic, command: exec claude}
-          - {role: approver, command: exec claude}
+          - role: agent
+            command: "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium"
   preset-p:
     columns:
       - panes:
@@ -68,8 +49,8 @@ presets:
 
 This complete default needs no personal configuration, installed Skill tree,
 launcher or initial prompt. Existing consoles with these native pane titles can
-start with a send. The plain `codex`/`claude` presets use the named installed
-clients. The `preset-p`/`preset-w` presets retain the existing vde-layout
+start with a send. The `dev` preset opens an ordinary `editor` shell beside the
+`agent` role. The `preset-p`/`preset-w` presets retain the existing vde-layout
 seven-role layout and exact client, model, effort and permission arguments. All
 presets are in this file; inspect them with `launch-agents <preset> --dry-run`.
 Client authentication remains external. Customize a complete copy for other
