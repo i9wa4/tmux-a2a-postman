@@ -153,8 +153,32 @@ func TestBuiltinPublicSelectionAndEmptyExplicitConfig(t *testing.T) {
 		Success bool     `json:"success"`
 		Presets []string `json:"presets"`
 	}
-	if err := json.Unmarshal(out, &listed); err != nil || !listed.Success || !reflect.DeepEqual(listed.Presets, []string{"claude", "codex", "preset-p", "preset-w"}) {
+	if err := json.Unmarshal(out, &listed); err != nil || !listed.Success || !reflect.DeepEqual(listed.Presets, []string{"dev", "preset-p", "preset-w"}) {
 		t.Fatal(string(out), err)
+	}
+	preview, err := run("launch-agents", "dev", "--dry-run", "--socket", filepath.Join(home, "socket"), "--cwd", home)
+	if err != nil {
+		t.Fatal(string(preview), err)
+	}
+	var dryRun struct {
+		Success bool `json:"success"`
+		DryRun  bool `json:"dry_run"`
+		Plan    struct {
+			Columns []struct {
+				Panes []struct {
+					Title   string `json:"title"`
+					Role    string `json:"role"`
+					Command string `json:"command"`
+				} `json:"panes"`
+			} `json:"columns"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(preview, &dryRun); err != nil || !dryRun.Success || !dryRun.DryRun || len(dryRun.Plan.Columns) != 2 ||
+		len(dryRun.Plan.Columns[0].Panes) != 1 || len(dryRun.Plan.Columns[1].Panes) != 1 ||
+		dryRun.Plan.Columns[0].Panes[0].Title != "editor" || dryRun.Plan.Columns[0].Panes[0].Role != "" || dryRun.Plan.Columns[0].Panes[0].Command != "" ||
+		dryRun.Plan.Columns[1].Panes[0].Title != "agent" || dryRun.Plan.Columns[1].Panes[0].Role != "agent" ||
+		dryRun.Plan.Columns[1].Panes[0].Command != "codex --yolo --no-alt-screen --no-daemon --model gpt-6-sol --config model_reasoning_effort=medium" {
+		t.Fatal("builtin dev preview changed", string(preview), err)
 	}
 	for _, args := range [][]string{{"--config=", "launch-agents", "--list"}, {"launch-agents", "--list", "--config="}, {"--config", filepath.Join(home, "missing.md"), "launch-agents", "--list"}} {
 		out, err := run(args...)

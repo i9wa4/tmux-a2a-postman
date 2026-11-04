@@ -15,8 +15,9 @@ const MaxLaunchPanes = 64
 var presetName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 type LaunchPane struct {
-	Role    string `json:"role"`
-	Command string `json:"command"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 type LaunchColumn struct {
 	Panes []LaunchPane `json:"panes"`
@@ -106,7 +107,8 @@ func parseLaunchPreset(node *yaml.Node, roles map[string]bool) (LaunchPreset, er
 	if columns == nil || columns.Kind != yaml.SequenceNode || len(columns.Content) < 1 || len(columns.Content) > 8 {
 		return result, errors.New("columns must be an ordered list of 1 to 8 columns")
 	}
-	seen := map[string]bool{}
+	seenRoles := map[string]bool{}
+	seenTitles := map[string]bool{}
 	for ci, column := range columns.Content {
 		fields, err := presetFields(column, "panes")
 		if err != nil {
@@ -118,24 +120,40 @@ func parseLaunchPreset(node *yaml.Node, roles map[string]bool) (LaunchPreset, er
 		}
 		parsed := LaunchColumn{Panes: []LaunchPane{}}
 		for pi, pane := range panes.Content {
-			fields, err := presetFields(pane, "role", "command")
+			fields, err := presetFields(pane, "title", "role", "command")
 			if err != nil {
 				return result, fmt.Errorf("column %d pane %d: %w", ci+1, pi+1, err)
 			}
-			role, command := fields["role"], fields["command"]
-			if role == nil || role.Tag != "!!str" || !roles[role.Value] || seen[role.Value] {
-				return result, fmt.Errorf("column %d pane %d: role must be an existing, unique topology node", ci+1, pi+1)
+			role, title, command := fields["role"], fields["title"], fields["command"]
+			item := LaunchPane{}
+			if role == nil {
+				if title == nil || title.Tag != "!!str" || !presetName.MatchString(title.Value) || roles[title.Value] || command != nil {
+					return result, fmt.Errorf("column %d pane %d: shell pane requires a unique non-role title and no command", ci+1, pi+1)
+				}
+				item.Title = title.Value
+			} else {
+				if role.Tag != "!!str" || !roles[role.Value] || seenRoles[role.Value] || title != nil && (title.Tag != "!!str" || title.Value != role.Value) {
+					return result, fmt.Errorf("column %d pane %d: role must be an existing, unique topology node with matching title", ci+1, pi+1)
+				}
+				if command == nil || command.Tag != "!!str" || strings.TrimSpace(command.Value) == "" || len(command.Value) > 8192 || !utf8.ValidString(command.Value) || strings.ContainsRune(command.Value, 0) {
+					return result, fmt.Errorf("role %s requires a UTF-8 command of 1 to 8192 bytes without NUL", role.Value)
+				}
+				item.Title, item.Role, item.Command = role.Value, role.Value, command.Value
+				seenRoles[role.Value] = true
 			}
-			if command == nil || command.Tag != "!!str" || strings.TrimSpace(command.Value) == "" || len(command.Value) > 8192 || !utf8.ValidString(command.Value) || strings.ContainsRune(command.Value, 0) {
-				return result, fmt.Errorf("role %s requires a UTF-8 command of 1 to 8192 bytes without NUL", role.Value)
+			if seenTitles[item.Title] {
+				return result, fmt.Errorf("column %d pane %d: duplicate pane title %s", ci+1, pi+1, item.Title)
 			}
-			seen[role.Value] = true
-			if len(seen) > MaxLaunchPanes {
+			seenTitles[item.Title] = true
+			if len(seenTitles) > MaxLaunchPanes {
 				return result, errors.New("preset exceeds 64 panes")
 			}
-			parsed.Panes = append(parsed.Panes, LaunchPane{Role: role.Value, Command: command.Value})
+			parsed.Panes = append(parsed.Panes, item)
 		}
 		result.Columns = append(result.Columns, parsed)
+	}
+	if len(seenRoles) == 0 {
+		return result, errors.New("preset requires at least one agent role pane")
 	}
 	return result, nil
 }

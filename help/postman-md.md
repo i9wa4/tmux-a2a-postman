@@ -215,13 +215,17 @@ uses the generated report/decision guidance. Declaration alone starts no service
 and grants no host permissions. Installed external operating instructions live
 in `tmux-a2a-postman help postman-usage external`.
 
-Optional YAML `presets` maps names to `columns`, each with ordered `panes` of
-existing unique `role` and exact shell `command` pairs. `launch-agents --list`
-and `launch-agents <preset> --dry-run` are inert; only explicit launch executes
-commands in a new dedicated session. Newly created consoles inherit the
-absolute config selection described above. No startup policy mail, credentials,
-model flags or supervisor are added. Use installed `help launch-agents` for
-selection, shell initialization, collisions and partial-start cleanup.
+Optional YAML `presets` maps names to `columns`, each with ordered `panes`.
+Agent panes require an existing unique `role` and exact shell `command`. A
+title-only shell pane has a unique non-role `title`, no command, and no mail
+recipient identity. At least one agent role is required. `launch-agents --list`
+and `launch-agents <preset> --dry-run` are inert; only explicit launch starts
+shells and commands in a new window of the verified invoking session, or a
+dedicated session outside tmux or with an explicit target. New consoles inherit
+the absolute config selection described above. No startup policy mail,
+credentials, model flags or supervisor are added. Use installed
+`help launch-agents` for selection, shell initialization, collisions and
+partial-start cleanup.
 
 ## 7. Bounds and unsupported forms
 

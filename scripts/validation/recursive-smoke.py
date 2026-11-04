@@ -23,7 +23,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--postman", required=True)
 parser.add_argument("--postman-md", type=pathlib.Path,
                     help="read an optional consumer policy into the private fixture")
-parser.add_argument("--launch", choices=["codex", "claude", "preset-p", "preset-w"], help="start the builtin preset using private fixed-client stubs")
+parser.add_argument("--launch", choices=["preset-p", "preset-w"], help="start a seven-role builtin preset using private fixed-client stubs")
 parser.add_argument("--builtin", action="store_true", help="exercise the absent-user-config standard root team")
 parser.add_argument("--skill-root", type=pathlib.Path, action="append", default=[],
                     help="explicit metadata source for optional consumer skills")
@@ -52,8 +52,6 @@ template = (args.postman_md or repo / "testdata/config/recursive.md").resolve()
 roles = ["messenger", "orchestrator", "worker", "approver", "guardian", "critic"]
 if args.launch:
     roles += ["worker-alt"]
-    if args.launch in {"codex", "claude"}:
-        roles += ["agent"]
 postman = str(pathlib.Path(args.postman).resolve())
 skill_roots = [path.resolve() for path in args.skill_root] + [repo / "skills"]
 

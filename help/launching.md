@@ -11,14 +11,18 @@ loop.
 
 The default `postman.md` contains startup commands in its YAML `presets`,
 alongside routing edges and Markdown cooperation policy in the same file. Each
-preset has ordered `columns`, each containing top-to-bottom `panes` with an
-existing role and an explicit shell `command`. A role appears at most once in a
-preset; different presets may reuse it. Limits are 32 presets, 8 columns, and 64
-panes per preset. Unknown nested keys and invalid roles/commands are rejected.
-Commands are not rendered into recipient policy or evaluated by config readers.
+preset has ordered `columns`, each containing top-to-bottom `panes`. An agent
+pane has an existing `role` and explicit shell `command`. A title-only pane has
+a unique non-role `title` and no command; it starts an ordinary interactive
+shell and is not a mail recipient. A role appears at most once in a preset;
+different presets may reuse it. At least one role pane is required. Limits are
+32 presets, 8 columns, and 64 panes per preset. Unknown nested keys and invalid
+roles, titles or commands are rejected. Commands are not rendered into
+recipient policy or evaluated by config readers.
 
 ```sh
 tmux-a2a-postman launch-agents --list
+tmux-a2a-postman launch-agents dev --dry-run
 tmux-a2a-postman launch-agents preset-p \
   --socket /absolute/private/tmux.sock --cwd /absolute/team-directory --dry-run
 ```
@@ -51,8 +55,9 @@ itself. Both status getters remain cache-only and ignore config selection.
 
 The existing server's `default-shell` is used; on a new server, `SHELL` or
 `/bin/sh` is used. Supported shell validation is shared with command execution.
-Each command is passed intact as one argument to `shell -lic`: normal login and
-interactive initialization runs, including aliases and functions defined there.
+Each role command is passed intact as one argument to `shell -lic`: normal login
+and interactive initialization runs, including aliases and functions defined
+there. A title-only pane starts `shell -il` with no declared command.
 First-prompt-only hooks and a running shell's private state are not reproduced.
 For environment loading that needs a prompt hook, declare an explicit command,
 for example `direnv exec . codex`; Postman never approves `.envrc` itself.
@@ -61,12 +66,13 @@ launcher adds no credentials or provider flags.
 
 ## 3. Outcomes and ownership
 
-The launcher first creates inert native panes, establishes cwd, role titles,
+The launcher first creates inert native panes, establishes cwd, pane titles,
 inherited config and normal verified workspace ownership, and only then starts
-the declared commands. JSON reports actual server/session/window/pane IDs and
-accepted command starts. This establishes neither authentication nor readiness;
-a configured command can exit immediately. Successful exit leaves the team
-alive.
+ordinary shells and declared role commands. A title-only shell is not registered
+as a communication role. The first pane is focused. JSON reports actual
+server/session/window/pane IDs and accepted role command starts. This
+establishes neither authentication nor readiness; a configured command can exit
+immediately. Successful exit leaves the team alive.
 
 A nonblocking OS advisory lock serializes setup for one canonical workspace.
 Repeated targets, existing dedicated target sessions, live/unverified workspace
@@ -103,17 +109,23 @@ and use the returned absolute directory as `postman_resources`. See
 
 ## 5. Builtin presets
 
-When no automatic user configuration exists, `launch-agents --list` lists all
-four presets from the embedded default `postman.md`:
+When no automatic user configuration exists, `launch-agents --list` lists three
+presets from the embedded default `postman.md`:
 
-- `codex` and `claude`: eight roles using plain `exec codex` / `exec claude`.
+- `dev`: the original two equal-width columns, with a focused `editor` shell
+  on the left and one `agent` role on the right. Only the right pane runs the
+  original explicit Codex command. `editor` is a native title, not a message
+  recipient.
 - `preset-p`: the existing vde-layout Codex team in two columns of four and
   three roles.
 - `preset-w`: the same seven-role layout with the existing mixed Codex/Claude
   command mapping.
 
-The vde-layout presets preserve their original model, effort and permission
-arguments. Preview with `--dry-run` to inspect the exact declared commands.
+The original VDE `dev` uses `current-window`; Postman creates a new window in
+the verified invoking session, or a dedicated session outside tmux. It never
+rewrites an arbitrary existing window. The seven-role presets preserve their
+original model, effort and permission arguments. Preview with `--dry-run` to
+inspect the exact declared commands.
 All presets are in that one default file; no separate preset configuration is
 needed. A custom `postman.md` remains a complete replacement. See `help config`
 to inspect/export the default and `help postman-orchestrate` for the workflow.

@@ -39,7 +39,8 @@ type LaunchPlan struct {
 	Topology      config.WorkspaceTopology `json:"-"`
 }
 type LaunchedPane struct {
-	Role    string `json:"role"`
+	Title   string `json:"title"`
+	Role    string `json:"role,omitempty"`
 	Pane    string `json:"pane"`
 	PID     string `json:"pid,omitempty"`
 	Column  int    `json:"column"`
@@ -630,7 +631,8 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	}
 	anchors := []string{fields[2]}
 	for range len(plan.Columns) - 1 {
-		pane, err := tmuxOutput(ctx, plan.Socket, "split-window", "-h", "-d", "-t", anchors[len(anchors)-1], "-c", plan.CWD, "-P", "-F", "#{pane_id}", sleeper, "86400")
+		// New panes must not inherit a stale server-global config before respawn.
+		pane, err := tmuxOutput(ctx, plan.Socket, "split-window", "-h", "-d", "-t", anchors[len(anchors)-1], "-c", plan.CWD, "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), "-P", "-F", "#{pane_id}", sleeper, "86400")
 		if err != nil {
 			return result, fmt.Errorf("create column: %w", err)
 		}
@@ -651,24 +653,39 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	for ci, column := range plan.Columns {
 		target := anchors[ci]
 		for pi, item := range column.Panes {
+			title := item.Title
+			if title == "" {
+				title = item.Role
+			}
 			if pi > 0 {
 				remaining := len(column.Panes) - pi
-				pane, err := tmuxOutput(ctx, plan.Socket, "split-window", "-v", "-d", "-t", target, "-c", plan.CWD, "-l", strconv.Itoa(100*remaining/(remaining+1))+"%", "-P", "-F", "#{pane_id}", sleeper, "86400")
+				pane, err := tmuxOutput(ctx, plan.Socket, "split-window", "-v", "-d", "-t", target, "-c", plan.CWD, "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), "-l", strconv.Itoa(100*remaining/(remaining+1))+"%", "-P", "-F", "#{pane_id}", sleeper, "86400")
 				if err != nil {
-					return result, fmt.Errorf("create role %s: %w", item.Role, err)
+					return result, fmt.Errorf("create pane %s: %w", title, err)
 				}
 				target = strings.TrimSuffix(pane, "\n")
 				if !nativeID(target, '%') {
 					return result, ErrUnknown
 				}
 			}
-			if _, err := tmuxOutput(ctx, plan.Socket, "select-pane", "-t", target, "-T", item.Role); err != nil {
+			if _, err := tmuxOutput(ctx, plan.Socket, "select-pane", "-t", target, "-T", title); err != nil {
 				return result, err
 			}
-			result.Panes = append(result.Panes, LaunchedPane{Role: item.Role, Pane: target, Column: ci, Row: pi})
+			result.Panes = append(result.Panes, LaunchedPane{Title: title, Role: item.Role, Pane: target, Column: ci, Row: pi})
 		}
 	}
-	rt.Pane = result.Panes[0].Pane
+	if _, err := tmuxOutput(ctx, plan.Socket, "select-pane", "-t", result.Panes[0].Pane); err != nil {
+		return result, err
+	}
+	for _, pane := range result.Panes {
+		if pane.Role != "" {
+			rt.Pane = pane.Pane
+			break
+		}
+	}
+	if rt.Pane == "" {
+		return result, errors.New("launch requires an agent role pane")
+	}
 	if err := s.WithVerified(ctx, rt, func(*os.Root, Snapshot) error { return nil }); err != nil {
 		return result, fmt.Errorf("native launch ownership admission failed before commands: %w", err)
 	}
@@ -682,12 +699,16 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 	for _, column := range plan.Columns {
 		for _, item := range column.Panes {
 			pane := &result.Panes[index]
-			// Multiple tmux command arguments execute directly: the exact source is one
-			// argument to the user's interactive/login shell, never naively word-split.
-			if _, err := tmuxOutput(ctx, plan.Socket, "respawn-pane", "-k", "-t", pane.Pane, "-c", plan.CWD, "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), shell, "-lic", item.Command); err != nil {
-				return result, fmt.Errorf("role %s start uncertain: %w", item.Role, err)
+			// A title-only pane starts an ordinary interactive/login shell. Role
+			// commands are exact shell source, never split into words here.
+			args := []string{"respawn-pane", "-k", "-t", pane.Pane, "-c", plan.CWD, "-e", launchConfigEnvironment(plan), "-e", launchXDGEnvironment(plan), shell, "-il"}
+			if item.Role != "" {
+				args = append(args[:len(args)-1], "-lic", item.Command)
 			}
-			pane.Started = true
+			if _, err := tmuxOutput(ctx, plan.Socket, args...); err != nil {
+				return result, fmt.Errorf("pane %s start uncertain: %w", pane.Title, err)
+			}
+			pane.Started = item.Role != ""
 			if out, err := tmuxOutput(ctx, plan.Socket, "display-message", "-p", "-t", pane.Pane, "#{pane_pid}"); err == nil {
 				pid := strings.TrimSuffix(out, "\n")
 				if positivePID(pid) {
