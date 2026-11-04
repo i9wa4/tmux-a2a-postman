@@ -69,6 +69,29 @@ func TestRecipientContactsUseExactImmediateInterfaceViewpoint(t *testing.T) {
 	}
 }
 
+func TestDirectoryContactsMatchNearestLiveInterfaceRoutes(t *testing.T) {
+	topology := config.WorkspaceTopology{InterfaceNode: "messenger", Edges: map[string][]string{"messenger": {"worker"}}}
+	interfaces := []workspace.DirectoryInterface{
+		{Session: "top", Root: "~/github.com"},
+		{Session: "child", Root: "~/github.com/repo"},
+		{Session: "leaf", Root: "~/github.com/repo/sub"},
+		{Session: "sibling", Root: "~/github.com/other"},
+	}
+	if got := recipientAddressesDirectory(topology, "child", "messenger", interfaces); !slices.Equal(got, []string{"leaf:messenger", "top:messenger", "worker"}) {
+		t.Fatal("directory contacts do not match direct routes", got)
+	}
+	if got := recipientAddressesDirectory(topology, "top", "messenger", interfaces); !slices.Equal(got, []string{"child:messenger", "sibling:messenger", "worker"}) {
+		t.Fatal("parent contact hints skipped a live level", got)
+	}
+	if got := recipientAddressesDirectory(topology, "child", "worker", interfaces); len(got) != 0 {
+		t.Fatal("non-interface role gained directory contacts", got)
+	}
+	topology.Sessions = []config.WorkspaceSession{{Name: "top", InterfaceNode: "messenger"}}
+	if got := recipientAddressesDirectory(topology, "child", "messenger", interfaces); !slices.Equal(got, []string{"worker"}) {
+		t.Fatal("explicit tree was changed by inferred contacts", got)
+	}
+}
+
 func TestExecutionContextShowsFixedDecisionActionsAndNoOrdinaryReply(t *testing.T) {
 	msg := workspace.Message{ID: "m-0123456789abcdef0123456789abcdef", From: "worker", To: "approver", Kind: "execution-request", NeedsReply: true, GuidanceVersion: 1}
 	text := renderRecipientContext(config.RecipientPolicy{}, config.WorkspaceTopology{}, "/tmp/config 'quoted'.md", "session", msg)
