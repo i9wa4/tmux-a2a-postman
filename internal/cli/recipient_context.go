@@ -11,7 +11,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
-func (c *workspaceCommand) prepareRecipientContext(ctx context.Context) (retErr error) {
+func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipient string) (retErr error) {
 	span := c.trace.Start("recipient_context")
 	defer func() { span.Error(retErr) }()
 	policy, err := c.topology.RecipientPolicy(ctx, c.topologyPath)
@@ -24,10 +24,10 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context) (retErr 
 	}
 	name := caller.Name()
 	var interfaces []workspace.DirectoryInterface
-	if len(c.topology.Sessions) == 0 {
-		// Contact hints are advisory. An unrelated malformed session must not
-		// block a valid local send; cross-session sends repeat discovery and
-		// require a verified route before publication.
+	if len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode {
+		// Only interface recipients can use directory contact hints. Keep
+		// ordinary local sends free of native session enumeration. Hints are
+		// advisory; cross-session sends verify their route separately.
 		advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		interfaces, _ = c.runtime.DirectoryInterfaces(advisoryCtx, c.topology.InterfaceNode)
@@ -214,10 +214,6 @@ func recipientAddressesDirectory(topology config.WorkspaceTopology, session, nod
 	}
 	sort.Strings(addresses)
 	return addresses
-}
-
-func recipientContacts(policy config.RecipientPolicy, topology config.WorkspaceTopology, session, node string) string {
-	return recipientContactsForAddresses(policy, recipientAddresses(topology, session, node))
 }
 
 func recipientContactsForAddresses(policy config.RecipientPolicy, addresses []string) string {

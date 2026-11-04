@@ -13,13 +13,14 @@ import (
 // Snapshot. A name is only a route selector; the server incarnation, session
 // ID, pane ID and role binding remain the authority for a file operation.
 type NamedRuntime struct {
-	tmux        Tmux
-	name        string
-	role        string
-	server      string
-	incarnation string
-	sessionID   string
-	panePID     string
+	tmux           Tmux
+	name           string
+	role           string
+	server         string
+	incarnation    string
+	sessionID      string
+	panePID        string
+	directoryRoute bool
 }
 
 // DirectoryInterface is a verified live interface in a native tmux session.
@@ -84,7 +85,7 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 		peer := t
 		peer.Pane = interfacePane
 		owner := origin.Caller.Owner
-		runtime := NamedRuntime{peer, fields[1], role, owner.Server, owner.Incarnation, fields[0], interfacePID}
+		runtime := NamedRuntime{peer, fields[1], role, owner.Server, owner.Incarnation, fields[0], interfacePID, false}
 		snapshot, err := runtime.Snapshot(ctx)
 		if err != nil {
 			return nil, err
@@ -174,7 +175,7 @@ func (t Tmux) NamedCaller(ctx context.Context) (NamedRuntime, error) {
 		return NamedRuntime{}, err
 	}
 	owner := snapshot.Caller.Owner
-	runtime := NamedRuntime{t, name, snapshot.Caller.Role, owner.Server, owner.Incarnation, owner.Session, snapshot.Caller.PanePID}
+	runtime := NamedRuntime{t, name, snapshot.Caller.Role, owner.Server, owner.Incarnation, owner.Session, snapshot.Caller.PanePID, false}
 	if _, err := runtime.Snapshot(ctx); err != nil {
 		return NamedRuntime{}, err
 	}
@@ -182,6 +183,41 @@ func (t Tmux) NamedCaller(ctx context.Context) (NamedRuntime, error) {
 }
 
 func (r NamedRuntime) Name() string { return r.name }
+
+// WithDirectoryRoute requires a fresh direct-directory relation at the mail
+// publication boundary. Explicit workspace-tree routes do not set this flag.
+func (r NamedRuntime) WithDirectoryRoute() NamedRuntime {
+	r.directoryRoute = true
+	return r
+}
+
+func verifyDirectoryRoute(ctx context.Context, source, destination NamedRuntime, from, to Snapshot) error {
+	if source.role != destination.role {
+		return ErrUnknown
+	}
+	interfaces, err := source.tmux.DirectoryInterfaces(ctx, source.role)
+	if err != nil {
+		return err
+	}
+	selected, err := DirectDirectoryPeer(interfaces, source.name, destination.name)
+	if err != nil {
+		return err
+	}
+	if selected.Root != to.Root || selected.Runtime.sessionID != destination.sessionID ||
+		selected.Runtime.panePID != destination.panePID {
+		return ErrUnknown
+	}
+	for _, candidate := range interfaces {
+		if candidate.Session == source.name {
+			if candidate.Root != from.Root || candidate.Runtime.sessionID != source.sessionID ||
+				candidate.Runtime.panePID != source.panePID {
+				return ErrUnknown
+			}
+			return nil
+		}
+	}
+	return ErrUnknown
+}
 
 // FindNamedPeer uses a complete bounded native enumeration, then checks the
 // candidate through the same Snapshot contract as the caller. Ambiguous or
@@ -240,7 +276,7 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 	peer := t
 	peer.Pane = pane
 	owner := caller.Caller.Owner
-	runtime := NamedRuntime{peer, sessionName, role, owner.Server, owner.Incarnation, selected, panePID}
+	runtime := NamedRuntime{peer, sessionName, role, owner.Server, owner.Incarnation, selected, panePID, false}
 	if _, err := runtime.Snapshot(ctx); err != nil {
 		return NamedRuntime{}, err
 	}

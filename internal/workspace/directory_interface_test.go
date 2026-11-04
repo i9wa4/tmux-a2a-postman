@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDirectDirectoryPeerUsesComponentsAndNearestLiveLevel(t *testing.T) {
@@ -81,5 +82,100 @@ func TestDirectoryInterfacesVerifyNativeRootsAndRejectAmbiguity(t *testing.T) {
 	f.run(t, "select-pane", "-t", second, "-T", "worker")
 	if _, err := f.adapter().DirectoryInterfaces(ctx, "worker"); err == nil {
 		t.Fatal("ambiguous live interface role accepted")
+	}
+}
+
+func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
+	for _, tc := range []struct {
+		name, change string
+		reply        bool
+	}{
+		{"new endpoint moved", "move", false},
+		{"new intermediate appeared", "middle", false},
+		{"reply endpoint moved", "move", true},
+		{"reply intermediate appeared", "middle", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTmuxFixture(t)
+			branchRoot := filepath.Join(f.repo, "branch")
+			childRoot := filepath.Join(branchRoot, "leaf")
+			otherRoot := filepath.Join(f.repo, "other")
+			for _, root := range []string{childRoot, otherRoot} {
+				if err := os.MkdirAll(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
+				"-P", "-F", "#{pane_id}", "exec sh -i")
+			f.run(t, "select-pane", "-t", childPane, "-T", "worker")
+			ctx := context.Background()
+			parent, err := f.adapter().NamedCaller(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, err := f.adapter().FindNamedPeer(ctx, "child", "worker")
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+			source, destination := parent, child.WithDirectoryRoute()
+			var request Message
+			if tc.reply {
+				request, err = m.SendCrossWithReply(ctx, source, destination, "question", "", "", true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := m.Claim(ctx, child, request.ID); err != nil {
+					t.Fatal(err)
+				}
+				source, destination = child, parent.WithDirectoryRoute()
+			}
+			m.afterStep = func(step string) error {
+				if step != "cross-before-publish" {
+					return nil
+				}
+				switch tc.change {
+				case "move":
+					f.run(t, "send-keys", "-l", "-t", childPane, "cd "+otherRoot)
+					f.run(t, "send-keys", "-t", childPane, "C-m")
+					deadline := time.Now().Add(time.Second)
+					for time.Now().Before(deadline) {
+						if f.run(t, "display-message", "-p", "-t", childPane, "#{pane_current_path}") == otherRoot {
+							return nil
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
+					t.Fatal("owned child pane did not change root")
+				case "middle":
+					pane := f.run(t, "new-session", "-d", "-s", "middle", "-c", branchRoot,
+						"-P", "-F", "#{pane_id}", "exec sleep 120")
+					f.run(t, "select-pane", "-t", pane, "-T", "worker")
+				}
+				return nil
+			}
+			var rejected Message
+			if tc.reply {
+				rejected, err = m.SendCrossReply(ctx, source, destination, []string{request.ID}, "answer")
+			} else {
+				rejected, err = m.SendCrossWithReply(ctx, source, destination, "question", "", "", true)
+			}
+			if err == nil || rejected.ID == "" {
+				t.Fatalf("changed relation published: %+v %v", rejected, err)
+			}
+			sourceRoot, destinationRoot := "~/repo", "~/repo/branch/leaf"
+			if tc.reply {
+				sourceRoot, destinationRoot = destinationRoot, sourceRoot
+			}
+			sourceName, _ := Name(sourceRoot)
+			destinationName, _ := Name(destinationRoot)
+			for _, path := range []string{
+				filepath.Join(m.Store.StateRoot, sourceName, "agents", "worker", "sent", rejected.ID+".md"),
+				filepath.Join(m.Store.StateRoot, destinationName, "agents", "worker", "inbox", rejected.ID+".md"),
+			} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("rejected message was published at %s: %v", path, err)
+				}
+			}
+		})
 	}
 }

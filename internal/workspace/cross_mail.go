@@ -40,6 +40,11 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 				from.Caller.Owner.Incarnation != to.Caller.Owner.Incarnation {
 				return ErrUnknown
 			}
+			if destination.directoryRoute {
+				if err := verifyDirectoryRoute(ctx, source, destination, from, to); err != nil {
+					return err
+				}
+			}
 			if err := m.recover(destinationWS); err != nil {
 				return err
 			}
@@ -99,6 +104,14 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 			}
 			if err := validateMessage(msg); err != nil {
 				return err
+			}
+			if destination.directoryRoute {
+				if err := m.step("cross-before-publish"); err != nil {
+					return err
+				}
+				if err := verifyDirectoryRoute(ctx, source, destination, from, to); err != nil {
+					return err
+				}
 			}
 			if err := m.stage(sourceWS, msg); err != nil {
 				return err

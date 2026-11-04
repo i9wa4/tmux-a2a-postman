@@ -196,7 +196,11 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 			*to = first.FromSession + ":" + first.From
 		}
 	}
-	if err := c.prepareRecipientContext(ctx); err != nil {
+	recipient := *to
+	if _, role, cross := strings.Cut(*to, ":"); cross {
+		recipient = role
+	}
+	if err := c.prepareRecipientContext(ctx, recipient); err != nil {
 		return err
 	}
 	mailSpan := trace.Start("mail_operation")
@@ -236,7 +240,7 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 			if routeErr != nil {
 				return routeErr
 			}
-			peer = selected.Runtime
+			peer = selected.Runtime.WithDirectoryRoute()
 			out.RefreshEligible = true
 		}
 		if err != nil {
