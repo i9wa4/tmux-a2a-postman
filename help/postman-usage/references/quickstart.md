@@ -91,10 +91,12 @@ discovery in YAML `skill_path`; it supplies names/descriptions, not automatic
 Skill execution. See the configuration reference
 (`tmux-a2a-postman help postman-md`).
 
-For a declared parent/child topology, gateway in `postman-parent` can send to
-`postman-child:gateway`, and the child gateway can send to
-`postman-parent:gateway`. Local builder uses its local gateway; no sibling or
-grandchild shortcuts are implied. The declaration does not create sessions. For
+For nested canonical workspaces with live `gateway` panes on the same tmux
+server, gateway in `postman-parent` can send to `postman-child:gateway`, and the
+child gateway can send to `postman-parent:gateway` when no live interface lies
+between them. Local builder uses its local gateway; no sibling or grandchild
+shortcuts are implied. An optional `workspace_tree` instead restricts routes to
+its declared direct relationships and does not create sessions. For
 a worked deterministic development trial, see the recursive-session guide
 (`docs/validation/recursive-sessions-trial-runbook.md` in the source
 repository).

@@ -37,7 +37,8 @@ flowchart TB
 Use the embedded standard team without a configuration file, or customize
 the whole organization in one file. Artifact review and command approval are
 different roles; review coordinates decisions and is not an OS sandbox.
-Direct parent/child routes require declared interfaces and distinct workspaces.
+Direct parent/child routes use live interface panes in distinct nested
+workspaces. An explicit `workspace_tree`, when present, controls those routes.
 The configuration reference defines the supported fields.
 
 ## 2. Small commands, durable files

@@ -57,11 +57,14 @@ attention, inbound replies owed and outbound replies awaited.
 
 ## 3. Routing and activation
 
-Local mail requires an explicit Mermaid edge. Cross-session mail requires a
-declared direct parent/child relationship and the exact interface roles in
-`workspace_tree`; both named native runtimes are verified at send time.
-Directory ancestry and same-named local roles cannot authorize or redirect
-mail. Each workspace retains independent ownership, inbox/read and sent files.
+Local mail requires an explicit Mermaid edge. Without `workspace_tree`,
+cross-session mail requires verified native interface panes at the nearest live
+parent or child canonical workspace directories on the same server. An
+intermediate live interface blocks a shortcut. An explicit `workspace_tree`
+instead requires its declared direct relationship and exact interface roles.
+Both named native runtimes are verified at send time; equal roots, siblings,
+path-prefix lookalikes and same-named non-interface roles cannot route mail.
+Each workspace retains independent ownership, inbox/read and sent files.
 
 After durable publication, the same CLI makes a bounded attempt through the
 common [tmux input transport](notification.md). Sending never waits for POP,

@@ -78,13 +78,15 @@ renamed, ambiguous or unbound panes cannot inherit healthy facts.
 
 Consumers first match their assigned server/session/native pane/workspace, then
 use the attributed status/scope. Role names alone are ambiguous across sessions.
-For interface adjacency, select the local session declaration in its own scope,
-then its direct parent/children and declared interface roles; missing/ambiguous
-native matches are unknown. There is no top-level
-workspace/nodes/parent/children projection. Managers separately establish direct
-reports from their assigned role policy. Global observation does not authorize
-reading peer inbox bodies, controlling unrelated workspaces or bypassing
-configured routes.
+For interface adjacency with an explicit tree, select the local session
+declaration in its own scope, then its direct parent/children and declared
+interface roles. Without a tree, compare verified native interface pane roots
+for nearest canonical parent/child containment. Missing/ambiguous native matches
+are unknown; cached status alone does not authorize a send. There is no
+top-level workspace/nodes/parent/children projection. Managers separately
+establish direct reports from their assigned role policy. Global observation
+does not authorize reading peer inbox bodies, controlling unrelated workspaces
+or bypassing configured routes.
 
 ## 3. Bounded collection and concurrency
 

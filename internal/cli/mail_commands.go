@@ -211,12 +211,34 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		session, role, err := c.topology.InterfaceRoute(caller.Name(), snapshot.Caller.Role, *to)
-		if err != nil {
-			return err
+		var session, role string
+		var peer workspace.NamedRuntime
+		if len(c.topology.Sessions) != 0 {
+			session, role, err = c.topology.InterfaceRoute(caller.Name(), snapshot.Caller.Role, *to)
+			if err != nil {
+				return err
+			}
+			out.RefreshEligible = true
+			peer, err = c.runtime.FindNamedPeer(ctx, session, role)
+		} else {
+			if strings.Count(*to, ":") != 1 || snapshot.Caller.Role != c.topology.InterfaceNode {
+				return errors.New("recipient is not a directory interface")
+			}
+			session, role, _ = strings.Cut(*to, ":")
+			if role != c.topology.InterfaceNode {
+				return errors.New("recipient is not a directory interface")
+			}
+			interfaces, routeErr := c.runtime.DirectoryInterfaces(ctx, role)
+			if routeErr != nil {
+				return routeErr
+			}
+			selected, routeErr := workspace.DirectDirectoryPeer(interfaces, caller.Name(), session)
+			if routeErr != nil {
+				return routeErr
+			}
+			peer = selected.Runtime
+			out.RefreshEligible = true
 		}
-		out.RefreshEligible = true
-		peer, err := c.runtime.FindNamedPeer(ctx, session, role)
 		if err != nil {
 			recoveryCtx, recoveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			defer recoveryCancel()

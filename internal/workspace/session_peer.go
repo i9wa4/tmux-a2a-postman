@@ -22,6 +22,125 @@ type NamedRuntime struct {
 	panePID     string
 }
 
+// DirectoryInterface is a verified live interface in a native tmux session.
+// Root is the canonical HOME-relative directory of its interface pane.
+type DirectoryInterface struct {
+	Session string
+	Root    string
+	Runtime NamedRuntime
+}
+
+// DirectoryInterfaces discovers only live panes bearing the configured
+// interface role on this server. Each candidate is rechecked as a named
+// runtime; duplicate roles, roots, or session names fail closed.
+func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]DirectoryInterface, error) {
+	if !binding.ValidateNodeName(role) {
+		return nil, ErrUnknown
+	}
+	caller, err := t.NamedCaller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	origin, err := caller.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out, err := tmuxOutput(ctx, t.Socket, "list-sessions", "-F", "#{session_id}\t#{session_name}")
+	if err != nil {
+		return nil, err
+	}
+	var interfaces []DirectoryInterface
+	seenNames, seenRoots := map[string]bool{}, map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 || !nativeID(fields[0], '$') || !validNativeSessionName(fields[1]) || seenNames[fields[1]] {
+			return nil, ErrUnknown
+		}
+		seenNames[fields[1]] = true
+		panes, err := tmuxOutput(ctx, t.Socket, "list-panes", "-s", "-t", fields[0],
+			"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}\t#{pane_pid}")
+		if err != nil {
+			return nil, err
+		}
+		count := 0
+		var interfacePane, interfacePID string
+		for _, pane := range strings.Split(strings.TrimSuffix(panes, "\n"), "\n") {
+			parts := strings.Split(pane, "\t")
+			if len(parts) != 5 || parts[0] != fields[0] || !nativeID(parts[1], '%') ||
+				!positivePID(parts[4]) || (parts[3] != "0" && parts[3] != "1") {
+				return nil, ErrUnknown
+			}
+			if parts[2] == role && parts[3] == "0" {
+				count++
+				interfacePane, interfacePID = parts[1], parts[4]
+			}
+		}
+		if count == 0 {
+			continue
+		}
+		if count != 1 {
+			return nil, errors.New("ambiguous interface role binding")
+		}
+		peer := t
+		peer.Pane = interfacePane
+		owner := origin.Caller.Owner
+		runtime := NamedRuntime{peer, fields[1], role, owner.Server, owner.Incarnation, fields[0], interfacePID}
+		snapshot, err := runtime.Snapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if fields[0] == owner.Session && snapshot.Root != origin.Root {
+			return nil, ErrUnknown
+		}
+		if seenRoots[snapshot.Root] {
+			return nil, errors.New("ambiguous interface workspace root")
+		}
+		seenRoots[snapshot.Root] = true
+		interfaces = append(interfaces, DirectoryInterface{fields[1], snapshot.Root, runtime})
+	}
+	return interfaces, nil
+}
+
+// DirectDirectoryPeer selects one parent or child by canonical directory
+// containment. A live interface strictly between the pair blocks shortcuts.
+func DirectDirectoryPeer(interfaces []DirectoryInterface, sender, target string) (DirectoryInterface, error) {
+	var from, to *DirectoryInterface
+	seenSessions, seenRoots := map[string]bool{}, map[string]bool{}
+	for i := range interfaces {
+		if seenSessions[interfaces[i].Session] || seenRoots[interfaces[i].Root] {
+			return DirectoryInterface{}, errors.New("ambiguous directory interfaces")
+		}
+		seenSessions[interfaces[i].Session], seenRoots[interfaces[i].Root] = true, true
+		if interfaces[i].Session == sender {
+			from = &interfaces[i]
+		}
+		if interfaces[i].Session == target {
+			to = &interfaces[i]
+		}
+	}
+	if from == nil || to == nil || from == to || !directoryContains(from.Root, to.Root) && !directoryContains(to.Root, from.Root) {
+		return DirectoryInterface{}, errors.New("no direct directory interface edge")
+	}
+	parent, child := from.Root, to.Root
+	if directoryContains(to.Root, from.Root) {
+		parent, child = to.Root, from.Root
+	}
+	for _, middle := range interfaces {
+		if middle.Session != sender && middle.Session != target &&
+			directoryContains(parent, middle.Root) && directoryContains(middle.Root, child) {
+			return DirectoryInterface{}, errors.New("intermediate live interface blocks directory route")
+		}
+	}
+	return *to, nil
+}
+
+func directoryContains(parent, child string) bool {
+	if parent == "~" {
+		return strings.HasPrefix(child, "~/")
+	}
+	return strings.HasPrefix(child, parent+"/")
+}
+
 func (r NamedRuntime) Snapshot(ctx context.Context) (Snapshot, error) {
 	snapshot, err := r.tmux.Snapshot(ctx)
 	if err != nil {
