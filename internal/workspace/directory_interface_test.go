@@ -108,6 +108,10 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			canonicalOtherRoot, err := filepath.EvalSymlinks(otherRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
 			childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
 				"-P", "-F", "#{pane_id}", "exec env HISTFILE=/dev/null sh -i")
 			f.run(t, "select-pane", "-t", childPane, "-T", "worker")
@@ -145,12 +149,13 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 					f.run(t, "send-keys", "-t", childPane, "C-m")
 					deadline := time.Now().Add(time.Second)
 					for time.Now().Before(deadline) {
-						if f.run(t, "display-message", "-p", "-t", childPane, "#{pane_current_path}") == otherRoot {
+						if f.run(t, "display-message", "-p", "-t", childPane, "#{pane_current_path}") == canonicalOtherRoot {
 							return nil
 						}
 						time.Sleep(10 * time.Millisecond)
 					}
-					t.Fatal("owned child pane did not change root")
+					t.Fatalf("owned child pane did not change root: got %q, want %q",
+						f.run(t, "display-message", "-p", "-t", childPane, "#{pane_current_path}"), canonicalOtherRoot)
 				case "middle":
 					pane := f.run(t, "new-session", "-d", "-s", "middle", "-c", branchRoot,
 						"-P", "-F", "#{pane_id}", "exec sleep 120")
