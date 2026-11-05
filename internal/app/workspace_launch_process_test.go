@@ -323,6 +323,7 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 			defer cancel()
+			beforeWindows := windows()
 			cmd := f.child(ctx, f.worker, "launch-agents", preset, "--cwd", cwd)
 			// The parent and tmux server intentionally contain a hostile override.
 			// Clear it only for the launched CLI so the missing isolated default
@@ -338,9 +339,26 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 			if got.Launch.Readiness != "not established; created processes are not authenticated or ready agents" {
 				t.Fatalf("launch must report process start without authenticated readiness: %q", got.Launch.Readiness)
 			}
-			window := got.Launch.Window
-			if window == "" || window == originalWindow || got.Launch.SessionID != originalSession {
-				t.Fatalf("not a new invoking-session window: %+v", got.Launch)
+			afterWindows := windows()
+			if len(afterWindows) != len(beforeWindows)+1 {
+				t.Fatalf("expected exactly one new invoking-session window: before=%v after=%v receipt=%+v", beforeWindows, afterWindows, got.Launch)
+			}
+			for _, existing := range beforeWindows {
+				if !slices.Contains(afterWindows, existing) {
+					t.Fatalf("existing window disappeared during launch: before=%v after=%v receipt=%+v", beforeWindows, afterWindows, got.Launch)
+				}
+			}
+			window := ""
+			for _, candidate := range afterWindows {
+				if !slices.Contains(beforeWindows, candidate) {
+					if window != "" {
+						t.Fatalf("multiple new windows during launch: before=%v after=%v receipt=%+v", beforeWindows, afterWindows, got.Launch)
+					}
+					window = candidate
+				}
+			}
+			if window == "" || window == originalWindow || window == unrelated || got.Launch.Window != window || got.Launch.SessionID != originalSession {
+				t.Fatalf("launch receipt does not name the new invoking-session window: before=%v after=%v receipt=%+v", beforeWindows, afterWindows, got.Launch)
 			}
 			defer f.tmux("kill-window", "-t", window)
 			assertPreserved(t)
@@ -352,7 +370,7 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 				t.Fatalf("incomplete preset: %+v", got.Launch.Panes)
 			}
 			seen := map[string]bool{}
-			lefts, tops := map[int]int{}, map[int]int{}
+			lefts, tops, widths := map[int]int{}, map[int]int{}, map[int]int{}
 			for index, pane := range got.Launch.Panes {
 				wantRole := presets[preset].Columns[pane.Column].Panes[pane.Row].Role
 				if pane.Role != wantRole {
@@ -380,6 +398,13 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 					t.Fatalf("pane rows out of order: %+v: %d <= %d", pane, top, previous)
 				}
 				tops[pane.Column] = top
+				if preset == "dev" {
+					width, err := strconv.Atoi(f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_width}"))
+					if err != nil {
+						t.Fatalf("native pane width for %+v: %v", pane, err)
+					}
+					widths[pane.Column] = width
+				}
 				if preset == "dev" && pane.Title == "editor" {
 					if pane.Role != "" || pane.Started || pane.Column != 0 || f.tmux("display-message", "-p", "-t", pane.Pane, "#{pane_active}") != "1" {
 						t.Fatalf("editor pane: %+v", pane)
@@ -449,6 +474,13 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 			}
 			if lefts[0] >= lefts[1] {
 				t.Fatalf("columns not left to right: %v", lefts)
+			}
+			if preset == "dev" {
+				// An odd tmux window width gives one column the rounding cell.
+				difference := widths[0] - widths[1]
+				if len(widths) != 2 || difference < -1 || difference > 1 {
+					t.Fatalf("dev columns are not equal width: %v", widths)
+				}
 			}
 			paneIDs := make([]string, 0, len(got.Launch.Panes))
 			for _, pane := range got.Launch.Panes {
