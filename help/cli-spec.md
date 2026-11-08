@@ -172,6 +172,9 @@ Example: `[0]🟩💛:🟢 [3]⬛🟥 [9] [12]⚫`. `[N]` is native `$N`, numeri
 sorted, including gaps/two-digit IDs, independently of session names. Colons
 separate included agent windows, with panes in physical top/left order.
 Ordinary panes have no glyph; their native session label remains visible.
+Incomplete saved coverage or a saved agent status reason adds `[partial]` at
+the end of the one-line summary, including when an unavailable pane has no
+glyph beside healthy panes.
 Missing/incompatible cache emits `?` and exits nonzero. The complete visible
 output is one line, including in abnormal cases; no separate stderr diagnostics
 are emitted. Inspect `get-status` for saved coverage and per-node reasons.

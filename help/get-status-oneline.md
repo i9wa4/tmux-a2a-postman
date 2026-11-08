@@ -45,10 +45,14 @@ inactivity. Screen movement can be a spinner or pasted input.
 Rows with saved agent status produce glyphs. Unbound, dead, linked, renamed or
 ambiguous role panes have unknown counts. Ordinary panes add no glyph; every
 saved native session still displays its [N], including sessions without agents.
+An incomplete saved coverage sweep adds `[partial]` to the end of the line,
+including when an unavailable pane has no glyph beside healthy panes. A saved
+agent status reason also adds that marker. Inspect `get-status` for the exact
+coverage and per-pane reasons; the marker does not identify a current failure.
 Missing/malformed/incompatible cache emits '?' and exits nonzero. The command
 prints exactly one line in normal and abnormal cases, with no separate stderr
-diagnostics. Partial coverage and per-node uncertainty appear in glyphs; inspect
-the saved `get-status` JSON for coverage, per-node reasons and capture times.
+diagnostics. Per-node uncertainty also appears in glyphs; inspect the saved
+`get-status` JSON for coverage, per-node reasons and capture times.
 Valid stale snapshots remain dated; current time only ages glyph color, never
 changes as_of.
 --config is accepted but never read. No tmux, discovery, mail scan, state

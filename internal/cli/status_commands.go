@@ -70,6 +70,7 @@ func RunWorkspaceGetStatusOneline(args []string) error {
 	}
 	// Session IDs are native, never ordinal positions or digits from names.
 	var output []string
+	partial := !snapshot.Coverage.Complete
 	for _, session := range snapshot.Sessions {
 		number, _ := strconv.Atoi(strings.TrimPrefix(session.ID, "$"))
 		rows := []workspace.OperatorNode{}
@@ -77,6 +78,9 @@ func RunWorkspaceGetStatusOneline(args []string) error {
 			for _, pane := range window.Panes {
 				if pane.Status != nil {
 					rows = append(rows, workspace.OperatorNode{Session: number, Window: window.Index, Top: pane.Top, Left: pane.Left, Pane: pane.ID, Status: *pane.Status})
+					if pane.Status.Reason != "" {
+						partial = true
+					}
 				}
 			}
 		}
@@ -89,6 +93,9 @@ func RunWorkspaceGetStatusOneline(args []string) error {
 	if len(output) == 0 {
 		_, _ = fmt.Fprintln(os.Stdout, "?")
 		return reportedError{errors.New("saved server has no sessions")}
+	}
+	if partial {
+		output = append(output, "[partial]")
 	}
 	_, err = fmt.Fprintln(os.Stdout, strings.Join(output, " "))
 	return err
