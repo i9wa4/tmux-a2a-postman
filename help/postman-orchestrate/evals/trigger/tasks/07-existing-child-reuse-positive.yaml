@@ -1,0 +1,12 @@
+id: postman-orchestrate-existing-child-reuse-positive
+name: reuse suitable existing direct child
+inputs:
+  prompt: A verified direct child team already owns this delegated scope and has a reachable interface. Coordinate its first real task and exact return hop by selecting that existing child; do not propose a new preset launch or session.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: existing-child-reuse-positive
+  config:
+    skill_path: help/postman-orchestrate/SKILL.md
+    mode: positive

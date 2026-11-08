@@ -9,6 +9,17 @@ route, owns its scope index and may delegate further within authority. No
 sibling/ancestor guessing, shared global mutable tracker, raw descendant-state
 inspection or human-facing shortcut hides a failed route.
 
+Before launching a team, run `refresh-status` to inspect existing verified
+teams and canonical workspaces, then check reachable direct child interfaces
+in current recipient contact guidance. Compare each child's known role and
+ownership with the delegated scope; unknown readiness is not evidence of a
+suitable team. Contact hints are advisory, and the actual send rechecks the
+route. Reuse a suitable direct child for the first real task: send to its exact
+`session:interface_node` address without running `launch-agents`, preserving
+the original goal and acceptance criteria. If none is suitable, record in the
+canonical task artifact which existing children were inspected and why a new
+team is needed. Only then follow the new-team branch below.
+
 For a new team, choose a real directory below the parent interface pane's
 canonical workspace. Review `tmux-a2a-postman launch-agents --list`, then
 preview a dedicated child session:
