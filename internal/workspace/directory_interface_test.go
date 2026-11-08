@@ -69,6 +69,22 @@ func TestDirectoryInterfacesVerifyNativeRootsAndRejectAmbiguity(t *testing.T) {
 	if err != nil || selected.Root != "~/repo/child" {
 		t.Fatalf("verified child route: %+v %v", selected, err)
 	}
+	unrelated := f.run(t, "new-session", "-d", "-s", "unrelated space", "-c", f.home,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.run(t, "select-pane", "-t", unrelated, "-T", "ordinary")
+	interfaces, err = f.adapter().DirectoryInterfaces(ctx, "worker")
+	if err != nil || len(interfaces) != 3 {
+		t.Fatalf("unrelated native name blocked valid interfaces: %+v %v", interfaces, err)
+	}
+	if selected, err := DirectDirectoryPeer(interfaces, "one", "child"); err != nil || selected.Session != "child" {
+		t.Fatalf("unrelated native name blocked direct route: %+v %v", selected, err)
+	}
+	if _, err := f.adapter().FindNamedPeer(ctx, "child", "worker"); err != nil {
+		t.Fatalf("unrelated native name blocked target lookup: %v", err)
+	}
+	if _, err := f.adapter().FindNamedPeer(ctx, "unrelated space", "worker"); err == nil {
+		t.Fatal("Postman-disallowed target address accepted")
+	}
 	alias := filepath.Join(f.home, "alias")
 	if err := os.Symlink(childRoot, alias); err != nil {
 		t.Fatal(err)

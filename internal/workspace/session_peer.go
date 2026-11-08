@@ -54,10 +54,9 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 	seenNames, seenRoots := map[string]bool{}, map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 2 || !nativeID(fields[0], '$') || !validNativeSessionName(fields[1]) || seenNames[fields[1]] {
+		if len(fields) != 2 || !nativeID(fields[0], '$') {
 			return nil, ErrUnknown
 		}
-		seenNames[fields[1]] = true
 		panes, err := tmuxOutput(ctx, t.Socket, "list-panes", "-s", "-t", fields[0],
 			"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}\t#{pane_pid}")
 		if err != nil {
@@ -79,6 +78,10 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 		if count == 0 {
 			continue
 		}
+		if !validNativeSessionName(fields[1]) || seenNames[fields[1]] {
+			return nil, ErrUnknown
+		}
+		seenNames[fields[1]] = true
 		if count != 1 {
 			return nil, errors.New("ambiguous interface role binding")
 		}
@@ -237,7 +240,7 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 	var selected string
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 2 || !nativeID(fields[0], '$') || !validNativeSessionName(fields[1]) {
+		if len(fields) != 2 || !nativeID(fields[0], '$') {
 			return NamedRuntime{}, ErrUnknown
 		}
 		if fields[1] == sessionName {

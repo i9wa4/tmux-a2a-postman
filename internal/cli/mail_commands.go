@@ -200,7 +200,7 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 	if _, role, cross := strings.Cut(*to, ":"); cross {
 		recipient = role
 	}
-	if err := c.prepareRecipientContext(ctx, recipient); err != nil {
+	if err := c.prepareRecipientContext(ctx, recipient, strings.Contains(*to, ":")); err != nil {
 		return err
 	}
 	mailSpan := trace.Start("mail_operation")

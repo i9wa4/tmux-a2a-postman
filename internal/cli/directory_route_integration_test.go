@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -113,6 +114,46 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		}
 		return msg
 	}
+	// A local interface send must not wait for advisory whole-server discovery.
+	// Slow any pre-stage enumeration in an owned server with many sessions and
+	// record whether the CLI attempted it before a sent copy existed.
+	orchestratorPane := runTmux("split-window", "-d", "-t", parentPane, "-c", parentRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	runTmux("select-pane", "-t", orchestratorPane, "-T", "orchestrator")
+	for i := 0; i < 16; i++ {
+		runTmux("new-session", "-d", "-s", "unrelated-"+strconv.Itoa(i), "-c", home,
+			"-P", "-F", "#{pane_id}", "exec sleep 120")
+	}
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shim := filepath.Join(shimDir, "tmux")
+	logPath := filepath.Join(shimDir, "pre-stage-enumerations")
+	script := "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = list-sessions ] && [ -z \"$(find \"$POSTMAN_TEST_STATE\" -type f -path '*/sent/*.md' -print -quit)\" ]; then\n    printf 'pre-stage list-sessions\\n' >> \"$POSTMAN_TEST_LOG\"\n    sleep 3\n  fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("POSTMAN_TEST_STATE", filepath.Join(home, "state"))
+	t.Setenv("POSTMAN_TEST_LOG", logPath)
+	t.Setenv("POSTMAN_REAL_TMUX", realTmux)
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+oldPath)
+	local, localErr := invoke(orchestratorPane, "local interface task\n", RunWorkspaceSendHeredoc, "--to", "messenger")
+	if err := os.Setenv("PATH", oldPath); err != nil {
+		t.Fatal(err)
+	}
+	if localErr != nil || !local.Success {
+		t.Fatalf("local interface send: %+v %v", local, localErr)
+	}
+	if data, err := os.ReadFile(logPath); err == nil {
+		t.Fatalf("local interface send enumerated sessions before staging: %s", data)
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	t.Log("local interface send with 18 native sessions: pre-stage full-server enumerations: 0")
+	_ = claim(parentPane, "local interface task\n")
 	for _, direction := range []struct {
 		name, target, sourcePane, targetPane string
 	}{
