@@ -24,9 +24,9 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 	}
 	name := caller.Name()
 	var interfaces []workspace.DirectoryInterface
-	localDirectoryContacts := !crossSession && len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode
+	localDirectoryContacts := !crossSession && recipient == c.topology.InterfaceNode
 	c.mail.StageBeforeContext = localDirectoryContacts
-	if crossSession && len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode {
+	if crossSession && recipient == c.topology.InterfaceNode {
 		// Directory contact hints are advisory. Local mail and channel sync
 		// must not enumerate the server before staging; cross-session sends
 		// verify their route separately.
@@ -173,26 +173,10 @@ func renderRecipientContextDirectory(policy config.RecipientPolicy, topology con
 	return text.String()
 }
 
-func recipientAddresses(topology config.WorkspaceTopology, session, node string) []string {
+func recipientAddresses(topology config.WorkspaceTopology, node string) []string {
 	seen := map[string]bool{}
 	for _, peer := range topology.Edges[node] {
 		seen[peer] = true
-	}
-	for _, scope := range topology.Sessions {
-		if scope.Name != session || scope.InterfaceNode != node {
-			continue
-		}
-		// This is the recipient's declared rendering viewpoint. Actual sends
-		// retain their own verified local-interface authorization checks.
-		view := topology
-		view.InterfaceNode = scope.InterfaceNode
-		for _, candidate := range topology.Sessions {
-			if candidate.Name == scope.Parent || candidate.Parent == scope.Name {
-				if _, _, err := view.InterfaceRoute(session, node, candidate.Name+":"+candidate.InterfaceNode); err == nil {
-					seen[candidate.Name+":"+candidate.InterfaceNode] = true
-				}
-			}
-		}
 	}
 	var addresses []string
 	for peer := range seen {
@@ -203,8 +187,8 @@ func recipientAddresses(topology config.WorkspaceTopology, session, node string)
 }
 
 func recipientAddressesDirectory(topology config.WorkspaceTopology, session, node string, interfaces []workspace.DirectoryInterface) []string {
-	addresses := recipientAddresses(topology, session, node)
-	if len(topology.Sessions) != 0 || node != topology.InterfaceNode {
+	addresses := recipientAddresses(topology, node)
+	if node != topology.InterfaceNode {
 		return addresses
 	}
 	seen := map[string]bool{}

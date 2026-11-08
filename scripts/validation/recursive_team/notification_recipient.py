@@ -101,18 +101,36 @@ def own_status(snapshot):
 
 def interface_scope(snapshot):
     native, pane = own_status(snapshot)
-    scope = pane["scope"]
-    if scope["interface_node"] != role:
+    if pane["scope"]["interface_node"] != role:
         raise RuntimeError("fixture role is not its assigned interface")
-    if scope.get("builtin") and not scope["sessions"]:
-        return {"parent": None, "children": []}
-    declared = [entry for entry in scope["sessions"] if entry["name"] == native["name"]]
-    if len(declared) != 1:
-        raise RuntimeError("local declared route missing/ambiguous")
-    parent = declared[0]["parent"]
-    return {"parent": {"session": parent} if parent else None,
-            "children": [{"session": entry["name"]} for entry in scope["sessions"]
-                         if entry["parent"] == native["name"]]}
+    interfaces = []
+    for candidate in snapshot["sessions"]:
+        panes = [item for window in candidate["windows"] for item in window["panes"]
+                 if item["title"] == role and not item["dead"] and not item["linked"]]
+        if len(panes) > 1:
+            raise RuntimeError("ambiguous live interface in native session")
+        if panes:
+            interfaces.append({"session": candidate["name"], "root": panes[0]["workspace"]})
+    roots = [entry["root"] for entry in interfaces]
+    if len(roots) != len(set(roots)) or any(not root.startswith("~/") for root in roots):
+        raise RuntimeError("ambiguous or noncanonical live interface roots")
+    own = [entry for entry in interfaces if entry["session"] == native["name"]]
+    if len(own) != 1 or own[0]["root"] != pane["workspace"]:
+        raise RuntimeError("local live interface missing/ambiguous")
+
+    def contains(parent, child):
+        return child.startswith(parent + "/")
+
+    root = own[0]["root"]
+    ancestors = [entry for entry in interfaces if contains(entry["root"], root)]
+    parent = max(ancestors, key=lambda entry: len(entry["root"])) if ancestors else None
+    children = [entry for entry in interfaces if contains(root, entry["root"])
+                and not any(other != entry and other != own[0]
+                            and contains(root, other["root"])
+                            and contains(other["root"], entry["root"])
+                            for other in interfaces)]
+    return {"parent": {"session": parent["session"]} if parent else None,
+            "children": [{"session": entry["session"]} for entry in children]}
 
 
 def own_sent(wire_nonce):

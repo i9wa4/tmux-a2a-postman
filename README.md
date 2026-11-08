@@ -38,7 +38,7 @@ Use the embedded standard team without a configuration file, or customize
 the whole organization in one file. Artifact review and command approval are
 different roles; review coordinates decisions and is not an OS sandbox.
 Direct parent/child routes use live interface panes in distinct nested
-workspaces. An explicit `workspace_tree`, when present, controls those routes.
+workspaces. The nearest live interface blocks shortcuts to more distant teams.
 The configuration reference defines the supported fields.
 
 ## 2. Small commands, durable files

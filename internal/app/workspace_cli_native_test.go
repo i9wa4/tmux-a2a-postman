@@ -19,10 +19,10 @@ import (
 
 func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 	f := newPublicApprovalFixture(t)
-	childRoot := filepath.Join(f.home, "child")
-	grandRoot := filepath.Join(f.home, "grandchild")
+	childRoot := filepath.Join(f.home, "work", "child")
+	grandRoot := filepath.Join(childRoot, "grandchild")
 	for _, dir := range []string{childRoot, grandRoot} {
-		if err := os.Mkdir(dir, 0o700); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -30,7 +30,7 @@ func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 	f.tmux("select-pane", "-t", child, "-T", "worker")
 	grand := f.tmux("new-session", "-d", "-s", "grandchild", "-c", grandRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
 	f.tmux("select-pane", "-t", grand, "-T", "worker")
-	content := "---\ninterface_node: worker\nworkspace_tree:\n  - session_name: work\n    interface_node: worker\n  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n  - session_name: missing\n    parent_session_name: work\n    interface_node: worker\n  - session_name: grandchild\n    parent_session_name: child\n    interface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	content := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
 	if err := os.WriteFile(f.config, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -44,20 +44,16 @@ func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 		t.Fatal(status, err)
 	}
 	own := findStatusPane(t, status.Sessions, f.worker)
-	if own.Scope == nil || own.Scope.Interface != "worker" || len(own.Scope.Sessions) != 4 {
+	if own.Scope == nil || own.Scope.Interface != "worker" {
 		t.Fatal(own)
 	}
 	childStatus := findStatusPane(t, status.Sessions, child)
-	if childStatus.Workspace != "~/child" || childStatus.Status == nil || childStatus.Status.UnreadCount == nil {
+	if childStatus.Workspace != "~/work/child" || childStatus.Status == nil || childStatus.Status.UnreadCount == nil {
 		t.Fatal(childStatus)
 	}
-	failed, sendErr := f.run(f.worker, "preserve unavailable peer body", "send-heredoc", "--config", f.config, "--to", "missing:worker")
-	if sendErr == nil || failed.Success || failed.RecoveryMessageID == "" || failed.Self.DraftCount == nil || *failed.Self.DraftCount != 1 || failed.Self.FailedCount == nil || *failed.Self.FailedCount != 0 {
-		t.Fatal("unavailable peer lost draft or invented confirmed failure", failed, sendErr)
-	}
-	draft := readProtocolArchive(t, filepath.Join(f.box("worker", "draft"), failed.RecoveryMessageID+".md"))
-	if draft.Body != "preserve unavailable peer body" || draft.ToSession != "missing" {
-		t.Fatal(draft)
+	failed, sendErr := f.run(f.worker, "must not publish", "send-heredoc", "--config", f.config, "--to", "missing:worker")
+	if sendErr == nil || failed.Success {
+		t.Fatal("unavailable directory peer was accepted", failed, sendErr)
 	}
 	nested, err := f.run(child, "", "get-status", "--config", f.config)
 	if err != nil || len(nested.Sessions) != 3 || nested.AsOf != status.AsOf { // Failed send may publish another snapshot.
@@ -188,8 +184,8 @@ func TestWorkspaceCLIRetitleBeforeSendFailsClosed(t *testing.T) {
 				return strings.TrimSpace(string(out))
 			}
 			home := t.TempDir()
-			for _, name := range []string{"parent", "child"} {
-				if err := os.Mkdir(filepath.Join(home, name), 0o700); err != nil {
+			for _, name := range []string{"parent", "parent/child"} {
+				if err := os.MkdirAll(filepath.Join(home, name), 0o700); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -202,11 +198,11 @@ func TestWorkspaceCLIRetitleBeforeSendFailsClosed(t *testing.T) {
 			runTmux("select-pane", "-t", parent, "-T", "worker")
 			local := runTmux("new-window", "-d", "-t", "parent", "-c", filepath.Join(home, "parent"), "-P", "-F", "#{pane_id}", "exec sleep 120")
 			runTmux("select-pane", "-t", local, "-T", "local")
-			child := runTmux("new-session", "-d", "-s", "child", "-c", filepath.Join(home, "child"), "-P", "-F", "#{pane_id}", "exec sleep 120")
+			child := runTmux("new-session", "-d", "-s", "child", "-c", filepath.Join(home, "parent", "child"), "-P", "-F", "#{pane_id}", "exec sleep 120")
 			runTmux("select-pane", "-t", child, "-T", "worker")
 
 			config := filepath.Join(t.TempDir(), "postman.md")
-			content := "---\ninterface_node: worker\nworkspace_tree:\n  - session_name: parent\n    interface_node: worker\n  - session_name: child\n    parent_session_name: parent\n    interface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- local\nalt --- worker\n```\n## `worker`\nWorker\n## `local`\nLocal\n## `alt`\nAlt\n"
+			content := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- local\nalt --- worker\n```\n## `worker`\nWorker\n## `local`\nLocal\n## `alt`\nAlt\n"
 			if err := os.WriteFile(config, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}

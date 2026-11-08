@@ -7,7 +7,7 @@ description: >-
 tags:
   - negative-trigger
 inputs:
-  prompt: "Fix a wrong interface role in postman.md's workspace_tree frontmatter."
+  prompt: "Fix a wrong interface role in postman.md frontmatter."
 expected:
   should_trigger: false
 graders:

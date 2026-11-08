@@ -95,11 +95,8 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 			return nil, nil, errors.New("conflicting registered workspace configurations")
 		}
 		if chosen == nil {
-			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode, Sessions: []StatusRoute{}}
+			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode}
 			nodes = topology.Nodes
-			for _, s := range topology.Sessions {
-				chosen.Sessions = append(chosen.Sessions, StatusRoute{s.Name, s.Parent, s.InterfaceNode})
-			}
 		}
 	}
 	if chosen == nil {

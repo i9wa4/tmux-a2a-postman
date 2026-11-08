@@ -15,8 +15,8 @@ class RecursiveConfigurationTests(unittest.TestCase):
             for i in range(1, 100)
         ]
         result = compile_config(TEMPLATE, {"sessions": sessions})
-        self.assertIn('session_name: "t99"', result)
-        self.assertIn('parent_session_name: "t98"', result)
+        self.assertIn("interface_node: messenger", result)
+        self.assertNotIn("workspace_tree:", result)
         self.assertEqual(result.split("\n---\n", 1)[1], TEMPLATE.split("\n---\n", 1)[1])
         sections = role_sections(result)
         self.assertIn("recursive-common-EOF", sections["common_template"])

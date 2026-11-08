@@ -2,9 +2,8 @@
 
 ## 1. Recursive teams and publication
 
-Only verified direct parent/child interface routes exist. With no
-`workspace_tree`, the nearest live native interface in a containing canonical
-directory is the parent or child; an explicit tree takes precedence when set.
+Only verified direct parent/child interface routes exist. The nearest live
+native interface in a containing canonical directory is the parent or child.
 Each child preserves its delegated goal, criteria and exact per-hop return
 route, owns its scope index and may delegate further within authority. No
 sibling/ancestor guessing, shared global mutable tracker, raw descendant-state

@@ -19,8 +19,7 @@ chain or daemon defaults apply.
 | ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | YAML `skill_path`       | Optional path, list or selected path entries            | Adds ordinary Skill discovery metadata to recipient archives, not execution.                |
 | YAML `interface_node`   | Optional existing role name                             | Designates the local interface; no implicit default. Mermaid designation is also supported. |
-| YAML `workspace_tree`   | Optional explicit session/parent/interface list         | Overrides directory inference with declared direct routes; does not create sessions.        |
-| YAML external fields    | Optional root/workspace/session scalar strings together | Binds the declared top-level interface to a separately provisioned file channel.            |
+| YAML external fields    | Optional root/workspace/session scalar strings together | Binds the named interface workspace/session to a separately provisioned file channel.       |
 | YAML `presets`          | Optional named ordered columns/panes                    | Explicit `launch-agents` only; never evaluated by policy rendering or ordinary mail.        |
 | H2 `edges`              | One Mermaid graph, supported subset below               | Validates allowed role routes and optional reviewer/interface designation.                  |
 | H2 `common_template`    | Optional Markdown                                       | Cooperative instructions included for every intended recipient.                             |
@@ -172,7 +171,7 @@ Changing configuration later does not rewrite existing archives.
 
 ## 5. Direct parent/child interfaces
 
-Without `workspace_tree`, an interface pane can address the nearest live
+An interface pane can address the nearest live
 interface in a parent or child canonical workspace directory on the same tmux
 server. Both panes must use the configured `interface_node` role. A live
 interface at an intermediate directory blocks a shortcut; siblings, unrelated
@@ -181,36 +180,17 @@ session, role, pane, server, and workspace identity are checked before mail is
 committed. The address remains `session:interface_node`, and exact replies use
 the saved return address subject to the same current route check.
 
-An explicit tree takes precedence when present, including installations with
-different interface roles:
-
-Both sessions can share this complete declaration and the same local roles:
-
-```yaml
----
-interface_node: gateway
-workspace_tree:
-  - session_name: postman-parent
-    interface_node: gateway
-  - session_name: postman-child
-    parent_session_name: postman-parent
-    interface_node: gateway
----
-```
-
-Add a `gateway` role and its intended local edges to the body, or use the
-complete hierarchy example in the repository. Each session uses its own gateway
-in a **different** canonical workspace root below HOME. Parent gateway sends to
-`postman-child:gateway`; child gateway sends to `postman-parent:gateway`. Other
-local roles use local edges. Exact replies preserve their original return route.
-Siblings, grandchild shortcuts, undeclared sessions, cycles, duplicate names and
-ambiguous bindings fail. Session names select routes, not native identity.
-Different local interface roles are also supported when each config explicitly
-designates its own interface and contains the same tree.
+For a complete hierarchy example, see `testdata/config/hierarchy.md` in the
+repository. Each session uses its own gateway in a different canonical workspace
+root below HOME, with the child root below the parent root. Parent gateway sends
+to `postman-child:gateway`; child gateway sends to `postman-parent:gateway`.
+Other local roles use local edges. Exact replies preserve their original return
+route. Siblings, grandchild shortcuts and ambiguous bindings fail. Session names
+select the native recipient; canonical roots establish the relationship.
 
 ## 6. External file entry and optional launching
 
-An external binding adds these scalar fields together to the top-level
+An external binding adds these scalar fields together to the configured
 interface's frontmatter; replace the absolute private root for your machine:
 
 ```yaml

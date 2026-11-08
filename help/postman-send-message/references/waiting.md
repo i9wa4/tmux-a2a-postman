@@ -9,8 +9,8 @@ POP, sleep/POP, or status loops as a wait mechanism. Use
 known mail, stale evidence, and escalation.
 
 For cross-session mail use `session:node` only between verified native interface
-peers. Without `workspace_tree`, canonical directory containment selects the
+peers. Canonical directory containment selects the
 nearest live parent or child interface; an intermediate live interface blocks a
-shortcut. With `workspace_tree`, only its declared direct routes apply. Reply
+shortcut. Reply
 to the actual POP message ID; its saved return address is selected
 automatically and the route is verified again.

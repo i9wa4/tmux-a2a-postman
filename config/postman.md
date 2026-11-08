@@ -129,8 +129,7 @@ Intentional migration, task, role, permission and safety instructions still
 apply; unresolved conflicts block the affected work.
 
 Direct parent/child routes use verified native interface panes in the nearest
-live containing canonical workspace directory when no `workspace_tree` exists.
-An explicit tree controls routes when present. Use the local interface at each
+live containing canonical workspace directory. Use the local interface at each
 hop; never skip a live intermediate level, inspect arbitrary descendant records
 or turn forwarding into permission. Preserve original criteria and exact return
 correlation at each hop.

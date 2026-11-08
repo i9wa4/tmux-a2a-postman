@@ -253,7 +253,7 @@ def run_case(case):
     def verify_flow(root_id, goal, request):
         outcome = outcomes()[root_id]
         body, msg = outcome["body"], outcome["message"]
-        expected = "blocked" if case in {"declined", "missing"} else "done"
+        expected = "blocked" if case == "declined" else "done"
         if (
             body["status"] != expected
             or body["goal"] != goal
@@ -278,7 +278,7 @@ def run_case(case):
                     "child scope lost its original task or returned false DONE: "
                     + session
                 )
-        markers = list(home.glob("scopes/*/executed-" + root_id))
+        markers = list((home / "scopes").rglob("executed-" + root_id))
         if expected == "done" and (
             not markers or any(path.read_text() != "once" for path in markers)
         ):
@@ -310,7 +310,8 @@ def run_case(case):
             "exec sleep 3600",
         )
         for session in active:
-            work = home / "scopes" / session
+            parent = parents[session]
+            work = roots[parent] / session if parent is not None else home / "scopes" / session
             work.mkdir(parents=True)
             roots[session] = work
             subprocess.run(
@@ -485,6 +486,8 @@ def run_case(case):
         # Initial negative sends exercise the actual parser/route admission.
         # The controller never supplies a recipient POP, read, reply or decision.
         probes = [("team-root", "worker", "critic")]
+        if case == "missing":
+            probes += [("team-root", "messenger", "team-missing:messenger")]
         if len(active) > 2:
             probes += [("team-root", "messenger", active[2] + ":messenger")]
         if "team-b1" in active:

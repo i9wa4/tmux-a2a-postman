@@ -69,10 +69,11 @@ def run_case(case, terminal):
     receiver = next(role for role in roles if role != initiator)
     if case == "approval-burst":
         roles += ["worker-a", "worker-b", "worker-c"]
+    native_roles = {role: "gateway" if cross else role for role in roles}
     dirs = {role: work for role in roles}
     sessions = {role: "work" for role in roles}
     if cross:
-        dirs["worker"] = home / "child"
+        dirs["worker"] = work / "child"
         dirs["worker"].mkdir()
         sessions["worker"] = "child"
     configs = {role: dirs[role] / "postman.md" for role in roles}
@@ -85,9 +86,9 @@ def run_case(case, terminal):
         config += ("\n## 2. `common_template`\nShared instructions are not a node.\n"
                    "\n## 3. `message_footer`\nPresentation text is not a node.\n")
         if cross:
-            config = ("---\ninterface_node: " + role + "\nworkspace_tree:\n"
-                      "  - session_name: work\n    interface_node: orchestrator\n"
-                      "  - session_name: child\n    parent_session_name: work\n    interface_node: worker\n---\n" + config)
+            config = ("---\ninterface_node: gateway\n---\n"
+                      "## 1. `edges`\n```mermaid\ngraph LR\ngateway\nclass gateway interface_node\n```\n"
+                      "## 2. `gateway`\nRoute to the nearest live gateway.\n")
         if case in EXTERNAL_CASES:
             config = ("---\ninterface_node: orchestrator\nexternal_workspace: ~/work-tree\n"
                       "external_session: work\nexternal_mailbox_root: " + str(root / "external") + "\n---\n" + config)
@@ -166,7 +167,7 @@ def run_case(case, terminal):
         return dict(env, TMUX=str(socket) + ",0,0", TMUX_PANE=panes[role])
 
     def send():
-        to = sessions[receiver] + ":" + receiver if cross else receiver
+        to = sessions[receiver] + ":" + native_roles[receiver] if cross else receiver
         began = time.monotonic()
         body = "Smoke ping " + uuid.uuid4().hex + "; full archive read required.\nUnicode 日本語\nEOF_MARKER\n"
         initial = subprocess.run([postman, "send-heredoc", "--config", str(configs[initiator]), "--to", to],
@@ -175,7 +176,7 @@ def run_case(case, terminal):
         if initial.returncode:
             raise RuntimeError("send-heredoc failed after " + str(time.monotonic() - began) + "s: " +
                                initial.stdout + initial.stderr)
-        return {"seconds": time.monotonic() - began, **json.loads(initial.stdout), "mail_evidence": sent_evidence(initiator, body, root / "state")}
+        return {"seconds": time.monotonic() - began, **json.loads(initial.stdout), "mail_evidence": sent_evidence(native_roles[initiator], body, root / "state")}
 
     def verify_proof(proof, ready):
         role = proof["role"]
@@ -209,12 +210,12 @@ def run_case(case, terminal):
             panes[role] = pane
             tmux("set-option", "-t", sessions[role], "remain-on-exit", "on")
             tmux("resize-window", "-t", pane, "-x", "240", "-y", "60")
-            tmux("select-pane", "-t", pane, "-T", role)
+            tmux("select-pane", "-t", pane, "-T", native_roles[role])
             prompt = ("Isolated Postman notification smoke. SMOKE_ROLE=" + role + " NONCE=" + nonces[role] + ". "
                       "Do not edit project files or use external services. Run python3 " + shlex.quote(recipient) + " setup " + nonces[role] +
                       ". Then wait for Postman notifications in THIS conversation. For each notification, run python3 " + shlex.quote(recipient) +
                       " <exact-notified-message-id> " + nonces[role] + ". The helper POPs, reads the complete archive and sends the correlated test reply. Do not poll.")
-            launch = ["env", "POSTMAN_SMOKE_ROLE=" + role, "POSTMAN_CONFIG=" + str(configs[role]),
+            launch = ["env", "POSTMAN_SMOKE_ROLE=" + role, "POSTMAN_SMOKE_NATIVE_ROLE=" + native_roles[role], "POSTMAN_CONFIG=" + str(configs[role]),
                       "POSTMAN_SMOKE_CONVERSATION=" + uuid.uuid4().hex]
             if codex:
                 # Real vde-layout-style Codex; transport is still ordinary tmux input.
@@ -254,15 +255,13 @@ def run_case(case, terminal):
                 if not denied.returncode or (root / "external").exists():
                     raise RuntimeError("ordinary worker accessed or provisioned external binding")
                 original = configs[initiator].read_text()
-                child = original.replace("external_session: work\n", "external_session: work\nworkspace_tree:\n"
-                                         "  - session_name: parent\n    interface_node: worker\n"
-                                         "  - session_name: work\n    parent_session_name: parent\n    interface_node: orchestrator\n")
+                child = original.replace("external_session: work\n", "external_session: child\n")
                 try:
                     configs[initiator].write_text(child)
                     denied = subprocess.run([postman, "channel-sync", "--config", str(configs[initiator])],
                                             env=sender_env(initiator), text=True, capture_output=True, timeout=15)
                     if not denied.returncode or (root / "external").exists():
-                        raise RuntimeError("child interface accessed or provisioned external binding")
+                        raise RuntimeError("mismatched native session accessed or provisioned external binding")
                 finally:
                     configs[initiator].write_text(original)
             channel_sync()  # Provision only this fixture's configured private binding.
