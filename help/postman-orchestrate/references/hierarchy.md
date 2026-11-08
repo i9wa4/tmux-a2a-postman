@@ -15,12 +15,11 @@ canonical workspace. Review `tmux-a2a-postman launch-agents --list`, then
 Inspect its roles, commands, configuration source and dedicated session target,
 then repeat the same command without `--dry-run`. When invoked from a parent
 pane, omitting `--session` creates a window in that parent session, so it is
-unsuitable for this child-team route. A successful
-launch records live native bindings, but does not prove an agent is ready.
-For a manually started team, its interface must perform a normal configured
-operation to register its current configuration before it can receive a
-directory task. Use `refresh-status` to inspect attributed scope; it is an
-observation, not send authority.
+unsuitable for this child-team route. A successful launch records live native
+bindings, but does not prove an agent is ready. For a manually started team, its
+interface must perform a normal configured operation to register its current
+configuration before it can receive a directory task. Use `refresh-status` to
+inspect attributed scope; it is an observation, not send authority.
 
 Send to the exact `session:interface_node` address shown by verified contact
 guidance. Each peer's interface name comes from its own registered
