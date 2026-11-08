@@ -176,6 +176,9 @@ func TestPresetChildDirectoryFirstTaskAndExactReply(t *testing.T) {
 	if err != nil || !launched.Success || len(launched.Launch.Panes) != 1 {
 		t.Fatal("child launch", launched, err)
 	}
+	if launched.Launch.SessionID == f.tmux("display-message", "-p", "-t", f.worker, "#{session_id}") {
+		t.Fatal("documented --session route did not create a dedicated child session", launched)
+	}
 	child := launched.Launch.Panes[0].Pane
 	requestBody := "preset child task\n"
 	if result, err := f.run(f.worker, requestBody, "send-heredoc", "--config", parentConfig, "--to", "child:messenger"); err != nil || !result.Success {

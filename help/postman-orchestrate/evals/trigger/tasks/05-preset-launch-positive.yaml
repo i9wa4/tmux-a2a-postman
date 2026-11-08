@@ -1,0 +1,12 @@
+id: postman-orchestrate-preset-launch-positive
+name: preset child team launch
+inputs:
+  prompt: Coordinate a parent/child directory team's preset launch handoff. Preview and launch its dedicated child session, send the first delegated task, and preserve the original acceptance criteria through the exact reply and evidence return hop.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: preset-launch-positive
+  config:
+    skill_path: help/postman-orchestrate/SKILL.md
+    mode: positive

@@ -11,9 +11,11 @@ inspection or human-facing shortcut hides a failed route.
 
 For a new team, choose a real directory below the parent interface pane's
 canonical workspace. Review `tmux-a2a-postman launch-agents --list`, then
-`tmux-a2a-postman launch-agents <preset> --cwd /absolute/child --dry-run`.
-Inspect its roles, commands, configuration source and target before removing
-`--dry-run`. Use `--session` only for a new dedicated session. A successful
+`tmux-a2a-postman launch-agents <preset> --cwd /absolute/child --session child-team --dry-run`.
+Inspect its roles, commands, configuration source and dedicated session target,
+then repeat the same command without `--dry-run`. When invoked from a parent
+pane, omitting `--session` creates a window in that parent session, so it is
+unsuitable for this child-team route. A successful
 launch records live native bindings, but does not prove an agent is ready.
 For a manually started team, its interface must perform a normal configured
 operation to register its current configuration before it can receive a

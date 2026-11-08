@@ -173,20 +173,40 @@ Changing configuration later does not rewrite existing archives.
 
 An interface pane can address the nearest live
 interface in a parent or child canonical workspace directory on the same tmux
-server. Both panes must use the configured `interface_node` role. A live
+server. Each pane uses the `interface_node` role from its own registered
+configuration; the roles may have different names. A live
 interface at an intermediate directory blocks a shortcut; siblings, unrelated
 roots, equal roots, and path-prefix lookalikes do not form routes. Native
 session, role, pane, server, and workspace identity are checked before mail is
 committed. The address remains `session:interface_node`, and exact replies use
 the saved return address subject to the same current route check.
 
-For a complete hierarchy example, see `testdata/config/hierarchy.md` in the
-repository. Each session uses its own gateway in a different canonical workspace
-root below HOME, with the child root below the parent root. Parent gateway sends
-to `postman-child:gateway`; child gateway sends to `postman-parent:gateway`.
-Other local roles use local edges. Exact replies preserve their original return
-route. Siblings, grandchild shortcuts and ambiguous bindings fail. Session names
-select the native recipient; canonical roots establish the relationship.
+For example, give `parent` at `~/team` a `postman.md` with
+`interface_node: gateway` and give `alpha` at `~/team/alpha` a separate
+`postman.md` with `interface_node: messenger`. Start the live panes with those
+exact titles and register each configuration by a normal configured operation
+(such as `pop`); a preset launch registers its live panes after startup. The
+parent addresses `alpha:messenger`, and alpha addresses `parent:gateway`.
+Neither config needs a parent declaration or a `workspace_tree` override.
+
+```text
+~/team                 parent:gateway
+├── alpha              alpha:messenger
+│   └── deep           deep:gateway
+├── beta               beta:gateway
+└── alphaish           prefix:gateway
+~/other                unrelated:gateway
+```
+
+With all shown interfaces live and registered, `parent`↔`alpha` and
+`parent`↔`beta` are direct. `alpha`↔`deep` is direct; `parent`↔`deep` is
+blocked by alpha's intermediate interface. `alpha`↔`beta` is a sibling route
+and is blocked. `unrelated` has no containment route. `alphaish` shares only a
+text prefix with `alpha`, so `alpha`↔`prefix` is blocked; it is a separate
+direct child of `parent`. A missing registration, duplicate root, or ambiguous
+interface binding fails closed. Session names select the native recipient;
+canonical roots establish the relationship. For a complete same-role fixture,
+see `testdata/config/hierarchy.md` in the repository.
 
 ## 6. External file entry and optional launching
 

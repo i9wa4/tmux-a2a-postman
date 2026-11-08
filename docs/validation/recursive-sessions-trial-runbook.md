@@ -2,10 +2,11 @@
 
 Create isolated parent and child tmux sessions rooted at different directories
 below a temporary HOME. Title their interface panes with configured roles.
-Declare both sessions and their direct parent relation in Markdown frontmatter
-as shown in the
-[format reference](../../help/postman-md.md).
-Each session's topology declares its own local `interface_node`.
+Each session's configuration declares its own local `interface_node` as shown
+in the [format reference](../../help/postman-md.md). Register each live
+interface through a normal configured operation before the first cross-session
+send. Canonical directory containment and current native registration establish
+the direct parent/child route; no parent frontmatter or tree override is used.
 
 Start an agent console in each interface pane. Send one reply-required message
 to `child:interface-role`. The common tmux paste/C-m notification must drive
@@ -13,9 +14,9 @@ child POP and full archive reading, its exact reply to `parent:interface-role`,
 and the parent claim. Repeat in the other direction.
 Check each workspace's independent sent and read files and POP receipts.
 
-Do not invoke receiver actions from the test controller. Do not infer routes
-from directory ancestry, scan a fleet of panes or notify a same-named local
-role. Missing/ambiguous peer binding must fail explicitly. Clean up only owned
+Do not invoke receiver actions from the test controller. Do not treat ancestry
+alone, an unregistered pane title, or a same-named local role as a verified
+route. Missing/ambiguous peer binding must fail explicitly. Clean up only owned
 fixtures. `TestNotificationDrivenTerminalAgents` automates both directions
 without a model or daemon. Run either direction with
 `nix run .#notification-smoke -- --case parent-child` or `--case child-parent`.
@@ -44,7 +45,7 @@ nix run .#recursive-smoke -- --case root \
 ```
 
 Use a compatible messenger/orchestrator/worker/approver/guardian/critic graph
-without an existing workspace-tree override. Additional Skill metadata comes
+without a workspace-tree override. Additional Skill metadata comes
 only from explicitly supplied roots; Postman's own Skills remain available.
 The original policy and installed directories are never modified. The default
 check has no consumer dependency.

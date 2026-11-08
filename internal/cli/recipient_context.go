@@ -48,6 +48,17 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		path := c.topologyPath
 		builtin := c.source.Builtin
 		if msg.ToSession != "" && msg.ToSession != name {
+			// A cross-session archive belongs to its recipient. The source
+			// enumeration can omit another child of a parent recipient.
+			currentInterfaces = nil
+			for _, candidate := range interfaces {
+				if candidate.Session == msg.ToSession && candidate.Role() == msg.To {
+					advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					currentInterfaces, _ = c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
+					cancel()
+					break
+				}
+			}
 			path, builtin = recipientSnapshot.ConfigPath, recipientSnapshot.BuiltinConfig
 			if path == "" {
 				return "", workspace.ErrUnknown

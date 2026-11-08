@@ -1,0 +1,12 @@
+id: postman-orchestrate-child-placement-negative
+name: unrelated directory placement
+inputs:
+  prompt: Suggest a filesystem directory for storing build outputs; no agent team, message route, or delegated task is involved.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: child-placement-negative
+  config:
+    skill_path: help/postman-orchestrate/SKILL.md
+    mode: negative

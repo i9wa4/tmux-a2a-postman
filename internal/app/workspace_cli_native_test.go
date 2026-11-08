@@ -131,6 +131,55 @@ func TestDirectoryRouteUsesEachPeersRegisteredInterface(t *testing.T) {
 	}
 }
 
+func TestCrossDirectoryArchiveListsRecipientParentOtherChild(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parentConfig := f.config
+	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(parentConfig, []byte(parentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	children := map[string]struct{ pane, config, role string }{}
+	for _, item := range []struct{ session, role string }{{"alpha", "messenger"}, {"beta", "gateway"}} {
+		root := filepath.Join(f.home, "work", item.session)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pane := f.tmux("new-session", "-d", "-s", item.session, "-c", root, "-P", "-F", "#{pane_id}", "exec sleep 120")
+		f.tmux("select-pane", "-t", pane, "-T", item.role)
+		path := filepath.Join(f.home, item.session+"-postman.md")
+		policy := "---\ninterface_node: " + item.role + "\n---\n## `edges`\n```mermaid\ngraph LR\n" + item.role + " --- helper\n```\n## `" + item.role + "`\nChild interface\n## `helper`\nHelper\n"
+		if err := os.WriteFile(path, []byte(policy), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		children[item.session] = struct{ pane, config, role string }{pane, path, item.role}
+	}
+	for _, item := range []struct{ pane, config string }{{f.worker, parentConfig}, {children["alpha"].pane, children["alpha"].config}, {children["beta"].pane, children["beta"].config}} {
+		if result, err := f.run(item.pane, "", "pop", "--config", item.config); err != nil || !result.Success {
+			t.Fatal("interface registration", result, err)
+		}
+	}
+	alpha := children["alpha"]
+	if result, err := f.run(alpha.pane, "from alpha", "send-heredoc", "--config", alpha.config, "--to", "work:worker"); err != nil || !result.Success {
+		t.Fatal("alpha to parent", result, err)
+	}
+	claimed, err := f.run(f.worker, "", "pop", "--config", parentConfig)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("parent POP", claimed, err)
+	}
+	archive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if archive.Context == nil {
+		t.Fatal("missing recipient context", archive)
+	}
+	_, after, ok := strings.Cut(archive.Context.Markdown, "You can talk to:\n\n")
+	if !ok {
+		t.Fatal("missing contact section", archive.Context.Markdown)
+	}
+	contacts, _, ok := strings.Cut(after, "\n\nThese are configured routes")
+	if !ok || !strings.Contains(contacts, "- alpha:messenger") || !strings.Contains(contacts, "- beta:gateway") || strings.Contains(contacts, "- work:worker") {
+		t.Fatal("parent contacts were filtered through alpha's view", contacts)
+	}
+}
+
 func TestExternalChannelIsBoundToExactChildInterface(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	childRoot := filepath.Join(f.home, "work", "child")

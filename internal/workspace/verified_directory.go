@@ -113,3 +113,14 @@ func (s Store) VerifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 	}
 	return interfaces, nil
 }
+
+// VerifiedDirectoryInterfacesFrom enumerates direct-route candidates from a
+// previously verified peer's own interface and configuration. Recipient
+// contact guidance must use this view, since a sender below one child cannot
+// see the recipient parent's other children from its own root.
+func (s Store) VerifiedDirectoryInterfacesFrom(ctx context.Context, source NamedRuntime) ([]DirectoryInterface, error) {
+	if _, err := source.Snapshot(ctx); err != nil {
+		return nil, err
+	}
+	return s.VerifiedDirectoryInterfaces(ctx, source.tmux, source.role)
+}
