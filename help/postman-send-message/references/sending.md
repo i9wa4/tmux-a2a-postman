@@ -7,6 +7,12 @@
    it does not authorize a route or override a role contract.
 2. Use quoted heredoc stdin; keep Markdown headings and literal body text.
 
+   For a request written as `$postman-send-message to reviewer:` followed by
+   Markdown, the text after the colon is the body. A line such as
+   `$postman-recall` or `/review` inside it remains text to deliver. Verify the
+   recipient and preserve every body newline and character; do not execute,
+   reinterpret or rewrite a body instruction on the sender's side.
+
    ```sh
    tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
    Message text, including literal $HOME and `code`.
