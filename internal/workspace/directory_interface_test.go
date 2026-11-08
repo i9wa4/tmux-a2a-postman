@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -85,6 +86,35 @@ func TestDirectoryInterfacesVerifyNativeRootsAndRejectAmbiguity(t *testing.T) {
 	if _, err := f.adapter().FindNamedPeer(ctx, "unrelated space", "worker"); err == nil {
 		t.Fatal("Postman-disallowed target address accepted")
 	}
+	// Older tmux versions can expose tabs in session names. This version
+	// rejects them on creation, so substitute that one native name lookup.
+	tabSession := f.run(t, "display-message", "-p", "-t", unrelated, "#{session_id}")
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyDir := t.TempDir()
+	proxy := "#!/bin/sh\ncase \"$*\" in\n" +
+		"  *list-sessions*session_name*) exit 91 ;;\n" +
+		"  *display-message*\"$POSTMAN_TAB_SESSION\"*session_name*) printf '%s\\tunrelated\\tname\\n' \"$POSTMAN_TAB_SESSION\"; exit 0 ;;\n" +
+		"esac\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(proxyDir, "tmux"), []byte(proxy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("POSTMAN_TAB_SESSION", tabSession)
+	t.Setenv("POSTMAN_REAL_TMUX", realTmux)
+	t.Setenv("PATH", proxyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if interfaces, err := f.adapter().DirectoryInterfaces(ctx, "worker"); err != nil || len(interfaces) != 3 {
+		t.Fatalf("unrelated tabbed native name blocked valid interfaces: %+v %v", interfaces, err)
+	}
+	if _, err := f.adapter().FindNamedPeer(ctx, "child", "worker"); err != nil {
+		t.Fatalf("unrelated tabbed native name blocked target lookup: %v", err)
+	}
+	f.run(t, "select-pane", "-t", unrelated, "-T", "worker")
+	if _, err := f.adapter().DirectoryInterfaces(ctx, "worker"); err == nil {
+		t.Fatal("tabbed native name with selected interface was accepted")
+	}
+	f.run(t, "select-pane", "-t", unrelated, "-T", "ordinary")
 	alias := filepath.Join(f.home, "alias")
 	if err := os.Symlink(childRoot, alias); err != nil {
 		t.Fatal(err)

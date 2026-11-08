@@ -24,6 +24,8 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 	}
 	name := caller.Name()
 	var interfaces []workspace.DirectoryInterface
+	localDirectoryContacts := !crossSession && len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode
+	c.mail.StageBeforeContext = localDirectoryContacts
 	if crossSession && len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode {
 		// Directory contact hints are advisory. Local mail and channel sync
 		// must not enumerate the server before staging; cross-session sends
@@ -36,11 +38,17 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		currentInterfaces := interfaces
+		if localDirectoryContacts {
+			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			currentInterfaces, _ = c.runtime.DirectoryInterfaces(advisoryCtx, c.topology.InterfaceNode)
+		}
 		path := c.topologyPath
 		if c.source.Builtin {
 			path = ""
 		}
-		return renderRecipientContextDirectory(policy, c.topology, path, name, msg, interfaces), nil
+		return renderRecipientContextDirectory(policy, c.topology, path, name, msg, currentInterfaces), nil
 	}
 	return nil
 }

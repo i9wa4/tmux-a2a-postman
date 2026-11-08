@@ -46,18 +46,17 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 	if err != nil {
 		return nil, err
 	}
-	out, err := tmuxOutput(ctx, t.Socket, "list-sessions", "-F", "#{session_id}\t#{session_name}")
+	out, err := tmuxOutput(ctx, t.Socket, "list-sessions", "-F", "#{session_id}")
 	if err != nil {
 		return nil, err
 	}
 	var interfaces []DirectoryInterface
 	seenNames, seenRoots := map[string]bool{}, map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 2 || !nativeID(fields[0], '$') {
+	for _, sessionID := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if !nativeID(sessionID, '$') {
 			return nil, ErrUnknown
 		}
-		panes, err := tmuxOutput(ctx, t.Socket, "list-panes", "-s", "-t", fields[0],
+		panes, err := tmuxOutput(ctx, t.Socket, "list-panes", "-s", "-t", sessionID,
 			"-F", "#{session_id}\t#{pane_id}\t#{pane_title}\t#{pane_dead}\t#{pane_pid}")
 		if err != nil {
 			return nil, err
@@ -66,7 +65,7 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 		var interfacePane, interfacePID string
 		for _, pane := range strings.Split(strings.TrimSuffix(panes, "\n"), "\n") {
 			parts := strings.Split(pane, "\t")
-			if len(parts) != 5 || parts[0] != fields[0] || !nativeID(parts[1], '%') ||
+			if len(parts) != 5 || parts[0] != sessionID || !nativeID(parts[1], '%') ||
 				!positivePID(parts[4]) || (parts[3] != "0" && parts[3] != "1") {
 				return nil, ErrUnknown
 			}
@@ -78,29 +77,30 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 		if count == 0 {
 			continue
 		}
-		if !validNativeSessionName(fields[1]) || seenNames[fields[1]] {
+		name, err := nativeSessionName(ctx, t.Socket, sessionID)
+		if err != nil || seenNames[name] {
 			return nil, ErrUnknown
 		}
-		seenNames[fields[1]] = true
+		seenNames[name] = true
 		if count != 1 {
 			return nil, errors.New("ambiguous interface role binding")
 		}
 		peer := t
 		peer.Pane = interfacePane
 		owner := origin.Caller.Owner
-		runtime := NamedRuntime{peer, fields[1], role, owner.Server, owner.Incarnation, fields[0], interfacePID, false}
+		runtime := NamedRuntime{peer, name, role, owner.Server, owner.Incarnation, sessionID, interfacePID, false}
 		snapshot, err := runtime.Snapshot(ctx)
 		if err != nil {
 			return nil, err
 		}
-		if fields[0] == owner.Session && snapshot.Root != origin.Root {
+		if sessionID == owner.Session && snapshot.Root != origin.Root {
 			return nil, ErrUnknown
 		}
 		if seenRoots[snapshot.Root] {
 			return nil, errors.New("ambiguous interface workspace root")
 		}
 		seenRoots[snapshot.Root] = true
-		interfaces = append(interfaces, DirectoryInterface{fields[1], snapshot.Root, runtime})
+		interfaces = append(interfaces, DirectoryInterface{name, snapshot.Root, runtime})
 	}
 	return interfaces, nil
 }
@@ -233,21 +233,24 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 	if err != nil {
 		return NamedRuntime{}, err
 	}
-	out, err := tmuxOutput(ctx, t.Socket, "list-sessions", "-F", "#{session_id}\t#{session_name}")
+	out, err := tmuxOutput(ctx, t.Socket, "list-sessions", "-F", "#{session_id}")
 	if err != nil {
 		return NamedRuntime{}, err
 	}
 	var selected string
-	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) != 2 || !nativeID(fields[0], '$') {
+	for _, sessionID := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if !nativeID(sessionID, '$') {
 			return NamedRuntime{}, ErrUnknown
 		}
-		if fields[1] == sessionName {
+		name, err := rawNativeSessionName(ctx, t.Socket, sessionID)
+		if err != nil {
+			return NamedRuntime{}, err
+		}
+		if name == sessionName {
 			if selected != "" {
 				return NamedRuntime{}, errors.New("ambiguous named session")
 			}
-			selected = fields[0]
+			selected = sessionID
 		}
 	}
 	if selected == "" || selected == caller.Caller.Owner.Session {
@@ -287,16 +290,24 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 }
 
 func nativeSessionName(ctx context.Context, socket, sessionID string) (string, error) {
+	name, err := rawNativeSessionName(ctx, socket, sessionID)
+	if err != nil || !validNativeSessionName(name) {
+		return "", ErrUnknown
+	}
+	return name, nil
+}
+
+func rawNativeSessionName(ctx context.Context, socket, sessionID string) (string, error) {
 	out, err := tmuxOutput(ctx, socket, "display-message", "-p", "-t", sessionID,
 		"#{session_id}\t#{session_name}")
 	if err != nil {
 		return "", err
 	}
-	fields := strings.Split(strings.TrimSuffix(out, "\n"), "\t")
-	if len(fields) != 2 || fields[0] != sessionID || !validNativeSessionName(fields[1]) {
+	identity, name, ok := strings.Cut(strings.TrimSuffix(out, "\n"), "\t")
+	if !ok || identity != sessionID {
 		return "", ErrUnknown
 	}
-	return fields[1], nil
+	return name, nil
 }
 
 func validNativeSessionName(name string) bool {

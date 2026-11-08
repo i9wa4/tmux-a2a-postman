@@ -116,7 +116,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	}
 	// A local interface send must not wait for advisory whole-server discovery.
 	// Slow any pre-stage enumeration in an owned server with many sessions and
-	// record whether the CLI attempted it before a sent copy existed.
+	// record whether the CLI attempted it before a durable draft existed.
 	orchestratorPane := runTmux("split-window", "-d", "-t", parentPane, "-c", parentRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
 	runTmux("select-pane", "-t", orchestratorPane, "-T", "orchestrator")
@@ -131,7 +131,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	shimDir := t.TempDir()
 	shim := filepath.Join(shimDir, "tmux")
 	logPath := filepath.Join(shimDir, "pre-stage-enumerations")
-	script := "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = list-sessions ] && [ -z \"$(find \"$POSTMAN_TEST_STATE\" -type f -path '*/sent/*.md' -print -quit)\" ]; then\n    printf 'pre-stage list-sessions\\n' >> \"$POSTMAN_TEST_LOG\"\n    sleep 3\n  fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	script := "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = list-sessions ] && [ -z \"$(find \"$POSTMAN_TEST_STATE\" -type f \\( -path '*/draft/*.md' -o -path '*/sent/*.md' \\) -print -quit)\" ]; then\n    printf 'pre-stage list-sessions\\n' >> \"$POSTMAN_TEST_LOG\"\n    sleep 3\n  fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
 	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
