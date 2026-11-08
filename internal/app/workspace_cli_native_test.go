@@ -67,10 +67,100 @@ func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 	}
 }
 
+func TestDirectoryRouteUsesEachPeersRegisteredInterface(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	childRoot := filepath.Join(f.home, "work", "child")
+	if err := os.MkdirAll(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	child := f.tmux("new-session", "-d", "-s", "child", "-c", childRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", child, "-T", "messenger")
+	parentConfig := f.config
+	childConfig := filepath.Join(f.home, "child-postman.md")
+	for path, content := range map[string]string{
+		parentConfig: "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n",
+		childConfig:  "---\ninterface_node: messenger\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result, err := f.run(f.worker, "", "pop", "--config", parentConfig); err != nil || !result.Success {
+		t.Fatal("parent registration", result, err)
+	}
+	if result, err := f.run(f.worker, "unregistered peer", "send-heredoc", "--config", parentConfig, "--to", "child:messenger"); err == nil || result.Success {
+		t.Fatal("unregistered title became a route", result, err)
+	}
+	if result, err := f.run(child, "", "pop", "--config", childConfig); err != nil || !result.Success {
+		t.Fatal("child registration", result, err)
+	}
+	if result, err := f.run(f.worker, "wrong role", "send-heredoc", "--config", parentConfig, "--to", "child:worker"); err == nil || result.Success {
+		t.Fatal("caller-selected peer role became a route", result, err)
+	}
+	requestBody := "registered cross-config task\n"
+	if result, err := f.run(f.worker, requestBody, "send-heredoc", "--config", parentConfig, "--to", "child:messenger"); err != nil || !result.Success {
+		t.Fatal("cross-config task", result, err)
+	}
+	pop, err := f.run(child, "", "pop", "--config", childConfig)
+	if err != nil || !pop.Success || pop.MarkdownPath == nil {
+		t.Fatal("child POP", pop, err)
+	}
+	complete, err := os.ReadFile(*pop.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), requestBody) {
+		t.Fatal("complete child archive", err)
+	}
+	request := readProtocolArchive(t, *pop.MarkdownPath)
+	if request.From != "worker" || request.To != "messenger" || request.FromSession != "work" || request.ToSession != "child" || request.Context == nil || !strings.Contains(request.Context.Markdown, "work:worker") || !strings.Contains(request.Context.Markdown, "Messenger") {
+		t.Fatal("registered route or contact", request)
+	}
+	answerBody := "registered cross-config answer\n"
+	if result, err := f.run(child, answerBody, "send-heredoc", "--config", childConfig, "--to", request.ID); err != nil || !result.Success {
+		t.Fatal("exact child reply", result, err)
+	}
+	pop, err = f.run(f.worker, "", "pop", "--config", parentConfig)
+	if err != nil || !pop.Success || pop.MarkdownPath == nil {
+		t.Fatal("parent POP", pop, err)
+	}
+	complete, err = os.ReadFile(*pop.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), answerBody) {
+		t.Fatal("complete parent archive", err)
+	}
+	answer := readProtocolArchive(t, *pop.MarkdownPath)
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID || answer.From != "messenger" || answer.To != "worker" {
+		t.Fatal("exact reply correlation", answer)
+	}
+}
+
+func TestExternalChannelIsBoundToExactChildInterface(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	childRoot := filepath.Join(f.home, "work", "child")
+	if err := os.MkdirAll(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	child := f.tmux("new-session", "-d", "-s", "child", "-c", childRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", child, "-T", "messenger")
+	root := filepath.Join(f.home, "child-external")
+	configPath := filepath.Join(f.home, "child-external.md")
+	content := "---\ninterface_node: messenger\nexternal_mailbox_root: " + root + "\nexternal_workspace: ~/work/child\nexternal_session: child\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(f.worker, "", "channel-sync", "--config", configPath); err == nil || result.Success {
+		t.Fatal("parent accessed child binding", result, err)
+	}
+	if result, err := f.run(child, "", "channel-sync", "--config", configPath); err != nil || !result.Success {
+		t.Fatal("configured child binding", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "binding.json")); err != nil {
+		t.Fatal("child binding missing", err)
+	}
+}
+
 func TestWorkspaceCLILocalArchiveListsNearestDirectoryContacts(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	childRoot := filepath.Join(f.home, "work", "child")
 	var childPane string
+	directoryPanes := []string{f.worker}
 	for _, item := range []struct{ name, root string }{
 		{"child", childRoot},
 		{"grandchild", filepath.Join(childRoot, "grandchild")},
@@ -82,6 +172,7 @@ func TestWorkspaceCLILocalArchiveListsNearestDirectoryContacts(t *testing.T) {
 		}
 		pane := f.tmux("new-session", "-d", "-s", item.name, "-c", item.root, "-P", "-F", "#{pane_id}", "exec sleep 120")
 		f.tmux("select-pane", "-t", pane, "-T", "worker")
+		directoryPanes = append(directoryPanes, pane)
 		if item.name == "child" {
 			childPane = pane
 		}
@@ -91,6 +182,11 @@ func TestWorkspaceCLILocalArchiveListsNearestDirectoryContacts(t *testing.T) {
 	content := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
 	if err := os.WriteFile(f.config, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	for _, pane := range directoryPanes {
+		if result, err := f.run(pane, "", "pop", "--config", f.config); err != nil || !result.Success {
+			t.Fatal("register directory interface", result, err)
+		}
 	}
 	if sent, err := f.run(childPeer, "local directory contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !sent.Success {
 		t.Fatal(sent, err)

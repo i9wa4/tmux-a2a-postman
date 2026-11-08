@@ -132,6 +132,7 @@ def run_case(case):
         "TMUX_A2A_POSTMAN_CONFIG": "",
         "POSTMAN_BUILTIN_POLICY": "",
         "POSTMAN_SMOKE_CASE": "recursive-team",
+        "POSTMAN_TEAM_DIRECTORY": "1" if len(active) > 1 else "0",
         "POSTMAN_TEAM_APPROVAL": "rejected" if case == "declined" else "approved",
     }
     env.pop("TMUX", None)

@@ -583,6 +583,10 @@ def receive():
 
 try:
     if phase == "setup":
+        if role == "messenger" and os.environ.get("POSTMAN_TEAM_DIRECTORY") == "1":
+            registered = cli(["pop"])
+            if registered.get("markdown_absolute_path") is not None:
+                raise RuntimeError("directory setup registration was not empty")
         (evidence / (role + ".ready.json")).write_text(
             json.dumps({"role": role, "nonce": nonce})
         )

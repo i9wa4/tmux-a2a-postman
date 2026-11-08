@@ -93,6 +93,13 @@ def receive():
 
 
 if phase == "setup":
+    if case in ["parent-child", "child-parent"]:
+        # One setup admission registers this terminal's current configuration
+        # and native pane. Later mail handling still starts only from a real
+        # notification; this is not an empty-inbox polling loop.
+        registered = cli(["pop", "--config", config])
+        if not registered["success"] or registered.get("markdown_absolute_path") is not None:
+            raise RuntimeError("cross-team setup registration was not empty")
     (root / (role + ".ready.json")).write_text(json.dumps({"conversation_id": thread_id, "nonce": nonce}))
     if case == "busy" and role == "worker":
         (root / "busy").touch()

@@ -154,6 +154,9 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	}
 	t.Log("local interface send with 18 native sessions: pre-stage full-server enumerations: 0")
 	_ = claim(parentPane, "local interface task\n")
+	if result, err := invoke(childPane, "", RunWorkspacePop); err != nil || !result.Success {
+		t.Fatalf("register child configuration: %+v %v", result, err)
+	}
 	for _, direction := range []struct {
 		name, target, sourcePane, targetPane string
 	}{
@@ -191,6 +194,9 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	middlePane := runTmux("new-session", "-d", "-s", "middle", "-c", filepath.Join(parentRoot, "branch"),
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
 	runTmux("select-pane", "-t", middlePane, "-T", "messenger")
+	if result, err := invoke(middlePane, "", RunWorkspacePop); err != nil || !result.Success {
+		t.Fatalf("register intermediate configuration: %+v %v", result, err)
+	}
 	if result, err := invoke(parentPane, "skipped-level reject\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err == nil || result.Success {
 		t.Fatalf("CLI accepted intermediate shortcut: %+v %v", result, err)
 	}

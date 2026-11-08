@@ -50,10 +50,10 @@ func TestRecipientContextUsesLocalDisplayOnlyForHumanFields(t *testing.T) {
 func TestDirectoryContactsMatchNearestLiveInterfaceRoutes(t *testing.T) {
 	topology := config.WorkspaceTopology{InterfaceNode: "messenger", Edges: map[string][]string{"messenger": {"worker"}}}
 	interfaces := []workspace.DirectoryInterface{
-		{Session: "top", Root: "~/github.com"},
-		{Session: "child", Root: "~/github.com/repo"},
-		{Session: "leaf", Root: "~/github.com/repo/sub"},
-		{Session: "sibling", Root: "~/github.com/other"},
+		{Session: "top", Root: "~/github.com", InterfaceRole: "messenger"},
+		{Session: "child", Root: "~/github.com/repo", InterfaceRole: "messenger"},
+		{Session: "leaf", Root: "~/github.com/repo/sub", InterfaceRole: "messenger"},
+		{Session: "sibling", Root: "~/github.com/other", InterfaceRole: "messenger"},
 	}
 	if got := recipientAddressesDirectory(topology, "child", "messenger", interfaces); !slices.Equal(got, []string{"leaf:messenger", "top:messenger", "worker"}) {
 		t.Fatal("directory contacts do not match direct routes", got)

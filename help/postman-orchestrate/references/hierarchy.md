@@ -9,6 +9,27 @@ route, owns its scope index and may delegate further within authority. No
 sibling/ancestor guessing, shared global mutable tracker, raw descendant-state
 inspection or human-facing shortcut hides a failed route.
 
+For a new team, choose a real directory below the parent interface pane's
+canonical workspace. Review `tmux-a2a-postman launch-agents --list`, then
+`tmux-a2a-postman launch-agents <preset> --cwd /absolute/child --dry-run`.
+Inspect its roles, commands, configuration source and target before removing
+`--dry-run`. Use `--session` only for a new dedicated session. A successful
+launch records live native bindings, but does not prove an agent is ready.
+For a manually started team, its interface must perform a normal configured
+operation to register its current configuration before it can receive a
+directory task. Use `refresh-status` to inspect attributed scope; it is an
+observation, not send authority.
+
+Send to the exact `session:interface_node` address shown by verified contact
+guidance. Each peer's interface name comes from its own registered
+`postman.md`; session names do not express hierarchy. After a genuine
+notification, the recipient POPs, reads the complete archive through EOF and
+replies to the claimed message ID. The parent POPs and reads that exact reply.
+If a middle interface is live, use two direct hops. Check collision and partial
+launch outcomes before retrying; started commands are never replayed
+automatically. See `help launching`, `help config`, `help postman-usage mailbox`
+and `help postman-send-message` for the canonical procedures.
+
 Before an external mutation, read the complete issue/PR body and comments,
 verify repository/remote/ref and target state, apply existing user authorization
 and local gates, then use a capable authorized connector or CLI. Never infer

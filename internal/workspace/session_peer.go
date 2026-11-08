@@ -26,14 +26,17 @@ type NamedRuntime struct {
 // DirectoryInterface is a verified live interface in a native tmux session.
 // Root is the canonical HOME-relative directory of its interface pane.
 type DirectoryInterface struct {
-	Session string
-	Root    string
-	Runtime NamedRuntime
+	Session       string
+	Root          string
+	Runtime       NamedRuntime
+	InterfaceRole string
 }
 
-// DirectoryInterfaces discovers only live panes bearing the configured
-// interface role on this server. Each candidate is rechecked as a named
-// runtime; duplicate roles, roots, or session names fail closed.
+func (d DirectoryInterface) Role() string { return d.InterfaceRole }
+
+// DirectoryInterfaces enumerates native title candidates for low-level tests.
+// A title does not attest another workspace's interface configuration. Mail
+// routes use Store.VerifiedDirectoryInterfaces instead.
 func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]DirectoryInterface, error) {
 	if !binding.ValidateNodeName(role) {
 		return nil, ErrUnknown
@@ -100,7 +103,7 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 			return nil, errors.New("ambiguous interface workspace root")
 		}
 		seenRoots[snapshot.Root] = true
-		interfaces = append(interfaces, DirectoryInterface{name, snapshot.Root, runtime})
+		interfaces = append(interfaces, DirectoryInterface{Session: name, Root: snapshot.Root, Runtime: runtime, InterfaceRole: role})
 	}
 	return interfaces, nil
 }
@@ -188,17 +191,14 @@ func (t Tmux) NamedCaller(ctx context.Context) (NamedRuntime, error) {
 func (r NamedRuntime) Name() string { return r.name }
 
 // WithDirectoryRoute requires a fresh direct-directory relation at the mail
-// publication boundary. Explicit workspace-tree routes do not set this flag.
+// publication boundary.
 func (r NamedRuntime) WithDirectoryRoute() NamedRuntime {
 	r.directoryRoute = true
 	return r
 }
 
-func verifyDirectoryRoute(ctx context.Context, source, destination NamedRuntime, from, to Snapshot) error {
-	if source.role != destination.role {
-		return ErrUnknown
-	}
-	interfaces, err := source.tmux.DirectoryInterfaces(ctx, source.role)
+func verifyDirectoryRoute(ctx context.Context, store Store, source, destination NamedRuntime, from, to Snapshot) error {
+	interfaces, err := store.VerifiedDirectoryInterfaces(ctx, source.tmux, source.role)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func verifyDirectoryRoute(ctx context.Context, source, destination NamedRuntime,
 	if err != nil {
 		return err
 	}
-	if selected.Root != to.Root || selected.Runtime.sessionID != destination.sessionID ||
+	if selected.Role() != destination.role || selected.Root != to.Root || selected.Runtime.sessionID != destination.sessionID ||
 		selected.Runtime.panePID != destination.panePID {
 		return ErrUnknown
 	}
