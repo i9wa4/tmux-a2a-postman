@@ -14,7 +14,8 @@ TMUX=/absolute/socket,PID,0 tmux-a2a-postman get-status-oneline
 ```
 
 External tmux status integration should refresh then render even when refresh is
-busy or fails; quote actual native socket/PID and preserve stderr diagnostics.
+busy or fails; quote the actual native socket/PID. Inspect `get-status` for
+saved detail when the overview is uncertain.
 
 Output is one line: [0]🟩💛:🟢 [1]⬛🟥
 [N] is native session $N, sorted numerically. ':' separates included windows
@@ -44,9 +45,12 @@ inactivity. Screen movement can be a spinner or pasted input.
 Rows with saved agent status produce glyphs. Unbound, dead, linked, renamed or
 ambiguous role panes have unknown counts. Ordinary panes add no glyph; every
 saved native session still displays its [N], including sessions without agents.
-Missing/malformed/incompatible cache emits '?' and exits nonzero, with stderr.
-Partial coverage and per-node uncertainty have stderr diagnostics. Valid stale
-snapshots remain dated; current time only ages glyph color, never changes as_of.
+Missing/malformed/incompatible cache emits '?' and exits nonzero. The command
+prints exactly one line in normal and abnormal cases, with no separate stderr
+diagnostics. Partial coverage and per-node uncertainty appear in glyphs; inspect
+the saved `get-status` JSON for coverage, per-node reasons and capture times.
+Valid stale snapshots remain dated; current time only ages glyph color, never
+changes as_of.
 --config is accepted but never read. No tmux, discovery, mail scan, state
 writes, locks, invocation logs or hidden refresh occurs. Reading cannot verify a
 current server incarnation. See help get-status and help refresh-status.

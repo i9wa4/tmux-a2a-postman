@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 )
@@ -65,7 +64,7 @@ func TestStatusOnelineColdPaneCandidatesDoNotInitializeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	line, diagnostic, err := operatorLine(t, f)
-	if err == nil || line != "?\n" || diagnostic == "" {
+	if err == nil || line != "?\n" || diagnostic != "" {
 		t.Fatal(line, diagnostic, err)
 	}
 	if _, err := os.Stat(f.stateHome); !os.IsNotExist(err) {
@@ -110,8 +109,14 @@ func TestStatusOnelineReadsAllSessionsAndWindowsWithoutMutatingMail(t *testing.T
 	}
 	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
-	if err != nil || line != "[0]?🖤:⚫ [1]⚫\n" || !strings.Contains(diagnostic, "unexpected mailbox entry") {
+	if err != nil || line != "[0]?🖤:⚫ [1]⚫\n" || diagnostic != "" {
 		t.Fatal("partial read corrupted another node/session", line, diagnostic, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	detail, err := f.child(ctx, "", "get-status", "--config", f.config).CombinedOutput()
+	if err != nil || !bytes.Contains(detail, []byte("unexpected mailbox entry")) {
+		t.Fatal("saved status lost the detailed reason", string(detail), err)
 	}
 }
 
@@ -126,7 +131,7 @@ func TestStatusOnelineRenamedOrReplacedPaneCannotKeepHealthyCounts(t *testing.T)
 	f.tmux("select-pane", "-t", f.worker, "-T", "editor")
 	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
-	if err != nil || line != "[0]?⚫\n" || !strings.Contains(diagnostic, "renamed") {
+	if err != nil || line != "[0]?⚫\n" || diagnostic != "" {
 		t.Fatal(line, diagnostic, err)
 	}
 	f.tmux("select-pane", "-t", f.worker, "-T", "worker")

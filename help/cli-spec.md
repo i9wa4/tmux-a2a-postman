@@ -172,7 +172,9 @@ Example: `[0]🟩💛:🟢 [3]⬛🟥 [9] [12]⚫`. `[N]` is native `$N`, numeri
 sorted, including gaps/two-digit IDs, independently of session names. Colons
 separate included agent windows, with panes in physical top/left order.
 Ordinary panes have no glyph; their native session label remains visible.
-Missing/incompatible cache emits `?` and exits nonzero, with stderr diagnostics.
+Missing/incompatible cache emits `?` and exits nonzero. The complete visible
+output is one line, including in abnormal cases; no separate stderr diagnostics
+are emitted. Inspect `get-status` for saved coverage and per-node reasons.
 
 Shape uses the shared node summary: unread or inbound work produces a square,
 including when outbound waits also exist; otherwise an outbound wait produces
@@ -198,8 +200,9 @@ screens may be spinners or pasted input. Last POP is never an activity fallback.
 
 Configured titles alone grant no identity. Known summaries require matching
 saved bindings/config provenance and collection-time native process identity.
-Unknown/partial rows retain reasons on stderr. Current-clock colors do not
-update the saved collection or individual capture timestamps.
+Unknown/partial rows remain visible through their glyphs, while `get-status`
+retains saved reasons and capture timestamps. Current-clock colors do not update
+the saved collection or individual capture timestamps.
 
 ## 4. pop
 
