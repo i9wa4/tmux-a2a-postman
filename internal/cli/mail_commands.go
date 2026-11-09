@@ -215,41 +215,23 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		var session, role string
-		var peer workspace.NamedRuntime
-		if len(c.topology.Sessions) != 0 {
-			session, role, err = c.topology.InterfaceRoute(caller.Name(), snapshot.Caller.Role, *to)
-			if err != nil {
-				return err
-			}
-			out.RefreshEligible = true
-			peer, err = c.runtime.FindNamedPeer(ctx, session, role)
-		} else {
-			if strings.Count(*to, ":") != 1 || snapshot.Caller.Role != c.topology.InterfaceNode {
-				return errors.New("recipient is not a directory interface")
-			}
-			session, role, _ = strings.Cut(*to, ":")
-			if role != c.topology.InterfaceNode {
-				return errors.New("recipient is not a directory interface")
-			}
-			interfaces, routeErr := c.runtime.DirectoryInterfaces(ctx, role)
-			if routeErr != nil {
-				return routeErr
-			}
-			selected, routeErr := workspace.DirectDirectoryPeer(interfaces, caller.Name(), session)
-			if routeErr != nil {
-				return routeErr
-			}
-			peer = selected.Runtime.WithDirectoryRoute()
-			out.RefreshEligible = true
+		if strings.Count(*to, ":") != 1 || snapshot.Caller.Role != c.topology.InterfaceNode {
+			return errors.New("recipient is not a directory interface")
 		}
-		if err != nil {
-			recoveryCtx, recoveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer recoveryCancel()
-			candidate, stageErr := c.mail.StageUnavailableCross(recoveryCtx, caller, session, role, ids, body, err)
-			out.RecoveryMessageID = candidate.ID
-			return stageErr
+		session, role, _ := strings.Cut(*to, ":")
+		interfaces, routeErr := c.mail.Store.VerifiedDirectoryInterfaces(ctx, c.runtime, c.topology.InterfaceNode)
+		if routeErr != nil {
+			return routeErr
 		}
+		selected, routeErr := workspace.DirectDirectoryPeer(interfaces, caller.Name(), session)
+		if routeErr != nil {
+			return routeErr
+		}
+		if role != selected.Role() {
+			return errors.New("recipient is not the verified directory interface")
+		}
+		peer := selected.Runtime.WithDirectoryRoute()
+		out.RefreshEligible = true
 		err = retryWorkspaceAdmission(ctx, func() (bool, error) {
 			var err error
 			if isReply {

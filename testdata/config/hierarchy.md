@@ -1,18 +1,13 @@
 ---
 interface_node: gateway
-workspace_tree:
-  - session_name: postman-parent
-    interface_node: gateway
-  - session_name: postman-child
-    parent_session_name: postman-parent
-    interface_node: gateway
 ---
 
 # Shared parent and child configuration
 
-Both sessions use this exact file and their own gateway/builder panes, in
-distinct workspace directories below HOME. The session names above are part of
-the route. No session is created merely by reading this declaration.
+Both sessions use this exact file and their own gateway/builder panes. Place
+the child workspace under the parent workspace below HOME. The nearest live
+gateway interfaces can then address each other by native session name. No
+session is created by reading this configuration.
 
 ## 1. `edges`
 
@@ -30,7 +25,7 @@ Reconcile child evidence before reporting completion upstream.
 
 ## 3. `gateway`
 
-Coordinate this local team and its declared immediate parent or child interface.
+Coordinate this local team and its nearest live parent or child interface.
 
 ## 4. `builder`
 

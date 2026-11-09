@@ -41,13 +41,8 @@ func TestDocumentedConfigurations(t *testing.T) {
 				}
 			}
 			if name == "hierarchy" {
-				for _, route := range [][3]string{{"postman-parent", "gateway", "postman-child:gateway"}, {"postman-child", "gateway", "postman-parent:gateway"}} {
-					if _, _, err := topology.InterfaceRoute(route[0], route[1], route[2]); err != nil {
-						t.Fatal(route, err)
-					}
-				}
-				if _, _, err := topology.InterfaceRoute("postman-parent", "builder", "postman-child:gateway"); err == nil {
-					t.Fatal("example grants builder an interface shortcut")
+				if topology.InterfaceNode != "gateway" || !strings.Contains(policy.Common, "POP archive") {
+					t.Fatal("hierarchy example lost interface instructions", topology, policy)
 				}
 			}
 		})

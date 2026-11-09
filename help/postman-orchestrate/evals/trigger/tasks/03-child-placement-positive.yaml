@@ -1,0 +1,12 @@
+id: postman-orchestrate-child-placement-positive
+name: child placement handoff
+inputs:
+  prompt: Place a delegated child team in a nested workspace directory, verify its direct interface contact, and preserve the parent's acceptance criteria through the return hop.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: child-placement-positive
+  config:
+    skill_path: help/postman-orchestrate/SKILL.md
+    mode: positive

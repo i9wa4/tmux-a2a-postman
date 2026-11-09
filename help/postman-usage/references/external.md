@@ -1,6 +1,7 @@
 # External filesystem interface
 
-This opt-in channel belongs to the configured top-level interface. Its producer
+This opt-in channel belongs to the exact configured interface workspace and
+session. Its producer
 owns foreground activation; do not add polling, a watcher or a daemon.
 
 On a genuine notification, POP normally and read the complete Markdown through

@@ -150,6 +150,70 @@ func launchShellWord(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
+func TestPresetChildDirectoryFirstTaskAndExactReply(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parentConfig := f.config
+	if err := os.WriteFile(parentConfig, []byte("---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	childRoot := filepath.Join(f.home, "work", "child")
+	if err := os.MkdirAll(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childConfig := filepath.Join(f.home, "preset-child.md")
+	childSource := "---\ninterface_node: messenger\npresets:\n  child:\n    columns:\n      - panes:\n          - role: messenger\n            command: 'exec sleep 120'\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+	if err := os.WriteFile(childConfig, []byte(childSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(f.worker, "", "pop", "--config", parentConfig); err != nil || !result.Success {
+		t.Fatal("parent registration", result, err)
+	}
+	preview, err := launchCLI(t, f, "child", "--config", childConfig, "--cwd", childRoot, "--session", "child", "--dry-run")
+	if err != nil || !preview.Success || !preview.DryRun {
+		t.Fatal("child preview", preview, err)
+	}
+	launched, err := launchCLI(t, f, "child", "--config", childConfig, "--cwd", childRoot, "--session", "child")
+	if err != nil || !launched.Success || len(launched.Launch.Panes) != 1 {
+		t.Fatal("child launch", launched, err)
+	}
+	if launched.Launch.SessionID == f.tmux("display-message", "-p", "-t", f.worker, "#{session_id}") {
+		t.Fatal("documented --session route did not create a dedicated child session", launched)
+	}
+	child := launched.Launch.Panes[0].Pane
+	requestBody := "preset child task\n"
+	if result, err := f.run(f.worker, requestBody, "send-heredoc", "--config", parentConfig, "--to", "child:messenger"); err != nil || !result.Success {
+		t.Fatal("first parent task", result, err)
+	}
+	pop, err := f.run(child, "", "pop", "--config", childConfig)
+	if err != nil || !pop.Success || pop.MarkdownPath == nil {
+		t.Fatal("child POP", pop, err)
+	}
+	complete, err := os.ReadFile(*pop.MarkdownPath)
+	if err != nil || !bytes.Contains(complete, []byte(requestBody)) {
+		t.Fatal("complete child archive", err)
+	}
+	request := readProtocolArchive(t, *pop.MarkdownPath)
+	if request.From != "worker" || request.To != "messenger" || request.FromSession != "work" || request.ToSession != "child" {
+		t.Fatal(request)
+	}
+	answerBody := "preset child answer\n"
+	if result, err := f.run(child, answerBody, "send-heredoc", "--config", childConfig, "--to", request.ID); err != nil || !result.Success {
+		t.Fatal("child exact reply", result, err)
+	}
+	pop, err = f.run(f.worker, "", "pop", "--config", parentConfig)
+	if err != nil || !pop.Success || pop.MarkdownPath == nil {
+		t.Fatal("parent POP", pop, err)
+	}
+	complete, err = os.ReadFile(*pop.MarkdownPath)
+	if err != nil || !bytes.Contains(complete, []byte(answerBody)) {
+		t.Fatal("complete parent archive", err)
+	}
+	answer := readProtocolArchive(t, *pop.MarkdownPath)
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID || answer.To != "worker" {
+		t.Fatal("reply correlation", answer)
+	}
+}
+
 func TestLaunchAgentsFromPaneCreatesWindowInInvokingSession(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	f.tmux("select-pane", "-t", f.worker, "-T", "shell")

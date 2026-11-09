@@ -57,11 +57,10 @@ attention, inbound replies owed and outbound replies awaited.
 
 ## 3. Routing and activation
 
-Local mail requires an explicit Mermaid edge. Without `workspace_tree`,
-cross-session mail requires verified native interface panes at the nearest live
+Local mail requires an explicit Mermaid edge. Cross-session mail requires
+verified native interface panes at the nearest live
 parent or child canonical workspace directories on the same server. An
-intermediate live interface blocks a shortcut. An explicit `workspace_tree`
-instead requires its declared direct relationship and exact interface roles.
+intermediate live interface blocks a shortcut.
 Both named native runtimes are verified at send time; equal roots, siblings,
 path-prefix lookalikes and same-named non-interface roles cannot route mail.
 Each workspace retains independent ownership, inbox/read and sent files.

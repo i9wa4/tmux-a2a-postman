@@ -24,17 +24,17 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 	}
 	name := caller.Name()
 	var interfaces []workspace.DirectoryInterface
-	localDirectoryContacts := !crossSession && len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode
+	localDirectoryContacts := !crossSession && recipient == c.topology.InterfaceNode
 	c.mail.StageBeforeContext = localDirectoryContacts
-	if crossSession && len(c.topology.Sessions) == 0 && recipient == c.topology.InterfaceNode {
+	if crossSession {
 		// Directory contact hints are advisory. Local mail and channel sync
 		// must not enumerate the server before staging; cross-session sends
 		// verify their route separately.
 		advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		interfaces, _ = c.runtime.DirectoryInterfaces(advisoryCtx, c.topology.InterfaceNode)
+		interfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
 	}
-	c.mail.Context = func(ctx context.Context, _ workspace.Snapshot, msg workspace.Message) (string, error) {
+	c.mail.Context = func(ctx context.Context, recipientSnapshot workspace.Snapshot, msg workspace.Message) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
@@ -42,13 +42,41 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		if localDirectoryContacts {
 			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			currentInterfaces, _ = c.runtime.DirectoryInterfaces(advisoryCtx, c.topology.InterfaceNode)
+			currentInterfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
 		}
+		topology, recipientPolicy := c.topology, policy
 		path := c.topologyPath
-		if c.source.Builtin {
+		builtin := c.source.Builtin
+		if msg.ToSession != "" && msg.ToSession != name {
+			// A cross-session archive belongs to its recipient. The source
+			// enumeration can omit another child of a parent recipient.
+			currentInterfaces = nil
+			for _, candidate := range interfaces {
+				if candidate.Session == msg.ToSession && candidate.Role() == msg.To {
+					advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+					currentInterfaces, _ = c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
+					cancel()
+					break
+				}
+			}
+			path, builtin = recipientSnapshot.ConfigPath, recipientSnapshot.BuiltinConfig
+			if path == "" {
+				return "", workspace.ErrUnknown
+			}
+			var err error
+			topology, err = (config.Source{Path: path, Builtin: builtin}).Load(ctx)
+			if err != nil || workspace.StatusConfigFingerprint(topology) != recipientSnapshot.ConfigFingerprint || topology.InterfaceNode != msg.To {
+				return "", workspace.ErrUnknown
+			}
+			recipientPolicy, err = topology.RecipientPolicy(ctx, path)
+			if err != nil {
+				return "", err
+			}
+		}
+		if builtin {
 			path = ""
 		}
-		return renderRecipientContextDirectory(policy, c.topology, path, name, msg, currentInterfaces), nil
+		return renderRecipientContextDirectory(recipientPolicy, topology, path, name, msg, currentInterfaces), nil
 	}
 	return nil
 }
@@ -173,26 +201,10 @@ func renderRecipientContextDirectory(policy config.RecipientPolicy, topology con
 	return text.String()
 }
 
-func recipientAddresses(topology config.WorkspaceTopology, session, node string) []string {
+func recipientAddresses(topology config.WorkspaceTopology, node string) []string {
 	seen := map[string]bool{}
 	for _, peer := range topology.Edges[node] {
 		seen[peer] = true
-	}
-	for _, scope := range topology.Sessions {
-		if scope.Name != session || scope.InterfaceNode != node {
-			continue
-		}
-		// This is the recipient's declared rendering viewpoint. Actual sends
-		// retain their own verified local-interface authorization checks.
-		view := topology
-		view.InterfaceNode = scope.InterfaceNode
-		for _, candidate := range topology.Sessions {
-			if candidate.Name == scope.Parent || candidate.Parent == scope.Name {
-				if _, _, err := view.InterfaceRoute(session, node, candidate.Name+":"+candidate.InterfaceNode); err == nil {
-					seen[candidate.Name+":"+candidate.InterfaceNode] = true
-				}
-			}
-		}
 	}
 	var addresses []string
 	for peer := range seen {
@@ -203,8 +215,8 @@ func recipientAddresses(topology config.WorkspaceTopology, session, node string)
 }
 
 func recipientAddressesDirectory(topology config.WorkspaceTopology, session, node string, interfaces []workspace.DirectoryInterface) []string {
-	addresses := recipientAddresses(topology, session, node)
-	if len(topology.Sessions) != 0 || node != topology.InterfaceNode {
+	addresses := recipientAddresses(topology, node)
+	if node != topology.InterfaceNode {
 		return addresses
 	}
 	seen := map[string]bool{}
@@ -213,7 +225,7 @@ func recipientAddressesDirectory(topology config.WorkspaceTopology, session, nod
 	}
 	for _, candidate := range interfaces {
 		if _, err := workspace.DirectDirectoryPeer(interfaces, session, candidate.Session); err == nil {
-			seen[candidate.Session+":"+node] = true
+			seen[candidate.Session+":"+candidate.Role()] = true
 		}
 	}
 	addresses = addresses[:0]

@@ -5,9 +5,12 @@
 Read `tmux-a2a-postman help postman-config-auditor audit` and
 `tmux-a2a-postman help postman-md`. Inspect the single absolute
 `postman.md` used by the invocation, its Mermaid edges and native role bindings.
-Check direct parent/child interface declarations and recipient runtime
-registration. No daemon configuration, TOML overlays or migration gate is
-involved.
+Check each workspace's own `interface_node`, current native role binding and
+recipient runtime registration. Direct parent/child routes come from canonical
+directory containment between verified live interfaces; no parent declaration
+or `workspace_tree` override supplies a route. Check intermediate, sibling,
+unrelated and ambiguous cases. No daemon configuration, TOML overlays or
+migration gate is involved.
 
 ## 2. Apply requested fixes
 

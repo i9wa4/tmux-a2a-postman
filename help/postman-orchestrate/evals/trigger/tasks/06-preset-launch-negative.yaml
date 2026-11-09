@@ -1,0 +1,12 @@
+id: postman-orchestrate-preset-launch-negative
+name: local preset command lookup
+inputs:
+  prompt: Show the available launch-agents presets and explain the CLI flags; do not create or coordinate a team.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: preset-launch-negative
+  config:
+    skill_path: help/postman-orchestrate/SKILL.md
+    mode: negative

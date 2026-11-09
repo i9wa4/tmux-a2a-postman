@@ -10,7 +10,34 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
+
+func directoryConfiguredAdapter(t *testing.T, f tmuxFixture) Tmux {
+	t.Helper()
+	path := filepath.Join(f.home, "directory-postman.md")
+	content := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- approver\n```\n## `worker`\nWorker\n## `approver`\nApprover\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	topology, err := (config.Source{Path: path}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := f.adapter()
+	adapter.ConfigPath = path
+	adapter.ConfigFingerprint = StatusConfigFingerprint(topology)
+	return adapter
+}
+
+func registerDirectoryPane(t *testing.T, store Store, adapter Tmux, pane string) {
+	t.Helper()
+	adapter.Pane = pane
+	if err := store.WithVerified(context.Background(), adapter, func(*os.Root, Snapshot) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestDirectDirectoryPeerUsesComponentsAndNearestLiveLevel(t *testing.T) {
 	base := []DirectoryInterface{
@@ -162,15 +189,18 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 				"-P", "-F", "#{pane_id}", "exec env HISTFILE=/dev/null sh -i")
 			f.run(t, "select-pane", "-t", childPane, "-T", "worker")
 			ctx := context.Background()
-			parent, err := f.adapter().NamedCaller(ctx)
+			adapter := directoryConfiguredAdapter(t, f)
+			parent, err := adapter.NamedCaller(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			child, err := f.adapter().FindNamedPeer(ctx, "child", "worker")
+			child, err := adapter.FindNamedPeer(ctx, "child", "worker")
 			if err != nil {
 				t.Fatal(err)
 			}
 			m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+			registerDirectoryPane(t, m.Store, adapter, f.pane)
+			registerDirectoryPane(t, m.Store, adapter, childPane)
 			source, destination := parent, child.WithDirectoryRoute()
 			var request Message
 			if tc.reply {
@@ -206,6 +236,8 @@ func TestDirectoryRouteRecheckedBeforePublication(t *testing.T) {
 					pane := f.run(t, "new-session", "-d", "-s", "middle", "-c", branchRoot,
 						"-P", "-F", "#{pane_id}", "exec sleep 120")
 					f.run(t, "select-pane", "-t", pane, "-T", "worker")
+					registerDirectoryPane(t, m.Store, adapter, pane)
+					beforeFiles = directoryTestFiles(t, m.Store.StateRoot)
 				}
 				return nil
 			}
@@ -269,15 +301,18 @@ func TestDirectoryRouteRetainsRecoveryIdentityAfterStage(t *testing.T) {
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
 	f.run(t, "select-pane", "-t", childPane, "-T", "worker")
 	ctx := context.Background()
-	parent, err := f.adapter().NamedCaller(ctx)
+	adapter := directoryConfiguredAdapter(t, f)
+	parent, err := adapter.NamedCaller(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, err := f.adapter().FindNamedPeer(ctx, "child", "worker")
+	child, err := adapter.FindNamedPeer(ctx, "child", "worker")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+	registerDirectoryPane(t, m.Store, adapter, f.pane)
+	registerDirectoryPane(t, m.Store, adapter, childPane)
 	m.afterStep = func(step string) error {
 		if step == "cross-intent" {
 			return errors.New("injected interruption after durable intent")

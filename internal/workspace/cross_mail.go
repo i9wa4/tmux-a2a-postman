@@ -42,7 +42,7 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 				return ErrUnknown
 			}
 			if destination.directoryRoute {
-				if err := verifyDirectoryRoute(ctx, source, destination, from, to); err != nil {
+				if err := verifyDirectoryRoute(ctx, m.Store, source, destination, from, to); err != nil {
 					return err
 				}
 			}
@@ -110,7 +110,7 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 				if err := m.step("cross-before-publish"); err != nil {
 					return err
 				}
-				if err := verifyDirectoryRoute(ctx, source, destination, from, to); err != nil {
+				if err := verifyDirectoryRoute(ctx, m.Store, source, destination, from, to); err != nil {
 					return err
 				}
 			}

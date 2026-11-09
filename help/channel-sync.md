@@ -1,7 +1,8 @@
 # channel-sync [--config <absolute-postman.md>]
 
-Bounded foreground intake and catch-up for the explicitly configured top-level
-external filesystem binding. Requires its exact native TMUX socket/TMUX_PANE.
+Bounded foreground intake and catch-up for the explicitly configured external
+filesystem binding. Requires its exact native TMUX socket/TMUX_PANE and
+workspace/session/interface match.
 Reads inbox and read archives, recovers durable mail, atomically publishes
 reports to outbox and returns pending exact decision filenames. Uses ordinary
 POP and the shared generic tmux notification lock. No daemon, watcher or empty
