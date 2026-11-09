@@ -11,17 +11,23 @@ inspection or human-facing shortcut hides a failed route.
 
 Before launching a team, run `refresh-status` and inspect its collection
 outcome. Then read `get-status` for the saved inventory: check `as_of` and
-`coverage`, and select the assigned native pane, canonical workspace,
-attributed scope and direct child interfaces. Treat busy, partial, error,
-stale or otherwise unknown evidence as unknown, not proof of a suitable team.
-Check reachable direct child interfaces in current recipient contact guidance,
-then compare each child's known role and ownership with the delegated scope.
+`coverage`, and select the assigned native interface pane and canonical
+workspace. Derive direct children from current registered interface-pane roots,
+each peer's attributed scope and native binding, and nearest canonical directory
+containment: the assigned interface must be a child's nearest containing
+interface. There is no top-level parent/children projection. Check reachable
+direct child interfaces in current recipient contact guidance, then compare
+each child's known role and ownership with the delegated scope. Busy, partial,
+error, stale, missing or ambiguous evidence is unknown: it proves neither a
+suitable child nor the absence of one. Resolve or report the evidence gap and
+defer launch until sufficiently current, complete evidence supports the choice.
 Contact hints are advisory, and the actual send rechecks the route. Reuse a
 suitable direct child for the first real task: send to its exact
 `session:interface_node` address without running `launch-agents`, preserving
-the original goal and acceptance criteria. If none is suitable, record in the
-canonical task artifact which existing children were inspected and why a new
-team is needed. Only then follow the new-team branch below.
+the original goal and acceptance criteria. If that evidence shows no suitable
+direct child, record in the canonical task artifact which existing children
+were inspected and why a new team is needed. Only then follow the new-team
+branch below.
 
 For a new team, choose a real directory below the parent interface pane's
 canonical workspace. Review `tmux-a2a-postman launch-agents --list`, then
@@ -41,8 +47,9 @@ interface must perform a normal configured operation to register its current
 configuration before it can receive a directory task. Run `refresh-status`,
 inspect its collection outcome, then read `get-status` for the saved `as_of`,
 `coverage` and attributed scope of the assigned native pane and workspace.
-Apply the unknown-evidence rule above; the inventory is observation, not send
-authority.
+Apply the direct-child derivation and unknown-evidence rules above; defer a
+directory task while binding or scope evidence is missing or ambiguous. The
+inventory is observation, not send authority.
 
 Send to the exact `session:interface_node` address shown by verified contact
 guidance. Each peer's interface name comes from its own registered
