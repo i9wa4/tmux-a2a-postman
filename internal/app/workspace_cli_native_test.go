@@ -71,6 +71,52 @@ func TestWorkspaceCLIStatusShowsOnlyDirectInterfaceRelatives(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCLILocalArchiveListsNearestDirectoryContacts(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	childRoot := filepath.Join(f.home, "work", "child")
+	var childPane string
+	for _, item := range []struct{ name, root string }{
+		{"child", childRoot},
+		{"grandchild", filepath.Join(childRoot, "grandchild")},
+		{"sibling", filepath.Join(f.home, "work", "sibling")},
+		{"prefix", filepath.Join(f.home, "work", "childish")},
+	} {
+		if err := os.MkdirAll(item.root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pane := f.tmux("new-session", "-d", "-s", item.name, "-c", item.root, "-P", "-F", "#{pane_id}", "exec sleep 120")
+		f.tmux("select-pane", "-t", pane, "-T", "worker")
+		if item.name == "child" {
+			childPane = pane
+		}
+	}
+	childPeer := f.tmux("new-window", "-d", "-t", "child", "-c", childRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", childPeer, "-T", "peer")
+	content := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if sent, err := f.run(childPeer, "local directory contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	claimed, err := f.run(childPane, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal(claimed, err)
+	}
+	archive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if archive.Body != "local directory contacts" || archive.Context == nil {
+		t.Fatal("local message lost body or generated context", archive)
+	}
+	_, after, ok := strings.Cut(archive.Context.Markdown, "You can talk to:\n\n")
+	if !ok {
+		t.Fatal("missing contact section", archive.Context.Markdown)
+	}
+	contacts, _, ok := strings.Cut(after, "\n\nThese are configured routes")
+	if !ok || !strings.Contains(contacts, "work:worker") || !strings.Contains(contacts, "grandchild:worker") || !strings.Contains(contacts, "- peer") || strings.Contains(contacts, "sibling:worker") || strings.Contains(contacts, "prefix:worker") {
+		t.Fatal("local archive contacts did not match nearest live routes", contacts)
+	}
+}
+
 func TestWorkspaceCLIRespawnBeforeSendCannotAdoptReplacement(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	realTmux, err := exec.LookPath("tmux")

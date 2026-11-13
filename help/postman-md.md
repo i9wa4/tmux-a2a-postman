@@ -19,7 +19,7 @@ chain or daemon defaults apply.
 | ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | YAML `skill_path`       | Optional path, list or selected path entries            | Adds ordinary Skill discovery metadata to recipient archives, not execution.                |
 | YAML `interface_node`   | Optional existing role name                             | Designates the local interface; no implicit default. Mermaid designation is also supported. |
-| YAML `workspace_tree`   | Optional explicit session/parent/interface list         | Allows only declared direct parent/child interface routes; does not create sessions.        |
+| YAML `workspace_tree`   | Optional explicit session/parent/interface list         | Overrides directory inference with declared direct routes; does not create sessions.        |
 | YAML external fields    | Optional root/workspace/session scalar strings together | Binds the declared top-level interface to a separately provisioned file channel.            |
 | YAML `presets`          | Optional named ordered columns/panes                    | Explicit `launch-agents` only; never evaluated by policy rendering or ordinary mail.        |
 | H2 `edges`              | One Mermaid graph, supported subset below               | Validates allowed role routes and optional reviewer/interface designation.                  |
@@ -171,6 +171,18 @@ describes the intended recipient; it does not grant its reader that role.
 Changing configuration later does not rewrite existing archives.
 
 ## 5. Direct parent/child interfaces
+
+Without `workspace_tree`, an interface pane can address the nearest live
+interface in a parent or child canonical workspace directory on the same tmux
+server. Both panes must use the configured `interface_node` role. A live
+interface at an intermediate directory blocks a shortcut; siblings, unrelated
+roots, equal roots, and path-prefix lookalikes do not form routes. Native
+session, role, pane, server, and workspace identity are checked before mail is
+committed. The address remains `session:interface_node`, and exact replies use
+the saved return address subject to the same current route check.
+
+An explicit tree takes precedence when present, including installations with
+different interface roles:
 
 Both sessions can share this complete declaration and the same local roles:
 

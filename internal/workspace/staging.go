@@ -11,6 +11,35 @@ type DeliveryFailure struct {
 	MessageID string
 }
 
+// A local interface can discover advisory contacts only after its complete
+// message body and identity have a durable sender draft. The final context
+// replaces that draft before the send intent can publish it.
+func (m Mail) addLocalMessageContext(ctx context.Context, ws *os.Root, snapshot Snapshot, msg *Message) (bool, error) {
+	if !m.StageBeforeContext {
+		return false, m.addMessageContext(ctx, snapshot, msg)
+	}
+	provisional := *msg
+	if err := m.stage(ws, provisional); err != nil {
+		return false, err
+	}
+	if err := m.addMessageContext(ctx, snapshot, msg); err != nil {
+		return true, err
+	}
+	if err := validateMessage(*msg); err != nil {
+		return true, err
+	}
+	draft, err := openOwnBox(ws, msg.From, "draft")
+	if err != nil {
+		return true, err
+	}
+	defer func() { _ = draft.Close() }()
+	previous, err := readMessage(draft, msg.ID+".md")
+	if err != nil || !sameMessage(previous, provisional) {
+		return true, ErrUnknown
+	}
+	return true, writeMessage(draft, msg.ID+".md", *msg)
+}
+
 // An authorized interface route can be unavailable before a peer is verified.
 // Retain the complete candidate only in the verified sender's draft, without
 // claiming confirmed non-delivery or granting any permission at the peer.

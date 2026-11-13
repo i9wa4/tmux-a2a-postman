@@ -19,8 +19,8 @@ type ArchiveContext struct {
 	Markdown string `json:"markdown,omitempty"`
 }
 
-// MessageContextBuilder is prepared outside mailbox locks. The callback renders
-// only already-loaded configuration against the verified send snapshot.
+// MessageContextBuilder is prepared outside mailbox locks. A local interface
+// callback may add bounded native contact evidence after its draft is staged.
 type MessageContextBuilder func(context.Context, Snapshot, Message) (string, error)
 
 func (m Mail) addMessageContext(ctx context.Context, snapshot Snapshot, msg *Message) error {
