@@ -66,10 +66,11 @@ func RunWorkspaceGetStatusOneline(args []string) error {
 	}
 	if err != nil {
 		_, _ = fmt.Fprintln(os.Stdout, "?")
-		return err
+		return reportedError{err}
 	}
 	// Session IDs are native, never ordinal positions or digits from names.
 	var output []string
+	partial := !snapshot.Coverage.Complete
 	for _, session := range snapshot.Sessions {
 		number, _ := strconv.Atoi(strings.TrimPrefix(session.ID, "$"))
 		rows := []workspace.OperatorNode{}
@@ -77,26 +78,26 @@ func RunWorkspaceGetStatusOneline(args []string) error {
 			for _, pane := range window.Panes {
 				if pane.Status != nil {
 					rows = append(rows, workspace.OperatorNode{Session: number, Window: window.Index, Top: pane.Top, Left: pane.Left, Pane: pane.ID, Status: *pane.Status})
+					if pane.Status.Reason != "" {
+						partial = true
+					}
 				}
 			}
 		}
-		line, diagnostics := renderStatusOneline(rows, time.Now().UTC())
+		line, _ := renderStatusOneline(rows, time.Now().UTC())
 		if line == "" {
 			line = fmt.Sprintf("[%d]", number)
 		}
 		output = append(output, line)
-		for _, reason := range diagnostics {
-			_, _ = fmt.Fprintln(os.Stderr, reason)
-		}
 	}
 	if len(output) == 0 {
 		_, _ = fmt.Fprintln(os.Stdout, "?")
-		return errors.New("saved server has no sessions")
+		return reportedError{errors.New("saved server has no sessions")}
+	}
+	if partial {
+		output = append(output, "[partial]")
 	}
 	_, err = fmt.Fprintln(os.Stdout, strings.Join(output, " "))
-	if !snapshot.Coverage.Complete {
-		_, _ = fmt.Fprintln(os.Stderr, "saved status has partial coverage: "+snapshot.Coverage.Reason)
-	}
 	return err
 }
 

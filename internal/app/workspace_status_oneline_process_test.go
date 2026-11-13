@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
 func operatorLine(t *testing.T, f *publicApprovalFixture) (string, string, error) {
@@ -65,7 +67,7 @@ func TestStatusOnelineColdPaneCandidatesDoNotInitializeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	line, diagnostic, err := operatorLine(t, f)
-	if err == nil || line != "?\n" || diagnostic == "" {
+	if err == nil || line != "?\n" || diagnostic != "" {
 		t.Fatal(line, diagnostic, err)
 	}
 	if _, err := os.Stat(f.stateHome); !os.IsNotExist(err) {
@@ -110,9 +112,129 @@ func TestStatusOnelineReadsAllSessionsAndWindowsWithoutMutatingMail(t *testing.T
 	}
 	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
-	if err != nil || line != "[0]?🖤:⚫ [1]⚫\n" || !strings.Contains(diagnostic, "unexpected mailbox entry") {
+	if err != nil || line != "[0]?🖤:⚫ [1]⚫ [partial]\n" || diagnostic != "" {
 		t.Fatal("partial read corrupted another node/session", line, diagnostic, err)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	detail, err := f.child(ctx, "", "get-status", "--config", f.config).CombinedOutput()
+	if err != nil || !bytes.Contains(detail, []byte("unexpected mailbox entry")) {
+		t.Fatal("saved status lost the detailed reason", string(detail), err)
+	}
+}
+
+func TestStatusOnelineExactOutputMatrix(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	for _, pane := range []string{f.worker, f.peer} {
+		if output, err := f.run(pane, "", "pop", "--config", f.config); err != nil || !output.Success {
+			t.Fatal(output, err)
+		}
+	}
+	refreshPublicStatus(t, f)
+	paths, err := filepath.Glob(filepath.Join(f.stateRoot(), "%status", "*", "status.json"))
+	if err != nil || len(paths) != 1 {
+		t.Fatal("expected one saved status", paths, err)
+	}
+	path := paths[0]
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseline workspace.ServerStatus
+	if err := json.Unmarshal(raw, &baseline); err != nil {
+		t.Fatal(err)
+	}
+	panes := baseline.Sessions[0].Windows[0].Panes
+	if len(panes) != 2 || panes[0].Status == nil || panes[1].Status == nil {
+		t.Fatal("expected two attributed fixture panes")
+	}
+	now := time.Now().UTC()
+	fresh := now.Format(time.RFC3339Nano)
+	zero := 0
+	for i := range panes {
+		status := panes[i].Status
+		status.UnreadCount, status.InboundCount, status.OutboundCount = &zero, &zero, &zero
+		status.LastCaptureAt, status.LastScreenChangeAt = &fresh, &fresh
+		status.Reason = ""
+	}
+	baseline.Sessions[0].Windows[0].Panes = panes
+	baseline.Coverage = workspace.StatusCoverage{Enumerated: 2, Captured: 2, Complete: true}
+	write := func(snapshot workspace.ServerStatus) {
+		t.Helper()
+		encoded, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(encoded, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	combined := func() (string, error) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := f.child(ctx, "", "get-status-oneline", "--config", f.config).CombinedOutput()
+		return string(out), err
+	}
+	check := func(label, expected string, wantError bool) {
+		t.Helper()
+		line, diagnostic, err := operatorLine(t, f)
+		if line != expected || diagnostic != "" || (err != nil) != wantError {
+			t.Fatalf("%s stdout=%q stderr=%q err=%v", label, line, diagnostic, err)
+		}
+		out, combinedErr := combined()
+		if out != expected || (combinedErr != nil) != wantError {
+			t.Fatalf("%s combined=%q err=%v", label, out, combinedErr)
+		}
+	}
+	write(baseline)
+	check("normal", "[0]🟢🟢\n", false)
+
+	stale := baseline
+	stale.Sessions = append([]workspace.StatusSession(nil), baseline.Sessions...)
+	stale.Sessions[0].Windows = append([]workspace.StatusWindow(nil), baseline.Sessions[0].Windows...)
+	stale.Sessions[0].Windows[0].Panes = append([]workspace.StatusPane(nil), panes...)
+	old := now.Add(-3 * time.Minute).Format(time.RFC3339Nano)
+	first := *panes[0].Status
+	first.LastCaptureAt, first.LastScreenChangeAt = &old, &old
+	stale.Sessions[0].Windows[0].Panes[0].Status = &first
+	write(stale)
+	check("stale", "[0]⚫🟢\n", false)
+
+	unknown := stale
+	unknown.Sessions = append([]workspace.StatusSession(nil), stale.Sessions...)
+	unknown.Sessions[0].Windows = append([]workspace.StatusWindow(nil), stale.Sessions[0].Windows...)
+	unknown.Sessions[0].Windows[0].Panes = append([]workspace.StatusPane(nil), panes...)
+	first = *panes[0].Status
+	first.UnreadCount = nil
+	unknown.Sessions[0].Windows[0].Panes[0].Status = &first
+	write(unknown)
+	check("unknown count", "[0]?🟢\n", false)
+
+	partial := unknown
+	partial.Sessions = append([]workspace.StatusSession(nil), unknown.Sessions...)
+	partial.Sessions[0].Windows = append([]workspace.StatusWindow(nil), unknown.Sessions[0].Windows...)
+	partial.Sessions[0].Windows[0].Panes = append([]workspace.StatusPane(nil), panes...)
+	partial.Sessions[0].Windows[0].Panes[1].Status = nil
+	partial.Sessions[0].Windows[0].Panes[1].Reason = "capture unavailable"
+	partial.Coverage = workspace.StatusCoverage{Enumerated: 2, Captured: 1, Unavailable: 1, Complete: false, Reason: "capture unavailable"}
+	write(partial)
+	check("healthy row plus unavailable pane", "[0]🟢 [partial]\n", false)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	detail, detailErr := f.child(ctx, "", "get-status", "--config", f.config).CombinedOutput()
+	cancel()
+	if detailErr != nil || !bytes.Contains(detail, []byte(`"complete":false`)) || !bytes.Contains(detail, []byte("capture unavailable")) {
+		t.Fatalf("detailed getter changed: %v %s", detailErr, detail)
+	}
+
+	if err := os.WriteFile(path, []byte("{\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	check("corrupt", "?\n", true)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	check("missing", "?\n", true)
 }
 
 func TestStatusOnelineRenamedOrReplacedPaneCannotKeepHealthyCounts(t *testing.T) {
@@ -126,14 +248,14 @@ func TestStatusOnelineRenamedOrReplacedPaneCannotKeepHealthyCounts(t *testing.T)
 	f.tmux("select-pane", "-t", f.worker, "-T", "editor")
 	refreshPublicStatus(t, f)
 	line, diagnostic, err := operatorLine(t, f)
-	if err != nil || line != "[0]?⚫\n" || !strings.Contains(diagnostic, "renamed") {
+	if err != nil || line != "[0]?⚫ [partial]\n" || diagnostic != "" {
 		t.Fatal(line, diagnostic, err)
 	}
 	f.tmux("select-pane", "-t", f.worker, "-T", "worker")
 	f.tmux("respawn-pane", "-k", "-t", f.worker, "exec sleep 120")
 	refreshPublicStatus(t, f)
 	line, diagnostic, err = operatorLine(t, f)
-	if err != nil || line != "[0]?⚫\n" {
+	if err != nil || line != "[0]?⚫ [partial]\n" {
 		t.Fatal("pane replacement reused an old role identity", line, diagnostic, err)
 	}
 	if output, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !output.Success {
