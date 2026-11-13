@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
@@ -343,6 +344,146 @@ func TestWorkspaceExecuteHeredocPublicApprovalReplies(t *testing.T) {
 				t.Fatal(string(raw), err)
 			}
 		})
+	}
+}
+
+func TestWorkspaceExecuteHeredocNonadjacentDecisionReturn(t *testing.T) {
+	for _, role := range []string{"messenger", "guardian"} {
+		for _, approve := range []bool{true, false} {
+			name := role + "/declined"
+			if approve {
+				name = role + "/approved"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newPublicApprovalFixture(t)
+				f.tmux("select-pane", "-t", f.worker, "-T", role)
+				// The relay edge connects the graph, but the requester has no
+				// ordinary outgoing edge to the configured approver.
+				config := "## `edges`\n```mermaid\ngraph LR\n" + role + " --- relay\nrelay --- peer:::command_approver_node\n```\n## `" + role + "`\nRequester\n## `relay`\nRelay\n## `peer`\nApprover\n"
+				if err := os.WriteFile(f.config, []byte(config), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.run(f.worker, "ordinary send", "send-heredoc", "--config", f.config, "--to", "peer"); err == nil {
+					t.Fatal("ordinary requester-to-approver send crossed a missing edge")
+				}
+				marker := filepath.Join(f.home, "executed")
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				cmd := f.execution(ctx, "printf x >> "+marker)
+				var diagnostic bytes.Buffer
+				cmd.Stderr = &diagnostic
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				req := f.waitRequest()
+				if req.From != role || req.To != "peer" {
+					t.Fatalf("unexpected typed route: %+v", req)
+				}
+				if _, err := f.decide(req, approve); err == nil {
+					t.Fatal("unclaimed request accepted")
+				}
+				f.claimRequest(req)
+				wrongID := req.ID[:len(req.ID)-1] + "A"
+				if wrongID == req.ID {
+					wrongID = req.ID[:len(req.ID)-1] + "B"
+				}
+				if !messageid.Valid(wrongID) {
+					t.Fatal("test constructed an invalid alternate request ID")
+				}
+				if _, err := f.run(f.peer, "", "approve-execution", "--config", f.config, "--to", wrongID, "--reason", "wrong request ID"); err == nil {
+					t.Fatal("wrong request ID accepted")
+				}
+				if _, err := f.run(f.peer, "ordinary reply", "send-heredoc", "--config", f.config, "--to", req.ID); err == nil {
+					t.Fatal("ordinary reply crossed a missing edge")
+				}
+				assertNoPublicApprovalSent(t, f, "peer")
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatal("invalid decision or ordinary reply executed source", err)
+				}
+				if _, err := f.run(f.worker, "", "approve-execution", "--config", f.config, "--to", req.ID, "--reason", "wrong approver"); err == nil {
+					t.Fatal("requester was accepted as approver")
+				}
+				decision, err := f.decide(req, approve)
+				if err != nil || !decision.Success {
+					t.Fatal("correlated decision failed", decision, err)
+				}
+				runErr := cmd.Wait()
+				result := decodeExecutionOutput(t, diagnostic.Bytes())
+				if result.Executed == nil || *result.Executed != approve || result.Success != approve || result.Approval == nil || result.Approval.Decision == nil {
+					t.Fatal("incorrect execution result", result, runErr)
+				}
+				if _, err := f.decide(req, !approve); err == nil {
+					t.Fatal("conflicting or late decision accepted")
+				}
+				raw, err := os.ReadFile(marker)
+				if approve {
+					if runErr != nil || err != nil || string(raw) != "x" {
+						t.Fatal("approval did not execute exactly once", runErr, string(raw), err)
+					}
+				} else if runErr == nil || !os.IsNotExist(err) {
+					t.Fatal("decline executed source", runErr, err)
+				}
+			})
+		}
+	}
+}
+
+func assertNoPublicApprovalSent(t *testing.T, f *publicApprovalFixture, role string) {
+	t.Helper()
+	entries, err := os.ReadDir(f.box(role, "sent"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".md") {
+			t.Fatalf("%s published a decision or ordinary reply before review: %s", role, entry.Name())
+		}
+	}
+}
+
+func TestWorkspaceExecuteHeredocNonadjacentChangedReviewer(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	f.tmux("select-pane", "-t", f.worker, "-T", "messenger")
+	relay := f.tmux("new-window", "-d", "-t", "work", "-c", filepath.Join(f.home, "work"), "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", relay, "-T", "relay")
+	initial := "## `edges`\n```mermaid\ngraph LR\nmessenger --- relay\nrelay --- peer:::command_approver_node\n```\n## `messenger`\nRequester\n## `relay`\nRelay\n## `peer`\nApprover\n"
+	if err := os.WriteFile(f.config, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(f.home, "executed")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := f.execution(ctx, "printf x >> "+marker)
+	var diagnostic bytes.Buffer
+	cmd.Stderr = &diagnostic
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	req := f.waitRequest()
+	f.claimRequest(req)
+	changed := strings.Replace(initial, "peer:::command_approver_node", "peer", 1)
+	changed = strings.Replace(changed, "messenger --- relay", "messenger --- relay:::command_approver_node", 1)
+	if err := os.WriteFile(f.config, []byte(changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.decide(req, true); err == nil {
+		t.Fatal("stale approver decided after configuration change")
+	}
+	if _, err := f.run(relay, "", "approve-execution", "--config", f.config, "--to", req.ID, "--reason", "new reviewer without claim"); err == nil {
+		t.Fatal("new approver decided a request it never claimed")
+	}
+	assertNoPublicApprovalSent(t, f, "peer")
+	assertNoPublicApprovalSent(t, f, "relay")
+	runErr := cmd.Wait()
+	if ctx.Err() != nil || runErr == nil {
+		t.Fatal("requester did not fail closed after reviewer changed", ctx.Err(), runErr, diagnostic.String())
+	}
+	result := decodeExecutionOutput(t, diagnostic.Bytes())
+	if result.Executed != nil && *result.Executed {
+		t.Fatal("changed reviewer caused execution", result)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("changed reviewer executed source", err)
 	}
 }
 

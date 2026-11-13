@@ -227,12 +227,8 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	if c.topology.Reviewer != c.caller.Caller.Role {
 		return errors.New("caller is not the configured command approver")
 	}
-	sources, err := c.mail.ReplySources(ctx, c.boundRuntime(), ids)
-	if err != nil {
+	if _, err := c.mail.ReplySources(ctx, c.boundRuntime(), ids); err != nil {
 		return err
-	}
-	if !c.permits(sources[0].From) {
-		return errors.New("requester is not a configured outgoing edge")
 	}
 	if err := c.prepareRecipientContext(ctx); err != nil {
 		return err
