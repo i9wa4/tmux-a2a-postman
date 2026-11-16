@@ -63,11 +63,12 @@ func (s Store) VerifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 			if root != origin.Root && !directoryContains(root, origin.Root) && !directoryContains(origin.Root, root) {
 				continue
 			}
-			role, roles := sourceRole, t.Roles
+			role := sourceRole
 			peer := t
 			var saved runtimeRecord
 			if sessionID != origin.Caller.Owner.Session || root != origin.Root {
 				var scope *StatusScope
+				var roles []string
 				saved, scope, roles, err = s.readStatusAttribution(ctx, root,
 					Owner{Server: origin.Caller.Owner.Server, Incarnation: origin.Caller.Owner.Incarnation, Session: sessionID}, native)
 				if errors.Is(err, os.ErrNotExist) {
