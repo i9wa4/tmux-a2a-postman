@@ -1,0 +1,12 @@
+id: postman-workflow-evaluator-3
+name: cross-session task evaluation
+inputs:
+  prompt: "Evaluate the named tmux session research-dev, which is separate from this one, against my original human objective and propose evidence-backed workflow improvements."
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-workflow-evaluator/SKILL.md
+    mode: positive
