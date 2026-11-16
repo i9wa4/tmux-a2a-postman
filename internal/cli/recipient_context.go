@@ -11,7 +11,7 @@ import (
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
-func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipient string, crossSession bool) (retErr error) {
+func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipient string, crossSession bool, routeInterfaces ...[]workspace.DirectoryInterface) (retErr error) {
 	span := c.trace.Start("recipient_context")
 	defer func() { span.Error(retErr) }()
 	policy, err := c.topology.RecipientPolicy(ctx, c.topologyPath)
@@ -30,9 +30,13 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		// Directory contact hints are advisory. Local mail and channel sync
 		// must not enumerate the server before staging; cross-session sends
 		// verify their route separately.
-		advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		interfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+		if len(routeInterfaces) > 0 {
+			interfaces = routeInterfaces[0]
+		} else {
+			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
+			interfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+		}
 	}
 	c.mail.Context = func(ctx context.Context, recipientSnapshot workspace.Snapshot, msg workspace.Message) (string, error) {
 		if err := ctx.Err(); err != nil {
@@ -54,8 +58,13 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 			for _, candidate := range interfaces {
 				if candidate.Session == msg.ToSession && candidate.Role() == msg.To {
 					advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-					currentInterfaces, _ = c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
+					view, viewErr := c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
 					cancel()
+					if viewErr == nil {
+						currentInterfaces = view
+					} else {
+						currentInterfaces = interfaces // Preserve the verified addressed contact.
+					}
 					break
 				}
 			}

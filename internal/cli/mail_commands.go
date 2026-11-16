@@ -200,13 +200,16 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 	if _, role, cross := strings.Cut(*to, ":"); cross {
 		recipient = role
 	}
-	if err := c.prepareRecipientContext(ctx, recipient, strings.Contains(*to, ":")); err != nil {
-		return err
+	crossSession := strings.Contains(*to, ":")
+	if !crossSession {
+		if err := c.prepareRecipientContext(ctx, recipient, false); err != nil {
+			return err
+		}
 	}
 	mailSpan := trace.Start("mail_operation")
 	defer func() { mailSpan.Error(retErr) }()
 	var msg workspace.Message
-	if strings.Contains(*to, ":") {
+	if crossSession {
 		caller, err := c.namedCaller(ctx)
 		if err != nil {
 			return err
@@ -233,6 +236,9 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		}
 		if role != selected.Role() {
 			return errors.New("recipient is not the verified directory interface")
+		}
+		if err := c.prepareRecipientContext(ctx, recipient, true, interfaces); err != nil {
+			return err
 		}
 		peer := selected.Runtime.WithDirectoryRoute()
 		out.RefreshEligible = true

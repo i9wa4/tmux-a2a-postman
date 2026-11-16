@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"errors"
-	"os"
 	"slices"
 	"strings"
 
@@ -19,8 +18,8 @@ func (s Store) VerifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 }
 
 // VerifiedDirectoryInterfacesOnRoute verifies only roots on the addressed
-// native corridor. Unrelated siblings cannot veto a send, while an unknown
-// intermediate root remains a possible interface and blocks publication.
+// native corridor. Unrelated siblings and never-registered panes cannot veto
+// a send; registered but stale intermediate roots block publication.
 func (s Store) VerifiedDirectoryInterfacesOnRoute(ctx context.Context, t Tmux, sourceRole, targetRoot string) ([]DirectoryInterface, error) {
 	if targetRoot == "" {
 		return nil, ErrUnknown
@@ -94,11 +93,11 @@ func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 				var roles []string
 				saved, scope, roles, err = s.readStatusAttribution(ctx, root,
 					Owner{Server: origin.Caller.Owner.Server, Incarnation: origin.Caller.Owner.Incarnation, Session: sessionID}, native)
-				if errors.Is(err, os.ErrNotExist) {
-					if targetRoot != "" {
-						return nil, ErrUnknown // A possible intermediate or target is unregistered.
+				if errors.Is(err, errUnregisteredWorkspace) {
+					if root == targetRoot {
+						return nil, ErrUnknown // An addressed interface must be registered.
 					}
-					continue // No registered interface in this advisory view.
+					continue // An ordinary pane without registration is not an interface.
 				}
 				if err != nil || scope == nil || !binding.ValidateNodeName(scope.Interface) {
 					return nil, ErrUnknown

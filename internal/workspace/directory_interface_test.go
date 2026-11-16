@@ -153,6 +153,61 @@ func TestDirectoryRouteUnknownProvenanceIsScopedToAddressedCorridor(t *testing.T
 	})
 }
 
+func TestDirectoryRouteIgnoresOrdinaryUnregisteredIntermediatePane(t *testing.T) {
+	f := newTmuxFixture(t)
+	middleRoot := filepath.Join(f.repo, "a")
+	childRoot := filepath.Join(middleRoot, "b")
+	if err := os.MkdirAll(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	middlePane := f.run(t, "new-session", "-d", "-s", "ordinary", "-c", middleRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.run(t, "select-pane", "-t", middlePane, "-T", "shell")
+	f.run(t, "select-pane", "-t", childPane, "-T", "worker")
+	ctx := context.Background()
+	adapter := directoryConfiguredAdapter(t, f)
+	m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+	for _, pane := range []string{f.pane, childPane} {
+		registerDirectoryPane(t, m.Store, adapter, pane)
+	}
+	parent, err := adapter.NamedCaller(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := adapter.FindNamedPeer(ctx, "child", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := m.SendCrossWithReply(ctx, parent, child.WithDirectoryRoute(), "task", "", "", true)
+	if err != nil || request.ID == "" {
+		t.Fatal("ordinary unregistered pane blocked child task", request, err)
+	}
+	if _, err := m.Claim(ctx, child, request.ID); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := m.SendCrossReply(ctx, child, parent.WithDirectoryRoute(), []string{request.ID}, "answer")
+	if err != nil || len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
+		t.Fatal("ordinary unregistered pane blocked exact reply", answer, err)
+	}
+	if _, err := m.Claim(ctx, parent, answer.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	f.run(t, "select-pane", "-t", middlePane, "-T", "worker")
+	registerDirectoryPane(t, m.Store, adapter, middlePane)
+	removeDirectoryProvenance(t, m.Store, f.home, middleRoot, middlePane)
+	before := directoryTestFiles(t, m.Store.StateRoot)
+	rejected, err := m.SendCrossWithReply(ctx, parent, child.WithDirectoryRoute(), "blocked", "", "", true)
+	if err == nil || rejected.ID != "" {
+		t.Fatal("registered but stale intermediate admitted mail", rejected, err)
+	}
+	if after := directoryTestFiles(t, m.Store.StateRoot); !slices.Equal(before, after) {
+		t.Fatal("stale intermediate changed durable files", before, after)
+	}
+}
+
 func TestDirectDirectoryPeerUsesComponentsAndNearestLiveLevel(t *testing.T) {
 	base := []DirectoryInterface{
 		{Session: "parent", Root: "~/github.com"},

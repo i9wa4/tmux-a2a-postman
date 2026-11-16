@@ -24,6 +24,8 @@ type statusConfigRecord struct {
 	Builtin     bool    `json:"builtin,omitempty"`
 }
 
+var errUnregisteredWorkspace = errors.New("workspace has no registration")
+
 func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
 	raw, _ := json.Marshal(topology)
 	if id := topology.BuiltinBundleID(); id != "" {
@@ -254,6 +256,9 @@ func (s Store) readStatusAttribution(ctx context.Context, root string, owner Own
 	}
 	ws, err := privateDir(base, name, false)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return saved, nil, nil, errUnregisteredWorkspace
+		}
 		return saved, nil, nil, err
 	}
 	defer func() { _ = ws.Close() }()
