@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
@@ -198,7 +199,7 @@ func (r NamedRuntime) WithDirectoryRoute() NamedRuntime {
 }
 
 func verifyDirectoryRoute(ctx context.Context, store Store, source, destination NamedRuntime, from, to Snapshot) error {
-	interfaces, err := store.VerifiedDirectoryInterfaces(ctx, source.tmux, source.role)
+	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, source.tmux, source.role, to.Root)
 	if err != nil {
 		return err
 	}
@@ -287,6 +288,27 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 		return NamedRuntime{}, err
 	}
 	return runtime, nil
+}
+
+// NativePeerRoot locates an addressed pane's current directory before its
+// registered interface configuration is known. The role is used only to find
+// a native pane; callers must verify the route and peer configuration before
+// using the root to publish mail.
+func (t Tmux) NativePeerRoot(ctx context.Context, sessionName, role string) (string, error) {
+	probe := t
+	probe.Roles = slices.Clone(t.Roles)
+	if !slices.Contains(probe.Roles, role) {
+		probe.Roles = append(probe.Roles, role)
+	}
+	peer, err := probe.FindNamedPeer(ctx, sessionName, role)
+	if err != nil {
+		return "", err
+	}
+	snapshot, err := peer.Snapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.Root, nil
 }
 
 func nativeSessionName(ctx context.Context, socket, sessionID string) (string, error) {

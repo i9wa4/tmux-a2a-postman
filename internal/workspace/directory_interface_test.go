@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,119 @@ func registerDirectoryPane(t *testing.T, store Store, adapter Tmux, pane string)
 	if err := store.WithVerified(context.Background(), adapter, func(*os.Root, Snapshot) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func removeDirectoryProvenance(t *testing.T, store Store, home, root, pane string) {
+	t.Helper()
+	canonical, err := CanonicalRoot(root, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := Name(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.StateRoot, name, "runtime", "status-config-p"+strings.TrimPrefix(pane, "%")+".json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectoryRouteUnknownProvenanceIsScopedToAddressedCorridor(t *testing.T) {
+	t.Run("off-route sibling allows exact exchange", func(t *testing.T) {
+		f := newTmuxFixture(t)
+		alphaRoot, betaRoot := filepath.Join(f.repo, "alpha"), filepath.Join(f.repo, "beta")
+		for _, root := range []string{alphaRoot, betaRoot} {
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		alphaPane := f.run(t, "new-session", "-d", "-s", "alpha", "-c", alphaRoot,
+			"-P", "-F", "#{pane_id}", "exec sleep 120")
+		betaPane := f.run(t, "new-session", "-d", "-s", "beta", "-c", betaRoot,
+			"-P", "-F", "#{pane_id}", "exec sleep 120")
+		for _, pane := range []string{alphaPane, betaPane} {
+			f.run(t, "select-pane", "-t", pane, "-T", "worker")
+		}
+		ctx := context.Background()
+		adapter := directoryConfiguredAdapter(t, f)
+		m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+		for _, pane := range []string{f.pane, alphaPane, betaPane} {
+			registerDirectoryPane(t, m.Store, adapter, pane)
+		}
+		removeDirectoryProvenance(t, m.Store, f.home, betaRoot, betaPane)
+		parent, err := adapter.NamedCaller(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alpha, err := adapter.FindNamedPeer(ctx, "alpha", "worker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		beta, err := adapter.FindNamedPeer(ctx, "beta", "worker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		request, err := m.SendCrossWithReply(ctx, parent, alpha.WithDirectoryRoute(), "task", "", "", true)
+		if err != nil || request.ID == "" {
+			t.Fatal("off-route beta vetoed alpha", request, err)
+		}
+		if _, err := m.Claim(ctx, alpha, request.ID); err != nil {
+			t.Fatal(err)
+		}
+		answer, err := m.SendCrossReply(ctx, alpha, parent.WithDirectoryRoute(), []string{request.ID}, "answer")
+		if err != nil || len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
+			t.Fatal("exact alpha reply failed", answer, err)
+		}
+		if _, err := m.Claim(ctx, parent, answer.ID); err != nil {
+			t.Fatal(err)
+		}
+		betaSnapshot, err := beta.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "worker", betaSnapshot.Root); err == nil {
+			t.Fatal("unknown beta became a verified route")
+		}
+	})
+	t.Run("unknown intermediate rejects before durable mail", func(t *testing.T) {
+		f := newTmuxFixture(t)
+		middleRoot := filepath.Join(f.repo, "middle")
+		alphaRoot := filepath.Join(middleRoot, "alpha")
+		if err := os.MkdirAll(alphaRoot, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		middlePane := f.run(t, "new-session", "-d", "-s", "middle", "-c", middleRoot,
+			"-P", "-F", "#{pane_id}", "exec sleep 120")
+		alphaPane := f.run(t, "new-session", "-d", "-s", "alpha", "-c", alphaRoot,
+			"-P", "-F", "#{pane_id}", "exec sleep 120")
+		for _, pane := range []string{middlePane, alphaPane} {
+			f.run(t, "select-pane", "-t", pane, "-T", "worker")
+		}
+		ctx := context.Background()
+		adapter := directoryConfiguredAdapter(t, f)
+		m := Mail{Store: Store{StateRoot: filepath.Join(f.home, "state")}}
+		for _, pane := range []string{f.pane, middlePane, alphaPane} {
+			registerDirectoryPane(t, m.Store, adapter, pane)
+		}
+		removeDirectoryProvenance(t, m.Store, f.home, middleRoot, middlePane)
+		parent, err := adapter.NamedCaller(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alpha, err := adapter.FindNamedPeer(ctx, "alpha", "worker")
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := directoryTestFiles(t, m.Store.StateRoot)
+		rejected, err := m.SendCrossWithReply(ctx, parent, alpha.WithDirectoryRoute(), "shortcut", "", "", true)
+		if err == nil || rejected.ID != "" {
+			t.Fatal("unknown intermediate admitted route", rejected, err)
+		}
+		if after := directoryTestFiles(t, m.Store.StateRoot); !slices.Equal(before, after) {
+			t.Fatal("pre-stage rejection changed durable files", before, after)
+		}
+	})
 }
 
 func TestDirectDirectoryPeerUsesComponentsAndNearestLiveLevel(t *testing.T) {

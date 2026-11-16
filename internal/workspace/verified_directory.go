@@ -15,6 +15,20 @@ import (
 // its interface. A pane title or the caller's interface role cannot designate
 // a peer interface on its own.
 func (s Store) VerifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRole string) ([]DirectoryInterface, error) {
+	return s.verifiedDirectoryInterfaces(ctx, t, sourceRole, "")
+}
+
+// VerifiedDirectoryInterfacesOnRoute verifies only roots on the addressed
+// native corridor. Unrelated siblings cannot veto a send, while an unknown
+// intermediate root remains a possible interface and blocks publication.
+func (s Store) VerifiedDirectoryInterfacesOnRoute(ctx context.Context, t Tmux, sourceRole, targetRoot string) ([]DirectoryInterface, error) {
+	if targetRoot == "" {
+		return nil, ErrUnknown
+	}
+	return s.verifiedDirectoryInterfaces(ctx, t, sourceRole, targetRoot)
+}
+
+func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRole, targetRoot string) ([]DirectoryInterface, error) {
 	if !binding.ValidateNodeName(sourceRole) || !slices.Contains(t.Roles, sourceRole) || t.ConfigFingerprint == "" {
 		return nil, ErrUnknown
 	}
@@ -60,8 +74,17 @@ func (s Store) VerifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 			groups[root] = append(groups[root], Binding{Role: parts[2], Owner: owner, PanePID: parts[4]})
 		}
 		for root, native := range groups {
-			if root != origin.Root && !directoryContains(root, origin.Root) && !directoryContains(origin.Root, root) {
-				continue
+			if targetRoot == "" {
+				if root != origin.Root && !directoryContains(root, origin.Root) && !directoryContains(origin.Root, root) {
+					continue
+				}
+			} else {
+				onRoute := root == origin.Root || root == targetRoot ||
+					directoryContains(origin.Root, root) && directoryContains(root, targetRoot) ||
+					directoryContains(targetRoot, root) && directoryContains(root, origin.Root)
+				if !onRoute {
+					continue
+				}
 			}
 			role := sourceRole
 			peer := t
@@ -72,7 +95,10 @@ func (s Store) VerifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 				saved, scope, roles, err = s.readStatusAttribution(ctx, root,
 					Owner{Server: origin.Caller.Owner.Server, Incarnation: origin.Caller.Owner.Incarnation, Session: sessionID}, native)
 				if errors.Is(err, os.ErrNotExist) {
-					continue // No registered interface in this workspace.
+					if targetRoot != "" {
+						return nil, ErrUnknown // A possible intermediate or target is unregistered.
+					}
+					continue // No registered interface in this advisory view.
 				}
 				if err != nil || scope == nil || !binding.ValidateNodeName(scope.Interface) {
 					return nil, ErrUnknown

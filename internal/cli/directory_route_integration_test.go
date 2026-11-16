@@ -185,6 +185,48 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 			}
 		})
 	}
+	removeProvenance := func(root, pane string) {
+		t.Helper()
+		canonical, err := workspace.CanonicalRoot(root, home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name, err := workspace.Name(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(home, "state", "tmux-a2a-postman", name, "runtime",
+			"status-config-p"+strings.TrimPrefix(pane, "%")+".json")
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	betaRoot := filepath.Join(parentRoot, "beta")
+	if err := os.MkdirAll(betaRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	betaPane := runTmux("new-session", "-d", "-s", "beta", "-c", betaRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	runTmux("select-pane", "-t", betaPane, "-T", "messenger")
+	if result, err := invoke(betaPane, "", RunWorkspacePop); err != nil || !result.Success {
+		t.Fatalf("register beta: %+v %v", result, err)
+	}
+	removeProvenance(betaRoot, betaPane)
+	if result, err := invoke(parentPane, "off-route beta must not veto alpha\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err != nil || !result.Success {
+		t.Fatalf("valid child send blocked by beta: %+v %v", result, err)
+	}
+	request := claim(childPane, "off-route beta must not veto alpha\n")
+	if result, err := invoke(childPane, "exact alpha reply with beta unknown\n", RunWorkspaceSendHeredoc, "--to", request.ID); err != nil || !result.Success {
+		t.Fatalf("valid exact reply blocked by beta: %+v %v", result, err)
+	}
+	answer := claim(parentPane, "exact alpha reply with beta unknown\n")
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
+		t.Fatalf("off-route beta changed exact reply correlation: %+v", answer)
+	}
+	if result, err := invoke(parentPane, "unknown beta reject\n", RunWorkspaceSendHeredoc, "--to", "beta:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+		t.Fatalf("unknown beta became a route or durable draft: %+v %v", result, err)
+	}
+
 	siblingPane := runTmux("new-session", "-d", "-s", "sibling", "-c", siblingRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
 	runTmux("select-pane", "-t", siblingPane, "-T", "messenger")
@@ -199,5 +241,9 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	}
 	if result, err := invoke(parentPane, "skipped-level reject\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err == nil || result.Success {
 		t.Fatalf("CLI accepted intermediate shortcut: %+v %v", result, err)
+	}
+	removeProvenance(filepath.Join(parentRoot, "branch"), middlePane)
+	if result, err := invoke(parentPane, "unknown intermediate reject\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+		t.Fatalf("unknown intermediate admitted mail before durable stage: %+v %v", result, err)
 	}
 }

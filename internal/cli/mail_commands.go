@@ -219,9 +219,13 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 			return errors.New("recipient is not a directory interface")
 		}
 		session, role, _ := strings.Cut(*to, ":")
-		interfaces, routeErr := c.mail.Store.VerifiedDirectoryInterfaces(ctx, c.runtime, c.topology.InterfaceNode)
+		targetRoot, routeErr := c.runtime.NativePeerRoot(ctx, session, role)
 		if routeErr != nil {
-			return routeErr
+			return fmt.Errorf("locate native recipient: %w", routeErr)
+		}
+		interfaces, routeErr := c.mail.Store.VerifiedDirectoryInterfacesOnRoute(ctx, c.runtime, c.topology.InterfaceNode, targetRoot)
+		if routeErr != nil {
+			return fmt.Errorf("verify addressed directory route: %w", routeErr)
 		}
 		selected, routeErr := workspace.DirectDirectoryPeer(interfaces, caller.Name(), session)
 		if routeErr != nil {
