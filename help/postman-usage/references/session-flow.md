@@ -1,7 +1,9 @@
 # Session Flow
 
 Use `tmux-a2a-postman help postman-usage mailbox` for POP and complete-body
-reading, and `tmux-a2a-postman help send-heredoc` for sending.
+reading, and `tmux-a2a-postman help postman-send-message sending` for the
+ordinary-send procedure. `tmux-a2a-postman help send-heredoc` gives CLI syntax
+and limits when needed.
 
 ## 1. Choose an action from current evidence
 

@@ -46,6 +46,8 @@ claims and missing context. Empty history means no archived context recovered.
 Read current file-derived status separately: old narrative, a POP receipt, a
 reply or a sampled pane screen does not prove current task completion/activity.
 Use `tmux-a2a-postman help postman-usage mailbox` for known unread mail and
-normal POP/full reading after recall; use `tmux-a2a-postman help send-heredoc`
-for an authorized send. Recall itself sends nothing, claims nothing, rewrites
-nothing, starts no daemon and never polls empty status/POP in a loop.
+normal POP/full reading after recall; use
+`tmux-a2a-postman help postman-send-message sending` for an authorized send
+and `help send-heredoc` for CLI syntax. Recall itself sends nothing, claims
+nothing, rewrites nothing, starts no daemon and never polls empty status/POP
+in a loop.

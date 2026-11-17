@@ -1,0 +1,12 @@
+id: postman-usage-7
+name: first contact send belongs to send-message
+inputs:
+  prompt: I need to send a first-contact Postman request to a configured reviewer with a literal Markdown body; there is no unread mail to POP.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-usage/SKILL.md
+    mode: negative

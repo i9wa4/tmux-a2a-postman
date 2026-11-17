@@ -57,6 +57,10 @@ also own that same workspace; unknown ownership is not silently replaced.
 
 Have the orchestrator console run:
 
+For an ordinary send, follow `help postman-send-message sending`; the command
+below illustrates CLI syntax. Interpret its delivery,
+notification and current self-state with `postman-send-message outcomes`.
+
 ```sh
 tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
 Please confirm you can read this complete message and reply with the result.
@@ -70,7 +74,8 @@ path. Do not pass a message ID to POP.
 
 For example, the returned guidance uses `send-heredoc --to` with the claimed
 message ID and a quoted heredoc body. Use the actual ID and config-aware command
-from that archive; do not reply to the role name when closing this request.
+from that archive; follow `postman-send-message sending` for the reply
+procedure. Do not reply to the role name when closing this request.
 Orchestrator then POPs and fully reads the correlated reply. Sending to a role
 creates a reply obligation; replying to a claimed ID does not create another
 obligation. The CLI specification (`tmux-a2a-postman help cli-spec`) defines

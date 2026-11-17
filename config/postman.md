@@ -83,10 +83,13 @@ routes, not a grant of authority. Notification IDs are hints; POP selects mail.
 
 Read the applicable installed Skill entries and their matching references before
 the corresponding workflow: `tmux-a2a-postman help postman-orchestrate`,
-`help postman-plan`, `help postman-records`, and `help postman-review`.
-Transport syntax belongs to `help postman-usage mailbox`, `help send-heredoc`
-and the typed execution decision topics. The embedded catalog is a discovery
-index; read every selected reference through EOF, not just the entry or summary.
+`help postman-plan`, `help postman-records`, and `help postman-review`
+apply when their task stage arises, not as a pre-send checklist. Use
+`help postman-usage mailbox` for POP and complete archive reading,
+`help postman-send-message sending` for ordinary sends including exact replies,
+`help send-heredoc` for CLI syntax and limits, and the typed execution decision
+topics for command approval. The embedded catalog is a discovery index; read
+every selected reference through EOF, not just the entry or summary.
 
 Preserve the original human request, constraints, checklist and later changes.
 Assign one accountable artifact writer. Coordinators delegate every write,

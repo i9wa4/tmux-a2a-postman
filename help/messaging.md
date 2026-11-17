@@ -17,4 +17,7 @@ POSTMAN_BODY
 ```
 
 A reply derives its exact return route and creates no new obligation. See
-help send-heredoc for combined replies, output and notification semantics.
+`help postman-usage mailbox` for POP and complete archive reads,
+`help postman-send-message sending` for ordinary sends and exact replies,
+`help send-heredoc` for syntax and combined-reply limits, and
+`help postman-send-message outcomes` for delivery, notification and self-state.

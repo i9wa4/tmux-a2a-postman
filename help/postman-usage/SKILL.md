@@ -3,7 +3,7 @@ name: postman-usage
 license: MIT
 description: |
   USE FOR: Postman mailbox and session work: genuine notifications, POP and
-  complete archived-body reads, exact replies, passive waits,
+  complete archived-body reads, reply prerequisites, passive waits,
   bounded file-based status, pane evidence, and execute-heredoc orientation.
   DO NOT USE FOR: Ordinary sending procedure (use postman-send-message),
   configuration/topology audit (use postman-config-auditor), or deciding
@@ -29,8 +29,8 @@ report the incompatibility; do not substitute another checkout or download.
 | Read when                                       | ref                                          |
 | ----------------------------------------------- | -------------------------------------------- |
 | Handling a notification or claiming unread mail | [`mailbox`](references/mailbox.md)           |
-| Sending, replying or waiting after a send       | [`sending`](references/sending.md)           |
+| Checking mailbox/session state around a send    | [`sending`](references/sending.md)           |
 | Inspecting state or command-execution evidence  | [`status`](references/status.md)             |
 | Reconciling obligations, follow-ups or latency  | [`session-flow`](references/session-flow.md) |
 | Handling external-channel mail                  | [`external`](references/external.md)         |
-| Making a first configured exchange              | [`quickstart`](references/quickstart.md)     |
+| Setting up the worked first-exchange demo       | [`quickstart`](references/quickstart.md)     |

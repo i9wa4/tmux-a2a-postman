@@ -16,6 +16,7 @@ For audit-only work, report findings with concrete patches. Do not edit runtime
 mailboxes, broaden routes or treat missing evidence as verified absence.
 Use installed `tmux-a2a-postman help` for actual commands and flags.
 
-For POP/full reading, replies and passive waits use
-`tmux-a2a-postman help postman-usage mailbox`; for ordinary sends use
-`tmux-a2a-postman help send-heredoc`.
+For POP/full reading use `tmux-a2a-postman help postman-usage mailbox`;
+for ordinary sends including exact replies use
+`tmux-a2a-postman help postman-send-message sending`. The
+`tmux-a2a-postman help send-heredoc` topic gives CLI syntax and limits.
