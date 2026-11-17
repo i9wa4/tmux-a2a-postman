@@ -25,10 +25,11 @@ import (
 // Mail performs synchronous local-workspace file operations. Callers enforce
 // configured routing before Send; notification and Bash run only after return.
 type Mail struct {
-	Diagnostics *diagnostic.Recorder
-	Store       Store
-	Context     MessageContextBuilder
-	afterStep   func(string) error
+	Diagnostics        *diagnostic.Recorder
+	Store              Store
+	Context            MessageContextBuilder
+	StageBeforeContext bool
+	afterStep          func(string) error
 }
 
 type Message struct {
@@ -334,7 +335,8 @@ func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, f
 		if needsReply {
 			msg.InputRequestID = inputRequestID(msg.ID)
 		}
-		if err := m.addMessageContext(ctx, s, &msg); err != nil {
+		staged, err := m.addLocalMessageContext(ctx, ws, s, &msg)
+		if err != nil {
 			return err
 		}
 		if err := validateMessage(msg); err != nil {
@@ -344,7 +346,7 @@ func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, f
 		if !bound {
 			return m.failUnpublished(ws, msg, errors.New("recipient has no verified local binding"))
 		}
-		return m.begin(ws, tx)
+		return m.beginStaged(ws, tx, staged)
 	})
 	return msg, err
 }
@@ -355,7 +357,11 @@ func (m Mail) Recover(ctx context.Context, rt Runtime) error {
 }
 
 func (m Mail) begin(ws *os.Root, tx mailTransaction) error {
-	if tx.Kind == "send" {
+	return m.beginStaged(ws, tx, false)
+}
+
+func (m Mail) beginStaged(ws *os.Root, tx mailTransaction, staged bool) error {
+	if tx.Kind == "send" && !staged {
 		if err := m.stage(ws, tx.Message); err != nil {
 			return err
 		}
