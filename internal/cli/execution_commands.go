@@ -129,7 +129,7 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 	}
 	c = &opened
 	c.attachDiagnostic(ctx, trace)
-	if err := c.prepareRecipientContext(ctx); err != nil {
+	if err := c.prepareRecipientContext(ctx, c.topology.Reviewer, false); err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -234,7 +234,7 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	if !c.permits(sources[0].From) {
 		return errors.New("requester is not a configured outgoing edge")
 	}
-	if err := c.prepareRecipientContext(ctx); err != nil {
+	if err := c.prepareRecipientContext(ctx, sources[0].From, false); err != nil {
 		return err
 	}
 	var msg workspace.Message

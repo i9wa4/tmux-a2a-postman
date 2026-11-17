@@ -117,7 +117,8 @@ func (m Mail) SendReply(ctx context.Context, rt Runtime, ids []string, body stri
 			return err
 		}
 		msg = Message{ID: identity.ID, From: s.Caller.Role, To: first.From, Replies: replyReferences(sources), CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 1}
-		if err := m.addMessageContext(ctx, s, &msg); err != nil {
+		staged, err := m.addLocalMessageContext(ctx, ws, s, &msg)
+		if err != nil {
 			return err
 		}
 		if err := validateMessage(msg); err != nil {
@@ -126,7 +127,7 @@ func (m Mail) SendReply(ctx context.Context, rt Runtime, ids []string, body stri
 		if !bound {
 			return m.failUnpublished(ws, msg, errors.New("reply recipient has no verified local binding"))
 		}
-		return m.begin(ws, mailTransaction{Version: 1, Kind: "send", Message: msg, Body: body})
+		return m.beginStaged(ws, mailTransaction{Version: 1, Kind: "send", Message: msg, Body: body}, staged)
 	})
 	return msg, err
 }
