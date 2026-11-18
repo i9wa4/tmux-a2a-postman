@@ -231,9 +231,6 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	if err != nil {
 		return err
 	}
-	if !c.permits(sources[0].From) {
-		return errors.New("requester is not a configured outgoing edge")
-	}
 	if err := c.prepareRecipientContext(ctx, sources[0].From, false); err != nil {
 		return err
 	}
