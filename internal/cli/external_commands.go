@@ -65,7 +65,7 @@ func RunWorkspaceChannelSync(args []string) (retErr error) {
 	if err != nil {
 		return err
 	}
-	if err := c.prepareRecipientContext(ctx); err != nil {
+	if err := c.prepareRecipientContext(ctx, c.topology.InterfaceNode, false); err != nil {
 		return err
 	}
 	retErr = retryWorkspaceAdmission(ctx, func() (bool, error) {

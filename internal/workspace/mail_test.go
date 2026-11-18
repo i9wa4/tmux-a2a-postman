@@ -86,6 +86,34 @@ func TestMailPublishesSeparateCopiesAndReturnsDurableClaim(t *testing.T) {
 	}
 }
 
+func TestLocalContextReadsDurableDraftBeforePublication(t *testing.T) {
+	m := mailFixture(t)
+	m.StageBeforeContext = true
+	m.Context = func(_ context.Context, _ Snapshot, msg Message) (string, error) {
+		path := mailPath(m, msg.From, "draft", msg.ID)
+		provisional, err := readMessageAtPath(path)
+		if err != nil || provisional.Body != msg.Body || provisional.Context != nil {
+			t.Fatalf("context lookup ran before a complete provisional draft: %+v %v", provisional, err)
+		}
+		return "Verified nearest contacts", nil
+	}
+	msg := sendMail(t, m)
+	for _, path := range []string{mailPath(m, "peer", "inbox", msg.ID), mailPath(m, "worker", "sent", msg.ID)} {
+		archived, err := readMessageAtPath(path)
+		if err != nil || archived.Context == nil || archived.Context.Markdown != "Verified nearest contacts" {
+			t.Fatalf("published archive lost final context: %+v %v", archived, err)
+		}
+	}
+}
+
+func readMessageAtPath(path string) (Message, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Message{}, err
+	}
+	return DecodeArchive(raw)
+}
+
 func TestMailSendRecoveryAtEachPublicationBoundary(t *testing.T) {
 	failure := errors.New("simulated interrupted send")
 	for _, point := range []string{"send-intent", "send-inbox", "send-sent"} {

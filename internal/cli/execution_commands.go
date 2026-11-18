@@ -129,7 +129,7 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 	}
 	c = &opened
 	c.attachDiagnostic(ctx, trace)
-	if err := c.prepareRecipientContext(ctx); err != nil {
+	if err := c.prepareRecipientContext(ctx, c.topology.Reviewer, false); err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -227,10 +227,11 @@ func runExecutionDecision(args []string, approve bool) (retErr error) {
 	if c.topology.Reviewer != c.caller.Caller.Role {
 		return errors.New("caller is not the configured command approver")
 	}
-	if _, err := c.mail.ReplySources(ctx, c.boundRuntime(), ids); err != nil {
+	sources, err := c.mail.ReplySources(ctx, c.boundRuntime(), ids)
+	if err != nil {
 		return err
 	}
-	if err := c.prepareRecipientContext(ctx); err != nil {
+	if err := c.prepareRecipientContext(ctx, sources[0].From, false); err != nil {
 		return err
 	}
 	var msg workspace.Message
