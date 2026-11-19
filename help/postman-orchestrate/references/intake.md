@@ -25,6 +25,15 @@ Coordinators may read relevant procedures, records and returned evidence;
 source investigation, tests and all writes are delegated. Verify delegated
 record updates by reading back the actual linked files.
 
+If the active canonical index path is unknown, orchestrator delegates bounded
+candidate enumeration and provenance gathering to one worker using
+`help postman-records discovery`. The worker returns candidate paths and
+evidence; orchestrator reads them and validates repository, full branch,
+worktree, purpose, contents and provenance under
+`help postman-records selection` before deciding which record is canonical. A
+previously known path that is missing or unreadable remains a recovery case,
+not permission to adopt a fresh candidate.
+
 The active index contains original request/changes, acceptance criteria, task
 and dependency matrix, owners, last verified evidence, next action, blockers,
 approvals, child scopes and resume context. Link detailed plans, review records
