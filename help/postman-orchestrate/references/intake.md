@@ -3,8 +3,11 @@
 Read this complete topic before coordinating the standard team.
 `help postman-records` owns record selection and persistence;
 `help postman-plan` owns planning and investigation; `help postman-review`
-owns review admission, evidence and counters. Transport syntax remains in
-`help postman-usage mailbox` and `help send-heredoc`.
+owns review admission, evidence and counters. `help postman-usage mailbox`
+owns POP and complete archive reads; `help postman-send-message sending` owns
+ordinary sends and exact replies; `help send-heredoc` owns CLI syntax and
+limits; `help postman-send-message outcomes` owns delivery, notification and
+self-state interpretation.
 
 ## 1. Intake and ownership
 

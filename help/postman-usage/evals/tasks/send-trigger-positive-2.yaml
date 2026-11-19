@@ -1,10 +1,10 @@
 id: send-trigger-positive-002
 name: Send Positive Trigger 2
-description: Initial-contact request should trigger the send procedure.
+description: Worked first-exchange setup selects the usage quickstart.
 tags:
   - positive-trigger
 inputs:
-  prompt: "I need to contact another agent node for the first time and preserve a Markdown body exactly."
+  prompt: "Set up the worked Postman first-exchange demo with two configured consoles and show how the notification, POP and reply flow works."
 expected:
   should_trigger: true
 graders:
@@ -12,6 +12,6 @@ graders:
     name: contains-keywords
     config:
       contains:
-        - "send-heredoc"
-        - "quoted heredoc"
-        - "Markdown"
+        - "quickstart"
+        - "tmux"
+        - "pop"

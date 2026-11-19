@@ -1,10 +1,10 @@
 id: send-trigger-positive-001
 name: Send Positive Trigger 1
-description: Direct skill request should trigger message sending guidance.
+description: A notification selects POP and complete archive reading before the send handoff.
 tags:
   - positive-trigger
 inputs:
-  prompt: "Use postman-usage to send the first message to the reviewer node."
+  prompt: "A genuine Postman notification arrived. Use postman-usage to POP and read the entire archived request before I prepare an exact reply."
 expected:
   should_trigger: true
 graders:
@@ -12,6 +12,6 @@ graders:
     name: contains-keywords
     config:
       contains:
-        - "send-heredoc"
-        - "POSTMAN_BODY"
-        - "reviewer"
+        - "tmux-a2a-postman pop"
+        - "markdown_absolute_path"
+        - "postman-send-message"

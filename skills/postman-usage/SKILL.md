@@ -3,7 +3,7 @@ name: postman-usage
 license: MIT
 description: |
   USE FOR: Postman mailbox and session work: genuine notifications, POP and
-  complete archived-body reads, exact replies, passive waits,
+  complete archived-body reads, reply prerequisites, passive waits,
   bounded file-based status, pane evidence, and execute-heredoc orientation.
   DO NOT USE FOR: Ordinary sending procedure (use postman-send-message),
   configuration/topology audit (use postman-config-auditor), or deciding

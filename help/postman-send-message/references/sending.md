@@ -2,6 +2,14 @@
 
 ## 1. Send
 
+This is the ordinary-send procedure, including exact replies. After a genuine
+notification, use `postman-usage mailbox` to POP and read the full archive
+before composing a reply. Read this send procedure once for the active task;
+consult `help send-heredoc` for CLI syntax or limits when needed. After the
+send, read `postman-send-message outcomes` to interpret delivery,
+notification and current self-state. Use waiting/session-flow references when
+those stages arise.
+
 1. Resolve the sender and intended recipient against the current workspace,
    verified binding, configured edges, and return route. A footer is a hint;
    it does not authorize a route or override a role contract.
