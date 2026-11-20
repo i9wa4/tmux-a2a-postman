@@ -63,7 +63,7 @@ func (m Mail) StageUnavailableCross(ctx context.Context, source NamedRuntime, to
 			if err != nil {
 				return err
 			}
-			msg = Message{ID: identity.ID, From: s.Caller.Role, FromSession: source.Name(), To: to, ToSession: toSession, Replies: refs, NeedsReply: len(ids) == 0, CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 1}
+			msg = Message{ID: identity.ID, From: s.Caller.Role, FromSession: source.Name(), To: to, ToSession: toSession, Replies: refs, NeedsReply: len(ids) == 0, CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 2}
 			if msg.NeedsReply {
 				msg.InputRequestID = inputRequestID(msg.ID)
 			}

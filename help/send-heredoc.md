@@ -1,10 +1,16 @@
 # send-heredoc — publish mail and attempt a bounded input notification
 
 ```sh
-tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY_7f4c39b2'
 Literal Markdown, including $HOME and `code`.
-POSTMAN_BODY
+POSTMAN_BODY_7f4c39b2
 ```
+
+The marker is illustrative. Before constructing any send command, choose a
+fresh delimiter and verify that no complete line of the actual body equals it.
+Use the same quoted opening and unquoted closing delimiter. A collision ends
+stdin early and can execute following body lines in the sender shell. This
+also applies to reply and external report heredocs.
 
 Required: --to <node|session:interface|POP'd-message-id[,POP'd-message-id...]>.
 Optional: `--config <absolute-path>`. No positional arguments or reply flags.
