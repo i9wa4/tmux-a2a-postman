@@ -26,7 +26,6 @@
 
    The marker above is illustrative. Replace it with a fresh value checked
    against the actual body before sending.
-
 3. Address a configured node for a new request; every new request requires a
    reply. Address your actual POP'd message ID to reply. The tool recovers its
    exact correlation and authorized return route; never copy another request's
