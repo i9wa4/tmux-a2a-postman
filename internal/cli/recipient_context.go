@@ -117,7 +117,7 @@ func renderRecipientContextDirectory(policy config.RecipientPolicy, topology con
 		guidance = strings.Replace(guidance, "exact command, reason, cwd and shell above", "exact command, reason, cwd and shell in Sender Message below", 1)
 	}
 	if !msg.NeedsReply && msg.Kind == "" {
-		guidance += "\nIf a material response is needed, reply to this message ID; an exact reply creates no new reply obligation:\n\n```sh\ntmux-a2a-postman send-heredoc --to " + msg.ID + " <<'POSTMAN_BODY'\n<your material response>\nPOSTMAN_BODY\n```\n"
+		guidance += workspace.OptionalReplyGuidance(msg)
 	}
 	configArguments := ""
 	if path != "" {

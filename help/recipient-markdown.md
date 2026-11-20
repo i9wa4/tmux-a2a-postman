@@ -77,13 +77,16 @@ Read this complete archived Markdown through EOF before handling it.
 A reply is required. Reply to this actual message ID with quoted heredoc:
 
 ```sh
-tmux-a2a-postman send-heredoc --to m-20261101T120000.000000000Z-Ab12Cd <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to m-20261101T120000.000000000Z-Ab12Cd <<'POSTMAN_BODY_7f4c39b2'
 <your reply>
-POSTMAN_BODY
+POSTMAN_BODY_7f4c39b2
 ```
 
 The reply closes transport responsibility; task completion still needs the
 original checklist and actual evidence.
+
+The marker is illustrative. Before constructing the reply, choose a fresh
+quoted delimiter absent as a complete body line; see `help send-heredoc`.
 
 ## Sender Message
 

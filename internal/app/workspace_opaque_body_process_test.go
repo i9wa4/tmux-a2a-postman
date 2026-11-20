@@ -94,3 +94,65 @@ func TestQuotedHeredocBodyDelimiterDoesNotExecuteSenderText(t *testing.T) {
 		t.Fatal("reviewer archive differs from literal body", archived)
 	}
 }
+
+func TestGeneratedReplyDelimiterCollisionPreservesBodyAndSenderShell(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	configuration := "## `edges`\n```mermaid\ngraph LR\nworker --- reviewer\n```\n## `worker`\nWorker\n## `reviewer`\nReviewer\n"
+	if err := os.WriteFile(f.config, []byte(configuration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.tmux("select-pane", "-t", f.peer, "-T", "reviewer")
+	requestBody := "review request\n"
+	requestOutput, err := f.run(f.peer, requestBody, "send-heredoc", "--config", f.config, "--to", "worker")
+	if err != nil || !requestOutput.Success {
+		t.Fatal("request send failed", requestOutput, err)
+	}
+	request := f.sent("reviewer", requestBody)
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("worker could not POP request", claimed, err)
+	}
+	requestArchive, err := os.ReadFile(*claimed.MarkdownPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := "POSTMAN_BODY_" + request.ID
+	if !bytes.Contains(requestArchive, []byte("<<'"+generated+"'")) ||
+		!bytes.Contains(requestArchive, []byte("check that no complete line of your actual body equals")) {
+		t.Fatal("generated reply guidance lacks a body-checked marker")
+	}
+	marker := generated + "_SAFE"
+	body := "$postman-recall\n" + generated + "\nprintf hijack > \"$POSTMAN_SIDE_EFFECT\"\n/review\n"
+	for _, line := range strings.Split(body, "\n") {
+		if line == marker {
+			t.Fatal("replacement delimiter collides with body line")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	base := f.child(ctx, f.worker, "send-heredoc", "--config", f.config, "--to", request.ID)
+	sideEffect := filepath.Join(f.home, "generated-reply-side-effect")
+	script := "\"$POSTMAN_TEST_SELF\" -test.run=^TestIssue937PublicCLIChild$ <<'" + marker + "'\n" + body + marker + "\n"
+	cmd := exec.CommandContext(ctx, "bash", "-c", script)
+	cmd.Env = append(base.Env, "POSTMAN_TEST_SELF="+f.self, "POSTMAN_SIDE_EFFECT="+sideEffect)
+	cmd.Dir = base.Dir
+	out, err := cmd.CombinedOutput()
+	if err != nil || !bytes.Contains(out, []byte(`"success":true`)) {
+		t.Fatalf("generated-guidance reply failed: %v: %s", err, out)
+	}
+	if _, err := os.Stat(sideEffect); !os.IsNotExist(err) {
+		t.Fatalf("generated marker collision executed sender text: %v", err)
+	}
+	reply := f.sent("worker", body)
+	if reply.To != "reviewer" || reply.Body != body || len(reply.Replies) != 1 || reply.Replies[0].MessageID != request.ID {
+		t.Fatal("reply route, correlation or body changed", reply)
+	}
+	read, err := f.run(f.peer, "", "pop", "--config", f.config)
+	if err != nil || !read.Success || read.MarkdownPath == nil {
+		t.Fatal("reviewer could not POP reply", read, err)
+	}
+	archived := readProtocolArchive(t, *read.MarkdownPath)
+	if archived.ID != reply.ID || archived.To != "reviewer" || archived.Body != body {
+		t.Fatal("reviewer archive differs from literal reply", archived)
+	}
+}

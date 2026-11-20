@@ -113,10 +113,13 @@ files for reconciliation.
 On genuine notification, POP normally and read the entire returned Markdown
 through EOF. Its external guidance identifies the report command:
 
+Choose a fresh quoted delimiter absent as a complete report-body line; see
+`tmux-a2a-postman help send-heredoc` for the same shell boundary.
+
 ```sh
-tmux-a2a-postman channel-report-heredoc --to m-<claimed-id> --state done <<'BODY'
+tmux-a2a-postman channel-report-heredoc --to m-<claimed-id> --state done <<'POSTMAN_BODY_7f4c39b2'
 Describe the subject, actual result, evidence and remaining limitations.
-BODY
+POSTMAN_BODY_7f4c39b2
 ```
 
 Use `--state blocked` with the concrete blocker when work cannot complete.

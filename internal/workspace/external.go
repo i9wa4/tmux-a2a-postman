@@ -202,7 +202,7 @@ func externalInput(ws *os.Root, b ExternalBinding, name, body string, reports []
 		}
 		x.ExchangeID, x.DecisionID, x.Scope, x.Choice = decision.External.ExchangeID, decision.ID, parts[2], parts[3]
 	}
-	return Message{ID: id, From: externalRole(b.key()), To: b.Node, NeedsReply: true, InputRequestID: inputRequestID(id), CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 1, External: x}, nil
+	return Message{ID: id, From: externalRole(b.key()), To: b.Node, NeedsReply: true, InputRequestID: inputRequestID(id), CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 2, External: x}, nil
 }
 
 // SyncExternal performs a bounded scan. A producer invokes it after atomic file
