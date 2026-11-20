@@ -480,6 +480,7 @@ func resumeExternalDraft(ctx context.Context, ws *os.Root, candidate Message) (M
 	}
 	candidate.ID, candidate.InputRequestID = prior.ID, prior.InputRequestID
 	candidate.CreatedAt, candidate.Context = prior.CreatedAt, prior.Context
+	candidate.GuidanceVersion = prior.GuidanceVersion
 	if !sameMessage(candidate, prior) {
 		return Message{}, errors.New("external staged identity conflicts with the retried action")
 	}
