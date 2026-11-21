@@ -127,10 +127,11 @@ Each root contains Skill subdirectories with `SKILL.md` name/description
 metadata. Relative paths resolve against the config directory, `~/` against
 HOME. A catalog is sorted discovery metadata and source paths; it is not the
 full Skill body, an installer, a tool grant or automatic execution. Install/read
-Skills through the agent's ordinary mechanism. Missing roots or selected
-metadata fail archive rendering explicitly. Read-only topology/status does not
-open catalogs. Legacy PING-only catalogs do not become ordinary-mail catalogs,
-start timers or restore startup injection.
+Skills through the agent's ordinary mechanism. Missing roots are skipped; if
+none exist, the external catalog is empty. Missing selected metadata in a
+present root still fails archive rendering explicitly. Read-only topology/status
+does not open catalogs. Legacy PING-only catalogs do not become ordinary-mail
+catalogs, start timers or restore startup injection.
 
 The practical repository example uses `../../skills` from its own directory.
 When copying it to XDG, replace that root with the actual installed directory;
