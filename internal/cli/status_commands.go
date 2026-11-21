@@ -76,6 +76,9 @@ func RunWorkspaceGetStatusOneline(args []string) error {
 		rows := []workspace.OperatorNode{}
 		for _, window := range session.Windows {
 			for _, pane := range window.Panes {
+				if pane.Workspace == "" && pane.Reason != "" {
+					partial = true
+				}
 				if pane.Status != nil {
 					rows = append(rows, workspace.OperatorNode{Session: number, Window: window.Index, Top: pane.Top, Left: pane.Left, Pane: pane.ID, Status: *pane.Status})
 					if pane.Status.Reason != "" {

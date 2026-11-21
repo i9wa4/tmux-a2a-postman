@@ -190,6 +190,16 @@ func TestStatusOnelineExactOutputMatrix(t *testing.T) {
 	write(baseline)
 	check("normal", "[0]🟢🟢\n", false)
 
+	unattributed := baseline
+	unattributed.Sessions = append([]workspace.StatusSession(nil), baseline.Sessions...)
+	unattributed.Sessions[0].Windows = append([]workspace.StatusWindow(nil), baseline.Sessions[0].Windows...)
+	unattributed.Sessions[0].Windows[0].Panes = append([]workspace.StatusPane(nil), panes...)
+	unattributed.Sessions[0].Windows[0].Panes[1].Status = nil
+	unattributed.Sessions[0].Windows[0].Panes[1].Workspace = ""
+	unattributed.Sessions[0].Windows[0].Panes[1].Reason = "workspace attribution: outside canonical home"
+	write(unattributed)
+	check("healthy row plus unattributed pane", "[0]🟢 [partial]\n", false)
+
 	stale := baseline
 	stale.Sessions = append([]workspace.StatusSession(nil), baseline.Sessions...)
 	stale.Sessions[0].Windows = append([]workspace.StatusWindow(nil), baseline.Sessions[0].Windows...)
