@@ -88,7 +88,8 @@ func loadSkillCatalog(markdownPath, skillPath string) ([]skillCatalogEntry, stri
 	if err != nil {
 		return nil, "", err
 	}
-	if err := validateSkillPathDir(skillPath, resolvedPath); err != nil {
+	present, err := validateSkillPathDir(skillPath, resolvedPath)
+	if err != nil || !present {
 		return nil, resolvedPath, err
 	}
 
@@ -146,7 +147,8 @@ func loadSelectedSkillCatalog(markdownPath, skillPath string, names []string) ([
 	if err != nil {
 		return nil, "", err
 	}
-	if err := validateSkillPathDir(skillPath, resolvedPath); err != nil {
+	present, err := validateSkillPathDir(skillPath, resolvedPath)
+	if err != nil || !present {
 		return nil, resolvedPath, err
 	}
 
@@ -174,15 +176,18 @@ func loadSelectedSkillCatalog(markdownPath, skillPath string, names []string) ([
 	return entries, resolvedPath, nil
 }
 
-func validateSkillPathDir(skillPath, resolvedPath string) error {
+func validateSkillPathDir(skillPath, resolvedPath string) (bool, error) {
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		return fmt.Errorf("stat skill path %s: %w", skillPath, err)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat skill path %s: %w", skillPath, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("skill path %s is not a directory", skillPath)
+		return false, fmt.Errorf("skill path %s is not a directory", skillPath)
 	}
-	return nil
+	return true, nil
 }
 
 func validateSkillName(name string) error {
