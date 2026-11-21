@@ -37,6 +37,13 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	adapter.Roles = topology.Nodes
 	adapter.ConfigPath, adapter.BuiltinConfig = configPath, true
 	adapter.ConfigFingerprint = StatusConfigFingerprint(topology)
+	priorFingerprint := "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	if !StatusConfigFingerprintMatches(topology, priorFingerprint) {
+		t.Fatal("reviewed prior built-in fingerprint was rejected")
+	}
+	if StatusConfigFingerprintMatches(topology, "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
+		t.Fatal("foreign built-in fingerprint was accepted")
+	}
 	store := Store{StateRoot: filepath.Join(f.home, "state")}
 	for _, pane := range []string{f.pane, childPane} {
 		registerDirectoryPane(t, store, adapter, pane)
@@ -54,7 +61,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
 	}
-	record.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	record.Fingerprint = priorFingerprint
 	write := func() {
 		t.Helper()
 		data, err := json.Marshal(record)

@@ -144,6 +144,24 @@ func TestSkillCatalogSkipsMissingRootsAndMergesPresentRoots(t *testing.T) {
 	}
 }
 
+func TestSelectedSkillNamesAreValidatedWhenRootIsMissing(t *testing.T) {
+	markdownPath := filepath.Join(t.TempDir(), "postman.md")
+	for _, tc := range []struct {
+		name, selector, wantError string
+	}{
+		{"empty", "", "skill name must be non-empty"},
+		{"path", "../outside", "must be a directory name"},
+		{"glob", "bad*", "uses a glob pattern"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := renderSkillCatalogs(markdownPath, []skillCatalogSpec{{Path: "missing", Names: []string{tc.selector}}})
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("missing root accepted invalid selected skill %q: %v", tc.selector, err)
+			}
+		})
+	}
+}
+
 func TestRecipientRoleRetainsLegacyFrontmatterFallback(t *testing.T) {
 	role, err := roleDescription("---\nrole: >-\n  Original first line\n  and continuation.\n---\nFull contract\n")
 	if err != nil || role != "Original first line and continuation." {

@@ -147,6 +147,11 @@ func loadSelectedSkillCatalog(markdownPath, skillPath string, names []string) ([
 	if err != nil {
 		return nil, "", err
 	}
+	for _, name := range names {
+		if err := validateSkillName(name); err != nil {
+			return nil, resolvedPath, err
+		}
+	}
 	present, err := validateSkillPathDir(skillPath, resolvedPath)
 	if err != nil || !present {
 		return nil, resolvedPath, err
@@ -154,9 +159,6 @@ func loadSelectedSkillCatalog(markdownPath, skillPath string, names []string) ([
 
 	entries := make([]skillCatalogEntry, 0, len(names))
 	for _, name := range names {
-		if err := validateSkillName(name); err != nil {
-			return nil, resolvedPath, err
-		}
 		skillFile := filepath.Join(resolvedPath, name, "SKILL.md")
 		entry, err := parseSkillCatalogEntry(skillFile)
 		if err != nil {
