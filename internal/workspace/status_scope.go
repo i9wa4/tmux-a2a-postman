@@ -91,7 +91,15 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		}
 		fingerprint := StatusConfigFingerprint(topology)
 		if fingerprint != record.Fingerprint {
-			return nil, nil, errors.New("registered configuration changed; a normal operation must verify it again")
+			// The previous built-in bundle has the same directory interface,
+			// but its help assets give it a different bundle fingerprint. Pin
+			// this one known registration so an unchanged parent can still be
+			// reached; arbitrary or edited registrations remain rejected.
+			const previousBuiltinFingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+			if !record.Builtin || record.Fingerprint != previousBuiltinFingerprint || topology.InterfaceNode != "messenger" {
+				return nil, nil, errors.New("registered configuration changed; a normal operation must verify it again")
+			}
+			fingerprint = record.Fingerprint
 		}
 		if chosen != nil && chosen.Fingerprint != fingerprint {
 			return nil, nil, errors.New("conflicting registered workspace configurations")

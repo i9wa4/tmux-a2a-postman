@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -14,6 +15,85 @@ import (
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 )
+
+func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.T) {
+	f := newTmuxFixture(t)
+	childRoot := filepath.Join(f.repo, "child")
+	if err := os.Mkdir(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	for _, pane := range []string{f.pane, childPane} {
+		f.run(t, "select-pane", "-t", pane, "-T", "messenger")
+	}
+	ctx := context.Background()
+	configPath := filepath.Join(f.home, "absent-postman.md")
+	topology, err := (config.Source{Path: configPath, Builtin: true}).Load(ctx)
+	if err != nil || topology.InterfaceNode != "messenger" {
+		t.Fatalf("built-in directory interface: %q %v", topology.InterfaceNode, err)
+	}
+	adapter := f.adapter()
+	adapter.Roles = topology.Nodes
+	adapter.ConfigPath, adapter.BuiltinConfig = configPath, true
+	adapter.ConfigFingerprint = StatusConfigFingerprint(topology)
+	store := Store{StateRoot: filepath.Join(f.home, "state")}
+	for _, pane := range []string{f.pane, childPane} {
+		registerDirectoryPane(t, store, adapter, pane)
+	}
+	parentName, err := Name("~/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.StateRoot, parentName, "runtime", "status-config-p"+f.pane[1:]+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record statusConfigRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	record.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	write := func() {
+		t.Helper()
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	adapter.Pane = childPane
+	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := DirectDirectoryPeer(interfaces, "child", "one")
+	if err != nil || selected.Root != "~/repo" {
+		t.Fatalf("pinned parent route: %+v %v", selected, err)
+	}
+	child, err := adapter.NamedCaller(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := selected.Runtime
+	mail := Mail{Store: store}
+	request, err := mail.SendCrossWithReply(ctx, child, parent.WithDirectoryRoute(), "handoff", "", "", true)
+	if err != nil || request.ID == "" {
+		t.Fatalf("pinned parent mail: %+v %v", request, err)
+	}
+	if _, err := mail.Claim(ctx, parent, request.ID); err != nil {
+		t.Fatal(err)
+	}
+	record.Binding.PanePID = "999999"
+	write()
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+		t.Fatal("stale parent pane provenance admitted")
+	}
+}
 
 func directoryConfiguredAdapter(t *testing.T, f tmuxFixture) Tmux {
 	t.Helper()
