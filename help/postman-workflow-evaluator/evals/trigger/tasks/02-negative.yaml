@@ -1,0 +1,12 @@
+id: postman-workflow-evaluator-2
+name: passive mailbox notification
+inputs:
+  prompt: "A message arrived for my Postman node. POP it, read the full body, and reply to the exact message ID."
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-workflow-evaluator/SKILL.md
+    mode: negative

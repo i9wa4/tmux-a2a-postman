@@ -1,0 +1,12 @@
+id: postman-workflow-evaluator-1
+name: named session evaluation
+inputs:
+  prompt: "Evaluate the named tmux session project-dev against my original human objective and propose evidence-backed workflow improvements."
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-workflow-evaluator/SKILL.md
+    mode: positive
