@@ -299,6 +299,10 @@ func TestLaunchedTerminalAgentsOwnFullReadRepliesAndExecutionApproval(t *testing
 		t.Skip("python3 unavailable")
 	}
 	f := newRebuiltCLIFixture(t)
+	// An empty fixture HOME makes interactive zsh stop at its first-run menu.
+	if err := os.WriteFile(filepath.Join(f.home, ".zshrc"), []byte("# test fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Logf("owned launched protocol fixture: %s", f.dir)
 	directory := filepath.Join(f.home, "launched")
 	evidence := filepath.Join(f.dir, "launch-evidence")
