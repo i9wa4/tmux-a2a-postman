@@ -44,10 +44,14 @@ func StatusConfigFingerprintMatches(topology config.WorkspaceTopology, registere
 	if current == registered {
 		return true
 	}
-	return topology.InterfaceNode == "messenger" &&
-		registered == "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4" &&
-		(current == "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71" ||
-			current == "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad")
+	if topology.InterfaceNode != "messenger" {
+		return false
+	}
+	const prior = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	const mergedBase = "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71"
+	const helpUpdated = "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad"
+	return (registered == prior && (current == mergedBase || current == helpUpdated)) ||
+		(registered == mergedBase && current == helpUpdated)
 }
 
 // This is registration provenance, written only inside verified normal operation
