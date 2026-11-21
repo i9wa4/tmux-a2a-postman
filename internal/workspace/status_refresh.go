@@ -284,6 +284,11 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 	for _, s := range snapshot.Sessions {
 		for _, w := range s.Windows {
 			for _, p := range w.Panes {
+				// An expired aggregation may leave a fresh pane without Status.
+				// Capture success cannot make its unverified attribution complete.
+				if p.Status == nil && workCtx.Err() != nil && p.Workspace != "" && !p.Dead && !p.Linked {
+					snapshot.Coverage.UnknownNodes++
+				}
 				if p.Status != nil && (p.Status.Reason != "" || p.Status.UnreadCount == nil || p.Status.InboundCount == nil || p.Status.OutboundCount == nil || p.Status.DraftCount == nil || p.Status.FailedCount == nil) {
 					snapshot.Coverage.UnknownNodes++
 				}

@@ -305,6 +305,24 @@ func TestServerRefreshSlowFinalNativeVerificationKeepsPriorSnapshot(t *testing.T
 	}
 }
 
+func TestServerRefreshExpiredAggregationIsPartial(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	server := ServerContext{Socket: f.socket}
+	r, err := m.RefreshServerStatus(context.Background(), server, f.home, RefreshOptions{phaseStarted: func(name string) {
+		if name == "aggregate" {
+			time.Sleep(1200 * time.Millisecond)
+		}
+	}})
+	if err == nil || r.Status != "partial" || r.Coverage == nil || r.Coverage.Captured != 1 || r.Coverage.Unavailable != 0 || r.Coverage.UnknownNodes != 1 {
+		t.Fatal("expired aggregation appeared complete", r, err)
+	}
+	_, saved, err := m.Store.ReadServerStatus(server)
+	if err != nil || saved.Coverage.Complete || firstStatusPane(t, saved).Capture == nil || firstStatusPane(t, saved).Reason == "" {
+		t.Fatal(saved, err)
+	}
+}
+
 func TestServerRefreshLockInodeNeverReplaced(t *testing.T) {
 	f := newTmuxFixture(t)
 	m := mailFixture(t)
