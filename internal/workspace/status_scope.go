@@ -83,6 +83,7 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 	}
 	defer func() { _ = dir.Close() }()
 	var chosen *StatusScope
+	var conflictIdentity string
 	var nodes []string
 	for _, b := range bindings {
 		var record statusConfigRecord
@@ -106,12 +107,16 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		if !StatusConfigFingerprintMatches(topology, record.Fingerprint) {
 			return nil, nil, errors.New("registered configuration changed; a normal operation must verify it again")
 		}
-		fingerprint := record.Fingerprint
-		if chosen != nil && chosen.Fingerprint != fingerprint {
+		// The pinned prior and current built-in registrations describe the
+		// same loaded topology. Compare that verified identity while keeping
+		// the selected registration's fingerprint in the reported scope.
+		identity := StatusConfigFingerprint(topology)
+		if chosen != nil && conflictIdentity != identity {
 			return nil, nil, errors.New("conflicting registered workspace configurations")
 		}
 		if chosen == nil {
-			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode}
+			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: record.Fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode}
+			conflictIdentity = identity
 			nodes = topology.Nodes
 		}
 	}

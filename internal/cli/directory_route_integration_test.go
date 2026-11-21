@@ -220,6 +220,41 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if result, err := invoke(childPane, "prior builtin parent\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
 		t.Fatalf("CLI prior-built-in parent send: %+v %v", result, err)
 	}
+	archiveResult, err := invoke(parentPane, "", RunWorkspacePop)
+	if err != nil || archiveResult.MarkdownPath == nil || *archiveResult.MarkdownPath == nil {
+		t.Fatalf("CLI prior-built-in parent POP: %+v %v", archiveResult, err)
+	}
+	archive, err := os.ReadFile(**archiveResult.MarkdownPath)
+	if err != nil || !strings.Contains(string(archive), "prior builtin parent\n") ||
+		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
+		!strings.Contains(string(archive), "### messenger instructions") {
+		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
+	}
+	var refreshed statusConfig
+	data, err := os.ReadFile(parentConfig)
+	if err != nil || json.Unmarshal(data, &refreshed) != nil || refreshed.Fingerprint != currentFingerprint {
+		t.Fatalf("normal parent POP did not refresh only its registration: %v %+v", err, refreshed)
+	}
+	orchestratorConfig := filepath.Join(filepath.Dir(parentConfig),
+		"status-config-p"+strings.TrimPrefix(orchestratorPane, "%")+".json")
+	var stillPrior statusConfig
+	data, err = os.ReadFile(orchestratorConfig)
+	if err != nil || json.Unmarshal(data, &stillPrior) != nil || stillPrior.Fingerprint != prior.Fingerprint {
+		t.Fatalf("other parent registration did not remain prior: %v %+v", err, stillPrior)
+	}
+	if result, err := invoke(childPane, "mixed builtin parent second\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
+		t.Fatalf("CLI mixed-built-in parent second send: %+v %v", result, err)
+	}
+	secondResult, err := invoke(parentPane, "", RunWorkspacePop)
+	if err != nil || secondResult.MarkdownPath == nil || *secondResult.MarkdownPath == nil {
+		t.Fatalf("CLI mixed-built-in parent second POP: %+v %v", secondResult, err)
+	}
+	secondArchive, err := os.ReadFile(**secondResult.MarkdownPath)
+	if err != nil || !strings.Contains(string(secondArchive), "mixed builtin parent second\n") ||
+		!strings.Contains(string(secondArchive), "<!-- postman recipient context v1 -->") ||
+		!strings.Contains(string(secondArchive), "### messenger instructions") {
+		t.Fatalf("CLI mixed-built-in parent second archive context: %v", err)
+	}
 	bindingPath := filepath.Join(filepath.Dir(parentConfig), "binding.json")
 	bindingData, err := os.ReadFile(bindingPath)
 	if err != nil {
@@ -252,16 +287,6 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	}
 	if result, err := invoke(childPane, "stale parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
 		t.Fatalf("CLI stale parent pane admitted mail: %+v %v", result, err)
-	}
-	archiveResult, err := invoke(parentPane, "", RunWorkspacePop)
-	if err != nil || archiveResult.MarkdownPath == nil || *archiveResult.MarkdownPath == nil {
-		t.Fatalf("CLI prior-built-in parent POP: %+v %v", archiveResult, err)
-	}
-	archive, err := os.ReadFile(**archiveResult.MarkdownPath)
-	if err != nil || !strings.Contains(string(archive), "prior builtin parent\n") ||
-		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
-		!strings.Contains(string(archive), "### messenger instructions") {
-		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
 	}
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "status-config-p") {
