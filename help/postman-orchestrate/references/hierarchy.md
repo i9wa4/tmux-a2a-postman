@@ -2,13 +2,64 @@
 
 ## 1. Recursive teams and publication
 
-Only verified direct parent/child interface routes exist. With no
-`workspace_tree`, the nearest live native interface in a containing canonical
-directory is the parent or child; an explicit tree takes precedence when set.
+Only verified direct parent/child interface routes exist. The nearest live
+native interface in a containing canonical directory is the parent or child.
 Each child preserves its delegated goal, criteria and exact per-hop return
 route, owns its scope index and may delegate further within authority. No
 sibling/ancestor guessing, shared global mutable tracker, raw descendant-state
 inspection or human-facing shortcut hides a failed route.
+
+Before launching a team, run `refresh-status` and inspect its collection
+outcome. Then read `get-status` for the saved inventory: check `as_of` and
+`coverage`, and select the assigned native interface pane and canonical
+workspace. Derive direct children from current registered interface-pane roots,
+each peer's attributed scope and native binding, and nearest canonical directory
+containment: the assigned interface must be a child's nearest containing
+interface. There is no top-level parent/children projection. Check reachable
+direct child interfaces in current recipient contact guidance, then compare
+each child's known role and ownership with the delegated scope. Busy, partial,
+error, stale, missing or ambiguous evidence is unknown: it proves neither a
+suitable child nor the absence of one. Resolve or report the evidence gap and
+defer launch until sufficiently current, complete evidence supports the choice.
+Contact hints are advisory, and the actual send rechecks the route. Reuse a
+suitable direct child for the first real task: send to its exact
+`session:interface_node` address without running `launch-agents`, preserving
+the original goal and acceptance criteria. If that evidence shows no suitable
+direct child, record in the canonical task artifact which existing children
+were inspected and why a new team is needed. Only then follow the new-team
+branch below.
+
+For a new team, choose a real directory below the parent interface pane's
+canonical workspace. Review `tmux-a2a-postman launch-agents --list`, then
+preview a dedicated child session:
+
+```sh
+tmux-a2a-postman launch-agents <preset> \
+  --cwd /absolute/child --session child-team --dry-run
+```
+
+Inspect its roles, commands, configuration source and dedicated session target,
+then repeat the same command without `--dry-run`. When invoked from a parent
+pane, omitting `--session` creates a window in that parent session, so it is
+unsuitable for this child-team route. A successful launch records live native
+bindings, but does not prove an agent is ready. For a manually started team, its
+interface must perform a normal configured operation to register its current
+configuration before it can receive a directory task. Run `refresh-status`,
+inspect its collection outcome, then read `get-status` for the saved `as_of`,
+`coverage` and attributed scope of the assigned native pane and workspace.
+Apply the direct-child derivation and unknown-evidence rules above; defer a
+directory task while binding or scope evidence is missing or ambiguous. The
+inventory is observation, not send authority.
+
+Send to the exact `session:interface_node` address shown by verified contact
+guidance. Each peer's interface name comes from its own registered
+`postman.md`; session names do not express hierarchy. After a genuine
+notification, the recipient POPs, reads the complete archive through EOF and
+replies to the claimed message ID. The parent POPs and reads that exact reply.
+If a middle interface is live, use two direct hops. Check collision and partial
+launch outcomes before retrying; started commands are never replayed
+automatically. See `help launching`, `help config`, `help postman-usage mailbox`
+and `help postman-send-message` for the canonical procedures.
 
 Before an external mutation, read the complete issue/PR body and comments,
 verify repository/remote/ref and target state, apply existing user authorization
