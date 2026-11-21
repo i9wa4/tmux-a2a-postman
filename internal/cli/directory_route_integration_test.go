@@ -157,6 +157,134 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if result, err := invoke(childPane, "", RunWorkspacePop); err != nil || !result.Success {
 		t.Fatalf("register child configuration: %+v %v", result, err)
 	}
+	parentName, err := workspace.Name("~/parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentConfig := filepath.Join(home, "state", "tmux-a2a-postman", parentName, "runtime",
+		"status-config-p"+strings.TrimPrefix(parentPane, "%")+".json")
+	registered, err := os.ReadFile(parentConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type statusConfig struct {
+		Version     int               `json:"version"`
+		Binding     workspace.Binding `json:"binding"`
+		Path        string            `json:"path"`
+		Fingerprint string            `json:"fingerprint"`
+		Builtin     bool              `json:"builtin"`
+	}
+	var prior statusConfig
+	if err := json.Unmarshal(registered, &prior); err != nil {
+		t.Fatal(err)
+	}
+	currentFingerprint := prior.Fingerprint
+	prior.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	writePrior := func() {
+		t.Helper()
+		data, err := json.Marshal(prior)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(parentConfig, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writePrior()
+	entries, err := os.ReadDir(filepath.Dir(parentConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "status-config-p") || entry.Name() == filepath.Base(parentConfig) {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(parentConfig), entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var other statusConfig
+		if err := json.Unmarshal(data, &other); err != nil {
+			t.Fatal(err)
+		}
+		other.Fingerprint = prior.Fingerprint
+		data, err = json.Marshal(other)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if result, err := invoke(childPane, "prior builtin parent\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
+		t.Fatalf("CLI prior-built-in parent send: %+v %v", result, err)
+	}
+	bindingPath := filepath.Join(filepath.Dir(parentConfig), "binding.json")
+	bindingData, err := os.ReadFile(bindingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		Version  int                 `json:"version"`
+		Owner    workspace.Owner     `json:"owner"`
+		Bindings []workspace.Binding `json:"bindings"`
+	}
+	if err := json.Unmarshal(bindingData, &saved); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	for i := range saved.Bindings {
+		if saved.Bindings[i].Owner.Pane == parentPane {
+			saved.Bindings[i].PanePID = "999999"
+			changed = true
+		}
+	}
+	if !changed {
+		t.Fatal("parent messenger binding absent")
+	}
+	bindingData, err = json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bindingPath, bindingData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := invoke(childPane, "stale parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+		t.Fatalf("CLI stale parent pane admitted mail: %+v %v", result, err)
+	}
+	archiveResult, err := invoke(parentPane, "", RunWorkspacePop)
+	if err != nil || archiveResult.MarkdownPath == nil || *archiveResult.MarkdownPath == nil {
+		t.Fatalf("CLI prior-built-in parent POP: %+v %v", archiveResult, err)
+	}
+	archive, err := os.ReadFile(**archiveResult.MarkdownPath)
+	if err != nil || !strings.Contains(string(archive), "prior builtin parent\n") ||
+		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
+		!strings.Contains(string(archive), "### messenger instructions") {
+		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "status-config-p") {
+			continue
+		}
+		path := filepath.Join(filepath.Dir(parentConfig), entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var current statusConfig
+		if err := json.Unmarshal(data, &current); err != nil {
+			t.Fatal(err)
+		}
+		current.Fingerprint = currentFingerprint
+		data, err = json.Marshal(current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, direction := range []struct {
 		name, target, sourcePane, targetPane string
 	}{

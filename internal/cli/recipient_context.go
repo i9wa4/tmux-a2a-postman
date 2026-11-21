@@ -74,7 +74,7 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 			}
 			var err error
 			topology, err = (config.Source{Path: path, Builtin: builtin}).Load(ctx)
-			if err != nil || workspace.StatusConfigFingerprint(topology) != recipientSnapshot.ConfigFingerprint || topology.InterfaceNode != msg.To {
+			if err != nil || !workspace.StatusConfigFingerprintMatches(topology, recipientSnapshot.ConfigFingerprint) || topology.InterfaceNode != msg.To {
 				return "", workspace.ErrUnknown
 			}
 			recipientPolicy, err = topology.RecipientPolicy(ctx, path)
