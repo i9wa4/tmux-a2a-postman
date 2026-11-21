@@ -39,19 +39,23 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	adapter.ConfigFingerprint = StatusConfigFingerprint(topology)
 	priorFingerprint := "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	mergedBaseFingerprint := "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71"
-	if !StatusConfigFingerprintMatches(topology, priorFingerprint) {
-		t.Fatal("reviewed prior built-in fingerprint was rejected")
+	previousFingerprint := "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad"
+	if !StatusConfigFingerprintMatches(topology, previousFingerprint) {
+		t.Fatal("previous built-in fingerprint was rejected")
 	}
 	if !StatusConfigFingerprintMatches(topology, mergedBaseFingerprint) {
 		t.Fatal("merged-base built-in fingerprint was rejected")
+	}
+	if !StatusConfigFingerprintMatches(topology, priorFingerprint) {
+		t.Fatal("reviewed prior built-in fingerprint was rejected")
 	}
 	if StatusConfigFingerprintMatches(topology, "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
 		t.Fatal("foreign built-in fingerprint was accepted")
 	}
 	editedTopology := topology
 	editedTopology.Reviewer = "edited"
-	if StatusConfigFingerprintMatches(editedTopology, mergedBaseFingerprint) {
-		t.Fatal("edited built-in topology accepted merged-base fingerprint")
+	if StatusConfigFingerprintMatches(editedTopology, previousFingerprint) {
+		t.Fatal("edited built-in topology accepted previous fingerprint")
 	}
 	store := Store{StateRoot: filepath.Join(f.home, "state")}
 	for _, pane := range []string{f.pane, childPane} {
@@ -70,7 +74,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
 	}
-	record.Fingerprint = mergedBaseFingerprint
+	record.Fingerprint = previousFingerprint
 	write := func() {
 		t.Helper()
 		data, err := json.Marshal(record)
