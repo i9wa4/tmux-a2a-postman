@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -35,7 +36,10 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		} else {
 			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			interfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			interfaces, err = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			if err != nil {
+				return recipientDirectoryContactsError(advisoryCtx, err)
+			}
 		}
 	}
 	c.mail.Context = func(ctx context.Context, recipientSnapshot workspace.Snapshot, msg workspace.Message) (string, error) {
@@ -46,7 +50,11 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		if localDirectoryContacts {
 			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			currentInterfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			var err error
+			currentInterfaces, err = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			if err != nil {
+				return "", recipientDirectoryContactsError(advisoryCtx, err)
+			}
 		}
 		topology, recipientPolicy := c.topology, policy
 		path := c.topologyPath
@@ -55,18 +63,22 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 			// A cross-session archive belongs to its recipient. The source
 			// enumeration can omit another child of a parent recipient.
 			currentInterfaces = nil
+			found := false
 			for _, candidate := range interfaces {
 				if candidate.Session == msg.ToSession && candidate.Role() == msg.To {
+					found = true
 					advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 					view, viewErr := c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
 					cancel()
-					if viewErr == nil {
-						currentInterfaces = view
-					} else {
-						currentInterfaces = interfaces // Preserve the verified addressed contact.
+					if viewErr != nil {
+						return "", recipientDirectoryContactsError(advisoryCtx, viewErr)
 					}
+					currentInterfaces = view
 					break
 				}
+			}
+			if !found {
+				return "", fmt.Errorf("verify complete recipient directory contacts: %w", workspace.ErrUnknown)
 			}
 			path, builtin = recipientSnapshot.ConfigPath, recipientSnapshot.BuiltinConfig
 			if path == "" {
@@ -88,6 +100,13 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		return renderRecipientContextDirectory(recipientPolicy, topology, path, name, msg, currentInterfaces), nil
 	}
 	return nil
+}
+
+func recipientDirectoryContactsError(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("verify complete recipient directory contacts timed out: %w; retry once when the native server is responsive, then inspect invocation diagnostics", ctx.Err())
+	}
+	return fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", err)
 }
 
 func contextShellWord(value string) string {
