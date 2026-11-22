@@ -102,12 +102,12 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
 	for _, pane := range []string{f.pane, childPane} {
-		f.run(t, "select-pane", "-t", pane, "-T", "messenger")
+		f.run(t, "select-pane", "-t", pane, "-T", "orchestrator")
 	}
 	ctx := context.Background()
 	configPath := filepath.Join(f.home, "absent-postman.md")
 	topology, err := (config.Source{Path: configPath, Builtin: true}).Load(ctx)
-	if err != nil || topology.InterfaceNode != "messenger" {
+	if err != nil || topology.InterfaceNode != "orchestrator" {
 		t.Fatalf("built-in directory interface: %q %v", topology.InterfaceNode, err)
 	}
 	adapter := f.adapter()
@@ -148,17 +148,17 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	record.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	write()
 	adapter.Pane = childPane
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("prior v2 built-in registration was accepted without normal re-registration")
 	}
 	record.Fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	write()
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("foreign v2 built-in registration was accepted")
 	}
 	record.Fingerprint = legacyBuiltinStatusFingerprint(topology)
 	write()
-	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo")
+	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	adapter.Pane = childPane
 	record.Fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	write()
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("tampered v3 built-in registration was accepted")
 	}
 	record.Fingerprint = StatusConfigFingerprint(topology)
@@ -198,7 +198,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	}
 	record.Binding.PanePID = "999999"
 	write()
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("stale parent pane provenance admitted")
 	}
 }

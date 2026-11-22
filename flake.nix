@@ -285,7 +285,8 @@
                 pkgs.direnv
                 pkgs.python3
               ];
-              # The macOS app suite took 577s before the new directory fixture.
+              # The app package includes bounded real-tmux matrices that can
+              # approach Go's default ten-minute test deadline on macOS.
               checkFlags = [ "-timeout=15m" ];
               ldflags = [
                 "-s"
