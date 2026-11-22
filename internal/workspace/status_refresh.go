@@ -97,7 +97,10 @@ func validPhase(phase string) bool {
 	return phase == "enumerate" || phase == "capture" || phase == "aggregate" || phase == "publish"
 }
 
-const statusFinalVerificationReserve = 900 * time.Millisecond
+const (
+	statusFinalVerificationReserve = 900 * time.Millisecond
+	statusAggregationReserve       = 250 * time.Millisecond
+)
 
 // RefreshServerStatus is the only persistent monitoring/capture writer. It
 // never holds a mailbox lock across native captures and never waits for its
@@ -228,8 +231,10 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 		return result, err
 	}
 	defer func() { _ = history.Close() }()
-	// Cap captures at one second and stop them before the closing native frame.
-	captureCtx, stopCapture := context.WithTimeout(workCtx, time.Second)
+	// Leave time to attribute registered panes before final native verification.
+	// Captures are optional; an incomplete sweep is reported as partial coverage.
+	workDeadline, _ := workCtx.Deadline()
+	captureCtx, stopCapture := context.WithDeadline(workCtx, workDeadline.Add(-statusAggregationReserve))
 	defer stopCapture()
 	for i, task := range tasks {
 		session := &snapshot.Sessions[task.session]
