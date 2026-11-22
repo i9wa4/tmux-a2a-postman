@@ -1,0 +1,12 @@
+id: postman-records-3
+name: resume known handoff record
+inputs:
+  prompt: Resume our ongoing task from the verified canonical work record named in the handoff after the chat context was lost.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: help/postman-records/SKILL.md
+    mode: positive

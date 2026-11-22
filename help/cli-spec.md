@@ -254,10 +254,13 @@ most 256 entries/32 KiB, durable intents at most 60 KiB and complete archives at
 most 64 KiB. Exceeding a bound fails rather than truncating role instructions.
 
 ```sh
-tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY_7f4c39b2'
 Please check the change and reply with the result.
-POSTMAN_BODY
+POSTMAN_BODY_7f4c39b2
 ```
+
+For every send, choose a fresh quoted delimiter absent as a complete body
+line; see `help send-heredoc`.
 
 `--to` is the only dedicated option. A configured local node or authorized
 direct `session:interface-node` route creates a new reply-required request.
@@ -267,9 +270,9 @@ not create another reply obligation. Mid-task questions are new node-addressed
 requests and leave the original obligation open.
 
 ```sh
-tmux-a2a-postman send-heredoc --to m-0123456789abcdef0123456789abcdef <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to m-0123456789abcdef0123456789abcdef <<'POSTMAN_BODY_a9d2e806'
 The check is complete.
-POSTMAN_BODY
+POSTMAN_BODY_a9d2e806
 ```
 
 Comma-separated claimed IDs create one combined reply, currently bounded to

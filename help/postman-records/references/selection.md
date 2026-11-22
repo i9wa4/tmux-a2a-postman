@@ -21,6 +21,19 @@ changes when the convention changes.
 
 ## 1. Canonical Path Selection
 
+Choose Logbook for an ordinary local Markdown tracker, plan or note, including
+finding and reusing a supplied ordinary path. Choose `postman-records` when the
+referent is a verified canonical Postman work record such as an orchestration
+index. Choose `postman-recall` to reconstruct your own Postman correspondence.
+Logbook may use the shared location and selection mechanics in this reference;
+that does not make an ordinary tracker a `postman-records` trigger.
+
+Positive ordinary-Markdown selector case: "Find and resume my local Markdown
+task tracker for this work; no canonical Postman index was named" selects
+Logbook. It does not select `postman-records` or `postman-recall`. The shipped
+Postman trigger suites assert those two negative boundaries; Logbook's own
+trigger evaluation is maintained with its installed Skill.
+
 This section is the sole selection/replacement procedure. Read it before any
 supplied, discovered or newly created path is adopted. Identify purpose and
 owning scope first: repository identity, full unsanitized branch, relevant

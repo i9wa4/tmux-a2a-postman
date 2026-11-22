@@ -1,0 +1,12 @@
+id: postman-recall-8
+name: known task index instead of mail history
+inputs:
+  prompt: Pick up the interrupted task from the canonical index already named in the handoff.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-recall/SKILL.md
+    mode: negative
