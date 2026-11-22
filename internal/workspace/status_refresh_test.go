@@ -246,6 +246,11 @@ func TestServerRefreshSlowCapturesRemainDueAndDoNotAdvanceWholeSweep(t *testing.
 func TestServerRefreshReservesFinalNativeVerificationAfterSlowCapture(t *testing.T) {
 	f := newTmuxFixture(t)
 	m := mailFixture(t)
+	rt := configuredStatusFixture(t, f, m)
+	registered, err := rt.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for range 16 {
 		f.run(t, "new-window", "-d", "-t", "one", "-c", f.repo, "exec sleep 120")
 	}
@@ -272,6 +277,14 @@ func TestServerRefreshReservesFinalNativeVerificationAfterSlowCapture(t *testing
 	_, saved, err := m.Store.ReadServerStatus(server)
 	if err != nil || saved.Coverage.Complete || saved.Coverage.Enumerated != 17 {
 		t.Fatal(saved.Coverage, err)
+	}
+	bound := firstStatusPane(t, saved)
+	if bound.ID != registered.Caller.Owner.Pane || bound.PID != registered.Caller.PanePID ||
+		bound.Title != registered.Caller.Role || bound.Workspace != registered.Root ||
+		bound.Status == nil || bound.Status.Node != registered.Caller.Role ||
+		bound.Status.UnreadCount == nil || bound.Scope == nil ||
+		bound.Scope.Fingerprint != rt.ConfigFingerprint {
+		t.Fatal("registered native pane lost attributed status or scope", bound, registered.Caller)
 	}
 }
 
