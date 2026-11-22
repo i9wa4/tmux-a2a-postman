@@ -285,6 +285,8 @@
                 pkgs.direnv
                 pkgs.python3
               ];
+              # The macOS app suite took 577s before the new directory fixture.
+              checkFlags = [ "-timeout=15m" ];
               ldflags = [
                 "-s"
                 "-w"
