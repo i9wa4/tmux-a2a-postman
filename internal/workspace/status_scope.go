@@ -24,6 +24,8 @@ type statusConfigRecord struct {
 	Builtin     bool    `json:"builtin,omitempty"`
 }
 
+var errUnregisteredWorkspace = errors.New("workspace has no registration")
+
 func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
 	raw, _ := json.Marshal(topology)
 	if id := topology.BuiltinBundleID(); id != "" {
@@ -31,6 +33,27 @@ func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
 	}
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// StatusConfigFingerprintMatches accepts reviewed built-in upgrade pairs.
+// Both digests include the topology and bundled help assets, so this does not
+// relax edited or unknown registrations during directory routing or context
+// rendering. A future built-in bundle must be reviewed before adding a pair.
+func StatusConfigFingerprintMatches(topology config.WorkspaceTopology, registered string) bool {
+	current := StatusConfigFingerprint(topology)
+	if current == registered {
+		return true
+	}
+	if topology.InterfaceNode != "messenger" {
+		return false
+	}
+	const prior = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	const mergedBase = "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71"
+	const helpUpdated = "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad"
+	const policyUpdated = "sha256:1babcfdfad036ee2a2cbf406d3845b3869d9350d5aab1e7e423a77b003d55ff0"
+	return (registered == prior && (current == mergedBase || current == helpUpdated)) ||
+		(registered == mergedBase && current == helpUpdated) ||
+		(current == policyUpdated && (registered == prior || registered == mergedBase || registered == helpUpdated))
 }
 
 // This is registration provenance, written only inside verified normal operation
@@ -67,6 +90,7 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 	}
 	defer func() { _ = dir.Close() }()
 	var chosen *StatusScope
+	var conflictIdentity string
 	var nodes []string
 	for _, b := range bindings {
 		var record statusConfigRecord
@@ -87,19 +111,20 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		if err != nil {
 			return nil, nil, err
 		}
-		fingerprint := StatusConfigFingerprint(topology)
-		if fingerprint != record.Fingerprint {
+		if !StatusConfigFingerprintMatches(topology, record.Fingerprint) {
 			return nil, nil, errors.New("registered configuration changed; a normal operation must verify it again")
 		}
-		if chosen != nil && chosen.Fingerprint != fingerprint {
+		// The pinned prior and current built-in registrations describe the
+		// same loaded topology. Compare that verified identity while keeping
+		// the selected registration's fingerprint in the reported scope.
+		identity := StatusConfigFingerprint(topology)
+		if chosen != nil && conflictIdentity != identity {
 			return nil, nil, errors.New("conflicting registered workspace configurations")
 		}
 		if chosen == nil {
-			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode, Sessions: []StatusRoute{}}
+			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: record.Fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode}
+			conflictIdentity = identity
 			nodes = topology.Nodes
-			for _, s := range topology.Sessions {
-				chosen.Sessions = append(chosen.Sessions, StatusRoute{s.Name, s.Parent, s.InterfaceNode})
-			}
 		}
 	}
 	if chosen == nil {
@@ -257,6 +282,9 @@ func (s Store) readStatusAttribution(ctx context.Context, root string, owner Own
 	}
 	ws, err := privateDir(base, name, false)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return saved, nil, nil, errUnregisteredWorkspace
+		}
 		return saved, nil, nil, err
 	}
 	defer func() { _ = ws.Close() }()

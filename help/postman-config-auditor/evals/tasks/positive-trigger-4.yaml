@@ -4,7 +4,7 @@ description: Trigger for daemonless recipient setup audits.
 tags:
   - positive-trigger
 inputs:
-  prompt: "Audit our postman.md workspace_tree and recipient Bash notifier registrations. The mail commits but a child interface does not POP. Check the direct route and native binding."
+  prompt: "Audit our postman.md interface role and recipient setup. The mail commits but a child interface does not POP. Check canonical directory placement, the direct route, and native binding."
 expected:
   should_trigger: true
 graders:
@@ -12,6 +12,6 @@ graders:
     name: contains-keywords
     config:
       contains:
-        - "workspace_tree"
+        - "interface"
         - "recipient"
         - "binding"

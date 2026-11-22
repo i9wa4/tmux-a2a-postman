@@ -722,6 +722,23 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 			index++
 		}
 	}
+	// Respawn changes each pane PID. Refresh the saved native bindings and
+	// configuration provenance from a live role before returning. This lets a
+	// parent address a newly launched interface without a synthetic POP.
+	for _, pane := range result.Panes {
+		if pane.Role == "" {
+			continue
+		}
+		live, err := tmuxOutput(ctx, plan.Socket, "display-message", "-p", "-t", pane.Pane, "#{pane_dead}")
+		if err != nil || strings.TrimSpace(live) != "0" {
+			continue
+		}
+		rt.Pane = pane.Pane
+		if err := s.WithVerified(ctx, rt, func(*os.Root, Snapshot) error { return nil }); err != nil {
+			return result, fmt.Errorf("launched native binding registration failed: %w", err)
+		}
+		break
+	}
 	record.Phase = "started"
 	// A short-lived configured command may already have exited. No resurrection,
 	// authentication/readiness claim, monitoring or automatic retry follows.
