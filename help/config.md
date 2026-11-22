@@ -48,8 +48,10 @@ external_workspace: ~/canonical/session-root
 external_session: exact-native-session-name
 ```
 
-It also requires interface_node and the declared top-level interface. Distinct
-bindings use separate private roots. See help channel-sync and
+It also requires `interface_node` and an exact native workspace/session/role
+match. The external channel belongs only to that configured binding; a
+directory relationship does not transfer it to another team. Distinct bindings
+use separate private roots. See help channel-sync and
 `tmux-a2a-postman help external-filesystem-channel` for producer activation and
 recovery.
 

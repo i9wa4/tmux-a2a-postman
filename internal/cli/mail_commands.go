@@ -200,13 +200,16 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 	if _, role, cross := strings.Cut(*to, ":"); cross {
 		recipient = role
 	}
-	if err := c.prepareRecipientContext(ctx, recipient, strings.Contains(*to, ":")); err != nil {
-		return err
+	crossSession := strings.Contains(*to, ":")
+	if !crossSession {
+		if err := c.prepareRecipientContext(ctx, recipient, false); err != nil {
+			return err
+		}
 	}
 	mailSpan := trace.Start("mail_operation")
 	defer func() { mailSpan.Error(retErr) }()
 	var msg workspace.Message
-	if strings.Contains(*to, ":") {
+	if crossSession {
 		caller, err := c.namedCaller(ctx)
 		if err != nil {
 			return err
@@ -215,41 +218,30 @@ func RunWorkspaceSendHeredoc(args []string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		var session, role string
-		var peer workspace.NamedRuntime
-		if len(c.topology.Sessions) != 0 {
-			session, role, err = c.topology.InterfaceRoute(caller.Name(), snapshot.Caller.Role, *to)
-			if err != nil {
-				return err
-			}
-			out.RefreshEligible = true
-			peer, err = c.runtime.FindNamedPeer(ctx, session, role)
-		} else {
-			if strings.Count(*to, ":") != 1 || snapshot.Caller.Role != c.topology.InterfaceNode {
-				return errors.New("recipient is not a directory interface")
-			}
-			session, role, _ = strings.Cut(*to, ":")
-			if role != c.topology.InterfaceNode {
-				return errors.New("recipient is not a directory interface")
-			}
-			interfaces, routeErr := c.runtime.DirectoryInterfaces(ctx, role)
-			if routeErr != nil {
-				return routeErr
-			}
-			selected, routeErr := workspace.DirectDirectoryPeer(interfaces, caller.Name(), session)
-			if routeErr != nil {
-				return routeErr
-			}
-			peer = selected.Runtime.WithDirectoryRoute()
-			out.RefreshEligible = true
+		if strings.Count(*to, ":") != 1 || snapshot.Caller.Role != c.topology.InterfaceNode {
+			return errors.New("recipient is not a directory interface")
 		}
-		if err != nil {
-			recoveryCtx, recoveryCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer recoveryCancel()
-			candidate, stageErr := c.mail.StageUnavailableCross(recoveryCtx, caller, session, role, ids, body, err)
-			out.RecoveryMessageID = candidate.ID
-			return stageErr
+		session, role, _ := strings.Cut(*to, ":")
+		targetRoot, routeErr := c.runtime.NativePeerRoot(ctx, session, role)
+		if routeErr != nil {
+			return fmt.Errorf("locate native recipient: %w", routeErr)
 		}
+		interfaces, routeErr := c.mail.Store.VerifiedDirectoryInterfacesOnRoute(ctx, c.runtime, c.topology.InterfaceNode, targetRoot)
+		if routeErr != nil {
+			return fmt.Errorf("verify addressed directory route: %w", routeErr)
+		}
+		selected, routeErr := workspace.DirectDirectoryPeer(interfaces, caller.Name(), session)
+		if routeErr != nil {
+			return routeErr
+		}
+		if role != selected.Role() {
+			return errors.New("recipient is not the verified directory interface")
+		}
+		if err := c.prepareRecipientContext(ctx, recipient, true, interfaces); err != nil {
+			return err
+		}
+		peer := selected.Runtime.WithDirectoryRoute()
+		out.RefreshEligible = true
 		err = retryWorkspaceAdmission(ctx, func() (bool, error) {
 			var err error
 			if isReply {

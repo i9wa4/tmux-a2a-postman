@@ -1,6 +1,5 @@
 """Private recursive-fixture configuration assembly; not a runtime command."""
 
-import json
 import re
 
 
@@ -92,12 +91,7 @@ def compile_config(template, tree):
     front, separator, body = template[4:].partition("\n---\n")
     if not separator or re.search(r"^(workspace_tree|interface_node):", front, re.MULTILINE):
         raise ValueError("template must not already declare a workspace tree/interface override")
-    lines = ["interface_node: messenger", "workspace_tree:"]
-    for name, parent in parents.items():
-        lines += ["  - session_name: " + json.dumps(name), "    interface_node: messenger"]
-        if parent is not None:
-            lines.append("    parent_session_name: " + json.dumps(parent))
-    result = "---\n" + front + "\n" + "\n".join(lines) + "\n---\n" + body
+    result = "---\n" + front + "\ninterface_node: messenger\n---\n" + body
     if len(result.encode()) > 256 * 1024:
         raise ValueError("compiled config exceeds 256 KiB")
     return result

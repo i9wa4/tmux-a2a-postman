@@ -9,11 +9,9 @@ selectors; relative or simultaneous selectors fail. Every invocation rereads
 configuration. No TOML overlays, daemon defaults or runtime restart is involved.
 
 Mermaid `---` edges define local peers; `command_approver_node` selects a
-reviewer and `interface_node` selects an interface role. YAML `workspace_tree`
-overrides directory-derived routes with declared direct parent/child interface
-routes. Without it, nearest live interface panes in containing canonical
-workspace directories define direct routes. Native tmux evidence must still
-verify both endpoints. See the canonical
+reviewer and `interface_node` selects an interface role. Nearest live interface
+panes in containing canonical workspace directories define direct routes.
+Native tmux evidence must still verify both endpoints. See the canonical
 [format reference](../../help/postman-md.md).
 
 ## 2. Agent runtime differences

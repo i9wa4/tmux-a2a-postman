@@ -113,12 +113,6 @@ type StatusScope struct {
 	Fingerprint string              `json:"fingerprint"`
 	Edges       map[string][]string `json:"edges"`
 	Interface   string              `json:"interface_node"`
-	Sessions    []StatusRoute       `json:"sessions"`
-}
-type StatusRoute struct {
-	Name      string `json:"name"`
-	Parent    string `json:"parent"`
-	Interface string `json:"interface_node"`
 }
 
 func statusKey(socket string) string {
