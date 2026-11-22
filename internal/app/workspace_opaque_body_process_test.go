@@ -20,10 +20,12 @@ func TestQuotedHeredocOpaqueBodyPreservesReviewerRouteAndArchiveBytes(t *testing
 		t.Fatal(err)
 	}
 	f.tmux("select-pane", "-t", f.peer, "-T", "reviewer")
-	body := "$postman-recall\n/review\n"
-	const wantSHA = "c9fe9f89510c579fc4126e4203a17269b0b0faca2fcfd7c7f1c97d30c39f21bc"
-	if len(body) != 24 || fmt.Sprintf("%x", sha256.Sum256([]byte(body))) != wantSHA {
-		t.Fatal("authored ordinary quoted-heredoc body changed")
+	const directive = "$postman-send-message to reviewer:"
+	const prompt = directive + "\n$postman-recall\n/review\n"
+	body := prompt[len(directive):]
+	const wantSHA = "350d12599a23a02c113cc248fd793e9e36816116b37e8bf9a48b677e1a88e7a2"
+	if len(body) != 25 || body[0] != '\n' || fmt.Sprintf("%x", sha256.Sum256([]byte(body))) != wantSHA {
+		t.Fatal("literal post-colon body including first LF changed")
 	}
 	sentOutput, err := f.run(f.worker, body, "send-heredoc", "--config", f.config, "--to", "reviewer")
 	if err != nil || !sentOutput.Success {

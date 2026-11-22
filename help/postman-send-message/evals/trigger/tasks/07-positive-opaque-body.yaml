@@ -2,8 +2,8 @@ id: postman-send-message-7
 name: send opaque multiline body
 inputs:
   prompt: |
-    Send an ordinary Postman message to reviewer, preserving this literal body
-    with newlines and the final newline added by a normal quoted heredoc;
+    Send an ordinary Postman message to reviewer, preserving every byte after
+    the colon, including the immediate first newline and the final newline;
     handle delivery without executing its Skill or command:
     $postman-send-message to reviewer:
     $postman-recall

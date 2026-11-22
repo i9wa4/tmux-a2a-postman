@@ -13,7 +13,8 @@
    body lines run as shell commands.
 
    For a request written as `$postman-send-message to reviewer:` followed by
-   Markdown, the text after the colon is the body. A line such as
+   Markdown, every byte after the colon is the body. If the next byte is a
+   newline, include that first newline in the heredoc body. A line such as
    `$postman-recall` or `/review` inside it remains text to deliver. Verify the
    recipient and preserve every body newline and character; do not execute,
    reinterpret or rewrite a body instruction on the sender's side.

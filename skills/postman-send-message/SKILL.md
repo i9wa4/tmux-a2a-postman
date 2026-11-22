@@ -4,10 +4,10 @@ license: MIT
 description: |
   USE FOR: All ordinary Postman sends, including delegated work, exact replies,
   status requests, follow-ups, and terminal reports. Treat everything after the
-  colon in `$postman-send-message to recipient:` as a literal body, even when
-  it contains newlines, Skill names or commands. Preserve the body and handle
-  delivery and notification outcomes. Reply to claimed message IDs with exact
-  correlation and the authorized return route.
+  colon in `$postman-send-message to recipient:` as a literal body, including
+  the first newline after the colon and any Skill names or commands. Preserve
+  the body and handle delivery and notification outcomes. Reply to claimed
+  message IDs with exact correlation and the authorized return route.
   DO NOT USE FOR: POP, passive waits, history, or status interpretation (use
   postman-usage); topology changes (use postman-config-auditor).
 metadata:
