@@ -63,6 +63,12 @@
           ghWorkflowFiles = "^\\.github/workflows/.*\\.(yml|yaml)$";
           goToolchain = pkgs.go_1_26;
           buildGoModuleWithToolchain = pkgs.buildGoModule.override { go = goToolchain; };
+          # Fixture checks need the binary, but not the package's test result.
+          # Build it independently so those checks can run alongside the full
+          # checked package in checks.notification.
+          fixtureBinary = config.packages.default.overrideAttrs (_: {
+            doCheck = false;
+          });
           waza = pkgs.callPackage ./nix/packages/waza.nix { inherit system; };
           actionsLock = pkgs.callPackage ./nix/packages/gh-actions-lock.nix { };
           triggerPython = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
@@ -115,7 +121,7 @@
             ];
             text = ''
               exec python3 ${recursiveSource}/scripts/validation/recursive-smoke.py \
-                --postman ${config.packages.default}/bin/tmux-a2a-postman "$@"
+                --postman ${fixtureBinary}/bin/tmux-a2a-postman "$@"
             '';
           };
           commonDevPackages =
@@ -324,7 +330,7 @@
                   export HOME="$TMPDIR/home"
                   mkdir -p "$HOME" "$out"
                   python3 ${./scripts/validation}/benchmark-invocations.py \
-                    --candidate ${config.packages.default}/bin/tmux-a2a-postman \
+                    --candidate ${fixtureBinary}/bin/tmux-a2a-postman \
                     --samples 3 --history 10 --concurrency 4 > "$out/results.json"
                   python3 - "$out/results.json" <<'PYTHON'
                   import json, sys

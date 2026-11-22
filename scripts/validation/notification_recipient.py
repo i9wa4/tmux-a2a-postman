@@ -13,6 +13,7 @@ from mail_fixture import read_archive, sent_evidence, workspace_files
 os.environ["PATH"] = os.environ["POSTMAN_SMOKE_BIN_DIR"] + ":" + os.environ["PATH"]
 phase, nonce = sys.argv[1:]
 role = os.environ["POSTMAN_SMOKE_ROLE"]
+native_role = os.environ.get("POSTMAN_SMOKE_NATIVE_ROLE", role)
 root = pathlib.Path(os.environ["POSTMAN_SMOKE_EVIDENCE"])
 postman, config = os.environ["POSTMAN_BIN"], os.environ["POSTMAN_CONFIG"]
 thread_id = os.environ.get("CODEX_THREAD_ID", os.environ["POSTMAN_SMOKE_CONVERSATION"])
@@ -71,7 +72,7 @@ def receive():
             action = "decline-execution" if case == "rejected" else "approve-execution"
             proof["send"] = cli([action, "--config", config, "--to", target, "--reason", "deterministic smoke decision"])
             state = pathlib.Path(os.environ["XDG_STATE_HOME"]) / "tmux-a2a-postman"
-            decisions = [read_archive(path) for path in workspace_files(state, "agents/" + role + "/sent/*.md")]
+            decisions = [read_archive(path) for path in workspace_files(state, "agents/" + native_role + "/sent/*.md")]
             decisions = [item for item in decisions if any(ref["message_id"] == target for ref in item.get("replies", []))]
             if len(decisions) != 1:
                 raise RuntimeError("exact decision evidence unavailable")
@@ -79,7 +80,7 @@ def receive():
             proof["decision"] = json.loads(decisions[0]["body"])
         else:
             proof["send"] = cli(["send-heredoc", "--config", config, "--to", target], body)
-            proof["send"]["mail_evidence"] = sent_evidence(role, body)
+            proof["send"]["mail_evidence"] = sent_evidence(native_role, body)
         if proof["send"].get("notification", {}).get("status") == "unavailable":
             failure = {"reason": "reply_notification_failed", "notification": proof["send"]["notification"],
                        "handling_message_id": msg["id"], "reply_message_id": proof["send"].get("mail_evidence", {}).get("id")}
@@ -92,6 +93,13 @@ def receive():
 
 
 if phase == "setup":
+    if case in ["parent-child", "child-parent"]:
+        # One setup admission registers this terminal's current configuration
+        # and native pane. Later mail handling still starts only from a real
+        # notification; this is not an empty-inbox polling loop.
+        registered = cli(["pop", "--config", config])
+        if not registered["success"] or registered.get("markdown_absolute_path") is not None:
+            raise RuntimeError("cross-team setup registration was not empty")
     (root / (role + ".ready.json")).write_text(json.dumps({"conversation_id": thread_id, "nonce": nonce}))
     if case == "busy" and role == "worker":
         (root / "busy").touch()

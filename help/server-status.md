@@ -36,9 +36,8 @@ The version 1 document contains:
   fresh.
 - `status`: existing node summary (same fields as operation `self`), or null.
   Unknown counts stay null. Aggregate mail corruption is not fabricated zeroes.
-- `scope`: registered configuration path/fingerprint, outgoing `edges`, local
-  `interface_node` and declared `sessions` (name/parent/interface_node), or
-  null.
+- `scope`: registered configuration path/fingerprint, outgoing `edges` and
+  local `interface_node`, or null.
 
 At most 1024 native panes/4098 frame lines/256 KiB enumeration and 4 MiB saved
 JSON are accepted. Exceeding a fatal bound preserves the previous snapshot and
@@ -78,11 +77,11 @@ renamed, ambiguous or unbound panes cannot inherit healthy facts.
 
 Consumers first match their assigned server/session/native pane/workspace, then
 use the attributed status/scope. Role names alone are ambiguous across sessions.
-For interface adjacency with an explicit tree, select the local session
-declaration in its own scope, then its direct parent/children and declared
-interface roles. Without a tree, compare verified native interface pane roots
-for nearest canonical parent/child containment. Missing/ambiguous native matches
-are unknown; cached status alone does not authorize a send. There is no
+For interface adjacency, compare current registered interface pane roots for
+nearest canonical parent/child containment. Each peer's interface role comes
+from that peer's own registered configuration. Missing, changed or ambiguous
+native/configuration matches are unknown; cached status alone does not
+authorize a send. There is no
 top-level workspace/nodes/parent/children projection. Managers separately
 establish direct reports from their assigned role policy. Global observation
 does not authorize reading peer inbox bodies, controlling unrelated workspaces

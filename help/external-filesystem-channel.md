@@ -7,8 +7,9 @@ inbox/read/sent archives, POP receipts, exact reply references and generic tmux
 notification. Historical process-local adapters, phony registries and daemon
 supervisors are absent and are not reconstructed. There is no new task database.
 
-The configured top-level interface handles external intake/reports; its
-orchestrator owns delegation, and descendants return through parents. #901 is
+The exact configured interface workspace/session handles external intake and
+reports; its orchestrator owns delegation, and descendants return through
+parents. Directory relatives do not inherit the channel. #901 is
 closed and is not a prerequisite. The adapter shares ordinary notification's
 limitation around simultaneous direct human typing: it does not preserve drafts
 or arbitrate all conversation writers. Text/filenames do not authenticate a
@@ -30,9 +31,9 @@ external_session: project-a
 
 The workspace is Postman's exact canonical HOME-relative native agent-pane
 directory, independent of the CLI subprocess cwd or old session creation root.
-The named native session and interface role must match fresh evidence. A
-declared child cannot own the channel. Other sessions sharing the configuration
-cannot access this binding.
+The named native session and interface role must match fresh evidence. A child
+team can own its own explicitly provisioned binding; its parent and other
+sessions sharing the configuration cannot access that binding.
 
 Provision the parent directory. The first scan creates only the final root,
 `inbox/`, `outbox/`, `read/`, `binding.json` and `.lock`. Use owned mode 0700

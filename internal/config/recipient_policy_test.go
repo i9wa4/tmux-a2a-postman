@@ -64,14 +64,101 @@ func TestRecipientPolicyFencedHeadingsDoNotCreateRoles(t *testing.T) {
 	}
 }
 
-func TestUnreadableOrdinaryCatalogDoesNotInvalidateReadOnlyTopology(t *testing.T) {
+func TestMissingOrdinaryCatalogLeavesEmptyCatalog(t *testing.T) {
 	path := topologyFixture(t, "---\nskill_path: /nonexistent/ordinary-catalog\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n")
 	topology, err := LoadWorkspaceTopology(context.Background(), path)
 	if err != nil {
 		t.Fatal("read-only topology opened an optional catalog", err)
 	}
-	if _, err := topology.RecipientPolicy(context.Background(), path); err == nil {
-		t.Fatal("configured ordinary catalog disappeared without a rendering error")
+	policy, err := topology.RecipientPolicy(context.Background(), path)
+	if err != nil || policy.Catalog != "" {
+		t.Fatal("missing catalog should render as empty", policy, err)
+	}
+}
+
+func TestSkillCatalogSkipsMissingRootsAndMergesPresentRoots(t *testing.T) {
+	directory := t.TempDir()
+	markdownPath := filepath.Join(directory, "postman.md")
+	for _, root := range []string{"first", "second"} {
+		for _, skill := range []string{"shared", root} {
+			path := filepath.Join(directory, root, skill)
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte("---\nname: "+skill+"\ndescription: "+root+" description\n---\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, all := range []bool{false, true} {
+		mode := "selected"
+		if all {
+			mode = "all"
+		}
+		t.Run(mode, func(t *testing.T) {
+			spec := func(path string) skillCatalogSpec {
+				return skillCatalogSpec{Path: path, All: all, Names: []string{"shared"}}
+			}
+			cases := []struct {
+				name, root string
+				wantEmpty  bool
+			}{
+				{"both absent", "missing", true},
+				{"first present", "first", false},
+				{"second present", "second", false},
+			}
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					catalog, err := renderSkillCatalogs(markdownPath, []skillCatalogSpec{spec("missing"), spec(tc.root)})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if tc.wantEmpty {
+						if catalog != "" {
+							t.Fatal("missing roots produced catalog", catalog)
+						}
+						return
+					}
+					if !strings.Contains(catalog, "- `shared`: "+tc.root+" description") || strings.Contains(catalog, "`missing`") {
+						t.Fatal("present root was not rendered alone", catalog)
+					}
+				})
+			}
+			catalog, err := renderSkillCatalogs(markdownPath, []skillCatalogSpec{spec("first"), spec("second")})
+			if err != nil || !strings.Contains(catalog, "- `shared`: second description") || strings.Contains(catalog, "- `shared`: first description") {
+				t.Fatal("later present root should win duplicate names", catalog, err)
+			}
+			if all && (!strings.Contains(catalog, "- `first`: first description") || !strings.Contains(catalog, "- `second`: second description")) {
+				t.Fatal("present roots should merge distinct skills", catalog)
+			}
+		})
+	}
+	if _, err := renderSkillCatalogs(markdownPath, []skillCatalogSpec{{Path: "first", Names: []string{"absent"}}}); err == nil {
+		t.Fatal("missing selected skill in a present root should still fail")
+	}
+	if err := os.WriteFile(filepath.Join(directory, "file"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := renderSkillCatalogs(markdownPath, []skillCatalogSpec{{Path: "file", All: true}}); err == nil {
+		t.Fatal("non-directory root should still fail")
+	}
+}
+
+func TestSelectedSkillNamesAreValidatedWhenRootIsMissing(t *testing.T) {
+	markdownPath := filepath.Join(t.TempDir(), "postman.md")
+	for _, tc := range []struct {
+		name, selector, wantError string
+	}{
+		{"empty", "", "skill name must be non-empty"},
+		{"path", "../outside", "must be a directory name"},
+		{"glob", "bad*", "uses a glob pattern"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := renderSkillCatalogs(markdownPath, []skillCatalogSpec{{Path: "missing", Names: []string{tc.selector}}})
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("missing root accepted invalid selected skill %q: %v", tc.selector, err)
+			}
+		})
 	}
 }
 

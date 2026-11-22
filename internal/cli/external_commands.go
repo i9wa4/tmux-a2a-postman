@@ -19,17 +19,6 @@ func (c workspaceCommand) externalBinding(ctx context.Context) (workspace.NamedR
 	if b.Root == "" || b.Node != c.caller.Caller.Role || b.Workspace != c.caller.Root || b.Session != rt.Name() {
 		return rt, b, errors.New("external channel is not configured for this interface workspace/session")
 	}
-	if len(c.topology.Sessions) > 0 {
-		rootInterface := false
-		for _, session := range c.topology.Sessions {
-			if session.Name == rt.Name() && session.Parent == "" && session.InterfaceNode == b.Node {
-				rootInterface = true
-			}
-		}
-		if !rootInterface {
-			return rt, b, errors.New("external channel belongs only to a declared top-level interface")
-		}
-	}
 	return rt, b, nil
 }
 
