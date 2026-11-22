@@ -332,8 +332,9 @@ def handle(msg, body):
         if not matches:
             # An old exact reply is history, never a fresh task/authorization.
             if role == "messenger" and body["kind"] == "result":
-                scope = interface_scope(cli(["get-status"]))
-                if scope.get("parent") is None:
+                # The builtin fixture is root-only; Messenger is its relay,
+                # while orchestrator owns the interface scope.
+                if not config or interface_scope(cli(["get-status"])).get("parent") is None:
                     state.setdefault("outcomes", {})[root_id] = {
                         "message": msg,
                         "body": body,
@@ -424,11 +425,19 @@ def handle(msg, body):
             }
             state["tasks"][root_id] = task
             save()
-            send(
-                "messenger",
-                packet(task, "scope-query"),
-                {"stage": "scope", "root_id": root_id},
-            )
+            if config:
+                send(
+                    "messenger",
+                    packet(task, "scope-query"),
+                    {"stage": "scope", "root_id": root_id},
+                )
+            else:
+                # In the builtin team, orchestrator owns the interface scope.
+                status = interface_scope(cli(["get-status"]))
+                start_children(task, {
+                    "parent": status.get("parent"),
+                    "children": status.get("children", []),
+                })
         elif body["kind"] == "question":
             task = state["tasks"][root_id]
             parent = task["scope"].get("parent")
