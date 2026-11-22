@@ -24,7 +24,10 @@ type statusConfigRecord struct {
 	Builtin     bool    `json:"builtin,omitempty"`
 }
 
-var errUnregisteredWorkspace = errors.New("workspace has no registration")
+var (
+	errUnregisteredWorkspace   = errors.New("workspace has no registration")
+	errMissingConfigProvenance = errors.New("workspace configuration provenance unavailable; run a normal configured operation")
+)
 
 // StatusConfigFingerprint identifies routing structure without authored role
 // text or bundled HelpDocs. PolicyIdentity retains that full authored identity.
@@ -122,7 +125,7 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		}
 	}
 	if chosen == nil {
-		return nil, nil, errors.New("workspace configuration provenance unavailable; run a normal configured operation")
+		return nil, nil, errMissingConfigProvenance
 	}
 	return chosen, nodes, nil
 }

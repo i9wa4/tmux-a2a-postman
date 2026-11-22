@@ -35,7 +35,10 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		} else {
 			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			interfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			interfaces, err = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			if err != nil {
+				return fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", err)
+			}
 		}
 	}
 	c.mail.Context = func(ctx context.Context, recipientSnapshot workspace.Snapshot, msg workspace.Message) (string, error) {
@@ -46,7 +49,11 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		if localDirectoryContacts {
 			advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			currentInterfaces, _ = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			var err error
+			currentInterfaces, err = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
+			if err != nil {
+				return "", fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", err)
+			}
 		}
 		topology, recipientPolicy := c.topology, policy
 		path := c.topologyPath
@@ -55,18 +62,22 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 			// A cross-session archive belongs to its recipient. The source
 			// enumeration can omit another child of a parent recipient.
 			currentInterfaces = nil
+			found := false
 			for _, candidate := range interfaces {
 				if candidate.Session == msg.ToSession && candidate.Role() == msg.To {
+					found = true
 					advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 					view, viewErr := c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
 					cancel()
-					if viewErr == nil {
-						currentInterfaces = view
-					} else {
-						currentInterfaces = interfaces // Preserve the verified addressed contact.
+					if viewErr != nil {
+						return "", fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", viewErr)
 					}
+					currentInterfaces = view
 					break
 				}
+			}
+			if !found {
+				return "", fmt.Errorf("verify complete recipient directory contacts: %w", workspace.ErrUnknown)
 			}
 			path, builtin = recipientSnapshot.ConfigPath, recipientSnapshot.BuiltinConfig
 			if path == "" {

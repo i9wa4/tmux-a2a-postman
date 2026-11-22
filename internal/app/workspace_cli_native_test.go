@@ -247,6 +247,105 @@ func TestCrossDirectoryArchiveKeepsRecipientContactsWithUnknownOffRouteSibling(t
 	}
 }
 
+func TestCrossDirectoryArchiveRejectsIncompleteParentContacts(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(parentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	type child struct{ pane, config string }
+	children := map[string]child{}
+	for _, name := range []string{"alpha", "beta"} {
+		root := filepath.Join(f.home, "work", name)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pane := f.tmux("new-session", "-d", "-s", name, "-c", root, "-P", "-F", "#{pane_id}", "exec sleep 120")
+		f.tmux("select-pane", "-t", pane, "-T", "messenger")
+		configPath := filepath.Join(f.home, name+"-postman.md")
+		policy := "---\ninterface_node: messenger\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+		if err := os.WriteFile(configPath, []byte(policy), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		children[name] = child{pane, configPath}
+	}
+	for _, item := range []child{{f.worker, f.config}, children["alpha"], children["beta"]} {
+		if result, err := f.run(item.pane, "", "pop", "--config", item.config); err != nil || !result.Success {
+			t.Fatal("interface registration", result, err)
+		}
+	}
+	beta := children["beta"]
+	betaRoot, err := workspace.CanonicalRoot(filepath.Join(f.home, "work", "beta"), f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaName, err := workspace.Name(betaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusConfig := filepath.Join(f.stateRoot(), betaName, "runtime", "status-config-p"+strings.TrimPrefix(beta.pane, "%")+".json")
+	raw, err := os.ReadFile(statusConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["fingerprint"] = "sha256:stale"
+	raw, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusConfig, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alpha := children["alpha"]
+	result, err := f.run(alpha.pane, "incomplete parent contacts", "send-heredoc", "--config", alpha.config, "--to", "work:worker")
+	if err == nil || result.Success || !strings.Contains(result.Reason, "complete recipient directory contacts") {
+		t.Fatal("unverified sibling produced incomplete parent contacts", result, err)
+	}
+	if result, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !result.Success || result.MarkdownPath != nil {
+		t.Fatal("incomplete recipient context was published", result, err)
+	}
+	if result, err := f.run(f.peer, "incomplete local contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err == nil || result.Success || !strings.Contains(result.Reason, "complete recipient directory contacts") {
+		t.Fatal("local send published incomplete parent contacts", result, err)
+	}
+	if result, err := f.run(beta.pane, "", "pop", "--config", beta.config); err != nil || !result.Success {
+		t.Fatal("beta re-registration", result, err)
+	}
+	if result, err := f.run(alpha.pane, "complete parent contacts", "send-heredoc", "--config", alpha.config, "--to", "work:worker"); err != nil || !result.Success {
+		t.Fatal("alpha to re-registered parent", result, err)
+	}
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("parent POP", claimed, err)
+	}
+	complete, err := os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "complete parent contacts") {
+		t.Fatal("complete parent archive", err)
+	}
+	request := readProtocolArchive(t, *claimed.MarkdownPath)
+	if request.Context == nil || !strings.Contains(request.Context.Markdown, "- alpha:messenger") || !strings.Contains(request.Context.Markdown, "- beta:messenger") {
+		t.Fatal("parent archive omitted a verified child", request.Context)
+	}
+	if result, err := f.run(f.worker, "complete answer", "send-heredoc", "--config", f.config, "--to", request.ID); err != nil || !result.Success {
+		t.Fatal("parent exact reply", result, err)
+	}
+	claimed, err = f.run(alpha.pane, "", "pop", "--config", alpha.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("alpha reply POP", claimed, err)
+	}
+	complete, err = os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "complete answer") {
+		t.Fatal("complete alpha reply archive", err)
+	}
+	answer := readProtocolArchive(t, *claimed.MarkdownPath)
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID || answer.Context == nil || !strings.Contains(answer.Context.Markdown, "- work:worker") || strings.Contains(answer.Context.Markdown, "beta:messenger") {
+		t.Fatal("child lost its single parent or reply correlation", answer)
+	}
+}
+
 func TestExternalChannelIsBoundToExactChildInterface(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	childRoot := filepath.Join(f.home, "work", "child")

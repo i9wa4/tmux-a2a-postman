@@ -101,6 +101,12 @@ Archived context records the configuration used for that send and grants no
 additional route or human authority. Ordinary sends, exact replies and command
 review traffic all retain their appropriate recipient context.
 
+An interface recipient's contacts include its verified immediate parent and
+every verified direct child. If Postman cannot verify the complete set, the
+send fails before publication with a recovery reason. A pane with no current
+configuration registration is not a contact; a stale registration must be
+re-registered by a normal operation in that interface before retrying.
+
 The generated context has one H1, `Message`. Recipient Instructions, Delivery
 and Reply Guidance and Sender Message are H2 siblings. Common contract,
 Available Skills and role instructions are H3 within Recipient Instructions;

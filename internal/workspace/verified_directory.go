@@ -99,6 +99,9 @@ func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 					}
 					continue // An ordinary pane without registration is not an interface.
 				}
+				if targetRoot == "" && errors.Is(err, errMissingConfigProvenance) {
+					continue // No current configuration means this sibling is not a verified contact.
+				}
 				if err != nil || scope == nil || !binding.ValidateNodeName(scope.Interface) {
 					return nil, ErrUnknown
 				}
