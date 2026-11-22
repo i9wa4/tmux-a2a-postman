@@ -40,6 +40,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	priorFingerprint := "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	mergedBaseFingerprint := "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71"
 	helpUpdatedFingerprint := "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad"
+	policyUpdatedFingerprint := "sha256:1babcfdfad036ee2a2cbf406d3845b3869d9350d5aab1e7e423a77b003d55ff0"
 	if !StatusConfigFingerprintMatches(topology, priorFingerprint) {
 		t.Fatalf("reviewed prior built-in fingerprint was rejected by %s", StatusConfigFingerprint(topology))
 	}
@@ -48,6 +49,9 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	}
 	if !StatusConfigFingerprintMatches(topology, helpUpdatedFingerprint) {
 		t.Fatal("help-updated built-in fingerprint was rejected")
+	}
+	if !StatusConfigFingerprintMatches(topology, policyUpdatedFingerprint) {
+		t.Fatal("policy-updated built-in fingerprint was rejected")
 	}
 	if StatusConfigFingerprintMatches(topology, "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
 		t.Fatal("foreign built-in fingerprint was accepted")
