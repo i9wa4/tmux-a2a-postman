@@ -24,7 +24,20 @@ type statusConfigRecord struct {
 	Builtin     bool    `json:"builtin,omitempty"`
 }
 
+var errUnregisteredWorkspace = errors.New("workspace has no registration")
+
+// StatusConfigFingerprint identifies routing structure without authored role
+// text or bundled HelpDocs. PolicyIdentity retains that full authored identity.
 func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
+	raw, _ := json.Marshal(topology)
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// legacyBuiltinStatusFingerprint recognizes only a v2 registration made by
+// this binary's current bundle. Older bundles must re-register in a normal
+// operation; passive status collection never upgrades their provenance.
+func legacyBuiltinStatusFingerprint(topology config.WorkspaceTopology) string {
 	raw, _ := json.Marshal(topology)
 	if id := topology.BuiltinBundleID(); id != "" {
 		raw = append(raw, []byte("\x00builtin:"+id)...)
@@ -51,7 +64,7 @@ func saveStatusConfig(ws *os.Root, snapshot Snapshot) error {
 	name := "status-config-p" + snapshot.Caller.Owner.Pane[1:] + ".json"
 	record := statusConfigRecord{Version: 1, Binding: snapshot.Caller, Path: snapshot.ConfigPath, Fingerprint: snapshot.ConfigFingerprint, Builtin: snapshot.BuiltinConfig}
 	if record.Builtin {
-		record.Version = 2
+		record.Version = 3
 	}
 	var previous statusConfigRecord
 	if readJSON(dir, name, &previous) == nil && previous == record {
@@ -67,6 +80,7 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 	}
 	defer func() { _ = dir.Close() }()
 	var chosen *StatusScope
+	var conflictIdentity string
 	var nodes []string
 	for _, b := range bindings {
 		var record statusConfigRecord
@@ -80,26 +94,31 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		if record.Binding.Owner != b.Owner || record.Binding.PanePID != b.PanePID {
 			continue
 		} // Former processes cannot supply provenance.
-		if (record.Version != 1 && record.Version != 2) || record.Version == 1 && record.Builtin || record.Version == 2 && !record.Builtin || !filepath.IsAbs(record.Path) {
+		validVersion := !record.Builtin && record.Version == 1 || record.Builtin && (record.Version == 2 || record.Version == 3)
+		if !filepath.IsAbs(record.Path) || !validVersion {
 			return nil, nil, ErrUnknown
 		}
 		topology, err := (config.Source{Path: record.Path, Builtin: record.Builtin}).Load(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		fingerprint := StatusConfigFingerprint(topology)
-		if fingerprint != record.Fingerprint {
+		identity := StatusConfigFingerprint(topology)
+		expected := identity
+		if record.Version == 2 {
+			expected = legacyBuiltinStatusFingerprint(topology)
+		}
+		if record.Fingerprint != expected {
 			return nil, nil, errors.New("registered configuration changed; a normal operation must verify it again")
 		}
-		if chosen != nil && chosen.Fingerprint != fingerprint {
+		// A verified current-legacy v2 record is represented by the current
+		// structural identity for routing and recipient context checks.
+		if chosen != nil && conflictIdentity != identity {
 			return nil, nil, errors.New("conflicting registered workspace configurations")
 		}
 		if chosen == nil {
-			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: fingerprint, Edges: topology.Edges, Interface: topology.InterfaceNode, Sessions: []StatusRoute{}}
+			chosen = &StatusScope{Config: record.Path, Builtin: record.Builtin, Fingerprint: identity, Edges: topology.Edges, Interface: topology.InterfaceNode}
+			conflictIdentity = identity
 			nodes = topology.Nodes
-			for _, s := range topology.Sessions {
-				chosen.Sessions = append(chosen.Sessions, StatusRoute{s.Name, s.Parent, s.InterfaceNode})
-			}
 		}
 	}
 	if chosen == nil {
@@ -257,6 +276,9 @@ func (s Store) readStatusAttribution(ctx context.Context, root string, owner Own
 	}
 	ws, err := privateDir(base, name, false)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return saved, nil, nil, errUnregisteredWorkspace
+		}
 		return saved, nil, nil, err
 	}
 	defer func() { _ = ws.Close() }()

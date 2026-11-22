@@ -367,8 +367,9 @@ skills from the published repository tag or release.
 
 Every `help/<name>/SKILL.md` needs a corresponding
 `help/<name>/evals/trigger/eval.yaml` and positive/negative YAML tasks under
-that suite's `tasks/` directory. CI enforces this through `nix flake check`; the
-local hook responds to both skill and trigger-fixture changes.
+that suite's `tasks/` directory. CI evaluates the flake and builds every
+check across its package and fixture lanes; the local hook responds to both
+skill and trigger-fixture changes.
 
 ```sh
 nix run .#skill-trigger-check

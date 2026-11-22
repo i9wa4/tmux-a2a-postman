@@ -6,7 +6,7 @@
 2. Check strict Mermaid edges and unique native pane titles. Verify the
    optional reviewer and local interface roles are actual configured nodes.
    Missing or ambiguous evidence is unknown, not absence or authorization.
-3. For `workspace_tree`, check unique session names, direct parent relation,
+3. For cross-session routes, check canonical directory containment,
    separate HOME-relative roots, exact local interface designation and live
    peer identity. Same-named local roles are different from session:node peers.
 4. Confirm receiving panes host the intended existing agent consoles, preserve

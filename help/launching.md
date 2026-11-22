@@ -68,11 +68,12 @@ launcher adds no credentials or provider flags.
 
 The launcher first creates inert native panes, establishes cwd, pane titles,
 inherited config and normal verified workspace ownership, and only then starts
-ordinary shells and declared role commands. A title-only shell is not registered
-as a communication role. The first pane is focused. JSON reports actual
-server/session/window/pane IDs and accepted role command starts. This
-establishes neither authentication nor readiness; a configured command can exit
-immediately. Successful exit leaves the team alive.
+ordinary shells and declared role commands. It then refreshes registered
+configuration provenance against a live role's post-start pane PID. A title-only
+shell is not registered as a communication role. The first pane is focused. JSON
+reports actual server/session/window/pane IDs and accepted role command starts.
+This establishes neither authentication nor readiness; a configured command can
+exit immediately. Successful exit leaves the team alive.
 
 A nonblocking OS advisory lock serializes setup for one canonical workspace.
 Repeated targets, existing dedicated target sessions, live/unverified workspace

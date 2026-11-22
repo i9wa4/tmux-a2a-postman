@@ -30,10 +30,9 @@ the obligation being managed. A reply can close an outbound wait before POP; POP
 and read its complete archive before interpreting its content. Zero outbound
 count alone cannot establish that a particular task succeeded. Both getters show
 the saved server independently of caller role. Derive direct parent/child
-interface routes only from your own attributed `scope.sessions` and local native
-session name when an explicit tree exists. Without a tree, compare canonical
-workspace directories of live interface panes to find the nearest containing
-parent or child, retaining missing/ambiguous matches as unknown. Match related
+interface routes by comparing canonical workspace directories of live interface
+panes to find the nearest containing parent or child. Retain missing or
+ambiguous matches as unknown. Match related
 native session plus interface pane and workspace; a cached status snapshot is
 observation, not send authorization. `scope.edges` is communication
 configuration, never a list of direct management reports. Visibility does not

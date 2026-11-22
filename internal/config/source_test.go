@@ -18,7 +18,7 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "messenger" || len(topology.Sessions) != 0 {
+	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "messenger" {
 		t.Fatal(topology)
 	}
 	if !slices.Contains(topology.Edges["critic"], "approver") || slices.Contains(topology.Edges["agent"], "approver") {

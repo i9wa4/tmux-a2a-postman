@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
@@ -26,14 +27,17 @@ type NamedRuntime struct {
 // DirectoryInterface is a verified live interface in a native tmux session.
 // Root is the canonical HOME-relative directory of its interface pane.
 type DirectoryInterface struct {
-	Session string
-	Root    string
-	Runtime NamedRuntime
+	Session       string
+	Root          string
+	Runtime       NamedRuntime
+	InterfaceRole string
 }
 
-// DirectoryInterfaces discovers only live panes bearing the configured
-// interface role on this server. Each candidate is rechecked as a named
-// runtime; duplicate roles, roots, or session names fail closed.
+func (d DirectoryInterface) Role() string { return d.InterfaceRole }
+
+// DirectoryInterfaces enumerates native title candidates for low-level tests.
+// A title does not attest another workspace's interface configuration. Mail
+// routes use Store.VerifiedDirectoryInterfaces instead.
 func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]DirectoryInterface, error) {
 	if !binding.ValidateNodeName(role) {
 		return nil, ErrUnknown
@@ -100,7 +104,7 @@ func (t Tmux) DirectoryInterfaces(ctx context.Context, role string) ([]Directory
 			return nil, errors.New("ambiguous interface workspace root")
 		}
 		seenRoots[snapshot.Root] = true
-		interfaces = append(interfaces, DirectoryInterface{name, snapshot.Root, runtime})
+		interfaces = append(interfaces, DirectoryInterface{Session: name, Root: snapshot.Root, Runtime: runtime, InterfaceRole: role})
 	}
 	return interfaces, nil
 }
@@ -188,17 +192,14 @@ func (t Tmux) NamedCaller(ctx context.Context) (NamedRuntime, error) {
 func (r NamedRuntime) Name() string { return r.name }
 
 // WithDirectoryRoute requires a fresh direct-directory relation at the mail
-// publication boundary. Explicit workspace-tree routes do not set this flag.
+// publication boundary.
 func (r NamedRuntime) WithDirectoryRoute() NamedRuntime {
 	r.directoryRoute = true
 	return r
 }
 
-func verifyDirectoryRoute(ctx context.Context, source, destination NamedRuntime, from, to Snapshot) error {
-	if source.role != destination.role {
-		return ErrUnknown
-	}
-	interfaces, err := source.tmux.DirectoryInterfaces(ctx, source.role)
+func verifyDirectoryRoute(ctx context.Context, store Store, source, destination NamedRuntime, from, to Snapshot) error {
+	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, source.tmux, source.role, to.Root)
 	if err != nil {
 		return err
 	}
@@ -206,7 +207,7 @@ func verifyDirectoryRoute(ctx context.Context, source, destination NamedRuntime,
 	if err != nil {
 		return err
 	}
-	if selected.Root != to.Root || selected.Runtime.sessionID != destination.sessionID ||
+	if selected.Role() != destination.role || selected.Root != to.Root || selected.Runtime.sessionID != destination.sessionID ||
 		selected.Runtime.panePID != destination.panePID {
 		return ErrUnknown
 	}
@@ -287,6 +288,27 @@ func (t Tmux) FindNamedPeer(ctx context.Context, sessionName, role string) (Name
 		return NamedRuntime{}, err
 	}
 	return runtime, nil
+}
+
+// NativePeerRoot locates an addressed pane's current directory before its
+// registered interface configuration is known. The role is used only to find
+// a native pane; callers must verify the route and peer configuration before
+// using the root to publish mail.
+func (t Tmux) NativePeerRoot(ctx context.Context, sessionName, role string) (string, error) {
+	probe := t
+	probe.Roles = slices.Clone(t.Roles)
+	if !slices.Contains(probe.Roles, role) {
+		probe.Roles = append(probe.Roles, role)
+	}
+	peer, err := probe.FindNamedPeer(ctx, sessionName, role)
+	if err != nil {
+		return "", err
+	}
+	snapshot, err := peer.Snapshot(ctx)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.Root, nil
 }
 
 func nativeSessionName(ctx context.Context, socket, sessionID string) (string, error) {
