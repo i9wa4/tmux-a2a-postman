@@ -30,10 +30,21 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            system: x86_64-linux
             timeout_minutes: 25
+            lane: package
+          - os: ubuntu-latest
+            system: x86_64-linux
+            timeout_minutes: 25
+            lane: fixtures
           - os: macos-latest
-            # The cold native/recursive matrix took 23 minutes before final checks.
+            system: aarch64-darwin
             timeout_minutes: 35
+            lane: package
+          - os: macos-latest
+            system: aarch64-darwin
+            timeout_minutes: 35
+            lane: fixtures
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     permissions:
@@ -56,26 +67,52 @@ jobs:
       - name: Cache Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
         with:
-          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ matrix.lane }}-${{ hashFiles('**/*.nix', 'flake.lock') }}
 
       - name: Check selected Go toolchain
+        if: matrix.lane == 'package'
         run: nix develop .#ci --command bash scripts/validation/check-go-toolchain.sh
 
-      - name: Run nix flake check
-        run: nix flake check --print-build-logs
+      - name: Evaluate nix flake checks
+        run: nix flake check --no-build
+
+      - name: Build checked package
+        if: matrix.lane == 'package'
+        run: nix build --print-build-logs '.#checks.${{ matrix.system }}.notification'
+
+      - name: Build remaining flake checks
+        if: matrix.lane == 'fixtures'
+        run: |
+          check_names=$(
+            nix eval --raw '.#checks.${{ matrix.system }}' \
+              --apply 'checks: builtins.concatStringsSep "\n" (builtins.filter (name: name != "notification") (builtins.attrNames checks))'
+          )
+          if [[ -z "$check_names" ]]; then
+            echo "No fixture checks found" >&2
+            exit 1
+          fi
+          check_refs=()
+          while IFS= read -r name; do
+            check_refs+=(".#checks.${{ matrix.system }}.$name")
+          done <<< "$check_names"
+          nix build --print-build-logs "${check_refs[@]}"
 
       - name: Run nix build
+        if: matrix.lane == 'package'
         run: nix build --print-build-logs
 
       - name: Run Go linters
+        if: matrix.lane == 'package'
         run: nix develop .#ci --command golangci-lint run ./...
 
       - name: Validate agent skills
+        if: matrix.lane == 'package'
         env:
           GH_TOKEN: ${{ github.token }}
         run: nix run '.#skill-check'
 
       - name: Run gitleaks history scan
+        if: matrix.lane == 'package'
         run: nix develop .#ci --command gitleaks detect --verbose --redact
 
   security:
