@@ -97,6 +97,8 @@ func validPhase(phase string) bool {
 	return phase == "enumerate" || phase == "capture" || phase == "aggregate" || phase == "publish"
 }
 
+const statusFinalVerificationReserve = 900 * time.Millisecond
+
 // RefreshServerStatus is the only persistent monitoring/capture writer. It
 // never holds a mailbox lock across native captures and never waits for its
 // refresh lock. Notification safety reads do not enter this function.
@@ -104,6 +106,11 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 	result.Status = "error"
 	ctx, cancel := context.WithTimeout(parent, StatusRefreshBudget)
 	defer cancel()
+	// Optional capture and aggregation must stop early enough for a complete
+	// closing native frame and atomic publication under the overall deadline.
+	deadline, _ := ctx.Deadline()
+	workCtx, stopWork := context.WithDeadline(ctx, deadline.Add(-statusFinalVerificationReserve))
+	defer stopWork()
 	dir, err := m.Store.statusDir(server, true)
 	if err != nil {
 		return result, err
@@ -221,8 +228,8 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 		return result, err
 	}
 	defer func() { _ = history.Close() }()
-	// Reserve time for the final identity check, aggregation and atomic commit.
-	captureCtx, stopCapture := context.WithTimeout(ctx, time.Second)
+	// Cap captures at one second and stop them before the closing native frame.
+	captureCtx, stopCapture := context.WithTimeout(workCtx, time.Second)
 	defer stopCapture()
 	for i, task := range tasks {
 		session := &snapshot.Sessions[task.session]
@@ -273,10 +280,15 @@ func (m Mail) RefreshServerStatus(parent context.Context, server ServerContext, 
 	if err := phase("aggregate"); err != nil {
 		return result, err
 	}
-	m.aggregateStatus(ctx, &snapshot)
+	m.aggregateStatus(workCtx, &snapshot)
 	for _, s := range snapshot.Sessions {
 		for _, w := range s.Windows {
 			for _, p := range w.Panes {
+				// An expired aggregation may leave a fresh pane without Status.
+				// Capture success cannot make its unverified attribution complete.
+				if p.Status == nil && workCtx.Err() != nil && p.Workspace != "" && !p.Dead && !p.Linked {
+					snapshot.Coverage.UnknownNodes++
+				}
 				if p.Status != nil && (p.Status.Reason != "" || p.Status.UnreadCount == nil || p.Status.InboundCount == nil || p.Status.OutboundCount == nil || p.Status.DraftCount == nil || p.Status.FailedCount == nil) {
 					snapshot.Coverage.UnknownNodes++
 				}
