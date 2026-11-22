@@ -411,7 +411,7 @@ func (s Store) LaunchAgents(parent context.Context, plan LaunchPlan) (result Lau
 		if err != nil {
 			return result, err
 		}
-		if StatusConfigFingerprint(fresh) != StatusConfigFingerprint(plan.Topology) {
+		if fresh.PolicyIdentity() != plan.Topology.PolicyIdentity() || StatusConfigFingerprint(fresh) != StatusConfigFingerprint(plan.Topology) {
 			return result, ErrUnknown
 		}
 	}

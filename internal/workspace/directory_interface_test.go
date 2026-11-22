@@ -14,7 +14,84 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
+	"github.com/i9wa4/tmux-a2a-postman/internal/helpdocs"
 )
+
+func TestStatusFingerprintSeparatesAuthoredPolicyFromRoutingTopology(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "postman.md")
+	base := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- approver\n```\n## `worker`\nWorker instructions\n## `approver`\nApprover instructions\n"
+	load := func(content string) config.WorkspaceTopology {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		topology, err := (config.Source{Path: path}).Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return topology
+	}
+	first := load(base)
+	authoredChange := load(strings.Replace(base, "Worker instructions", "Updated worker instructions", 1))
+	if StatusConfigFingerprint(first) != StatusConfigFingerprint(authoredChange) || first.PolicyIdentity() == authoredChange.PolicyIdentity() {
+		t.Fatal("authored-only change altered routing identity or kept policy identity")
+	}
+	structuralChange := load(strings.Replace(base, "interface_node: worker", "interface_node: approver", 1))
+	if StatusConfigFingerprint(first) == StatusConfigFingerprint(structuralChange) {
+		t.Fatal("interface change retained routing identity")
+	}
+	returned, err := (config.Source{Path: filepath.Join(t.TempDir(), "absent.md"), Builtin: true}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundled, err := fs.ReadFile(helpdocs.Assets(), "config/postman.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	customCopy := load(string(bundled))
+	if StatusConfigFingerprint(returned) != StatusConfigFingerprint(customCopy) || returned.PolicyIdentity() == customCopy.PolicyIdentity() {
+		t.Fatal("bundle provenance changed routing identity or lost authored identity")
+	}
+}
+
+func TestCustomV1StatusRegistrationRequiresExactTopology(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	rt := configuredStatusFixture(t, f, m)
+	snapshot, err := rt.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := Name(snapshot.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(m.Store.StateRoot, name, "runtime", "status-config-p"+f.pane[1:]+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record statusConfigRecord
+	if err := json.Unmarshal(data, &record); err != nil || record.Version != 1 || record.Builtin {
+		t.Fatal("custom operation did not retain v1 registration", err, record)
+	}
+	original, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, append(append([]byte{}, original...), []byte("## `worker`\nUpdated instructions\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := m.Store.readStatusAttribution(context.Background(), snapshot.Root, snapshot.Caller.Owner, snapshot.Bindings); err != nil {
+		t.Fatal("authored-only custom change altered v1 routing identity", err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, []byte(strings.Replace(string(original), "worker --- approver", "worker --- third", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := m.Store.readStatusAttribution(context.Background(), snapshot.Root, snapshot.Caller.Owner, snapshot.Bindings); err == nil {
+		t.Fatal("edited custom topology retained v1 status provenance")
+	}
+}
 
 func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.T) {
 	f := newTmuxFixture(t)
@@ -37,26 +114,6 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	adapter.Roles = topology.Nodes
 	adapter.ConfigPath, adapter.BuiltinConfig = configPath, true
 	adapter.ConfigFingerprint = StatusConfigFingerprint(topology)
-	priorFingerprint := "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
-	mergedBaseFingerprint := "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71"
-	helpUpdatedFingerprint := "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad"
-	if !StatusConfigFingerprintMatches(topology, priorFingerprint) {
-		t.Fatalf("reviewed prior built-in fingerprint was rejected by %s", StatusConfigFingerprint(topology))
-	}
-	if !StatusConfigFingerprintMatches(topology, mergedBaseFingerprint) {
-		t.Fatal("merged-base built-in fingerprint was rejected")
-	}
-	if !StatusConfigFingerprintMatches(topology, helpUpdatedFingerprint) {
-		t.Fatal("help-updated built-in fingerprint was rejected")
-	}
-	if StatusConfigFingerprintMatches(topology, "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
-		t.Fatal("foreign built-in fingerprint was accepted")
-	}
-	editedTopology := topology
-	editedTopology.Reviewer = "edited"
-	if StatusConfigFingerprintMatches(editedTopology, mergedBaseFingerprint) {
-		t.Fatal("edited built-in topology accepted merged-base fingerprint")
-	}
 	store := Store{StateRoot: filepath.Join(f.home, "state")}
 	for _, pane := range []string{f.pane, childPane} {
 		registerDirectoryPane(t, store, adapter, pane)
@@ -74,7 +131,9 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
 	}
-	record.Fingerprint = mergedBaseFingerprint
+	if record.Version != 3 || record.Fingerprint != StatusConfigFingerprint(topology) {
+		t.Fatal("normal operation did not write structural v3 registration", record)
+	}
 	write := func() {
 		t.Helper()
 		data, err := json.Marshal(record)
@@ -85,16 +144,45 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 			t.Fatal(err)
 		}
 	}
+	record.Version = 2
+	record.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	write()
 	adapter.Pane = childPane
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+		t.Fatal("prior v2 built-in registration was accepted without normal re-registration")
+	}
+	record.Fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	write()
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+		t.Fatal("foreign v2 built-in registration was accepted")
+	}
+	record.Fingerprint = legacyBuiltinStatusFingerprint(topology)
+	write()
 	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
 	selected, err := DirectDirectoryPeer(interfaces, "child", "one")
 	if err != nil || selected.Root != "~/repo" {
-		t.Fatalf("pinned parent route: %+v %v", selected, err)
+		t.Fatalf("current-legacy v2 parent route: %+v %v", selected, err)
 	}
+	if selected.Runtime.tmux.ConfigFingerprint != StatusConfigFingerprint(topology) {
+		t.Fatal("verified v2 route did not expose structural identity")
+	}
+	adapter.Pane = f.pane
+	registerDirectoryPane(t, store, adapter, f.pane)
+	data, err = os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &record) != nil || record.Version != 3 {
+		t.Fatal("normal operation did not re-register built-in v3", err, record)
+	}
+	adapter.Pane = childPane
+	record.Fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	write()
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+		t.Fatal("tampered v3 built-in registration was accepted")
+	}
+	record.Fingerprint = StatusConfigFingerprint(topology)
+	write()
 	child, err := adapter.NamedCaller(ctx)
 	if err != nil {
 		t.Fatal(err)
