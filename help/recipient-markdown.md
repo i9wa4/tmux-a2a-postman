@@ -14,17 +14,17 @@ The reference is the shipped v0.9.5 behavior, especially:
 - [configured skill catalog](https://github.com/i9wa4/tmux-a2a-postman/blob/v0.9.5/internal/config/skill_catalog.go)
 - [catalog insertion into common_template](https://github.com/i9wa4/tmux-a2a-postman/blob/v0.9.5/internal/config/markdown.go)
 
-| Historical content                                          | Current rendering contract                                                                                              |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Sender, recipient, session, time and message ID             | Retain immutable UTC machine metadata and a readable message header with local time and numeric offset                  |
-| common_template followed by the selected recipient template | Include the complete configured policy on every generated mail, including replies                                       |
-| Available Skills from ordinary skill_path entries           | Include configured paths and ordered name/description bullets; read applicable skills before acting                     |
-| You can talk to and role summaries                          | Use the recipient's routes and immediate interface relationships; first nonempty role line, at most 120 runes as before |
-| Quoted-heredoc reply example                                | Use the actual claimed message ID and current --to syntax                                                               |
-| Required reply/completion guidance                          | Distinguish transport reply requirements from substantive task acceptance                                               |
-| Configured message_footer                                   | Preserve applicable configured guidance with safe current substitutions                                                 |
-| Sender Message and visible separator                        | Keep the sender-authored UTF-8 bytes exactly, including headings, fences, dollar signs, comments and trailing newlines  |
-| POP read-body instruction                                   | Put an explicit full-file instruction in POP JSON whenever it returns an archive path                                   |
+| Historical content                                          | Current rendering contract                                                                                                                                                               |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sender, recipient, session, time and message ID             | Retain immutable UTC machine metadata and a readable message header with local time and numeric offset                                                                                   |
+| common_template followed by the selected recipient template | Include the complete configured policy on every generated mail, including replies                                                                                                        |
+| Available Skills from ordinary skill_path entries           | Include configured paths and ordered name/description bullets; read applicable skills before acting                                                                                      |
+| You can talk to and role summaries                          | Use the recipient's routes and verified direct interfaces; label a containing interface `parent` and contained interfaces `child`; first nonempty role line, at most 120 runes as before |
+| Quoted-heredoc reply example                                | Use the actual claimed message ID and current --to syntax                                                                                                                                |
+| Required reply/completion guidance                          | Distinguish transport reply requirements from substantive task acceptance                                                                                                                |
+| Configured message_footer                                   | Preserve applicable configured guidance with safe current substitutions                                                                                                                  |
+| Sender Message and visible separator                        | Keep the sender-authored UTF-8 bytes exactly, including headings, fences, dollar signs, comments and trailing newlines                                                                   |
+| POP read-body instruction                                   | Put an explicit full-file instruction in POP JSON whenever it returns an archive path                                                                                                    |
 
 Old context IDs and removed flags are represented by current native workspace,
 session and exact reply references. A typed execution request presents the
@@ -100,6 +100,8 @@ This entire sender-authored region is preserved literally, through EOF.
 Generated headings stay within their envelope sections. Headings inside code
 fences and all sender-authored content retain their original bytes. Contacts
 describe the recipient's permitted routes, not the sender's contact list.
+Verified direct interface contacts retain their exact `session:interface_node`
+address and show `parent` or `child` from the recipient's workspace view.
 Archived context records the configuration used for that send and grants no
 additional route or human authority. Ordinary sends, exact replies and command
 review traffic all retain their appropriate recipient context.
