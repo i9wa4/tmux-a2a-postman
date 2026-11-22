@@ -20,8 +20,9 @@ reply. Scheduling belongs to the host; this skill starts no timer or daemon.
    `tmux-a2a-postman help postman-usage mailbox` for genuine notifications,
    POP and complete reads. Never bypass POP by opening a peer's inbox.
 4. If evidence cannot settle the question, send one targeted inquiry to the
-   responsible direct report with
-   `tmux-a2a-postman help send-heredoc`. State the original
+   responsible direct report using
+   `tmux-a2a-postman help postman-send-message sending`; consult
+   `help send-heredoc` for CLI syntax. State the original
    objective, exact unresolved request, evidence, and the smallest question:
    active work and next milestone, a concrete blocker, or a missing result
    report. Request evidence rather than an acknowledgment alone.
