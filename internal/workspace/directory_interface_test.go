@@ -39,11 +39,15 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	adapter.ConfigFingerprint = StatusConfigFingerprint(topology)
 	priorFingerprint := "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	mergedBaseFingerprint := "sha256:66de3d517c53e2ffda32e97c07b48b416bf1affad8a05c7b43b4ae79dc44de71"
+	helpUpdatedFingerprint := "sha256:dd0cf4a6252f19819454bc913f327110ccf53bdddd823425ff7365f1dec800ad"
 	if !StatusConfigFingerprintMatches(topology, priorFingerprint) {
-		t.Fatal("reviewed prior built-in fingerprint was rejected")
+		t.Fatalf("reviewed prior built-in fingerprint was rejected by %s", StatusConfigFingerprint(topology))
 	}
 	if !StatusConfigFingerprintMatches(topology, mergedBaseFingerprint) {
 		t.Fatal("merged-base built-in fingerprint was rejected")
+	}
+	if !StatusConfigFingerprintMatches(topology, helpUpdatedFingerprint) {
+		t.Fatal("help-updated built-in fingerprint was rejected")
 	}
 	if StatusConfigFingerprintMatches(topology, "sha256:0000000000000000000000000000000000000000000000000000000000000000") {
 		t.Fatal("foreign built-in fingerprint was accepted")
