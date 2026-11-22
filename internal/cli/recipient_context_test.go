@@ -66,6 +66,40 @@ func TestDirectoryContactsMatchNearestLiveInterfaceRoutes(t *testing.T) {
 	}
 }
 
+func TestDirectoryContactLabelsUseVerifiedDirectRelationship(t *testing.T) {
+	topology := config.WorkspaceTopology{InterfaceNode: "gateway", Edges: map[string][]string{"gateway": {"worker"}}}
+	interfaces := []workspace.DirectoryInterface{
+		{Session: "top", Root: "~/github.com", InterfaceRole: "messenger"},
+		{Session: "middle", Root: "~/github.com/repo", InterfaceRole: "gateway"},
+		{Session: "alpha", Root: "~/github.com/repo/alpha", InterfaceRole: "agent"},
+		{Session: "beta", Root: "~/github.com/repo/beta", InterfaceRole: "relay"},
+		{Session: "leaf", Root: "~/github.com/repo/alpha/leaf", InterfaceRole: "agent"},
+		{Session: "sibling", Root: "~/github.com/other", InterfaceRole: "agent"},
+		{Session: "prefix", Root: "~/github.com/repository", InterfaceRole: "agent"},
+	}
+	msg := workspace.Message{ID: "m-0123456789abcdef0123456789abcdef", From: "worker", To: "gateway"}
+	got := renderRecipientContextDirectory(config.RecipientPolicy{}, topology, "", "middle", msg, interfaces)
+	for _, want := range []string{"- top:messenger (parent)", "- alpha:agent (child)", "- beta:relay (child)", "- worker"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing contact %q in %s", want, got)
+		}
+	}
+	for _, excluded := range []string{"leaf:agent", "sibling:agent", "prefix:agent", "- worker (parent)", "- worker (child)"} {
+		if strings.Contains(got, excluded) {
+			t.Fatalf("non-direct contact %q in %s", excluded, got)
+		}
+	}
+	for _, unsafe := range [][]workspace.DirectoryInterface{
+		{{Session: "middle", Root: "~/github.com/repo", InterfaceRole: "gateway"}, {Session: "top", Root: "~/github.com", InterfaceRole: "messenger"}, {Session: "top", Root: "~/github.com/other", InterfaceRole: "messenger"}},
+		{{Session: "top", Root: "~/github.com", InterfaceRole: "messenger"}},
+	} {
+		got := renderRecipientContextDirectory(config.RecipientPolicy{}, topology, "", "middle", msg, unsafe)
+		if strings.Contains(got, "(parent)") || strings.Contains(got, "(child)") {
+			t.Fatal("unverified or ambiguous interfaces received labels", got)
+		}
+	}
+}
+
 func TestExecutionContextShowsFixedDecisionActionsAndNoOrdinaryReply(t *testing.T) {
 	msg := workspace.Message{ID: "m-0123456789abcdef0123456789abcdef", From: "worker", To: "approver", Kind: "execution-request", NeedsReply: true, GuidanceVersion: 1}
 	text := renderRecipientContext(config.RecipientPolicy{}, config.WorkspaceTopology{}, "/tmp/config 'quoted'.md", "session", msg)

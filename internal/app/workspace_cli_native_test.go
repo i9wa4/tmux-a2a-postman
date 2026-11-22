@@ -570,7 +570,7 @@ func TestWorkspaceCLILocalArchiveListsNearestDirectoryContacts(t *testing.T) {
 		t.Fatal("missing contact section", archive.Context.Markdown)
 	}
 	contacts, _, ok := strings.Cut(after, "\n\nThese are configured routes")
-	if !ok || !strings.Contains(contacts, "work:worker") || !strings.Contains(contacts, "grandchild:worker") || !strings.Contains(contacts, "- peer") || strings.Contains(contacts, "sibling:worker") || strings.Contains(contacts, "prefix:worker") {
+	if !ok || !strings.Contains(contacts, "- work:worker (parent)") || !strings.Contains(contacts, "- grandchild:worker (child)") || !strings.Contains(contacts, "- peer") || strings.Contains(contacts, "sibling:worker") || strings.Contains(contacts, "prefix:worker") {
 		t.Fatal("local archive contacts did not match nearest live routes", contacts)
 	}
 }
