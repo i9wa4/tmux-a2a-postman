@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -37,7 +38,7 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 			defer cancel()
 			interfaces, err = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
 			if err != nil {
-				return fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", err)
+				return recipientDirectoryContactsError(advisoryCtx, err)
 			}
 		}
 	}
@@ -52,7 +53,7 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 			var err error
 			currentInterfaces, err = c.mail.Store.VerifiedDirectoryInterfaces(advisoryCtx, c.runtime, c.topology.InterfaceNode)
 			if err != nil {
-				return "", fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", err)
+				return "", recipientDirectoryContactsError(advisoryCtx, err)
 			}
 		}
 		topology, recipientPolicy := c.topology, policy
@@ -70,7 +71,7 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 					view, viewErr := c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
 					cancel()
 					if viewErr != nil {
-						return "", fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", viewErr)
+						return "", recipientDirectoryContactsError(advisoryCtx, viewErr)
 					}
 					currentInterfaces = view
 					break
@@ -99,6 +100,13 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 		return renderRecipientContextDirectory(recipientPolicy, topology, path, name, msg, currentInterfaces), nil
 	}
 	return nil
+}
+
+func recipientDirectoryContactsError(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("verify complete recipient directory contacts timed out: %w; retry once when the native server is responsive, then inspect invocation diagnostics", ctx.Err())
+	}
+	return fmt.Errorf("verify complete recipient directory contacts: %w; retry after the interface registrations are current", err)
 }
 
 func contextShellWord(value string) string {

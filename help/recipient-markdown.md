@@ -106,6 +106,12 @@ every verified direct child. If Postman cannot verify the complete set, the
 send fails before publication with a recovery reason. A pane with no current
 configuration registration is not a contact; a stale registration must be
 re-registered by a normal operation in that interface before retrying.
+The contact list stops at each verified or unavailable direct-child frontier:
+a grandchild is not promoted when its intermediate child is unregistered, and
+a stale grandchild cannot veto its parent's own direct contacts. If native
+enumeration times out, retry once when the server is responsive and inspect
+invocation diagnostics if it repeats; registration advice applies to
+provenance failures instead.
 
 The generated context has one H1, `Message`. Recipient Instructions, Delivery
 and Reply Guidance and Sender Message are H2 siblings. Common contract,
