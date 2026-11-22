@@ -72,7 +72,8 @@ func TestQuotedHeredocBodyDelimiterDoesNotExecuteSenderText(t *testing.T) {
 	sideEffect := filepath.Join(f.home, "sender-side-effect")
 	script := "\"$POSTMAN_TEST_SELF\" -test.run=^TestIssue937PublicCLIChild$ <<'" + delimiter + "'\n" + body + delimiter + "\n"
 	cmd := exec.CommandContext(ctx, "bash", "-c", script)
-	cmd.Env = append(base.Env, "POSTMAN_TEST_SELF="+f.self, "POSTMAN_SIDE_EFFECT="+sideEffect)
+	cmd.Env = base.Env
+	cmd.Env = append(cmd.Env, "POSTMAN_TEST_SELF="+f.self, "POSTMAN_SIDE_EFFECT="+sideEffect)
 	cmd.Dir = base.Dir
 	out, err := cmd.CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte(`"success":true`)) {
@@ -134,7 +135,8 @@ func TestGeneratedReplyDelimiterCollisionPreservesBodyAndSenderShell(t *testing.
 	sideEffect := filepath.Join(f.home, "generated-reply-side-effect")
 	script := "\"$POSTMAN_TEST_SELF\" -test.run=^TestIssue937PublicCLIChild$ <<'" + marker + "'\n" + body + marker + "\n"
 	cmd := exec.CommandContext(ctx, "bash", "-c", script)
-	cmd.Env = append(base.Env, "POSTMAN_TEST_SELF="+f.self, "POSTMAN_SIDE_EFFECT="+sideEffect)
+	cmd.Env = base.Env
+	cmd.Env = append(cmd.Env, "POSTMAN_TEST_SELF="+f.self, "POSTMAN_SIDE_EFFECT="+sideEffect)
 	cmd.Dir = base.Dir
 	out, err := cmd.CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte(`"success":true`)) {
