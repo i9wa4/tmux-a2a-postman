@@ -285,6 +285,9 @@
                 pkgs.direnv
                 pkgs.python3
               ];
+              # The app package includes bounded real-tmux matrices that can
+              # approach Go's default ten-minute test deadline on macOS.
+              checkFlags = [ "-timeout=15m" ];
               ldflags = [
                 "-s"
                 "-w"

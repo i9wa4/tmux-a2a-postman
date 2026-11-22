@@ -57,10 +57,13 @@ also own that same workspace; unknown ownership is not silently replaced.
 
 Have the orchestrator console run:
 
+Choose a fresh quoted delimiter absent as a complete body line; see
+`tmux-a2a-postman help send-heredoc`.
+
 ```sh
-tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY'
+tmux-a2a-postman send-heredoc --to worker <<'POSTMAN_BODY_7f4c39b2'
 Please confirm you can read this complete message and reply with the result.
-POSTMAN_BODY
+POSTMAN_BODY_7f4c39b2
 ```
 
 Worker receives a short input hint followed by Enter. Worker must run

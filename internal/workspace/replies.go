@@ -4,15 +4,42 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 )
 
 // messageGuidance is versioned because old archives must remain readable when
 // the CLI's current instructions change. User Markdown is never rewritten.
 func messageGuidance(msg Message) string {
-	if msg.GuidanceVersion != 1 {
+	switch msg.GuidanceVersion {
+	case 1:
+		return messageGuidanceV1(msg)
+	case 2:
+		guidance := strings.ReplaceAll(messageGuidanceV1(msg), "postman reply guidance v1", "postman reply guidance v2")
+		if strings.Contains(guidance, "<<'POSTMAN_BODY'") {
+			guidance = strings.ReplaceAll(guidance, "POSTMAN_BODY", ReplyHeredocDelimiter(msg.ID))
+			guidance = strings.Replace(guidance, "```sh\n", replyHeredocCheck+"```sh\n", 1)
+		}
+		return guidance
+	default:
 		return ""
 	}
+}
+
+const replyHeredocCheck = "Before constructing this command, check that no complete line of your actual body equals the quoted delimiter below. If one does, replace both delimiter lines with a fresh noncolliding value; otherwise following body lines could run in your shell.\n\n"
+
+// ReplyHeredocDelimiter gives a distinct illustrative marker for each message.
+// The sender still checks it against the actual body before shell construction.
+func ReplyHeredocDelimiter(id string) string { return "POSTMAN_BODY_" + id }
+
+// OptionalReplyGuidance keeps the material-response example under the same
+// marker and collision rule as required replies and external reports.
+func OptionalReplyGuidance(msg Message) string {
+	marker := ReplyHeredocDelimiter(msg.ID)
+	return "\nIf a material response is needed, reply to this message ID; an exact reply creates no new reply obligation:\n\n" + replyHeredocCheck + "```sh\ntmux-a2a-postman send-heredoc --to " + msg.ID + " <<'" + marker + "'\n<your material response>\n" + marker + "\n```\n"
+}
+
+func messageGuidanceV1(msg Message) string {
 	start := "\n\n---\n<!-- postman reply guidance v1 -->\n"
 	end := "\n<!-- end postman reply guidance v1 -->\n"
 	if msg.External != nil && msg.External.Direction == "in" {
@@ -116,7 +143,7 @@ func (m Mail) SendReply(ctx context.Context, rt Runtime, ids []string, body stri
 		if err != nil {
 			return err
 		}
-		msg = Message{ID: identity.ID, From: s.Caller.Role, To: first.From, Replies: replyReferences(sources), CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 1}
+		msg = Message{ID: identity.ID, From: s.Caller.Role, To: first.From, Replies: replyReferences(sources), CreatedAt: identity.CreatedAt, Body: body, GuidanceVersion: 2}
 		staged, err := m.addLocalMessageContext(ctx, ws, s, &msg)
 		if err != nil {
 			return err

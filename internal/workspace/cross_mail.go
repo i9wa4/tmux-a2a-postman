@@ -94,7 +94,7 @@ func (m Mail) sendCross(ctx context.Context, source, destination NamedRuntime, b
 				To: to.Caller.Role, ToSession: destination.Name(),
 				ReplyTo: replyTo, FillsInputRequestID: fills,
 				NeedsReply: needsReply, CreatedAt: identity.CreatedAt, Body: body,
-				GuidanceVersion: 1,
+				GuidanceVersion: 2,
 				Replies:         refs,
 			}
 			if needsReply {
