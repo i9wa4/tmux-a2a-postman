@@ -179,6 +179,10 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	currentFingerprint := prior.Fingerprint
+	if prior.Version != 3 || !prior.Builtin {
+		t.Fatal("normal built-in operation did not register v3", prior)
+	}
+	prior.Version = 2
 	prior.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	writePrior := func() {
 		t.Helper()
@@ -208,6 +212,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		if err := json.Unmarshal(data, &other); err != nil {
 			t.Fatal(err)
 		}
+		other.Version = 2
 		other.Fingerprint = prior.Fingerprint
 		data, err = json.Marshal(other)
 		if err != nil {
@@ -217,30 +222,39 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if result, err := invoke(childPane, "prior builtin parent\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
-		t.Fatalf("CLI prior-built-in parent send: %+v %v", result, err)
+	if result, err := invoke(childPane, "prior builtin parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+		t.Fatalf("CLI prior-built-in parent admitted mail: %+v %v", result, err)
+	}
+	if result, err := invoke(parentPane, "", RunWorkspacePop); err != nil || !result.Success {
+		t.Fatalf("normal parent operation failed to re-register: %+v %v", result, err)
+	}
+	if result, err := invoke(orchestratorPane, "", RunWorkspacePop); err != nil || !result.Success {
+		t.Fatalf("normal orchestrator operation failed to re-register: %+v %v", result, err)
+	}
+	if result, err := invoke(childPane, "re-registered builtin parent\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
+		t.Fatalf("CLI re-registered parent send: %+v %v", result, err)
 	}
 	archiveResult, err := invoke(parentPane, "", RunWorkspacePop)
 	if err != nil || archiveResult.MarkdownPath == nil || *archiveResult.MarkdownPath == nil {
 		t.Fatalf("CLI prior-built-in parent POP: %+v %v", archiveResult, err)
 	}
 	archive, err := os.ReadFile(**archiveResult.MarkdownPath)
-	if err != nil || !strings.Contains(string(archive), "prior builtin parent\n") ||
+	if err != nil || !strings.Contains(string(archive), "re-registered builtin parent\n") ||
 		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
 		!strings.Contains(string(archive), "### messenger instructions") {
 		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
 	}
 	var refreshed statusConfig
 	data, err := os.ReadFile(parentConfig)
-	if err != nil || json.Unmarshal(data, &refreshed) != nil || refreshed.Fingerprint != currentFingerprint {
-		t.Fatalf("normal parent POP did not refresh only its registration: %v %+v", err, refreshed)
+	if err != nil || json.Unmarshal(data, &refreshed) != nil || refreshed.Version != 3 || refreshed.Fingerprint != currentFingerprint {
+		t.Fatalf("normal parent operation did not write structural v3 registration: %v %+v", err, refreshed)
 	}
 	orchestratorConfig := filepath.Join(filepath.Dir(parentConfig),
 		"status-config-p"+strings.TrimPrefix(orchestratorPane, "%")+".json")
-	var stillPrior statusConfig
+	var reRegistered statusConfig
 	data, err = os.ReadFile(orchestratorConfig)
-	if err != nil || json.Unmarshal(data, &stillPrior) != nil || stillPrior.Fingerprint != prior.Fingerprint {
-		t.Fatalf("other parent registration did not remain prior: %v %+v", err, stillPrior)
+	if err != nil || json.Unmarshal(data, &reRegistered) != nil || reRegistered.Version != 3 || reRegistered.Fingerprint != currentFingerprint {
+		t.Fatalf("other parent registration did not refresh through normal operation: %v %+v", err, reRegistered)
 	}
 	if result, err := invoke(childPane, "mixed builtin parent second\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
 		t.Fatalf("CLI mixed-built-in parent second send: %+v %v", result, err)
