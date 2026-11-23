@@ -71,6 +71,15 @@ Worker receives a short input hint followed by Enter. Worker must run
 through EOF, and follow its exact reply command. An empty POP returns a null
 path. Do not pass a message ID to POP.
 
+The notification names newly delivered mail, while POP claims the next unread
+message; these can differ when mail is queued. Use the complete claimed archive
+to decide its response type and exact reply target. For an ordinary
+reply-required request, finish the work and send a substantive result with
+evidence or a concrete blocker; an acknowledgement alone does not complete it.
+Execution requests and external input follow their archive's decision or
+channel procedure. A no-reply archive needs no automatic response. Claiming
+mail clears unread attention but does not accept or complete the task.
+
 For example, the returned guidance uses `send-heredoc --to` with the claimed
 message ID and a quoted heredoc body. Use the actual ID and config-aware command
 from that archive; do not reply to the role name when closing this request.
