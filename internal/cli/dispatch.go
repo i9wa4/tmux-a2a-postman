@@ -9,6 +9,7 @@ type Config struct {
 
 type Handlers struct {
 	Resources        func([]string) error
+	Skill            func([]string) error
 	LaunchAgents     func([]string) error
 	ChannelSync      func([]string) error
 	ChannelReport    func([]string) error
@@ -36,6 +37,9 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 	switch command {
 	case "resources":
 		handler = h.Resources
+		workspaceCommand = false
+	case "skill":
+		handler = h.Skill
 		workspaceCommand = false
 	case "launch-agents":
 		handler = h.LaunchAgents

@@ -99,7 +99,7 @@ content-identified cache bundle. Its default, licenses, optional record helper
 and review prompts are portable and require no dotfiles checkout.
 
 A complete custom file may explicitly direct a role/common section to read an
-installed Skill such as `tmux-a2a-postman help postman-review`, or explicitly
+embedded Skill such as `tmux-a2a-postman skill subagent-review`, or explicitly
 select consumer-owned thin Skill metadata with the existing `skill_path` syntax.
 The binary never silently adds builtin workflow policy/catalogs to a custom
 file.

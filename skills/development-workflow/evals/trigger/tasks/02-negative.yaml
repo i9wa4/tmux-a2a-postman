@@ -1,0 +1,12 @@
+id: development-workflow-2
+name: negative 2
+inputs:
+  prompt: What is the syntax of a Python list comprehension?
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/development-workflow/SKILL.md
+    mode: negative

@@ -3,5 +3,5 @@ package help
 
 import "embed"
 
-//go:embed *.md */SKILL.md */references/*.md */scripts/*
+//go:embed *.md */scripts/*
 var Content embed.FS

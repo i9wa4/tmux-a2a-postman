@@ -1,0 +1,12 @@
+id: postman-records-2
+name: negative 2
+inputs:
+  prompt: Look up mail counts without selecting or changing a work record.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/postman-records/SKILL.md
+    mode: negative

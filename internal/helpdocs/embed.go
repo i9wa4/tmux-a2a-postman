@@ -13,6 +13,7 @@ import (
 	configdata "github.com/i9wa4/tmux-a2a-postman/config"
 	"github.com/i9wa4/tmux-a2a-postman/docs"
 	helpdata "github.com/i9wa4/tmux-a2a-postman/help"
+	skilldata "github.com/i9wa4/tmux-a2a-postman/skills"
 )
 
 var roots = []struct {
@@ -20,6 +21,7 @@ var roots = []struct {
 	files fs.FS
 }{
 	{"help", helpdata.Content},
+	{"skills", skilldata.Content},
 	{"config", configdata.Content},
 	{"docs", docs.Content},
 }
@@ -41,8 +43,7 @@ func Read(topic string, refs ...string) ([]byte, error) {
 			return configdata.Content.ReadFile("postman.md")
 		}
 		filename = topic + "/references/" + refs[0] + ".md"
-	} else if data, err := helpdata.Content.ReadFile(topic + "/SKILL.md"); err == nil {
-		return data, nil
+
 	}
 	data, err := helpdata.Content.ReadFile(filename)
 	if err != nil {
@@ -56,11 +57,7 @@ func Topics() []string {
 	entries, _ := helpdata.Content.ReadDir(".")
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
-			if _, err := helpdata.Content.ReadFile(entry.Name() + "/SKILL.md"); err == nil {
-				names = append(names, entry.Name())
-			}
-		} else if strings.HasSuffix(entry.Name(), ".md") {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
 			names = append(names, strings.TrimSuffix(entry.Name(), ".md"))
 		}
 	}
@@ -68,13 +65,32 @@ func Topics() []string {
 	return names
 }
 
-// WorkflowNames lists canonical Skill packages for the builtin role catalog.
-func WorkflowNames() []string {
-	names, _ := fs.Glob(helpdata.Content, "*/SKILL.md")
+// SkillNames lists canonical Skill packages for the builtin role catalog.
+func SkillNames() []string {
+	names, _ := fs.Glob(skilldata.Content, "*/SKILL.md")
 	for i := range names {
 		names[i] = path.Dir(names[i])
 	}
 	return names
+}
+
+// ReadSkill returns a complete embedded Skill or one of its Markdown references.
+func ReadSkill(name string, refs ...string) ([]byte, error) {
+	if !validName(name) || len(refs) > 1 {
+		return nil, fmt.Errorf("invalid skill name or reference %q", name)
+	}
+	filename := name + "/SKILL.md"
+	if len(refs) == 1 {
+		if !validName(refs[0]) {
+			return nil, fmt.Errorf("invalid skill reference %q", refs[0])
+		}
+		filename = name + "/references/" + refs[0] + ".md"
+	}
+	data, err := skilldata.Content.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("unknown skill or reference %q: %w", filename, err)
+	}
+	return data, nil
 }
 
 func validName(name string) bool {

@@ -40,3 +40,15 @@ possibly started command has executed=null and must not be blindly repeated.
 That result includes recovery_operation_id, the exact ID in this workspace's
 agents/<node>/executions/<id>.json audit record, for investigation.
 Postman saves minimal execution audit, not complete stdout/stderr logs.
+
+All configured roles use this entry for shell commands within their assigned
+scope, including authorized read-only checks and role-owned record/report
+writes. Postman transport, decision and discovery operations described by their
+own help remain direct control operations. Approval does not expand a role's
+assignment or bypass human and runtime permission limits.
+
+If a decision needs missing human authority, route the concrete question
+through the configured coordinator, immediate parents and human interface.
+Preserve the answer's source, target, effect and conditions. A rejected request
+remains rejected; submit a new typed request with new grounds after the answer.
+Do not blindly repeat an uncertain possibly-started operation.

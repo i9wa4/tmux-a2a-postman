@@ -118,7 +118,7 @@ skill_path:
 ```yaml
 skill_path:
   - path: /absolute/installed/skills
-    skills: [postman-usage, postman-send-message]
+    skills: [postman-records, postman-send-message]
   - path: /absolute/another/skills
     skills: all
 ```
@@ -226,7 +226,7 @@ permissions before activation. The external producer explicitly invokes
 `channel-sync` after publishing files and on reconnect. The interface POPs and
 uses the generated report/decision guidance. Declaration alone starts no service
 and grants no host permissions. Installed external operating instructions live
-in `tmux-a2a-postman help postman-usage external`.
+in `tmux-a2a-postman help external-filesystem-channel`.
 
 Optional YAML `presets` maps names to `columns`, each with ordered `panes`.
 Agent panes require an existing unique `role` and exact shell `command`. A
@@ -264,5 +264,5 @@ An absent automatic XDG/HOME path selects the embedded complete standard team. A
 custom file replaces it completely; there is no implicit role/catalog merge. Use
 `tmux-a2a-postman help config` for precedence, error handling and explicit
 read-only inspection/export of the installed default.
-`help postman-orchestrate`, `help postman-plan`, `help postman-records`
-and `help postman-review` own its portable workflows.
+The six complete portable Skills are read with `tmux-a2a-postman skill`;
+`help skills` describes source and distribution ownership.

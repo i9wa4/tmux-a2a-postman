@@ -242,7 +242,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if err != nil || !strings.Contains(string(archive), "re-registered builtin parent\n") ||
 		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
 		!strings.Contains(string(archive), "### orchestrator instructions") ||
-		!strings.Contains(string(archive), "Receive human and nearest-parent") {
+		!strings.Contains(string(archive), "Human-facing task coordinator; receives requests") {
 		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
 	}
 	var refreshed statusConfig

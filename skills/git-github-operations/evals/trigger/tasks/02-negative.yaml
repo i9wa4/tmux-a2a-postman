@@ -1,0 +1,12 @@
+id: git-github-operations-2
+name: negative 2
+inputs:
+  prompt: Review this function for a logic bug without Git or GitHub actions.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/git-github-operations/SKILL.md
+    mode: negative

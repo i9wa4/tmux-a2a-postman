@@ -101,25 +101,15 @@ tmux-a2a-postman version
 
 Client installation, authentication and sandbox settings remain yours.
 
-The binary includes complete Markdown guidance: run
-`tmux-a2a-postman help setup` or `tmux-a2a-postman help <topic>` without a
-checkout, tmux or configuration. Thin Skills discover installed workflow
-references; `tmux-a2a-postman help skills` explains the thin entries and
-consumer-owned setup. Updating the binary updates the detailed procedures.
-
-Install a thin Skill with GitHub CLI:
-
-```sh
-gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
-```
-
-Use `--agent claude-code` for Claude Code. Replace `postman-usage` with any
-workflow name listed by `tmux-a2a-postman help` to install another entry.
-Read the full procedure with `tmux-a2a-postman help <name>`, then matching
-references with `tmux-a2a-postman help <name> <ref>`.
+The binary includes complete CLI help and six complete portable Skills. Read
+`tmux-a2a-postman help setup` for setup, `tmux-a2a-postman skill <name>` for a
+full Skill, and `tmux-a2a-postman skill <name> <ref>` for a Markdown reference.
+These reads need no checkout, tmux, configuration, or extraction. Tracked
+`dist/skills/` contains thin discovery entries for client installation alongside
+the same-revision binary; [Skill help](help/skills.md) explains this layout.
 
 Start with the [builtin standard team](config/postman.md) and
-`tmux-a2a-postman help postman-orchestrate`; no dotfiles or Skill installation
+`tmux-a2a-postman skill postman-send-message`; no dotfiles or Skill installation
 is required. That same default `postman.md` contains all startup presets:
 
 | Preset     | Consoles and layout                                                   |
@@ -145,27 +135,24 @@ Inspect the builtin `postman.md` with
 `tmux-a2a-postman help config default`.
 Read `help config` to export a custom copy and select it.
 
-Follow the [first exchange](help/postman-usage/references/quickstart.md) and
+Follow the [first exchange](help/quickstart.md) and
 the [configuration reference](help/postman-md.md) to choose roles and routes.
 
 The repository mirrors the installed interface:
 
 ```text
-help/                 CLI usage: help <topic>
-  <name>/SKILL.md      canonical workflow: help <name>
-  <name>/references/   detailed procedures: help <name> <ref>
-  <name>/scripts/      optional helpers
-  <name>/evals/        workflow evaluation fixtures
-skills/<name>/
-  SKILL.md            generated header + one-line help instruction
-config/               bundled configuration assets
-docs/                design, research, development and validation
-testdata/            test-only fixtures
+help/*.md                 CLI usage, configuration and communication specs
+skills/<name>/SKILL.md   complete canonical Skill source
+skills/<name>/references/ and scripts/  required portable dependencies
+dist/skills/<name>/SKILL.md  generated, tracked discovery entry
+config/                  bundled configuration assets
+docs/                    design, research, development and validation
+testdata/                test-only fixtures
 ```
 
 ## 4. Guides and references
 
-- [Quickstart and operations](help/postman-usage/references/quickstart.md):
+- [Quickstart and operations](help/quickstart.md):
   setup, mail, observations and troubleshooting.
 - [Configuration reference](help/postman-md.md):
   anatomy, examples and exact supported fields.
@@ -174,13 +161,12 @@ testdata/            test-only fixtures
 - [Command review](help/execution.md),
   [server status](help/server-status.md), and
   [external file integration](help/external-filesystem-channel.md).
-- [Installable Skills](skills/): usage, sending, recall, configuration audit and
-  team management, planning, records, orchestration and review.
-- [Operating procedures](help/postman-orchestrate/references/intake.md),
-  [planning](help/postman-plan/references/investigation.md),
-  [records](help/postman-records/references/selection.md), and
-  [review](help/postman-review/references/routing.md): the canonical Skill
-  references available in the binary.
+- [Canonical Skills](skills/) and [tracked distribution](dist/skills/):
+  six complete embedded workflows and matching thin discovery entries.
+- [Skill use](help/skills.md),
+  [records](skills/postman-records/references/records.md), and
+  [review](skills/subagent-review/references/report.md): current binary reading
+  and portable procedures.
 - [Migration inventory](docs/design/standard-team-migration.md): source
   ownership, portability and verification boundaries.
 - [Contributing](docs/development/contributing.md): development, deterministic
