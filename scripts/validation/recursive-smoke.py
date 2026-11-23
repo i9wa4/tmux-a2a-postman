@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 import uuid
+from datetime import datetime, timezone
 
 from mail_fixture import MESSAGE_ID_PATTERN, read_archive, workspace_files
 from recursive_team.configuration import compile_config
@@ -78,10 +79,26 @@ def case_tree(case):
 
 
 def run_case(case):
-    root = pathlib.Path(tempfile.mkdtemp(prefix="pm-team-", dir="/tmp")).resolve()
+    started = time.monotonic()
+    fault_root = os.environ.get("POSTMAN_SMOKE_TEST_TRUNCATED_ACTION")
+    if fault_root:
+        root = pathlib.Path(fault_root).resolve()
+        root.mkdir(mode=0o700)
+    else:
+        root = pathlib.Path(tempfile.mkdtemp(prefix="pm-team-", dir="/tmp")).resolve()
     home, evidence = root / "home", root / "evidence"
     home.mkdir(mode=0o700)
     evidence.mkdir(mode=0o700)
+    if fault_root:
+        # Negative control: a killed actor can leave a partial append behind.
+        fault = evidence / "fault-trace"
+        fault.mkdir(mode=0o700)
+        (fault / "recipient.actions.jsonl").write_text(
+            json.dumps({
+                "hint": "m-20261123T000000.000000000Z-control",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }) + '\n{"hint":'
+        )
     # Copy only explicitly selected source metadata into this owned HOME.
     # The default policy and skills are entirely Postman-owned.
     catalog = home / ".codex/skills"
@@ -152,7 +169,15 @@ def run_case(case):
         "configuration": "builtin" if args.builtin else "explicit",
         "entry": "launch-" + args.launch if args.launch else "existing-consoles",
         "role_policy_execution": "fixed actors prove terminal/mail mechanics; not autonomous compliance",
+        "milestones": [],
     }
+
+    def mark(label):
+        report["milestones"].append({
+            "event": label,
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
 
     def tmux(*values):
         return subprocess.check_output(
@@ -539,9 +564,11 @@ def run_case(case):
             requests = dict(
                 zip(goals, pool.map(lambda item: send_initial(*item), goals.items()))
             )
+        mark("initial_requests_sent")
         wait_for(
             "root outcomes", lambda: all(root_id in outcomes() for root_id in goals)
         )
+        mark("first_root_results")
         report["flows"] = [
             verify_flow(root_id, goal, requests[root_id])
             for root_id, goal in goals.items()
@@ -551,6 +578,7 @@ def run_case(case):
         if case == "chain":
             # Respawn a completed child scope with the same durable mail/index.
             wait_for("terminal tools complete before planned restart", actors_finished)
+            mark("restart_started")
             leaf = active[-1]
             for role in ["messenger", "orchestrator", "worker"]:
                 ready = evidence / leaf / (role + ".ready.json")
@@ -565,6 +593,7 @@ def run_case(case):
                     commands[(leaf, role)],
                 )
                 wait_for("restarted role", lambda p=ready: p.exists())
+            mark("restart_roles_ready")
             root_id = uuid.uuid4().hex
             goal = {
                 "objective": "Fresh work after restart must ignore an old exact reply",
@@ -572,7 +601,9 @@ def run_case(case):
                 "constraints": ["reuse the fixture scope evidence", "no command replay"],
             }
             request = send_initial(root_id, goal)
+            mark("fresh_request_sent")
             wait_for("fresh post-restart outcome", lambda: root_id in outcomes())
+            mark("fresh_root_result")
             report["flows"].append(verify_flow(root_id, goal, request))
             if scope_indexes() != indexes_before:
                 raise RuntimeError("restart replaced a canonical index")
@@ -616,8 +647,39 @@ def run_case(case):
         )
     except Exception as error:  # noqa: BLE001 - retain failure evidence before private-server teardown
         report["error"] = str(error)
+        mark("failure")
     finally:
         if report["result"] != "pass":
+            report["hop_events"] = []
+            report["hop_trace_errors"] = []
+            for path in sorted(evidence.glob("*/*.actions.jsonl")):
+                try:
+                    lines = path.read_text().splitlines()
+                except (OSError, UnicodeError) as error:
+                    report["hop_trace_errors"].append({
+                        "path": str(path.relative_to(evidence)), "error": str(error),
+                    })
+                    continue
+                for number, line in enumerate(lines, 1):
+                    try:
+                        item = json.loads(line)
+                        message_id = item["hint"]
+                        if not isinstance(message_id, str):
+                            raise ValueError("hint must be a message ID string")
+                        match = re.fullmatch(r"m-(\d{8}T\d{6}\.\d+Z)-[A-Za-z0-9]+", message_id)
+                        report["hop_events"].append({
+                            "session": path.parent.name,
+                            "role": path.name.removesuffix(".actions.jsonl"),
+                            "message_id": message_id,
+                            "message_created_at": match.group(1) if match else None,
+                            "terminal_action_completed_at": item.get("completed_at"),
+                        })
+                    except (ValueError, KeyError, TypeError) as error:
+                        report["hop_trace_errors"].append({
+                            "path": str(path.relative_to(evidence)),
+                            "line": number,
+                            "error": str(error),
+                        })
             report["errors"] = {
                 str(p.relative_to(evidence)): p.read_text()
                 for p in evidence.glob("*/*.error.txt")
@@ -638,6 +700,10 @@ def run_case(case):
             timeout=5,
         )
         (root / "report.json").write_text(json.dumps(report, indent=2))
+    if report["result"] != "pass":
+        # Nix discards failed derivation outputs, so retain the report in its
+        # --print-build-logs stream as well as the isolated private directory.
+        print(json.dumps({"failure_report": report}), flush=True)
     print(
         json.dumps(
             {
