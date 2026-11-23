@@ -97,7 +97,7 @@ func validateMessage(msg Message) error {
 	if msg.Kind != "" && msg.Kind != "execution-request" && msg.Kind != "execution-decision" {
 		return errors.New("invalid message kind")
 	}
-	if !utf8.ValidString(msg.Body) || (msg.GuidanceVersion != 0 && msg.GuidanceVersion != 1) {
+	if !utf8.ValidString(msg.Body) || (msg.GuidanceVersion != 0 && msg.GuidanceVersion != 1 && msg.GuidanceVersion != 2) {
 		return errors.New("invalid message text or guidance version")
 	}
 	if len(msg.Replies) > MaxCombinedReplies || (len(msg.Replies) > 0 && (msg.ReplyTo != "" || msg.FillsInputRequestID != "")) {
@@ -329,7 +329,7 @@ func (m Mail) sendWithKind(ctx context.Context, rt Runtime, to, body, replyTo, f
 			Kind: kind,
 			ID:   identity.ID, From: s.Caller.Role, To: to,
 			ReplyTo: replyTo, NeedsReply: needsReply, CreatedAt: identity.CreatedAt, Body: body,
-			GuidanceVersion: 1,
+			GuidanceVersion: 2,
 		}
 		msg.FillsInputRequestID = fills
 		if needsReply {

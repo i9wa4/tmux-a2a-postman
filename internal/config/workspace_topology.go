@@ -23,20 +23,11 @@ type WorkspaceTopology struct {
 	Edges             map[string][]string
 	Reviewer          string
 	InterfaceNode     string
-	Sessions          []WorkspaceSession
 	ExternalRoot      string
 	ExternalWorkspace string
 	ExternalSession   string
 	messageSource     string
 	builtin           bool
-}
-
-// WorkspaceSession declares one member of an opt-in, direct parent-child
-// interface route. The declaration alone never proves a live tmux binding.
-type WorkspaceSession struct {
-	Name          string
-	Parent        string
-	InterfaceNode string
 }
 
 // LoadWorkspaceTopology reads one explicit postman.md, never a warning-and-skip
@@ -178,21 +169,18 @@ func parseWorkspaceTopology(ctx context.Context, content string) (WorkspaceTopol
 	if iface != "" && (!nodes[iface] || !validWorkspaceNode(iface)) {
 		return result, errors.New("configured interface is not a topology node")
 	}
-	sessions, err := parseWorkspaceSessions(content, nodes)
-	if err != nil {
-		return result, err
-	}
-	if len(sessions) > 0 && iface == "" {
-		return result, errors.New("workspace tree requires the local interface_node declaration")
-	}
 	sort.Strings(result.Nodes)
-	result.Edges, result.Reviewer, result.InterfaceNode, result.Sessions = adjacency, reviewer, iface, sessions
+	result.Edges, result.Reviewer, result.InterfaceNode = adjacency, reviewer, iface
 	result.messageSource = content
 	return result, nil
 }
 
 func validWorkspaceNode(name string) bool {
 	return binding.ValidateNodeName(name) && name != "postman"
+}
+
+func validWorkspaceSessionName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/:\\ \t\r\n\x00")
 }
 
 // Frontmatter is parsed without opening catalogs. Reject duplicate normalized
@@ -220,7 +208,7 @@ func validateWorkspaceFrontmatter(content string) error {
 			for i := 0; i+1 < len(node.Content); i += 2 {
 				key := node.Content[i]
 				normalized := strings.ToLower(strings.TrimSpace(key.Value))
-				if key.Kind != yaml.ScalarNode || normalized == "<<" || normalized == "command_approver_node" || seen[normalized] {
+				if key.Kind != yaml.ScalarNode || normalized == "<<" || normalized == "command_approver_node" || normalized == "workspace_tree" || seen[normalized] {
 					return errors.New("ambiguous or legacy topology frontmatter key")
 				}
 				seen[normalized] = true

@@ -1,0 +1,12 @@
+id: postman-recall-9
+name: current chat summary is not archive recall
+inputs:
+  prompt: Summarize what we discussed in this chat so far; no archived mail is needed.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: help/postman-recall/SKILL.md
+    mode: negative

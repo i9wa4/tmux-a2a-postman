@@ -2,6 +2,11 @@
 
 Recover your own last active day's working context from durable mail. This is
 a read-only workflow, not a memory database, task tracker or live activity test.
+Use it when the missing context is your own Postman conversation. If a trusted
+handoff already identifies the canonical task record, resume that record with
+`postman-records`. Use Logbook for an ordinary local Markdown tracker, plan or
+note. A request to summarize the current chat needs neither
+history recovery nor a Postman record lookup.
 
 ## 1. Verify your scope
 

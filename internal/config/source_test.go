@@ -18,7 +18,7 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "messenger" || len(topology.Sessions) != 0 {
+	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "orchestrator" {
 		t.Fatal(topology)
 	}
 	if !slices.Contains(topology.Edges["critic"], "approver") || slices.Contains(topology.Edges["agent"], "approver") {
@@ -32,6 +32,12 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 		if policy.Nodes[name].Instructions == "" || policy.Nodes[name].Role == "" {
 			t.Fatal("missing established role", name)
 		}
+	}
+	if !strings.Contains(policy.Common, "The interface role speaks Japanese to the human") ||
+		!strings.Contains(policy.Nodes["orchestrator"].Instructions, "Receive human and nearest-parent") ||
+		!strings.Contains(policy.Nodes["messenger"].Instructions, "Transport only when used") ||
+		!strings.Contains(policy.Nodes["approver"].Instructions, "received directly by the orchestrator as") {
+		t.Fatal("builtin direct interface or optional messenger guidance missing")
 	}
 	for _, text := range []string{"postman-records", "postman-review", "postman-plan", "postman-orchestrate", "no installed Skill tree"} {
 		if !strings.Contains(policy.Catalog, text) {
