@@ -142,8 +142,8 @@ Use Japanese by default when communicating with the human.
 
 ### 6.1. `role`
 
-Human-facing task coordinator; receives requests, delegates execution and
-returns reviewed results.
+Team task coordinator; receives requests through the configured interface,
+delegates execution and returns reviewed results through that interface.
 
 ### 6.2. Contract
 

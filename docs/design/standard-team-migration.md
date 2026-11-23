@@ -1,5 +1,14 @@
 # Standard team migration inventory
 
+This is the planning inventory used before the six-Skill migration in #988.
+The ownership proposals in the table below are historical. The current
+canonical sources are `skills/stay-lazy`, `skills/development-workflow`,
+`skills/git-github-operations`, `skills/postman-send-message`,
+`skills/subagent-review` and `skills/postman-records`; the binary reads their
+complete resources with `skill <name>` and `skill <name> <ref>`. See
+[Skill use](../../help/skills.md) for the current command and distribution
+contract.
+
 Source: dotfiles commit 5aaeb8f8901812ef026c53b5d032c4d93b924251. Source
 repository: <https://github.com/i9wa4/dotfiles> . All 13 Skill entrypoints,
 selected transitive references, scripts, dependency declarations and the shared
@@ -7,7 +16,7 @@ AGENTS/configuration were read before selecting these ports. The table records
 ownership, not a claim that fixed actors establish autonomous model quality.
 Consumer removal is gated on a published, verified Postman resource revision.
 
-| Existing Skill        | Selected content and transitive dependencies                                                                               | Canonical owner                                                             | Retained consumer content                                                        | Verification                                                                                        |
+| Existing Skill        | Selected content and transitive dependencies                                                                               | Original proposed owner (superseded)                                        | Retained consumer content                                                        | Verification                                                                                        |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | clarify-concepts      | Referent table: competing referents, missing evidence, practical consequences                                              | `help postman-plan`                                                         | Domain terminology packs                                                         | Ambiguous task example records the selected referent before planning                                |
 | create-review-comment | Evidence, severity, exact location, actionable recommendation; workflow reference                                          | `help postman-review`                                                       | Provider-specific UI conveniences                                                | Frozen criteria, stable IDs and evidence survive a corrected review packet                          |
@@ -36,10 +45,10 @@ flags. Existing agents can start with a send without launch.
 
 Retain the source MIT notice (copyright 2023 i9wa4) with migrated material.
 Do not copy third-party prose-review wording without its separate notice.
-Detailed procedures have one owner under each Skill's `references/`; short
-entries declare activation conditions and the common reference table. Read-only
-`skills`, `skills <name>` and `skills <name> <ref>`
-do not install, update or manage client trees.
+Detailed procedures have one owner under each current Skill's `references/`;
+short entries declare activation conditions and the common reference table.
+Read-only `skill`, `skill <name>` and `skill <name> <ref>` do not install,
+update or manage client trees.
 
 Embedded configuration selection must preserve explicit-file errors and full
 override behavior. Automatic fallback requires an absent default directory
@@ -90,6 +99,6 @@ then run the same receiver-driven task/approval/review/result exchange. Their
 fixture shell disables only host login-profile discovery to guarantee that a
 real installed client cannot replace a stub; interactive PTY execution remains
 exercised. No live client account, model API or global bootstrap is installed.
-All nine entries use the same named-reference interface. Their detailed
+All six current entries use the same named-reference interface. Their detailed
 procedures follow the installed binary; client installation remains with
 GitHub CLI or the consumer's declarative Skill manager.

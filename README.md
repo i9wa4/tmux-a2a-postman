@@ -167,8 +167,8 @@ testdata/                test-only fixtures
   [records](skills/postman-records/references/records.md), and
   [review](skills/subagent-review/references/report.md): current binary reading
   and portable procedures.
-- [Migration inventory](docs/design/standard-team-migration.md): source
-  ownership, portability and verification boundaries.
+- [Historical migration inventory](docs/design/standard-team-migration.md):
+  source decisions and verification boundaries before the six-Skill layout.
 - [Contributing](docs/development/contributing.md): development, deterministic
   tmux tests and evidence limits.
 

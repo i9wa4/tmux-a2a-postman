@@ -17,11 +17,16 @@ resolves the next important uncertainty. Make its proof runnable.
 
 Define completion and selection criteria before delegation. Give each child the
 original requirements, exact target, bounded scope and evidence. Keep writes
-separate; verify integration and leave missing reports explicit. For running
-behavior, launch the correct build to readiness. Verify prerequisites and
-instance identity; reproduce user actions, observe state and side effects, and
-clean only owned temporary resources. Execute new instructions before calling
-them reusable.
+separate; verify integration and leave missing reports explicit. Choose
+parallel work when it improves coverage, compares alternatives,
+synthesizes independent evidence or refutes a hypothesis. Ask children to
+report risks and uncertainties without inventing gates, requirements or review
+rounds.
+
+For running behavior, launch the correct build to readiness. Verify
+prerequisites and instance identity; reproduce user actions, observe state and
+side effects, and clean only owned temporary resources. Execute new
+instructions before calling them reusable.
 
 Record the revision, inputs, environment, command and outcome needed to judge
 evidence. Measure real workloads
