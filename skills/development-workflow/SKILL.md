@@ -11,32 +11,28 @@ description: |
 
 ## 1. Principles
 
-Start with the original goal, accepted changes, constraints and criteria.
-Inspect relevant code and checks. Choose the smallest coherent change that
-resolves the next important uncertainty. Make its proof runnable.
+Start with the goal, accepted changes, constraints and criteria. Inspect code
+and checks. Make the smallest coherent change that resolves the next uncertainty
+and prove it with a runnable check.
 
 Define completion and selection criteria before delegation. Give each child the
 original requirements, exact target, bounded scope and evidence. Keep writes
-separate; verify integration and leave missing reports explicit. Choose
-parallel work when it improves coverage, compares alternatives,
-synthesizes independent evidence or refutes a hypothesis. Ask children to
-report risks and uncertainties without inventing gates, requirements or review
-rounds.
+separate; verify integration and leave missing reports explicit. Parallelize
+for coverage, alternatives, independent synthesis or refutation. Children
+report risks without inventing gates, requirements or review rounds.
 
 For running behavior, launch the correct build to readiness. Verify
 prerequisites and instance identity; reproduce user actions, observe state and
 side effects, and clean only owned temporary resources. Execute new
 instructions before calling them reusable.
 
-Record the revision, inputs, environment, command and outcome needed to judge
-evidence. Measure real workloads
-inside a sensitive interval with a fixed method and account for noise. A mock
-proves its own mechanics; real-agent claims need real-agent observations.
+Record revision, inputs, environment, command and outcome. Measure real
+workloads consistently within sensitive intervals and account for noise. Mocks
+prove mechanics; real-agent claims require real-agent observations.
 
-Separate stale instructions, verification-tool gaps and product defects. Fix the
-failing layer without weakening expected behavior. Prevent recurrence through
-structure, types, focused lint, runtime checks or behavioral tests where useful;
-verify that prevention catches the mistake.
+Separate stale instructions, verification gaps and product defects. Fix the
+failing layer without weakening behavior. Prevent recurrence with structure,
+types, lint, runtime checks or behavioral tests; verify the prevention works.
 
 ## 2. Match the proof to the work
 
