@@ -79,6 +79,33 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 			t.Fatal("reference display did not return complete Markdown", ref, string(diagnostic), err)
 		}
 	}
+	intake, err := helpdocs.Read("postman-orchestrate", "intake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, diagnostic, err := run("help", "postman-orchestrate", "intake")
+	if err != nil || !bytes.Equal(out, intake) {
+		t.Fatal("orchestration intake did not ship as complete embedded HelpDoc", string(diagnostic), err)
+	}
+	for _, scenario := range []struct {
+		name  string
+		steps []string
+	}{
+		{"unknown canonical path", []string{"path is unknown", "orchestrator delegates bounded", "one worker", "candidate paths and", "orchestrator reads them and validates", "help postman-records selection", "before deciding which record is canonical"}},
+		{"known path missing", []string{"previously known path", "missing or unreadable", "remains a recovery case", "not permission to adopt"}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			text := string(out)
+			last := -1
+			for _, step := range scenario.steps {
+				at := strings.Index(text, step)
+				if at <= last {
+					t.Fatalf("embedded intake lost or reordered %q in %s", step, scenario.name)
+				}
+				last = at
+			}
+		})
+	}
 	wantConfig, err := fs.ReadFile(helpdocs.Assets(), "config/postman.md")
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +133,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if !reflect.DeepEqual(before, statusTree(t, home)) {
 		t.Fatal("help/Skill reads or rejected operations created files")
 	}
-	out, diagnostic, err := run("resources")
+	out, diagnostic, err = run("resources")
 	if err != nil {
 		t.Fatal(string(out), string(diagnostic), err)
 	}

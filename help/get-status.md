@@ -16,13 +16,13 @@ capture, status and scope. Ordinary/unregistered panes have null status/scope. A
 status row uses node, unread_count, inbound_count, outbound_count, draft_count,
 failed_count, last_pop_at, last_capture_at, last_screen_change_at and optional
 reason. Unknown counts are null, never fabricated zeroes. Scope records
-attributed configuration, outgoing edges, interface role and declared session
-relations.
+attributed configuration, outgoing edges and interface role.
 
 This is an operator-wide observation, not authority to manage/send/read any
 visible mailbox. Select your assigned server/session/native pane/workspace
-before using a row. Parent/child interface relations come from that pane's
-scope, never from a top-level parent/children field or role name alone.
+before using a row. Parent/child interface relations require current native
+bindings, each peer's registered scope and canonical directory containment;
+the cached row alone cannot authorize a route.
 
 No native tmux query, discovery, mail scan, initialization, lock, recovery,
 refresh, persistent invocation log or pruning occurs. Missing/malformed or

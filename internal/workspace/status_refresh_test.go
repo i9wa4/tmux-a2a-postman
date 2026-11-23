@@ -243,6 +243,99 @@ func TestServerRefreshSlowCapturesRemainDueAndDoNotAdvanceWholeSweep(t *testing.
 	}
 }
 
+func TestServerRefreshReservesFinalNativeVerificationAfterSlowCapture(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	rt := configuredStatusFixture(t, f, m)
+	registered, err := rt.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 16 {
+		f.run(t, "new-window", "-d", "-t", "one", "-c", f.repo, "exec sleep 120")
+	}
+	real, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	// The two complete native frames each take 550ms; captures collectively
+	// need more than the remaining time. A partial sweep must still publish.
+	proxy := "#!/bin/sh\ncase \"$*\" in *list-sessions*) sleep 0.55;; *capture-pane*) sleep 0.12;; esac\nexec " + shellQuote(real) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(proxy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	start := time.Now()
+	phases := map[string]time.Duration{}
+	server := ServerContext{Socket: f.socket}
+	r, err := m.RefreshServerStatus(context.Background(), server, f.home, RefreshOptions{phaseStarted: func(name string) { phases[name] = time.Since(start) }})
+	t.Logf("refresh=%s err=%v phases=%v total=%s", r.Status, err, phases, time.Since(start))
+	if r.Status != "partial" || err == nil || r.Coverage == nil || r.Coverage.Unavailable == 0 || phases["publish"] == 0 {
+		t.Fatal("shared budget prevented finite partial publication", r, err)
+	}
+	_, saved, err := m.Store.ReadServerStatus(server)
+	if err != nil || saved.Coverage.Complete || saved.Coverage.Enumerated != 17 {
+		t.Fatal(saved.Coverage, err)
+	}
+	bound := firstStatusPane(t, saved)
+	if bound.ID != registered.Caller.Owner.Pane || bound.PID != registered.Caller.PanePID ||
+		bound.Title != registered.Caller.Role || bound.Workspace != registered.Root ||
+		bound.Status == nil || bound.Status.Node != registered.Caller.Role ||
+		bound.Status.UnreadCount == nil || bound.Scope == nil ||
+		bound.Scope.Fingerprint != rt.ConfigFingerprint {
+		t.Fatal("registered native pane lost attributed status or scope", bound, registered.Caller)
+	}
+}
+
+func TestServerRefreshSlowFinalNativeVerificationKeepsPriorSnapshot(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	server := ServerContext{Socket: f.socket}
+	refreshFixture(t, m, f, time.Now().UTC())
+	before, _, err := m.Store.ReadServerStatus(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	count := filepath.Join(dir, "enumerations")
+	proxy := "#!/bin/sh\ncase \"$*\" in *list-sessions*) n=$(cat " + shellQuote(count) + " 2>/dev/null || echo 0); n=$((n+1)); echo \"$n\" > " + shellQuote(count) + "; if [ \"$n\" -eq 2 ]; then sleep 3; fi;; esac\nexec " + shellQuote(real) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(proxy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r, err := m.RefreshServerStatus(context.Background(), server, f.home, RefreshOptions{})
+	if err == nil || r.Status != "error" || !strings.Contains(err.Error(), "final native verification") {
+		t.Fatal(r, err)
+	}
+	after, _, err := m.Store.ReadServerStatus(server)
+	if err != nil || string(after) != string(before) {
+		t.Fatal("failed final verification changed published snapshot", err)
+	}
+}
+
+func TestServerRefreshExpiredAggregationIsPartial(t *testing.T) {
+	f := newTmuxFixture(t)
+	m := mailFixture(t)
+	server := ServerContext{Socket: f.socket}
+	r, err := m.RefreshServerStatus(context.Background(), server, f.home, RefreshOptions{phaseStarted: func(name string) {
+		if name == "aggregate" {
+			time.Sleep(1200 * time.Millisecond)
+		}
+	}})
+	if err == nil || r.Status != "partial" || r.Coverage == nil || r.Coverage.Captured != 1 || r.Coverage.Unavailable != 0 || r.Coverage.UnknownNodes != 1 {
+		t.Fatal("expired aggregation appeared complete", r, err)
+	}
+	_, saved, err := m.Store.ReadServerStatus(server)
+	if err != nil || saved.Coverage.Complete || firstStatusPane(t, saved).Capture == nil || firstStatusPane(t, saved).Reason == "" {
+		t.Fatal(saved, err)
+	}
+}
+
 func TestServerRefreshLockInodeNeverReplaced(t *testing.T) {
 	f := newTmuxFixture(t)
 	m := mailFixture(t)

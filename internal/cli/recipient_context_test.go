@@ -47,35 +47,13 @@ func TestRecipientContextUsesLocalDisplayOnlyForHumanFields(t *testing.T) {
 	}
 }
 
-func TestRecipientContactsUseExactImmediateInterfaceViewpoint(t *testing.T) {
-	topology := config.WorkspaceTopology{
-		InterfaceNode: "top-interface",
-		Edges:         map[string][]string{"worker": {"orchestrator"}, "child-interface": {"worker"}},
-		Sessions: []config.WorkspaceSession{
-			{Name: "top", InterfaceNode: "top-interface"},
-			{Name: "child", Parent: "top", InterfaceNode: "child-interface"},
-			{Name: "leaf", Parent: "child", InterfaceNode: "child-interface"},
-			{Name: "sibling", Parent: "top", InterfaceNode: "child-interface"},
-		},
-	}
-	if got := recipientAddresses(topology, "child", "child-interface"); !slices.Equal(got, []string{"leaf:child-interface", "top:top-interface", "worker"}) {
-		t.Fatal("recipient contact hints leaked a sibling or lost mixed interface roles", got)
-	}
-	if got := recipientAddresses(topology, "child", "worker"); !slices.Equal(got, []string{"orchestrator"}) {
-		t.Fatal("a non-interface role gained cross-session hints", got)
-	}
-	if topology.InterfaceNode != "top-interface" {
-		t.Fatal("rendering changed invocation authorization")
-	}
-}
-
 func TestDirectoryContactsMatchNearestLiveInterfaceRoutes(t *testing.T) {
 	topology := config.WorkspaceTopology{InterfaceNode: "messenger", Edges: map[string][]string{"messenger": {"worker"}}}
 	interfaces := []workspace.DirectoryInterface{
-		{Session: "top", Root: "~/github.com"},
-		{Session: "child", Root: "~/github.com/repo"},
-		{Session: "leaf", Root: "~/github.com/repo/sub"},
-		{Session: "sibling", Root: "~/github.com/other"},
+		{Session: "top", Root: "~/github.com", InterfaceRole: "messenger"},
+		{Session: "child", Root: "~/github.com/repo", InterfaceRole: "messenger"},
+		{Session: "leaf", Root: "~/github.com/repo/sub", InterfaceRole: "messenger"},
+		{Session: "sibling", Root: "~/github.com/other", InterfaceRole: "messenger"},
 	}
 	if got := recipientAddressesDirectory(topology, "child", "messenger", interfaces); !slices.Equal(got, []string{"leaf:messenger", "top:messenger", "worker"}) {
 		t.Fatal("directory contacts do not match direct routes", got)
@@ -86,9 +64,39 @@ func TestDirectoryContactsMatchNearestLiveInterfaceRoutes(t *testing.T) {
 	if got := recipientAddressesDirectory(topology, "child", "worker", interfaces); len(got) != 0 {
 		t.Fatal("non-interface role gained directory contacts", got)
 	}
-	topology.Sessions = []config.WorkspaceSession{{Name: "top", InterfaceNode: "messenger"}}
-	if got := recipientAddressesDirectory(topology, "child", "messenger", interfaces); !slices.Equal(got, []string{"worker"}) {
-		t.Fatal("explicit tree was changed by inferred contacts", got)
+}
+
+func TestDirectoryContactLabelsUseVerifiedDirectRelationship(t *testing.T) {
+	topology := config.WorkspaceTopology{InterfaceNode: "gateway", Edges: map[string][]string{"gateway": {"worker"}}}
+	interfaces := []workspace.DirectoryInterface{
+		{Session: "top", Root: "~/github.com", InterfaceRole: "messenger"},
+		{Session: "middle", Root: "~/github.com/repo", InterfaceRole: "gateway"},
+		{Session: "alpha", Root: "~/github.com/repo/alpha", InterfaceRole: "agent"},
+		{Session: "beta", Root: "~/github.com/repo/beta", InterfaceRole: "relay"},
+		{Session: "leaf", Root: "~/github.com/repo/alpha/leaf", InterfaceRole: "agent"},
+		{Session: "sibling", Root: "~/github.com/other", InterfaceRole: "agent"},
+		{Session: "prefix", Root: "~/github.com/repository", InterfaceRole: "agent"},
+	}
+	msg := workspace.Message{ID: "m-0123456789abcdef0123456789abcdef", From: "worker", To: "gateway"}
+	got := renderRecipientContextDirectory(config.RecipientPolicy{}, topology, "", "middle", msg, interfaces)
+	for _, want := range []string{"- top:messenger (parent)", "- alpha:agent (child)", "- beta:relay (child)", "- worker"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing contact %q in %s", want, got)
+		}
+	}
+	for _, excluded := range []string{"leaf:agent", "sibling:agent", "prefix:agent", "- worker (parent)", "- worker (child)"} {
+		if strings.Contains(got, excluded) {
+			t.Fatalf("non-direct contact %q in %s", excluded, got)
+		}
+	}
+	for _, unsafe := range [][]workspace.DirectoryInterface{
+		{{Session: "middle", Root: "~/github.com/repo", InterfaceRole: "gateway"}, {Session: "top", Root: "~/github.com", InterfaceRole: "messenger"}, {Session: "top", Root: "~/github.com/other", InterfaceRole: "messenger"}},
+		{{Session: "top", Root: "~/github.com", InterfaceRole: "messenger"}},
+	} {
+		got := renderRecipientContextDirectory(config.RecipientPolicy{}, topology, "", "middle", msg, unsafe)
+		if strings.Contains(got, "(parent)") || strings.Contains(got, "(child)") {
+			t.Fatal("unverified or ambiguous interfaces received labels", got)
+		}
 	}
 }
 
