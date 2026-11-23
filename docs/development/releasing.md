@@ -6,7 +6,7 @@ Release and skill-publish commands require an explicit release request from the
 user at the time of execution. Do not infer release intent from PR work, skill
 validation, Waza readiness, or review follow-up. In those cases, stop at normal
 branch publication plus validation commands such as `nix run '.#skill-check'`
-or `gh skill publish --dry-run`.
+or `gh skill publish dist/skills --dry-run`.
 
 1. Commit all changes to main branch
 2. Run local pre-release checks:
@@ -31,8 +31,9 @@ or `gh skill publish --dry-run`.
 
 Do not run `gh skill publish --tag` from the tag-push workflow. That command
 owns tag and release creation, so it fails when the pushed release tag already
-exists. The tag-push release path validates generated `skills/*/SKILL.md` with
-`gh skill publish --dry-run`; the published Git tag and GitHub Release are
+exists. The tag-push release path validates the six generated
+`dist/skills/*/SKILL.md` entries with `gh skill publish dist/skills --dry-run`;
+the published Git tag and GitHub Release are
 enough for `gh skill install` to resolve versions.
 
 ## 2. Version Behavior
@@ -71,5 +72,5 @@ completion. A successful release has:
 After release, confirm install discovery works:
 
 ```bash
-gh skill preview i9wa4/tmux-a2a-postman postman-usage@vX.Y.Z
+gh skill preview i9wa4/tmux-a2a-postman postman-send-message@vX.Y.Z
 ```

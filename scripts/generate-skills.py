@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate thin installable Skills from canonical HelpDoc frontmatter."""
+"""Generate thin installable Skills from canonical Skill frontmatter."""
 
 import argparse
 from pathlib import Path
@@ -10,7 +10,7 @@ import yaml
 
 def generate(root, check=False):
     expected = {}
-    for source in sorted((root / "help").glob("*/SKILL.md")):
+    for source in sorted((root / "skills").glob("*/SKILL.md")):
         text = source.read_text(encoding="utf-8")
         if not text.startswith("---\n") or "\n---\n" not in text[4:]:
             raise ValueError(f"{source}: expected YAML frontmatter")
@@ -18,22 +18,25 @@ def generate(root, check=False):
         data = yaml.safe_load(header)
         if not isinstance(data, dict) or data.get("name") != source.parent.name:
             raise ValueError(f"{source}: name must match the directory")
-        metadata = data.get("metadata", {})
-        body = metadata.get("postman-skill-body") if isinstance(metadata, dict) else None
-        if not isinstance(body, str) or not body.strip() or len(body.strip().splitlines()) != 1:
-            raise ValueError(f"{source}: metadata.postman-skill-body must be one nonempty line")
-        target = root / "skills" / source.parent.name / "SKILL.md"
-        expected[target] = f"---\n{header}\n---\n\n{body.strip()}\n"
+        name = source.parent.name
+        target = root / "dist" / "skills" / name / "SKILL.md"
+        expected[target] = f"---\n{header}\n---\n\nRead and follow `tmux-a2a-postman skill {name}`.\n"
     if not expected:
-        raise ValueError("no help/*/SKILL.md sources found")
+        raise ValueError("no skills/*/SKILL.md sources found")
     # Only entries belong in the distribution tree. Never silently ship stale
     # references, helpers or evaluation fixtures from an older layout.
-    unexpected = sorted(p for p in (root / "skills").rglob("*") if p.is_file() and p not in expected)
-    if unexpected:
-        raise ValueError("remove obsolete distribution files: " + ", ".join(str(p) for p in unexpected))
+    unexpected = sorted(p for p in (root / "dist" / "skills").rglob("*") if p.is_file() and p not in expected)
+    unmanaged = [p for p in unexpected if p.name != "SKILL.md" or p.parent.parent != root / "dist" / "skills"]
+    if unmanaged:
+        raise ValueError("remove obsolete distribution files: " + ", ".join(str(p) for p in unmanaged))
+    if check and unexpected:
+        raise ValueError("obsolete Skills: " + ", ".join(str(p) for p in unexpected))
     changed = [p for p, content in expected.items() if not p.is_file() or p.read_text(encoding="utf-8") != content]
     if check and changed:
         raise ValueError("stale Skills; run nix run .#generate-skills: " + ", ".join(str(p) for p in changed))
+    for old in unexpected:
+        old.unlink()
+        old.parent.rmdir()
     for target in changed:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(expected[target], encoding="utf-8")

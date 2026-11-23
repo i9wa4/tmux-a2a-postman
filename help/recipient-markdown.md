@@ -60,7 +60,7 @@ Read every applicable skill before starting work. Skill files live under
 the configured skill roots.
 
 - `postman-send-message`: [configured SKILL.md description]
-- `postman-usage`: [configured SKILL.md description]
+- `postman-records`: [configured SKILL.md description]
 
 ### worker instructions
 

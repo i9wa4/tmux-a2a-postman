@@ -126,7 +126,7 @@ The original VDE `dev` uses `current-window`; Postman creates a new window in
 the verified invoking session, or a dedicated session outside tmux. It never
 rewrites an arbitrary existing window. The seven-role presets preserve their
 original model, effort and permission arguments. Preview with `--dry-run` to
-inspect the exact declared commands.
-All presets are in that one default file; no separate preset configuration is
-needed. A custom `postman.md` remains a complete replacement. See `help config`
-to inspect/export the default and `help postman-orchestrate` for the workflow.
+inspect the exact declared commands. All presets are in that one default file;
+no separate preset configuration is needed. A custom `postman.md` remains a
+complete replacement. See `help config` to inspect/export the default and
+`skill postman-send-message` for first contact.

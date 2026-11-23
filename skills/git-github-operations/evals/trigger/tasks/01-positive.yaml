@@ -1,0 +1,12 @@
+id: git-github-operations-1
+name: positive 1
+inputs:
+  prompt: For issue 988, create an isolated Git worktree and branch, commit the change, and open a GitHub pull request.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: skills/git-github-operations/SKILL.md
+    mode: positive

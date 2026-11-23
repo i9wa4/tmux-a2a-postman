@@ -21,6 +21,9 @@ send-heredoc --to <node|session:interface|POP'd-id[,POP'd-id...]>: heredoc stdin
 execute-heredoc --reason <why>: heredoc stdin, child streams and final JSON on
 stderr. approve-execution --to <one-POP'd-execution-request-id> --reason <why>.
 decline-execution --to <one-POP'd-execution-request-id> --reason <why>.
+skill <name> [reference]: read a complete embedded Skill or selected reference;
+see help skill.
+resources: materialize bundled offline helpers; see help resources.
 
 Common: --config <absolute-postman.md>, --help. Duplicate options fail.
 Status commands accept --config for compatibility only; they never read it.

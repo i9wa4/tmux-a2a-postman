@@ -70,8 +70,8 @@ def local_file(root, path):
 
 
 def preflight(root):
-    skills = sorted((root / "help").glob("*/SKILL.md"))
-    suites = sorted((root / "help").glob("*/evals/trigger/eval.yaml"))
+    skills = sorted((root / "skills").glob("*/SKILL.md"))
+    suites = sorted((root / "skills").glob("*/evals/trigger/eval.yaml"))
     if not skills or not suites:
         raise InvalidSuite("zero shipped skills or deterministic trigger suites discovered")
     names = {path.parent.name for path in skills}
@@ -129,7 +129,7 @@ def preflight(root):
             if grader["type"] != "trigger" or not isinstance(grader["name"], str) or not grader["name"].strip():
                 raise InvalidSuite(f"{task_path}: only the verified trigger grader is allowed")
             params = mapping(grader["config"], ["skill_path", "mode"], ["skill_path", "mode"], str(task_path))
-            if params != {"skill_path": f"help/{name}/SKILL.md", "mode": "positive" if expected else "negative"}:
+            if params != {"skill_path": f"skills/{name}/SKILL.md", "mode": "positive" if expected else "negative"}:
                 raise InvalidSuite(f"{task_path}: grader source/mode must match the skill and boolean expectation")
         if expectations != {True, False}:
             raise InvalidSuite(f"{spec}: both positive and negative cases are required")

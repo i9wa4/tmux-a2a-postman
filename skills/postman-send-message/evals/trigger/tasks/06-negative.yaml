@@ -1,0 +1,12 @@
+id: postman-send-message-6
+name: negative 6
+inputs:
+  prompt: Optimize an SQLite query execution plan.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/postman-send-message/SKILL.md
+    mode: negative

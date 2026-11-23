@@ -33,13 +33,13 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 			t.Fatal("missing established role", name)
 		}
 	}
-	if !strings.Contains(policy.Common, "The interface role speaks Japanese to the human") ||
-		!strings.Contains(policy.Nodes["orchestrator"].Instructions, "Receive human and nearest-parent") ||
-		!strings.Contains(policy.Nodes["messenger"].Instructions, "Transport only when used") ||
-		!strings.Contains(policy.Nodes["approver"].Instructions, "received directly by the orchestrator as") {
+	if !strings.Contains(policy.Common, "Use English unless your role specifies otherwise") ||
+		!strings.Contains(policy.Nodes["orchestrator"].Instructions, "Own completion of this session") ||
+		!strings.Contains(policy.Nodes["messenger"].Instructions, "Relay requests and follow-ups") ||
+		!strings.Contains(policy.Nodes["approver"].Instructions, "Apply human authorization supplied with the request") {
 		t.Fatal("builtin direct interface or optional messenger guidance missing")
 	}
-	for _, text := range []string{"postman-records", "postman-review", "postman-plan", "postman-orchestrate", "no installed Skill tree"} {
+	for _, text := range []string{"postman-records", "subagent-review", "development-workflow", "git-github-operations", "stay-lazy", "postman-send-message"} {
 		if !strings.Contains(policy.Catalog, text) {
 			t.Fatal("unreachable builtin procedure", text)
 		}

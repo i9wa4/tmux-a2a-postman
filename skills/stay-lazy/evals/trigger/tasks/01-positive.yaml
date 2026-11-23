@@ -1,0 +1,12 @@
+id: stay-lazy-1
+name: positive 1
+inputs:
+  prompt: For this ordinary request, plan steps to fix a small code bug and explain the idea in plain language.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: skills/stay-lazy/SKILL.md
+    mode: positive
