@@ -1,0 +1,132 @@
+{
+  "kind": "SYNTHETIC_PUBLIC_SAFE_REPORT_CLASSIFICATION",
+  "session": "demo-migration",
+  "workspace": "sample/project",
+  "original_request": "Draft a migration guide, verify its commands on macOS and Linux, and obtain my signoff before publication.",
+  "record": {
+    "system": "Logbook",
+    "canonical_id": "sample/project/demo-migration",
+    "checkpoint": "T5",
+    "previous_checkpoint": "T4",
+    "event_ids": [
+      "T0",
+      "T1",
+      "T2",
+      "T3",
+      "T4",
+      "T5"
+    ],
+    "duplicate_ids": []
+  },
+  "criteria": [
+    {
+      "id": "C1",
+      "origin": "T0 original",
+      "requirement": "migration guide",
+      "status": "PASS",
+      "evidence": "T5 guide exists"
+    },
+    {
+      "id": "C2",
+      "origin": "T0 original",
+      "requirement": "macOS and Linux command checks",
+      "status": "OPEN",
+      "evidence": "T5 macOS check only; Linux check absent"
+    },
+    {
+      "id": "C3",
+      "origin": "T0 original",
+      "requirement": "human signoff before publication",
+      "status": "UNKNOWN",
+      "evidence": "T5 no human signoff record"
+    },
+    {
+      "id": "C4",
+      "origin": "T4 human amendment",
+      "requirement": "rollback note",
+      "status": "PASS",
+      "evidence": "T5 rollback note exists"
+    }
+  ],
+  "timeline": [
+    {
+      "id": "T0",
+      "kind": "human_request",
+      "result": "C1 guide; C2 macOS and Linux command checks; C3 human signoff before publication"
+    },
+    {
+      "id": "T1",
+      "kind": "plan",
+      "result": "guide and macOS check planned; Linux check omitted"
+    },
+    {
+      "id": "T2",
+      "kind": "format_review",
+      "artifact_digest": "same-digest",
+      "result": "no new issue"
+    },
+    {
+      "id": "T3",
+      "kind": "format_review",
+      "artifact_digest": "same-digest",
+      "result": "no new issue"
+    },
+    {
+      "id": "T4",
+      "kind": "human_correction",
+      "result": "retain C2 macOS and Linux checks; add C4 rollback note"
+    },
+    {
+      "id": "T5",
+      "kind": "final_artifact",
+      "result": "guide and rollback note exist; macOS check passes; Linux check and human signoff absent"
+    }
+  ],
+  "baseline_report": {
+    "status": "PASS",
+    "human_acceptance": "PASS",
+    "duplicate_must": "add checklist reminder"
+  },
+  "candidate_report": {
+    "status": "BLOCKED",
+    "original_verbatim_request": "AUTHORED SYNTHETIC ONLY",
+    "record_id": "sample/project/demo-migration",
+    "checkpoint": "T5",
+    "first_divergence": "T1 omitted Linux from C2",
+    "missed_requirements": [
+      "C2",
+      "C3"
+    ],
+    "human_corrections": 1,
+    "unnecessary_repeats": "one repeated format review; avoidability beyond identical digest UNKNOWN",
+    "human_acceptance": "UNKNOWN",
+    "existing_rule": "config/postman.md:99-111",
+    "duplicate_must": "reject",
+    "owner": "task planner and reporter; cause of omission UNKNOWN",
+    "time_resource_burden": "UNKNOWN",
+    "behavioral_efficacy": "UNKNOWN",
+    "total_complexity": {
+      "baseline": {
+        "code": "0 product LOC added; proposed config reminder only; time and maintenance UNKNOWN",
+        "config": "3 existing handoff paragraphs plus 1 proposed reminder; 2 duplicate rules and 1 obsolete route; time and maintenance UNKNOWN",
+        "Help": "0 new Help pointers; existing lookup burden unmeasured; time and maintenance UNKNOWN",
+        "Skill": "0 evaluator Skills or references; time and maintenance UNKNOWN",
+        "fixture": "0 evaluator cases, checkers, trigger suites or trigger tasks; time and maintenance UNKNOWN",
+        "operation": "3 instruction lookups; time and maintenance UNKNOWN"
+      },
+      "candidate": {
+        "code": "0 product LOC added; checker counted under fixture; time and maintenance UNKNOWN",
+        "config": "1 sentence and 1 Help pointer; 0 duplicate rules and 0 obsolete routes; time and maintenance UNKNOWN",
+        "Help": "1 canonical Help pointer; time and maintenance UNKNOWN",
+        "Skill": "1 thin evaluator Skill and 2 references; time and maintenance UNKNOWN",
+        "fixture": "1 JSON case, 1 checker, 1 trigger suite and 3 trigger tasks; time and maintenance UNKNOWN",
+        "operation": "1 route lookup; time and maintenance UNKNOWN"
+      }
+    },
+    "decisions": {
+      "config": "CONFIG_SUBTRACTION: delete obsolete route, merge duplicate POP-ID rules, point to Help; retain actual POP ID and native route",
+      "product": "REPRODUCE_BEFORE_ASSIGNMENT: request-ID mismatch is hypothetical; test exact binary and contract, assign developer only if reproduced",
+      "unsafe_replay": "EFFICACY_UNKNOWN: if faithful replay is unsafe or unavailable, seek separate consent for bounded check"
+    }
+  }
+}
