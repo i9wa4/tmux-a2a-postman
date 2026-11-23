@@ -14,6 +14,9 @@ After implementation work:
 - Check that `README.md` and `skills/*/SKILL.md` do not mention removed
   commands, renamed flags, or deleted packages
 
+The package build runs Go tests with verbose per-test durations and a 15-minute
+test deadline; CI retains their output with `nix build --print-build-logs`.
+
 The root `main.go` keeps the existing `go install`/`go build .` entrypoint.
 CLI process handling and its unit/integration tests live in `internal/app/`;
 reusable command, configuration and mail code remain in their existing
@@ -94,10 +97,13 @@ The `recursive-teams` flake check runs the same development fixture: a root,
 four-level chain with restart and stale replies, branching six-level tree with
 independent simultaneous requests, rejection and a missing child. Real terminal
 input drives every recipient's POP/full read/reply and exact execution decision.
-The default policy, Skill metadata and test artifacts are Postman-owned; no
-dotfiles checkout, installed Skill, client launcher or Logbook program is
-needed. These are fixed test actors, not a product task runtime or proof of
-model review. See the
+On failure, its Nix build log includes a `failure_report` JSON line with elapsed
+milestones, completed terminal hop times, actor errors and bounded pane
+captures. The private `report.json` remains available when running the fixture
+locally. The default policy, Skill metadata and test artifacts are
+Postman-owned; no dotfiles checkout, installed Skill, client launcher or Logbook
+program is needed. These are fixed test actors, not a product task runtime or
+proof of model review. See the
 [recursive trial guide](../validation/recursive-sessions-trial-runbook.md) for
 an explicit optional consumer-policy check. CLI commands and their flags do not
 change.

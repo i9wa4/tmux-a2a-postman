@@ -287,7 +287,10 @@
               ];
               # The app package includes bounded real-tmux matrices that can
               # approach Go's default ten-minute test deadline on macOS.
-              checkFlags = [ "-timeout=15m" ];
+              checkFlags = [
+                "-timeout=15m"
+                "-v"
+              ];
               ldflags = [
                 "-s"
                 "-w"
@@ -304,6 +307,7 @@
               export HOME="$TMPDIR/home"
               mkdir -p "$HOME"
               python3 ${recursiveSource}/scripts/validation/test-recursive-configuration.py
+              python3 ${recursiveSource}/scripts/validation/test-recursive-failure-evidence.py ${recursiveSmoke}/bin/recursive-smoke ${pkgs.tmux}/bin/tmux
               ${recursiveSmoke}/bin/recursive-smoke --output "$TMPDIR/results.json"
               ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --output "$TMPDIR/builtin.json"
               ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --launch preset-p --output "$TMPDIR/builtin-preset-p.json"
