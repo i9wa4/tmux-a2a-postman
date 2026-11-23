@@ -164,6 +164,10 @@ func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 				}
 				continue // No current configuration means this sibling is not a verified contact.
 			}
+			if targetRoot == "" && root == "~" && err != nil && directoryContains(root, origin.Root) &&
+				formerAncestorWithoutLiveRole(saved, native) {
+				continue // An old registration cannot turn ordinary ancestor panes into an interface.
+			}
 			if err != nil || scope == nil || !binding.ValidateNodeName(scope.Interface) {
 				return nil, ErrUnknown
 			}
@@ -209,6 +213,28 @@ func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 		}
 	}
 	return interfaces, nil
+}
+
+// A former runtime can leave private records at HOME after its team exits.
+// Only an ancestor with no native pane bearing any of its registered roles is
+// ordinary now; a plausible live interface still fails closed on stale state.
+func formerAncestorWithoutLiveRole(saved runtimeRecord, native []Binding) bool {
+	if saved.Version != 1 || !saved.Owner.valid() || len(saved.Bindings) == 0 ||
+		len(native) == 0 || sameRuntime(saved.Owner, native[0].Owner) ||
+		ValidateBindings(saved.Bindings) != nil {
+		return false
+	}
+	for _, former := range saved.Bindings {
+		if !sameRuntime(saved.Owner, former.Owner) {
+			return false
+		}
+		for _, current := range native {
+			if current.Role == former.Role {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // VerifiedDirectoryInterfacesFrom enumerates direct-route candidates from a
