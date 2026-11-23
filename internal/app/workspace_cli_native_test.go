@@ -131,6 +131,84 @@ func TestDirectoryRouteUsesEachPeersRegisteredInterface(t *testing.T) {
 	}
 }
 
+func TestLocalInterfaceReplySurvivesStaleParentRegistration(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parent := f.tmux("new-session", "-d", "-s", "parent", "-c", f.home, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", parent, "-T", "worker")
+	reviewer := f.tmux("new-window", "-d", "-t", "work", "-c", filepath.Join(f.home, "work"), "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", reviewer, "-T", "reviewer")
+	oldPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\nworker --- reviewer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n## `reviewer`\nReviewer\n"
+	if err := os.WriteFile(f.config, []byte(oldPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(reviewer, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("old reviewer registration", result, err)
+	}
+	if result, err := f.run(parent, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("old parent registration", result, err)
+	}
+	currentPolicy := strings.Replace(oldPolicy, "interface_node: worker", "interface_node: peer", 1)
+	if err := os.WriteFile(f.config, []byte(currentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(f.peer, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("current interface registration", result, err)
+	}
+	name, err := workspace.Name("~/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readFingerprint := func(pane string) string {
+		t.Helper()
+		path := filepath.Join(f.stateRoot(), name, "runtime", "status-config-p"+strings.TrimPrefix(pane, "%")+".json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record struct{ Fingerprint string }
+		if err := json.Unmarshal(raw, &record); err != nil {
+			t.Fatal(err)
+		}
+		return record.Fingerprint
+	}
+	if readFingerprint(reviewer) == readFingerprint(f.peer) {
+		t.Fatal("reviewer was not left on the prior topology")
+	}
+	requestBody := "local reply across interface upgrade"
+	if result, err := f.run(f.worker, requestBody, "send-heredoc", "--config", f.config, "--to", "peer"); err != nil || !result.Success {
+		t.Fatal("stale parent registration vetoed local mail", result, err)
+	}
+	claimed, err := f.run(f.peer, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("current interface POP", claimed, err)
+	}
+	complete, err := os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), requestBody) {
+		t.Fatal("complete interface archive", err)
+	}
+	request := readProtocolArchive(t, *claimed.MarkdownPath)
+	if request.Context == nil || request.To != "peer" || request.From != "worker" ||
+		!strings.Contains(request.Context.Markdown, "Parent and child contacts are unavailable") ||
+		strings.Contains(request.Context.Markdown, "- parent:worker") {
+		t.Fatal("local recipient context", request)
+	}
+	if result, err := f.run(f.peer, "answer", "send-heredoc", "--config", f.config, "--to", request.ID); err != nil || !result.Success {
+		t.Fatal("exact interface reply", result, err)
+	}
+	claimed, err = f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("worker POP", claimed, err)
+	}
+	complete, err = os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "answer") {
+		t.Fatal("complete worker archive", err)
+	}
+	answer := readProtocolArchive(t, *claimed.MarkdownPath)
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
+		t.Fatal("exact reply correlation", answer)
+	}
+}
+
 func TestCrossDirectoryArchiveListsRecipientParentOtherChild(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	parentConfig := f.config
@@ -308,8 +386,17 @@ func TestCrossDirectoryArchiveRejectsIncompleteParentContacts(t *testing.T) {
 	if result, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !result.Success || result.MarkdownPath != nil {
 		t.Fatal("incomplete recipient context was published", result, err)
 	}
-	if result, err := f.run(f.peer, "incomplete local contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err == nil || result.Success || !strings.Contains(result.Reason, "complete recipient directory contacts") {
-		t.Fatal("local send published incomplete parent contacts", result, err)
+	if result, err := f.run(f.peer, "incomplete local contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !result.Success {
+		t.Fatal("local send failed despite verified local recipient", result, err)
+	}
+	localClaim, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !localClaim.Success || localClaim.MarkdownPath == nil {
+		t.Fatal("local recipient POP", localClaim, err)
+	}
+	localArchive := readProtocolArchive(t, *localClaim.MarkdownPath)
+	if localArchive.Context == nil || !strings.Contains(localArchive.Context.Markdown, "Parent and child contacts are unavailable") ||
+		strings.Contains(localArchive.Context.Markdown, "- beta:messenger") {
+		t.Fatal("local archive advertised unverified child", localArchive.Context)
 	}
 	if result, err := f.run(beta.pane, "", "pop", "--config", beta.config); err != nil || !result.Success {
 		t.Fatal("beta re-registration", result, err)
@@ -458,7 +545,7 @@ func TestCrossDirectoryArchiveRejectsIncompleteParentContacts(t *testing.T) {
 	}
 }
 
-func TestInterfaceContactDiscoveryTimeoutReportsRecovery(t *testing.T) {
+func TestLocalInterfaceContactDiscoveryTimeoutKeepsMailAvailable(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	policy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
 	if err := os.WriteFile(f.config, []byte(policy), 0o600); err != nil {
@@ -486,14 +573,140 @@ func TestInterfaceContactDiscoveryTimeoutReportsRecovery(t *testing.T) {
 	cmd.Stdin = strings.NewReader("timeout contacts")
 	raw, err := cmd.Output()
 	if ctx.Err() != nil {
-		t.Fatal("CLI timed out before reporting contact recovery", ctx.Err())
+		t.Fatal("CLI timed out before local mail delivery", ctx.Err())
 	}
 	var result protocolOutput
-	if json.Unmarshal(raw, &result) != nil || err == nil || result.Success || !strings.Contains(result.Reason, "recipient directory contacts timed out") || strings.Contains(result.Reason, "registrations are current") {
-		t.Fatal("timeout was reported as registration failure", string(raw), err)
+	if json.Unmarshal(raw, &result) != nil || err != nil || !result.Success {
+		t.Fatal("directory timeout blocked local mail", string(raw), err)
+	}
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("local recipient POP after directory timeout", claimed, err)
+	}
+	archive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if archive.Context == nil || !strings.Contains(archive.Context.Markdown, "Parent and child contacts are unavailable") ||
+		!strings.Contains(archive.Context.Markdown, "Verify those contacts before using parent or child routes") ||
+		strings.Contains(archive.Context.Markdown, "- child:messenger") {
+		t.Fatal("local timeout context advertised unverified directory contacts", archive.Context)
+	}
+}
+
+func TestLocalInterfaceDiscoveryRejectsRetitledBinding(t *testing.T) {
+	for _, mode := range []struct {
+		name  string
+		delay bool
+	}{{"discovery-error", true}, {"discovery-success", false}} {
+		for _, target := range []string{"sender", "recipient"} {
+			t.Run(mode.name+"/"+target, func(t *testing.T) {
+				f := newPublicApprovalFixture(t)
+				policy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+				if err := os.WriteFile(f.config, []byte(policy), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if result, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !result.Success {
+					t.Fatal("interface registration", result, err)
+				}
+				pane, role := f.peer, "peer"
+				if target == "recipient" {
+					pane, role = f.worker, "worker"
+				}
+				realTmux, err := exec.LookPath("tmux")
+				if err != nil {
+					t.Fatal(err)
+				}
+				shimDir := t.TempDir()
+				delay := ""
+				if mode.delay {
+					delay = "  sleep 3\n"
+				}
+				shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ] && [ ! -e \"$POSTMAN_TEST_MARKER\" ]; then\n  : > \"$POSTMAN_TEST_MARKER\"\n  \"$POSTMAN_REAL_TMUX\" -S \"$POSTMAN_TEST_SOCKET\" select-pane -t \"$POSTMAN_TEST_RETITLE\" -T unbound || exit 1\n" + delay + " fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+				if err := os.WriteFile(filepath.Join(shimDir, "tmux"), []byte(shim), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				marker := filepath.Join(shimDir, "retitled")
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				cmd := f.child(ctx, f.peer, "send-heredoc", "--config", f.config, "--to", "worker")
+				cmd.Env = append(cmd.Env,
+					"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+					"POSTMAN_TEST_MARKER="+marker,
+					"POSTMAN_TEST_SOCKET="+f.socket,
+					"POSTMAN_TEST_RETITLE="+pane,
+					"POSTMAN_REAL_TMUX="+realTmux)
+				cmd.Stdin = strings.NewReader("must not publish after retitle")
+				raw, err := cmd.Output()
+				f.tmux("select-pane", "-t", pane, "-T", role)
+				if ctx.Err() != nil {
+					t.Fatal("CLI timed out before rejecting changed binding", ctx.Err())
+				}
+				if _, markerErr := os.Stat(marker); markerErr != nil {
+					t.Fatal("directory enumeration did not retitle target", markerErr)
+				}
+				var result protocolOutput
+				if json.Unmarshal(raw, &result) != nil || err == nil || result.Success ||
+					!strings.Contains(result.Reason, "verify local recipient after directory discovery") {
+					t.Fatal("changed binding was downgraded to directory guidance", string(raw), err)
+				}
+				if claimed, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !claimed.Success || claimed.MarkdownPath != nil {
+					t.Fatal("changed binding published local mail", claimed, err)
+				}
+				if claimed, err := f.run(f.peer, "", "pop", "--config", f.config); err != nil || !claimed.Success || claimed.MarkdownPath != nil {
+					t.Fatal("changed binding published sent mail", claimed, err)
+				}
+			})
+		}
+	}
+}
+
+func TestCrossInterfaceContactDiscoveryTimeoutRejectsMail(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(parentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	childRoot := filepath.Join(f.home, "work", "child")
+	if err := os.MkdirAll(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPane := f.tmux("new-session", "-d", "-s", "child", "-c", childRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", childPane, "-T", "messenger")
+	childConfig := filepath.Join(f.home, "child-postman.md")
+	childPolicy := "---\ninterface_node: messenger\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+	if err := os.WriteFile(childConfig, []byte(childPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ pane, config string }{{f.worker, f.config}, {childPane, childConfig}} {
+		if result, err := f.run(item.pane, "", "pop", "--config", item.config); err != nil || !result.Success {
+			t.Fatal("interface registration", result, err)
+		}
+	}
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ]; then\n  count=0\n  if [ -e \"$POSTMAN_TEST_MARKER\" ]; then count=$(cat \"$POSTMAN_TEST_MARKER\"); fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$POSTMAN_TEST_MARKER\"\n  if [ \"$count\" -ge 3 ]; then sleep 3; fi\n fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shimDir, "tmux"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := f.child(ctx, childPane, "send-heredoc", "--config", childConfig, "--to", "work:worker")
+	cmd.Env = append(cmd.Env,
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"POSTMAN_TEST_MARKER="+filepath.Join(shimDir, "list-sessions-count"),
+		"POSTMAN_REAL_TMUX="+realTmux)
+	cmd.Stdin = strings.NewReader("cross timeout contacts")
+	raw, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatal("CLI timed out before rejecting cross-session mail", ctx.Err())
+	}
+	var result protocolOutput
+	if json.Unmarshal(raw, &result) != nil || err == nil || result.Success || !strings.Contains(result.Reason, "recipient directory contacts timed out") {
+		t.Fatal("cross-session timeout published or returned the wrong failure", string(raw), err)
 	}
 	if claimed, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !claimed.Success || claimed.MarkdownPath != nil {
-		t.Fatal("timeout published incomplete contacts", claimed, err)
+		t.Fatal("cross-session timeout published mail", claimed, err)
 	}
 }
 
