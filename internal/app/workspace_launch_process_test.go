@@ -263,6 +263,21 @@ func TestLaunchAgentsFromPaneCreatesWindowInInvokingSession(t *testing.T) {
 
 func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 	f := newPublicApprovalFixture(t)
+	// The owned tmux session predates the CLI child. Give that session the same
+	// private environment before it creates any preset pane, then verify the
+	// environment inside each launched process below.
+	privateEnv := map[string]string{
+		"HOME":            f.home,
+		"ZDOTDIR":         f.home,
+		"XDG_CONFIG_HOME": filepath.Join(f.home, ".config"),
+		"XDG_STATE_HOME":  f.stateHome,
+	}
+	for key, value := range privateEnv {
+		f.tmux("set-environment", "-t", "work", key, value)
+		if got := f.tmux("show-environment", "-t", "work", key); got != key+"="+value {
+			t.Fatalf("owned tmux session environment %s: got %q, want %q", key, got, value)
+		}
+	}
 	// Keep tmux's automatic process-name updates from changing window names
 	// while checking whether the launcher itself renamed an existing window.
 	f.tmux("set-option", "-g", "automatic-rename", "off")
@@ -327,7 +342,7 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 	if err := os.Mkdir(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stub := "#!/bin/sh\nprintf '%s\\000' \"$0\" \"${TMUX_A2A_POSTMAN_CONFIG-unset}\" \"${XDG_CONFIG_HOME-unset}\" \"$PWD\" \"$@\" > \"$PWD/started-$TMUX_PANE\"\nprintf x >> \"$PWD/count-$TMUX_PANE\"\nexec sleep 120\n"
+	stub := "#!/bin/sh\nprintf '%s\\000' \"$0\" \"${TMUX_A2A_POSTMAN_CONFIG-unset}\" \"${HOME-unset}\" \"${ZDOTDIR-unset}\" \"${XDG_CONFIG_HOME-unset}\" \"${XDG_STATE_HOME-unset}\" \"$PWD\" \"$@\" > \"$PWD/started-$TMUX_PANE\"\nprintf x >> \"$PWD/count-$TMUX_PANE\"\nexec sleep 120\n"
 	for _, client := range []string{"codex", "claude"} {
 		if err := os.WriteFile(filepath.Join(bin, client), []byte(stub), 0o700); err != nil {
 			t.Fatal(err)
@@ -474,7 +489,8 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 						t.Fatalf("editor pane: %+v", pane)
 					}
 					shellMarker := filepath.Join(cwd, "editor-shell")
-					f.tmux("send-keys", "-l", "-t", pane.Pane, "printf shell-ok > "+launchShellWord(shellMarker))
+					envMarker := filepath.Join(cwd, "editor-env")
+					f.tmux("send-keys", "-l", "-t", pane.Pane, "printf '%s\\000' \"$HOME\" \"$ZDOTDIR\" \"$XDG_CONFIG_HOME\" \"$XDG_STATE_HOME\" > "+launchShellWord(envMarker)+"; printf shell-ok > "+launchShellWord(shellMarker))
 					f.tmux("send-keys", "-t", pane.Pane, "Enter")
 					deadline := time.Now().Add(3 * time.Second)
 					for {
@@ -485,6 +501,13 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 							t.Fatal("editor shell did not accept input")
 						}
 						time.Sleep(10 * time.Millisecond)
+					}
+					rawEnv, err := os.ReadFile(envMarker)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got, want := strings.Split(strings.TrimSuffix(string(rawEnv), "\x00"), "\x00"), []string{f.home, f.home, filepath.Join(f.home, ".config"), f.stateHome}; !slices.Equal(got, want) {
+						t.Fatalf("editor shell environment: got=%q want=%q", got, want)
 					}
 					continue
 				}
@@ -514,7 +537,7 @@ func TestBuiltinPresetsLaunchFromPaneAndCloseOnlyTheirWindows(t *testing.T) {
 				if preset == "preset-w" && (pane.Role == secondaryRole || pane.Role == reviewRole) {
 					client = "claude"
 				}
-				wantParts := append([]string{filepath.Join(bin, client), "", filepath.Join(f.home, ".config"), cwd}, strings.Fields(want)...)
+				wantParts := append([]string{filepath.Join(bin, client), "", f.home, f.home, filepath.Join(f.home, ".config"), f.stateHome, cwd}, strings.Fields(want)...)
 				if !slices.Equal(parts, wantParts) {
 					t.Fatalf("client/config/argv/cwd mismatch for %s: got=%q want=%q", pane.Role, parts, wantParts)
 				}
