@@ -41,6 +41,15 @@ known batch until the count is zero or unknown. Multiple notifications can
 refer to mail already consumed by an earlier batch; an empty successful POP
 ends handling and never starts a polling loop.
 
+The notification names a newly delivered message, while POP claims the next
+unread message. These may differ when unread mail is queued. Use the complete
+archive returned by POP to decide its response type and exact reply target.
+For an ordinary reply-required request, finish the work and send a substantive
+result with evidence or a concrete blocker; an acknowledgement alone does not
+complete it. Execution requests and external input follow their archive's
+specific decision or channel procedure. A no-reply archive needs no automatic
+response.
+
 Claiming mail clears unread attention; it does not prove understanding, accept
 a task, or fill a required reply. Empty POP still reports self-state. Never
 manually move or edit runtime mailbox files.

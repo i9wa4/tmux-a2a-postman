@@ -172,6 +172,29 @@ func TestNotificationTextRetainsOriginalProtocol(t *testing.T) {
 	}
 }
 
+func TestNotificationTextDefersResponseToClaimedArchive(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		message Message
+		want    string
+		absent  string
+	}{
+		{"ordinary request", Message{NeedsReply: true}, "substantive evidence or a concrete blocker", "approve or decline"},
+		{"no reply", Message{}, "POP's archive", "ACK is insufficient"},
+		{"execution request", Message{NeedsReply: true, Kind: "execution-request"}, "approve or decline guidance", "substantive evidence"},
+		{"external input", Message{External: &ExternalMessage{Direction: "in"}}, "channel report or decision procedure", "substantive evidence"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := tc.message
+			msg.ID, msg.To = "m-0123456789abcdef0123456789abcdef", "worker"
+			got := noticePrompt(msg)
+			if !strings.Contains(got, tc.want) || strings.Contains(got, tc.absent) || !strings.Contains(got, "not this hint") || strings.ContainsAny(got, "\r\n") {
+				t.Fatal(got)
+			}
+		})
+	}
+}
+
 func TestApprovalNoticeFailureDoesNotApproveOrResend(t *testing.T) {
 	m := mailFixture(t)
 	e := Executor{Mail: m, Resolve: approvalResolver("peer")}
