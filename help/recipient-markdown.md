@@ -107,17 +107,25 @@ additional route or human authority. Ordinary sends, exact replies and command
 review traffic all retain their appropriate recipient context.
 
 An interface recipient's contacts include its verified immediate parent and
-every verified direct child. If Postman cannot verify the complete set, the
-send fails before publication with a recovery reason. A pane with no current
-configuration registration is not a contact; a stale registration must be
-re-registered by a normal operation in that interface before retrying.
-The contact list stops at each verified or unavailable direct-child frontier:
-a grandchild is not promoted when its intermediate child lacks current
-configuration provenance, and a stale grandchild cannot veto its parent's own
-direct contacts. An ordinary never-registered pane is outside the interface
-set. If native enumeration times out, retry once when the server is responsive
-and inspect invocation diagnostics if it repeats; registration advice applies to
-provenance failures instead.
+every verified direct child. Cross-session mail fails before publication with a
+recovery reason if Postman cannot verify the complete recipient contact set.
+Locally addressed interface mail can still be delivered to its separately
+verified local recipient when directory verification fails. Its context lists
+only configured local routes and explicitly says parent and child contacts are
+unavailable; it does not advertise unverified directory addresses. Postman
+rechecks the local sender and recipient bindings before this delivery. A pane
+with no current configuration registration is not a contact; a stale
+registration must be re-registered by a normal operation in that interface
+before retrying a cross-session send. The contact list stops at each verified or
+unavailable direct-child frontier: a grandchild is not promoted when its
+intermediate child lacks current configuration provenance, and a stale
+grandchild cannot veto its parent's own direct contacts. An ordinary
+never-registered pane is outside the interface set. For a cross-session send
+that fails on native enumeration timeout, retry once when the server is
+responsive and inspect invocation diagnostics if it repeats. For locally
+delivered mail with unavailable directory contacts, verify those contacts before
+using parent or child routes. Registration advice applies to provenance failures
+instead.
 
 The generated context has one H1, `Message`. Recipient Instructions, Delivery
 and Reply Guidance and Sender Message are H2 siblings. Common contract,
