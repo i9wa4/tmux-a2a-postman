@@ -18,11 +18,15 @@ or `gh skill publish dist/skills --dry-run`.
    nix develop .#cd --command goreleaser check
    ```
 
-3. Create and push an annotated tag (must match `v[0-9]*`):
+3. From the reviewed release commit, create and push only its annotated tag
+   (must match `v[0-9]*`). Confirm `HEAD` and the freshly fetched
+   `origin/main` both match that commit before tagging:
 
    ```bash
-   git tag -a vX.Y.Z -m vX.Y.Z
-   git push origin main --tags
+   git fetch origin main &&
+     test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" &&
+     git tag -a vX.Y.Z -m vX.Y.Z &&
+     git push origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
    ```
 
 4. GitHub Actions validates the skills with `nix run '.#skill-check'`
