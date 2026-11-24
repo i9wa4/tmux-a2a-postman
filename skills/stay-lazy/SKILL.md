@@ -29,7 +29,10 @@ Spend effort where it matters.
 - **Write for the reader.** Use shared context; match content and detail to the
   purpose and destination. Pair identifiers with brief descriptions. Present
   the result; include history and evidence only when needed for understanding,
-  decisions, action, or verification.
+  decisions, action, or verification. Use Markdown effectively to improve
+  readability, choosing prose, lists, tables, or diagrams as appropriate.
+  Prefer Mermaid for diagrams, using conceptual diagrams when details obscure
+  the main point.
 - **Preserve what matters, not everything.** Protect correctness, safety,
   contracts, and evidence. Preserve compatibility when actual use and migration
   costs justify it.
