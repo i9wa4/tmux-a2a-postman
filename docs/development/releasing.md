@@ -26,7 +26,7 @@ or `gh skill publish dist/skills --dry-run`.
    git fetch origin main &&
      test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" &&
      git tag -a vX.Y.Z -m vX.Y.Z &&
-     git push origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
+     git push --no-follow-tags origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
    ```
 
 4. GitHub Actions validates the skills with `nix run '.#skill-check'`
