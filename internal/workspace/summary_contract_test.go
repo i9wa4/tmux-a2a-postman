@@ -2,12 +2,15 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func nodeFacts(t *testing.T, m Mail, role string) NodeStatus {
@@ -81,6 +84,123 @@ func TestNodeSummaryReadsFactsWithoutMutationAndEmptyPopKeepsTime(t *testing.T) 
 	after := nodeFacts(t, m, "peer")
 	if after.LastPopAt == nil || *after.LastPopAt != *node.LastPopAt {
 		t.Fatal("empty POP changed claim time")
+	}
+}
+
+func TestNodeSummaryCountsMailboxBeyondTransportScanLimit(t *testing.T) {
+	m := mailFixture(t)
+	first := sendStateMessage(t, m, "worker", "peer", "first", "", "", true)
+	second := sendStateMessage(t, m, "worker", "peer", "second", "", "", true)
+	third := sendStateMessage(t, m, "worker", "peer", "third", "", "", true)
+	for _, request := range []Message{first, second, third} {
+		claimStateMessage(t, m, "peer", request.ID)
+	}
+	if _, err := m.SendReply(context.Background(), mailRuntime("peer"), []string{first.ID, second.ID}, "combined answer\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SendWithReply(context.Background(), mailRuntime("peer"), "worker", "legacy answer\n", third.ID, third.InputRequestID, false); err != nil {
+		t.Fatal(err)
+	}
+	msg := sendMail(t, m)
+	msg.Body = "archived mail\n"
+	box := filepath.Dir(mailPath(m, "worker", "sent", msg.ID))
+	readBox := filepath.Dir(mailPath(m, "peer", "read", msg.ID))
+	claimedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	for i := 0; i < 2049; i++ {
+		msg.ID = fmt.Sprintf("m-%032x", i)
+		msg.InputRequestID = fmt.Sprintf("ireq_%032x", i)
+		data, err := encodeMessage(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(box, msg.ID+".md"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(readBox, msg.ID+".md"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		receipt, err := json.Marshal(ClaimReceipt{Version: 1, ID: msg.ID, Role: "peer", ClaimedAt: claimedAt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(readBox, msg.ID+".pop.json"), append(receipt, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Each direction exceeds the transport cap; the claimed peer archive has
+	// both message and receipt entries, for more than 4096 entries overall.
+	if err := m.Store.withView(context.Background(), mailRuntime("worker"), func(ws *os.Root, _ Snapshot) error {
+		for _, box := range []struct{ role, name string }{{"worker", "sent"}, {"peer", "read"}} {
+			_, err := readSummaryBox(context.Background(), ws, box.role, box.name)
+			if err == nil || err.Error() != "mail snapshot exceeds bounded scan" {
+				t.Fatalf("transport scan %s/%s: %v", box.role, box.name, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	node := nodeFacts(t, m, "worker")
+	if node.OutboundCount == nil || *node.OutboundCount != 2050 || node.InboundCount == nil || *node.InboundCount != 0 || node.UnreadCount == nil || *node.UnreadCount != 2 {
+		t.Fatal(node)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), StatusRefreshBudget)
+	defer cancel()
+	started := time.Now()
+	_, _, nodes, err := m.Summaries(ctx, mailRuntime("worker"), []string{"worker", "peer"})
+	t.Logf("two-role Summaries with >4096 mailbox entries: %s", time.Since(started))
+	if err != nil || len(nodes) != 2 || nodes[0].OutboundCount == nil || *nodes[0].OutboundCount != 2050 || nodes[1].InboundCount == nil || *nodes[1].InboundCount != 2050 || nodes[1].LastPopAt == nil || *nodes[1].LastPopAt != claimedAt {
+		t.Fatal(nodes, err)
+	}
+}
+
+func TestNodeSummaryPropagatesInvalidPopTime(t *testing.T) {
+	m := mailFixture(t)
+	msg := sendMail(t, m)
+	claimStateMessage(t, m, "peer", msg.ID)
+	receiptPath := strings.TrimSuffix(mailPath(m, "peer", "read", msg.ID), ".md") + ".pop.json"
+	var receipt ClaimReceipt
+	data, err := os.ReadFile(receiptPath)
+	if err != nil || json.Unmarshal(data, &receipt) != nil {
+		t.Fatal(err)
+	}
+	receipt.ClaimedAt = "invalid"
+	data, err = json.Marshal(receipt)
+	if err != nil || os.WriteFile(receiptPath, append(data, '\n'), 0o600) != nil {
+		t.Fatal(err)
+	}
+	_, _, node := m.Summary(context.Background(), mailRuntime("peer"), "peer")
+	if node.Reason != "invalid POP receipt time" || node.LastPopAt != nil || node.InboundCount != nil {
+		t.Fatal(node)
+	}
+}
+
+func TestStatusSummaryHonorsCancellation(t *testing.T) {
+	m := mailFixture(t)
+	msg := sendMail(t, m)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := m.Store.withView(context.Background(), mailRuntime("worker"), func(ws *os.Root, _ Snapshot) error {
+		box, err := openOwnBox(ws, "worker", "sent")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = box.Close() }()
+		_, err = statusEntries(ctx, box)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("directory scan: %v", err)
+		}
+		indexed, err := indexAnswers(ctx, []Message{msg})
+		if !errors.Is(err, context.Canceled) || indexed != nil {
+			t.Fatalf("answer index: %v", err)
+		}
+		_, err = hasExactAnswer(ctx, msg, map[string][]*Message{msg.ID: {&msg}})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("answer match: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
