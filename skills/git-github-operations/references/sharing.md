@@ -15,8 +15,6 @@ through the configured route. Preserve a failed or uncertain publication result;
 do not blindly repeat a possibly committed operation.
 
 For Gist publication and verification, read [Gist delivery](gist-delivery.md)
-with `tmux-a2a-postman skill git-github-operations gist-delivery`. For Issue
-creation and snapshot comments, read [Issue mailbox](issue-mailbox.md) with
-`tmux-a2a-postman skill git-github-operations issue-mailbox`. The binary
-materializes their scripts through `tmux-a2a-postman resources`; a source file
+with `tmux-a2a-postman skill git-github-operations gist-delivery`. The binary
+materializes its script through `tmux-a2a-postman resources`; a source file
 needs no task record.

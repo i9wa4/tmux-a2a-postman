@@ -18,7 +18,6 @@ postman_resources=$(tmux-a2a-postman resources)
 # Optional helpers. Delivery scripts act only when explicitly invoked:
 # "$postman_resources/skills/postman-records/scripts/select_day.py"
 # "$postman_resources/skills/postman-records/scripts/mkmd"
-# "$postman_resources/skills/git-github-operations/scripts/issue-mailbox"
 # "$postman_resources/skills/git-github-operations/scripts/verify-gist-delivery"
 # Read-only diagnostic analyzer (requires Python 3):
 python3 "$postman_resources/help/invocation-diagnostics/scripts/analyze-invocations.py" --help
