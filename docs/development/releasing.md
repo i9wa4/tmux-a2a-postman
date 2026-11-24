@@ -20,11 +20,11 @@ or `gh skill publish dist/skills --dry-run`.
 
 3. From the reviewed release commit, create and push only its annotated tag
    (must match `v[0-9]*`). Confirm `HEAD` and the freshly fetched
-   `origin/main` both match that commit before tagging:
+   `FETCH_HEAD` both match that commit before tagging:
 
    ```bash
    git fetch origin main &&
-     test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" &&
+     test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" &&
      git tag -a vX.Y.Z -m vX.Y.Z &&
      git push --no-follow-tags origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
    ```
