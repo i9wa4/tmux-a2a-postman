@@ -80,8 +80,15 @@ func (c *workspaceCommand) prepareRecipientContext(ctx context.Context, recipien
 					advisoryCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 					view, viewErr := c.mail.Store.VerifiedDirectoryInterfacesFrom(advisoryCtx, candidate.Runtime)
 					cancel()
+					if err := ctx.Err(); err != nil {
+						return "", err
+					}
 					if viewErr != nil {
-						return "", recipientDirectoryContactsError(advisoryCtx, viewErr)
+						// The addressed route was verified before staging. The
+						// recipient's other contacts are guidance, and an unknown
+						// off-route registration must not veto this exact send.
+						directoryNotice = "Parent and child contacts are unavailable because the directory could not be verified. Verify those contacts before using parent or child routes."
+						break
 					}
 					currentInterfaces = view
 					break
