@@ -17,7 +17,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from mail_fixture import MESSAGE_ID_PATTERN, read_archive, workspace_files
+from mail_fixture import read_archive, workspace_files
 from recursive_team.configuration import compile_config
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -261,18 +261,14 @@ def run_case(case):
                 return False
             try:
                 inputs = [json.loads(line) for line in path.read_text().splitlines()]
-                submitted = [
-                    hint
-                    for item in inputs
-                    for hint in re.findall(r"You've got mail: (" + MESSAGE_ID_PATTERN + r")\.md", item["text"])
-                ]
-                completed = [json.loads(line)["hint"] for line in actions.read_text().splitlines()]
+                submitted = sum(item["text"].count("You've got mail. Run `tmux-a2a-postman pop`") for item in inputs)
+                completed = len(actions.read_text().splitlines())
                 current = json.loads(progress.read_text())
             except json.JSONDecodeError:
                 return False
             # Several complete hints can share one submitted terminal buffer.
-            # Require every exact hinted action and actual helper-process exit.
-            if sorted(submitted) != sorted(completed) or current["submitted"] != current["completed"]:
+            # Require every submitted notice action and actual helper-process exit.
+            if submitted != completed or current["submitted"] != current["completed"]:
                 return False
         return True
 

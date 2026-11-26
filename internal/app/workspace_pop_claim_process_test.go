@@ -165,8 +165,7 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	if *got.MarkdownPath != expected || !filepath.IsAbs(expected) {
 		t.Fatal(got.MarkdownPath, expected)
 	}
-	if !strings.Contains(got.Instruction, "markdown_absolute_path through EOF") ||
-		!strings.Contains(got.Instruction, "deciding no action") || !strings.Contains(got.Instruction, "truncated view") {
+	if got.Instruction != "Read the complete file by running `cat '"+expected+"'` directly through EOF. Do not use `execute-heredoc` for this read." {
 		t.Fatal("POP must require a complete archive read before any handling decision", got.Instruction)
 	}
 	archived := readProtocolArchive(t, expected)
@@ -184,5 +183,36 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	second, err := f.run(f.worker, "", "pop", "--config", f.config)
 	if err != nil || !second.Success || second.MarkdownPath != nil || second.Instruction != "" || second.Self.LastPopAt == nil || *second.Self.LastPopAt != receipt.ClaimedAt {
 		t.Fatal("empty POP changed receipt/time", second, err)
+	}
+}
+
+func TestWorkspacePopProcessReadCommandPreservesShellSpecialPath(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	f.stateHome = filepath.Join(f.stateHome, "space ! ' $ ` ; \\ end")
+	const body = "special path archive through EOF\n"
+	if sent, err := f.run(f.peer, body, "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	got, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !got.Success || got.MarkdownPath == nil {
+		t.Fatal(got, err)
+	}
+	const prefix = "Read the complete file by running `"
+	const suffix = "` directly through EOF. Do not use `execute-heredoc` for this read."
+	if !strings.HasPrefix(got.Instruction, prefix) || !strings.HasSuffix(got.Instruction, suffix) {
+		t.Fatal("missing direct command", got.Instruction)
+	}
+	command := strings.TrimSuffix(strings.TrimPrefix(got.Instruction, prefix), suffix)
+	shell, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh unavailable")
+	}
+	output, err := exec.Command(shell, "-ic", command).Output()
+	if err != nil {
+		t.Fatal("emitted command failed in an interactive shell", command, err)
+	}
+	want, err := os.ReadFile(*got.MarkdownPath)
+	if err != nil || string(output) != string(want) {
+		t.Fatal("emitted command did not read the claimed archive through EOF", err)
 	}
 }
