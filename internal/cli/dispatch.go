@@ -21,6 +21,9 @@ type Handlers struct {
 	ApproveExecution func([]string) error
 	DeclineExecution func([]string) error
 	SendHeredoc      func([]string) error
+	Heartbeat        func([]string) error
+	ScheduleNext     func([]string) error
+	Daemon           func([]string) error
 	Version          func([]string) error
 	Help             func([]string)
 }
@@ -63,6 +66,12 @@ func Dispatch(command string, args []string, cfg Config, h Handlers) Result {
 		handler = h.DeclineExecution
 	case "send-heredoc":
 		handler = h.SendHeredoc
+	case "heartbeat":
+		handler = h.Heartbeat
+	case "schedule-next":
+		handler = h.ScheduleNext
+	case "daemon":
+		handler = h.Daemon
 	case "version":
 		handler = h.Version
 		workspaceCommand = false

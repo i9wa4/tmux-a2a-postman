@@ -1,4 +1,11 @@
 ---
+daemon:
+  defaults:
+    heartbeat:
+      every: 30m
+      body: |
+        Review outstanding work and its last substantive progress.
+        Report an evidence-backed result or a concrete blocker to the verified interface.
 presets:
   dev:
     columns:

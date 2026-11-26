@@ -5,6 +5,9 @@ get-status         Read the saved whole-server JSON snapshot
 get-status-oneline Read a compact human overview of the selected tmux server
 pop                Claim one own unread message; return its archive path
 send-heredoc       Send a new request or reply to claimed message IDs
+heartbeat          Send one reply-required request to the verified interface
+schedule-next      Query the current CLI heartbeat schedule as JSON
+daemon             Opt-in foreground wrapper for repeated fresh CLI calls
 execute-heredoc    Run source in an initialized shell after needed approval
 approve-execution  Approve one own POP'd execution request, with a reason
 decline-execution  Decline one own POP'd execution request, with a reason
