@@ -1,7 +1,8 @@
 # tmux-a2a-postman
 
 Turn terminal AI consoles into a configurable team, with durable Markdown mail
-and no resident Postman service.
+and no required resident Postman service. An optional foreground `daemon`
+wrapper can invoke fresh heartbeat CLI processes on a selected interval.
 
 ```mermaid
 flowchart TB

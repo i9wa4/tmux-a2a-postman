@@ -72,6 +72,7 @@ func Main() {
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
 		GetStatusOneline: cli.RunWorkspaceGetStatusOneline, RefreshStatus: cli.RunWorkspaceRefreshStatus,
 		ExecuteHeredoc: cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		Heartbeat: cli.RunWorkspaceHeartbeat, ScheduleNext: cli.RunScheduleNext, Daemon: cli.RunDaemon,
 		ApproveExecution: cli.RunWorkspaceApproveExecution, DeclineExecution: cli.RunWorkspaceDeclineExecution,
 		Version: func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
 	})
