@@ -67,12 +67,12 @@ POSTMAN_BODY_7f4c39b2
 ```
 
 Worker receives a short input hint followed by Enter. Worker must run
-`tmux-a2a-postman pop`, read the **entire** file at `markdown_absolute_path`
-through EOF, and follow its exact reply command. An empty POP returns a null
-path. Do not pass a message ID to POP.
+`tmux-a2a-postman pop`, run the returned instruction's direct `cat` command to
+read the **entire** claimed file through EOF, and follow its exact reply
+command. An empty POP returns a null path. Do not pass a message ID to POP.
 
-The notification names newly delivered mail, while POP claims the next unread
-message; these can differ when mail is queued. Use the complete claimed archive
+The notification announces mail without identifying a message. POP claims the
+next unread message; its archive establishes identity. Use the complete archive
 to decide its response type and exact reply target. For an ordinary
 reply-required request, finish the work and send a substantive result with
 evidence or a concrete blocker; an acknowledgement alone does not complete it.

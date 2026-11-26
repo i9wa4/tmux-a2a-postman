@@ -230,10 +230,8 @@ The existing filename selection order is preserved; timestamped IDs do not
 establish cross-process FIFO or order mixed legacy history. Output fields are
 `workspace`, `as_of`, `success`, `markdown_absolute_path` and common `self`.
 
-A non-null path also returns `instruction`, explicitly requiring a complete
-read of that Markdown through EOF before processing, replying or deciding that
-no action is needed. A truncated view, summary, notification, metadata or reply
-guidance does not substitute for the full file. Empty POP omits this field.
+A non-null path also returns `instruction` with the exact claimed path and the
+direct `cat` command for reading through EOF. Empty POP omits this field.
 
 `self.unread_count` counts messages remaining after this POP, excluding the
 claimed message. A known positive count is also named in `instruction`: fully
@@ -244,8 +242,8 @@ count. Zero, unknown or an empty POP ends the batch; never poll an empty inbox.
 A successful claim returns the absolute existing final Markdown path. Empty
 POP succeeds with a null path and unchanged last_pop_at. Read the complete
 Markdown through EOF: sender, identity and reply guidance come from that file,
-not repeated message bodies/receipt paths in JSON. The notification's hinted ID
-need not be the message actually selected; respond to the mail actually read.
+not repeated message bodies/receipt paths in JSON. Respond to the mail actually
+claimed and read.
 
 On a claim error, success is false and reason explains it. A committed claim is
 not resurrected if stdout, capture or supplemental state fails. Only the
@@ -479,7 +477,7 @@ main interface before this change; removed syntax is intentionally rejected.
 | Surface                                                                      | Decision and purpose                                           | Callers and rationale                                                                         |
 | ---------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `get-status`                                                                 | Saved server snapshot; explicit refresh-status owns collection | Agents/operators need one saved-file view; no global workspace scan                           |
-| `pop [id]`                                                                   | Simplify to argument-free `pop`                                | Receivers claim their actual next mail; notification IDs remain hints                         |
+| `pop [id]`                                                                   | Simplify to argument-free `pop`                                | Receivers claim their actual next mail                                                        |
 | `send-heredoc --to node`                                                     | Keep; new requests require replies                             | Senders need explicit configured routes and literal stdin                                     |
 | `--to session:interface`                                                     | Keep direct parent/child routes                                | Interface nodes need exact per-hop identity without foreign capture access                    |
 | `--reply-to`, `--fills-input-request-id`                                     | Remove from public input; derive from `--to <POP'd-id>`        | Agents should not transcribe correlation metadata                                             |
@@ -652,7 +650,7 @@ node fields in §2 and configuration attribution defined in the server contract.
     "last_screen_change_at": null
   },
   "markdown_absolute_path": "/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md",
-  "instruction": "Read the entire Markdown file at markdown_absolute_path through EOF before processing, replying, or deciding no action is needed. Do not substitute a truncated view, summary, notification, metadata, or reply guidance for the full file."
+  "instruction": "Read the complete file by running `cat '/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md'` directly through EOF. Do not use `execute-heredoc` for this read."
 }
 ```
 

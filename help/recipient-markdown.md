@@ -73,7 +73,9 @@ You can talk to:
 - orchestrator: Task coordinator.
 - approver: Command approval owner.
 
-Read this complete archived Markdown through EOF before handling it.
+Read this complete archived Markdown through EOF before handling it. You may
+run `cat` directly only for the exact archive path returned by your own
+successful `pop`; use `execute-heredoc` for other shell commands.
 A reply is required. Reply to this actual message ID with quoted heredoc:
 
 ```sh
@@ -148,13 +150,13 @@ A claimed path includes this additional JSON field:
 
 ```json
 {
-  "instruction": "Read the entire Markdown file at markdown_absolute_path through EOF before processing, replying, or deciding no action is needed. Do not substitute a truncated view, summary, notification, metadata, or reply guidance for the full file."
+  "instruction": "Read the complete file by running `cat '/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md'` directly through EOF. Do not use `execute-heredoc` for this read."
 }
 ```
 
 The existing workspace/as_of/success/path/self fields remain. An empty POP has
-a null path and no instruction. The notification's ID remains a hint; it does
-not choose which mail POP claims. The receiver reads the returned file fully,
+a null path and no instruction. The notification does not choose which mail
+POP claims. The receiver reads the returned file fully,
 including the actual sender body and generated guidance, before acting.
 
 ## 4. Persistence and validation

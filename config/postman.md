@@ -94,7 +94,8 @@ approval does not create human consent or bypass runtime controls.
 Ask only for missing context or authority.
 
 Run shell commands through `execute-heredoc`, except the control
-operations described in its help.
+operations described in its help and direct `cat` of the exact archive path
+returned by your own successful `pop`.
 
 Use English unless your role specifies otherwise.
 Explicit language requests take precedence within their stated scope.
