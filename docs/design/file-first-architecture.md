@@ -85,7 +85,8 @@ observations remain until user deletion; there is no expiry or rotation.
 
 Timestamps record successful POP, capture and observed screen differences. No
 activity state machine, automatic compaction observer, persistent observer,
-auto-PING, TUI, background delivery or daemon startup surface remains. The CLI
+auto-PING, TUI, background delivery or startup surface for the removed legacy
+mail daemon remains. The CLI
 reports file-derived counts using a common node/self shape. Native text does not
 establish model identity or continuous work.
 

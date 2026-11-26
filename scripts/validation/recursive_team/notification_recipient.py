@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from mail_fixture import read_archive, workspace_files
@@ -609,7 +610,11 @@ try:
         if remaining:
             raise RuntimeError("finite known-mail batch exceeded its bound")
         with (evidence / (role + ".actions.jsonl")).open("a") as trace:
-            trace.write(json.dumps({"hint": phase, "nonce": nonce}) + "\n")
+            trace.write(json.dumps({
+                "hint": phase,
+                "nonce": nonce,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }) + "\n")
 except Exception as error:
     (evidence / (role + ".error.txt")).write_text(str(error))
     raise

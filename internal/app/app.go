@@ -67,10 +67,12 @@ func Main() {
 	})
 	result := cli.Dispatch(command, args, cli.Config{ConfigPath: *configPath, ConfigProvided: configProvided}, cli.Handlers{
 		Resources:    cli.RunResources,
+		Skill:        cli.RunSkill,
 		LaunchAgents: cli.RunLaunchAgents, ChannelSync: cli.RunWorkspaceChannelSync, ChannelReport: cli.RunWorkspaceChannelReport,
 		Pop: cli.RunWorkspacePop, GetSessionStatus: cli.RunWorkspaceGetStatus,
 		GetStatusOneline: cli.RunWorkspaceGetStatusOneline, RefreshStatus: cli.RunWorkspaceRefreshStatus,
 		ExecuteHeredoc: cli.RunWorkspaceExecuteHeredoc, SendHeredoc: cli.RunWorkspaceSendHeredoc,
+		Heartbeat: cli.RunWorkspaceHeartbeat, ScheduleNext: cli.RunScheduleNext, Daemon: cli.RunDaemon,
 		ApproveExecution: cli.RunWorkspaceApproveExecution, DeclineExecution: cli.RunWorkspaceDeclineExecution,
 		Version: func(args []string) error { return cli.RunVersion(os.Stdout, args) }, Help: cli.RunHelp,
 	})

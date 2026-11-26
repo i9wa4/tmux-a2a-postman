@@ -145,11 +145,11 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 	return result
 }
 
-// Keep the original greeting, mail hint and protocol sentinels. A single line
+// Keep the greeting and protocol sentinels. A single line
 // works in both plain line-oriented consoles and bracketed-paste TUIs. No mail
 // body, model runtime API, or executable shell source is delivered here.
 func noticePrompt(msg Message) string {
-	return "<!-- message start --> Hello, " + msg.To + "! You've got mail: " + msg.ID + ".md. Run `tmux-a2a-postman pop` to claim the next unread message and get its archived path. Read that complete Markdown through EOF and follow its reply guidance. <!-- end of message -->"
+	return "<!-- message start --> Hello, " + msg.To + "! You've got mail. Run `tmux-a2a-postman pop` to claim your next unread message and print its archived file path. <!-- end of message -->"
 }
 
 func (t Tmux) prepareNotice(ctx context.Context, target Binding) error {

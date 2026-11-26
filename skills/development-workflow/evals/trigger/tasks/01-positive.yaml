@@ -1,0 +1,12 @@
+id: development-workflow-1
+name: positive 1
+inputs:
+  prompt: Plan and verify a software implementation against agreed acceptance criteria.
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: skills/development-workflow/SKILL.md
+    mode: positive

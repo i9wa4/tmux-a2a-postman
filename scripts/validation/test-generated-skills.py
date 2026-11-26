@@ -13,9 +13,6 @@ license: MIT
 description: |
   USE FOR: Example work.
   DO NOT USE FOR: Other work.
-metadata:
-  postman-skill-body: >-
-    Read and follow `tmux-a2a-postman help postman-example`.
 ---
 """
 
@@ -25,14 +22,14 @@ class GeneratedSkillTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.source = self.root / "help/postman-example/SKILL.md"
+        self.source = self.root / "skills/postman-example/SKILL.md"
         self.source.parent.mkdir(parents=True)
         self.source.write_text(HEADER + "\nDetailed procedure.\n")
-        self.target = self.root / "skills/postman-example/SKILL.md"
+        self.target = self.root / "dist/skills/postman-example/SKILL.md"
 
     def test_lossless_header_single_line_and_idempotence(self):
         GENERATE(self.root)
-        self.assertEqual(self.target.read_text(), HEADER + "\nRead and follow `tmux-a2a-postman help postman-example`.\n")
+        self.assertEqual(self.target.read_text(), HEADER + "\nRead and follow `tmux-a2a-postman skill postman-example`.\n")
         before = self.target.stat().st_mtime_ns
         GENERATE(self.root)
         GENERATE(self.root, check=True)
@@ -48,22 +45,24 @@ class GeneratedSkillTests(unittest.TestCase):
             GENERATE(self.root, check=True)
         self.assertEqual(self.target.read_text(), "manually edited\n")
 
-    def test_metadata_and_entry_body_changes_follow_the_source(self):
+    def test_metadata_changes_follow_the_source_but_body_changes_do_not(self):
         GENERATE(self.root)
-        self.source.write_text(self.source.read_text().replace("Example work.", "Updated work.").replace("Read and follow", "First read"))
+        self.source.write_text(self.source.read_text().replace("Detailed procedure.", "Changed procedure."))
+        GENERATE(self.root, check=True)
+        self.source.write_text(self.source.read_text().replace("Example work.", "Updated work."))
         with self.assertRaisesRegex(ValueError, "stale Skills"):
             GENERATE(self.root, check=True)
         GENERATE(self.root)
         self.assertIn("Updated work.", self.target.read_text())
-        self.assertTrue(self.target.read_text().endswith("First read `tmux-a2a-postman help postman-example`.\n"))
+        self.assertTrue(self.target.read_text().endswith("Read and follow `tmux-a2a-postman skill postman-example`.\n"))
 
     def test_references_helpers_and_evaluations_are_never_distributed(self):
         for filename in ["references/guide.md", "scripts/helper.py", "evals/eval.yaml"]:
             path = self.source.parent / filename
             path.parent.mkdir(parents=True)
-            path.write_text("private to the full HelpDoc package\n")
+            path.write_text("private to the full Skill package\n")
         GENERATE(self.root)
-        self.assertEqual([p.relative_to(self.root / "skills").as_posix() for p in (self.root / "skills").rglob("*") if p.is_file()], ["postman-example/SKILL.md"])
+        self.assertEqual([p.relative_to(self.root / "dist/skills").as_posix() for p in (self.root / "dist/skills").rglob("*") if p.is_file()], ["postman-example/SKILL.md"])
         stale = self.target.parent / "references/old.md"
         stale.parent.mkdir()
         stale.write_text("stale installed procedure\n")
@@ -71,18 +70,27 @@ class GeneratedSkillTests(unittest.TestCase):
             GENERATE(self.root, check=True)
 
     def test_invalid_source_and_empty_inventory_fail(self):
-        for source in ["no frontmatter", HEADER.replace("name: postman-example", "name: wrong"),
-                       HEADER.replace("  postman-skill-body: >-", "  unused: >-"),
-                       HEADER.replace("    Read and follow", "    Another line.\n    Read and follow").replace(">-", "|-"),
-                       HEADER.replace("    Read and follow `tmux-a2a-postman help postman-example`.", "    ")]:
+        for source in ["no frontmatter", HEADER.replace("name: postman-example", "name: wrong")]:
             with self.subTest(source=source):
                 self.source.write_text(source)
                 with self.assertRaises(ValueError):
                     GENERATE(self.root)
                 self.assertFalse(self.target.exists())
         self.source.unlink()
-        with self.assertRaisesRegex(ValueError, "no help"):
+        with self.assertRaisesRegex(ValueError, "no skills"):
             GENERATE(self.root)
+
+    def test_removed_source_removes_only_generated_entry(self):
+        GENERATE(self.root)
+        second = self.root / "skills/other/SKILL.md"
+        second.parent.mkdir()
+        second.write_text(HEADER.replace("postman-example", "other"))
+        GENERATE(self.root)
+        second.unlink()
+        with self.assertRaisesRegex(ValueError, "obsolete Skills"):
+            GENERATE(self.root, check=True)
+        GENERATE(self.root)
+        self.assertFalse((self.root / "dist/skills/other").exists())
 
 
 if __name__ == "__main__":

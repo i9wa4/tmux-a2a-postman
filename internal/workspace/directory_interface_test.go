@@ -32,6 +32,10 @@ func TestStatusFingerprintSeparatesAuthoredPolicyFromRoutingTopology(t *testing.
 		return topology
 	}
 	first := load(base)
+	heartbeatChange := load(strings.Replace(base, "interface_node: worker", "interface_node: worker\ndaemon:\n  defaults:\n    heartbeat:\n      every: 2m\n      body: Check work.\n", 1))
+	if StatusConfigFingerprint(first) != StatusConfigFingerprint(heartbeatChange) || first.PolicyIdentity() == heartbeatChange.PolicyIdentity() {
+		t.Fatal("heartbeat defaults changed routing registration or did not change authored policy")
+	}
 	authoredChange := load(strings.Replace(base, "Worker instructions", "Updated worker instructions", 1))
 	if StatusConfigFingerprint(first) != StatusConfigFingerprint(authoredChange) || first.PolicyIdentity() == authoredChange.PolicyIdentity() {
 		t.Fatal("authored-only change altered routing identity or kept policy identity")

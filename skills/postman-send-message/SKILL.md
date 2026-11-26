@@ -2,17 +2,22 @@
 name: postman-send-message
 license: MIT
 description: |
-  USE FOR: All ordinary Postman sends, including delegated work, exact replies,
-  status requests, follow-ups, and terminal reports. Treat everything after the
-  colon in `$postman-send-message to recipient:` as a literal body, including
-  the first newline after the colon and any Skill names or commands. Preserve
-  the body and handle delivery and notification outcomes. Reply to claimed
-  message IDs with exact correlation and the authorized return route.
-  DO NOT USE FOR: POP, passive waits, history, or status interpretation (use
-  postman-usage); topology changes (use postman-config-auditor).
-metadata:
-  postman-skill-body: >-
-    Read and follow `tmux-a2a-postman help postman-send-message`.
+  USE FOR: Sending or replying to Postman messages, including first
+  contact, task delegation and forwarding a supplied body unchanged.
+  DO NOT USE FOR: Mail intake, passive waiting or recalling past work.
 ---
 
-Read and follow `tmux-a2a-postman help postman-send-message`.
+# Send a Postman message
+
+An existing console can make first contact without an installed Skill tree or a
+prior Postman message. Check `tmux-a2a-postman version`, then read this embedded
+Skill with `tmux-a2a-postman skill postman-send-message`;
+`tmux-a2a-postman help send-heredoc` gives the exact CLI contract. No launcher,
+daemon or initial prompt is required.
+
+For a new request or an exact reply, read [sending](references/sending.md). To
+interpret a committed delivery or uncertain notification, read
+[outcomes](references/outcomes.md). For outstanding responses and passive
+waiting, read [waiting](references/waiting.md). Read each selected reference
+completely before using it. If this binary lacks a required reference, report
+the mismatch rather than substituting another checkout or personal Skill tree.

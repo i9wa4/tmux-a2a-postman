@@ -2,9 +2,9 @@
 skill_path:
   - path: ~/.codex/skills/
     skills:
-      - postman-usage
+      - stay-lazy
       - postman-send-message
-      - postman-config-auditor
+      - postman-records
 ---
 
 # Recursive terminal fixture policy

@@ -1,0 +1,12 @@
+id: stay-lazy-2
+name: negative 2
+inputs:
+  prompt: The user explicitly opts out of stay-lazy for this task.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/stay-lazy/SKILL.md
+    mode: negative

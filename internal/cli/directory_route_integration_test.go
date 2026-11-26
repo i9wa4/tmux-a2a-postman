@@ -104,6 +104,11 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		if err != nil || !strings.Contains(string(archive), body) {
 			t.Fatalf("complete claimed archive: %v", err)
 		}
+		if body == "exact alpha reply with beta unknown\n" &&
+			(!strings.Contains(string(archive), "Parent and child contacts are unavailable because the directory could not be verified.") ||
+				strings.Contains(string(archive), "beta:orchestrator (child)")) {
+			t.Fatal("uncertain directory contacts were presented as verified", string(archive))
+		}
 		firstLine, _, ok := strings.Cut(string(archive), "\n")
 		if !ok || !strings.HasPrefix(firstLine, "<!-- postman ") || !strings.HasSuffix(firstLine, " -->") {
 			t.Fatal("claimed archive lacks metadata")
@@ -242,7 +247,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if err != nil || !strings.Contains(string(archive), "re-registered builtin parent\n") ||
 		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
 		!strings.Contains(string(archive), "### orchestrator instructions") ||
-		!strings.Contains(string(archive), "Receive human and nearest-parent") {
+		!strings.Contains(string(archive), "Team task coordinator; receives requests through the configured interface") {
 		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
 	}
 	var refreshed statusConfig
@@ -353,7 +358,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 			}
 		})
 	}
-	removeProvenance := func(root, pane string) {
+	removeProvenance := func(root, pane string) string {
 		t.Helper()
 		canonical, err := workspace.CanonicalRoot(root, home)
 		if err != nil {
@@ -368,6 +373,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
+		return path
 	}
 	betaRoot := filepath.Join(parentRoot, "beta")
 	if err := os.MkdirAll(betaRoot, 0o700); err != nil {
@@ -379,15 +385,46 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if result, err := invoke(betaPane, "", RunWorkspacePop); err != nil || !result.Success {
 		t.Fatalf("register beta: %+v %v", result, err)
 	}
-	removeProvenance(betaRoot, betaPane)
+	betaCanonical, err := workspace.CanonicalRoot(betaRoot, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaName, err := workspace.Name(betaCanonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaStatusPath := filepath.Join(home, "state", "tmux-a2a-postman", betaName, "runtime",
+		"status-config-p"+strings.TrimPrefix(betaPane, "%")+".json")
+	betaRegistered, err := os.ReadFile(betaStatusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaConfig := removeProvenance(betaRoot, betaPane)
 	if result, err := invoke(parentPane, "off-route beta must not veto alpha\n", RunWorkspaceSendHeredoc, "--to", "child:orchestrator"); err != nil || !result.Success {
 		t.Fatalf("valid child send blocked by beta: %+v %v", result, err)
 	}
 	request := claim(childPane, "off-route beta must not veto alpha\n")
+	// The native return route is healthy, but the recipient's unrelated
+	// child has an invalid registration. Its contact list is unavailable.
+	var staleBeta statusConfig
+	if err := json.Unmarshal(betaRegistered, &staleBeta); err != nil {
+		t.Fatal(err)
+	}
+	staleBeta.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	staleData, err := json.Marshal(staleBeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(betaConfig, staleData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if result, err := invoke(childPane, "exact alpha reply with beta unknown\n", RunWorkspaceSendHeredoc, "--to", request.ID); err != nil || !result.Success {
 		t.Fatalf("valid exact reply blocked by beta: %+v %v", result, err)
 	}
 	answer := claim(parentPane, "exact alpha reply with beta unknown\n")
+	if err := os.Remove(betaConfig); err != nil {
+		t.Fatal(err)
+	}
 	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
 		t.Fatalf("off-route beta changed exact reply correlation: %+v", answer)
 	}

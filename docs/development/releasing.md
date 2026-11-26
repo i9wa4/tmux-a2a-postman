@@ -6,7 +6,7 @@ Release and skill-publish commands require an explicit release request from the
 user at the time of execution. Do not infer release intent from PR work, skill
 validation, Waza readiness, or review follow-up. In those cases, stop at normal
 branch publication plus validation commands such as `nix run '.#skill-check'`
-or `gh skill publish --dry-run`.
+or `gh skill publish dist/skills --dry-run`.
 
 1. Commit all changes to main branch
 2. Run local pre-release checks:
@@ -18,11 +18,15 @@ or `gh skill publish --dry-run`.
    nix develop .#cd --command goreleaser check
    ```
 
-3. Create and push an annotated tag (must match `v[0-9]*`):
+3. From the reviewed release commit, create and push only its annotated tag
+   (must match `v[0-9]*`). Confirm `HEAD` and the freshly fetched
+   `FETCH_HEAD` both match that commit before tagging:
 
    ```bash
-   git tag -a vX.Y.Z -m vX.Y.Z
-   git push origin main --tags
+   git fetch origin main &&
+     test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" &&
+     git tag -a vX.Y.Z -m vX.Y.Z &&
+     git push --no-follow-tags origin refs/tags/vX.Y.Z:refs/tags/vX.Y.Z
    ```
 
 4. GitHub Actions validates the skills with `nix run '.#skill-check'`
@@ -31,8 +35,9 @@ or `gh skill publish --dry-run`.
 
 Do not run `gh skill publish --tag` from the tag-push workflow. That command
 owns tag and release creation, so it fails when the pushed release tag already
-exists. The tag-push release path validates generated `skills/*/SKILL.md` with
-`gh skill publish --dry-run`; the published Git tag and GitHub Release are
+exists. The tag-push release path validates the six generated
+`dist/skills/*/SKILL.md` entries with `gh skill publish dist/skills --dry-run`;
+the published Git tag and GitHub Release are
 enough for `gh skill install` to resolve versions.
 
 ## 2. Version Behavior
@@ -71,5 +76,5 @@ completion. A successful release has:
 After release, confirm install discovery works:
 
 ```bash
-gh skill preview i9wa4/tmux-a2a-postman postman-usage@vX.Y.Z
+gh skill preview i9wa4/tmux-a2a-postman postman-send-message@vX.Y.Z
 ```
