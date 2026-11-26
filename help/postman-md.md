@@ -12,20 +12,22 @@ inherited `TMUX_A2A_POSTMAN_CONFIG`, then
 `$HOME/.config/tmux-a2a-postman/postman.md`. Relative selections fail; cwd does
 not select a config. Both status getters read a saved cache and ignore
 configuration. Symlinked config files, including Nix-managed ones, are
-supported. Each invocation reads one bounded regular file; no TOML, overlay
-chain or daemon defaults apply.
+supported. Each invocation reads one bounded regular file; no TOML or overlay
+chain applies. The optional heartbeat commands read only the selected file's
+`daemon.defaults.heartbeat.every` and `.body` values.
 
-| Place                   | Valid form / default                                    | Concrete effect and boundary                                                                |
-| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| YAML `skill_path`       | Optional path, list or selected path entries            | Adds ordinary Skill discovery metadata to recipient archives, not execution.                |
-| YAML `interface_node`   | Optional existing role name                             | Designates the local interface; no implicit default. Mermaid designation is also supported. |
-| YAML external fields    | Optional root/workspace/session scalar strings together | Binds the named interface workspace/session to a separately provisioned file channel.       |
-| YAML `presets`          | Optional named ordered columns/panes                    | Explicit `launch-agents` only; never evaluated by policy rendering or ordinary mail.        |
-| H2 `edges`              | One Mermaid graph, supported subset below               | Validates allowed role routes and optional reviewer/interface designation.                  |
-| H2 `common_template`    | Optional Markdown                                       | Cooperative instructions included for every intended recipient.                             |
-| H2 role name            | Optional role Markdown; roles can also be graph nodes   | Includes only the selected recipient's full role contract.                                  |
-| H3 `role` inside a role | Optional Markdown summary                               | Supplies its short description in contact lists; absence supplies no invented summary.      |
-| H2 `message_footer`     | Optional Markdown with supported substitutions          | Additional ordinary-mail reply guidance; fixed typed execution guidance takes precedence.   |
+| Place                            | Valid form / default                                      | Concrete effect and boundary                                                                |
+| -------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| YAML `skill_path`                | Optional path, list or selected path entries              | Adds ordinary Skill discovery metadata to recipient archives, not execution.                |
+| YAML `interface_node`            | Optional existing role name                               | Designates the local interface; no implicit default. Mermaid designation is also supported. |
+| YAML external fields             | Optional root/workspace/session scalar strings together   | Binds the named interface workspace/session to a separately provisioned file channel.       |
+| YAML `presets`                   | Optional named ordered columns/panes                      | Explicit `launch-agents` only; never evaluated by policy rendering or ordinary mail.        |
+| YAML `daemon.defaults.heartbeat` | Optional duration `every` of at least 1s and UTF-8 `body` | Used only by explicit heartbeat and foreground daemon commands.                             |
+| H2 `edges`                       | One Mermaid graph, supported subset below                 | Validates allowed role routes and optional reviewer/interface designation.                  |
+| H2 `common_template`             | Optional Markdown                                         | Cooperative instructions included for every intended recipient.                             |
+| H2 role name                     | Optional role Markdown; roles can also be graph nodes     | Includes only the selected recipient's full role contract.                                  |
+| H3 `role` inside a role          | Optional Markdown summary                                 | Supplies its short description in contact lists; absence supplies no invented summary.      |
+| H2 `message_footer`              | Optional Markdown with supported substitutions            | Additional ordinary-mail reply guidance; fixed typed execution guidance takes precedence.   |
 
 All three reserved H2 names (`edges`, `common_template`, `message_footer`)
 remain sections, not role nodes. Numbered forms such as `## 2. common_template`
@@ -248,8 +250,8 @@ edges. Ordinary catalogs have at most 32 roots, 256 selected Skills per root,
 explicitly; archive payloads also have the CLI's documented bounds. Presets have
 at most 32 names, 8 columns and 64 panes, with 8192-byte UTF-8/NUL-free
 commands. Unknown YAML is not an executable extension mechanism. Legacy TOML
-overlays, daemon policy keys, notifier registration and automatic PING are not
-setup.
+overlays, other daemon policy keys, notifier registration and automatic PING are
+not setup.
 
 Receiving roles must be existing consoles accepting text/paste and `C-m` in
 uniquely titled panes. Codex's `tui.terminal_title = []` preserves titles. Shell

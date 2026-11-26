@@ -1,9 +1,10 @@
 # CLI specification
 
-This is the canonical input/output contract for the daemonless CLI agreed in
-[issue #937](https://github.com/i9wa4/tmux-a2a-postman/issues/937).
-CLI help and Skill references each have one Markdown editing source embedded in
-the binary. Stable thin Skills select the relevant installed help topic.
+This is the canonical input/output contract for the file-first CLI established
+in [issue #937](https://github.com/i9wa4/tmux-a2a-postman/issues/937), including
+its optional foreground `daemon` wrapper. CLI help and Skill references each
+have one Markdown editing source embedded in the binary. Stable thin Skills
+select the relevant installed help topic.
 
 The optional external binding adds `channel-sync` (no command arguments) and
 `channel-report-heredoc --to <one-claimed-external-id> --state <done|blocked|pending>`
@@ -19,20 +20,23 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 
 ## 1. Commands and common rules
 
-| Command                    | Purpose                                                      |
-| -------------------------- | ------------------------------------------------------------ |
-| `launch-agents`            | Explicitly create one preset team in a new window or session |
-| `refresh-status`           | Collect one finite shared server snapshot                    |
-| `get-status`               | Read the saved explicit-server JSON snapshot                 |
-| `get-status-oneline`       | Render the same saved server snapshot as one human line      |
-| `pop`                      | Claim one own unread mail and return its final archive path  |
-| `send-heredoc`             | Send a request or reply to claimed message IDs               |
-| `execute-heredoc`          | Review and execute source in the caller's shell environment  |
-| `approve-execution`        | Send approval for one claimed execution request              |
-| `decline-execution`        | Send rejection for one claimed execution request             |
-| `help [topic [reference]]` | Explain commands without initializing workspace state        |
-| `version`                  | Print name, version and commit as JSON                       |
-| `resources`                | Explicitly materialize the offline helper bundle             |
+| Command                    | Purpose                                                         |
+| -------------------------- | --------------------------------------------------------------- |
+| `launch-agents`            | Explicitly create one preset team in a new window or session    |
+| `refresh-status`           | Collect one finite shared server snapshot                       |
+| `get-status`               | Read the saved explicit-server JSON snapshot                    |
+| `get-status-oneline`       | Render the same saved server snapshot as one human line         |
+| `pop`                      | Claim one own unread mail and return its final archive path     |
+| `send-heredoc`             | Send a request or reply to claimed message IDs                  |
+| `heartbeat`                | Send one reply-required request to the local verified interface |
+| `schedule-next heartbeat`  | Query the selected interval for a foreground daemon             |
+| `daemon -- heartbeat`      | Optional foreground loop invoking fresh CLI subprocesses        |
+| `execute-heredoc`          | Review and execute source in the caller's shell environment     |
+| `approve-execution`        | Send approval for one claimed execution request                 |
+| `decline-execution`        | Send rejection for one claimed execution request                |
+| `help [topic [reference]]` | Explain commands without initializing workspace state           |
+| `version`                  | Print name, version and commit as JSON                          |
+| `resources`                | Explicitly materialize the offline helper bundle                |
 
 `help` and command help read Markdown directly without configuration, tmux,
 credentials, extraction or runtime mutation. `help <name>` and
@@ -51,6 +55,19 @@ The top-level `--config` selects the same configuration. Relative or duplicate
 options, unexpected positional arguments and removed options are errors.
 `--postman-md` is removed from the product CLI. The notification test driver's
 similarly named fixture-copy option is a separate development interface.
+
+`heartbeat` accepts exact UTF-8 heredoc bytes or, with empty stdin, the
+selected `daemon.defaults.heartbeat.body`. `schedule-next heartbeat` returns
+JSON `command`, `every`, and RFC3339Nano `next_due_at` from the selected
+`daemon.defaults.heartbeat.every`. `daemon [--every <duration>] -- heartbeat`
+resolves the current CLI on each query and run, waits for one child to exit,
+and streams that child's stdout/stderr directly. An explicit empty `--config`
+is an error. Configured and explicit intervals must be at least one second;
+schedule-query output is limited to 4096 bytes. Overdue responses are rebased
+by one interval, and near-future responses are clamped to one second after the
+query. An immutable executable path may keep selecting an old CLI.
+These opt-in commands do not prove claim, substantive progress, or completion;
+heartbeat occurrence recovery and top-level team routing are not yet specified.
 
 `launch-agents <preset>` is an optional finite operation with `--socket`,
 `--cwd`, `--session`, and inert `--dry-run`; `launch-agents --list` lists
@@ -213,10 +230,8 @@ The existing filename selection order is preserved; timestamped IDs do not
 establish cross-process FIFO or order mixed legacy history. Output fields are
 `workspace`, `as_of`, `success`, `markdown_absolute_path` and common `self`.
 
-A non-null path also returns `instruction`, explicitly requiring a complete
-read of that Markdown through EOF before processing, replying or deciding that
-no action is needed. A truncated view, summary, notification, metadata or reply
-guidance does not substitute for the full file. Empty POP omits this field.
+A non-null path also returns `instruction` with the exact claimed path and the
+direct `cat` command for reading through EOF. Empty POP omits this field.
 
 `self.unread_count` counts messages remaining after this POP, excluding the
 claimed message. A known positive count is also named in `instruction`: fully
@@ -227,8 +242,8 @@ count. Zero, unknown or an empty POP ends the batch; never poll an empty inbox.
 A successful claim returns the absolute existing final Markdown path. Empty
 POP succeeds with a null path and unchanged last_pop_at. Read the complete
 Markdown through EOF: sender, identity and reply guidance come from that file,
-not repeated message bodies/receipt paths in JSON. The notification's hinted ID
-need not be the message actually selected; respond to the mail actually read.
+not repeated message bodies/receipt paths in JSON. Respond to the mail actually
+claimed and read.
 
 On a claim error, success is false and reason explains it. A committed claim is
 not resurrected if stdout, capture or supplemental state fails. Only the
@@ -459,35 +474,35 @@ main interface before this change; removed syntax is intentionally rejected.
 
 ### 10.1. Inputs and entry points
 
-| Surface                                                               | Decision and purpose                                           | Callers and rationale                                                                    |
-| --------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `get-status`                                                          | Saved server snapshot; explicit refresh-status owns collection | Agents/operators need one saved-file view; no global workspace scan                      |
-| `pop [id]`                                                            | Simplify to argument-free `pop`                                | Receivers claim their actual next mail; notification IDs remain hints                    |
-| `send-heredoc --to node`                                              | Keep; new requests require replies                             | Senders need explicit configured routes and literal stdin                                |
-| `--to session:interface`                                              | Keep direct parent/child routes                                | Interface nodes need exact per-hop identity without foreign capture access               |
-| `--reply-to`, `--fills-input-request-id`                              | Remove from public input; derive from `--to <POP'd-id>`        | Agents should not transcribe correlation metadata                                        |
-| Comma-separated `--to` IDs                                            | Add bounded combined replies, maximum 16                       | One answer can resolve several claimed requests with one sender/route                    |
-| `--reply-required`, `--no-reply`                                      | Remove; request/reply semantics determine policy               | Avoid contradictory reply flags and endless reply obligations                            |
-| `execute-bash --command`                                              | Replace with `execute-heredoc --reason` and stdin              | Exact multiline source, cwd and initialized shell form one reviewable request            |
-| `approve-execution`, `decline-execution`                              | Add fixed actions with `--to` and `--reason`                   | Approvers choose one action without JSON/code copies or boolean ambiguity                |
-| Decision/helper stdin                                                 | Reject nonempty stdin                                          | Reasons and target are explicit flags; source is never copied by the approver            |
-| `--config`                                                            | Keep one absolute override, before or after the command        | Operators/fixtures need explicit topology; defaults are cwd-independent                  |
-| `--postman-md`                                                        | Remove product alias                                           | One spelling for one input; the smoke driver's fixture-copy flag is separate             |
-| `--capture-related-panes`                                             | Remove; valid send/POP always trigger bounded session capture  | Visibility should not depend on each agent remembering a flag                            |
-| `help [topic [reference]]`, `<command> --help`, top-level `--help`    | Keep without runtime state; reject extra help arguments        | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics         |
-| `version`, top-level `--version`                                      | Keep compact name/version/commit JSON                          | Operators need the actual installed revision                                             |
-| Bare executable                                                       | Keep usage display, no mutation                                | No implicit startup operation                                                            |
-| Duplicate/unknown flags and extra positionals                         | Reject before mail publication/execution                       | No last-value-wins decisions or hidden compatibility branches                            |
-| HOME and XDG_CONFIG_HOME                                              | Keep absolute, canonical ownership/config sources              | Agents/operators use normal XDG layout; relative values fail                             |
-| XDG_STATE_HOME                                                        | Keep absolute private state selection                          | Tests and operators isolate mail; no new root flag                                       |
-| TMUX, TMUX_PANE and tmux native evidence                              | Keep verified identity inputs                                  | Mutable names, cwd alone and PID liveness alone are insufficient                         |
-| tmux default-shell, cwd and exported caller environment               | Keep explicit execution environment                            | Fresh shell configuration and first-prompt hooks run after authorization                 |
-| Legacy TOML, POSTMAN_HOME, context/root/daemon overrides              | Remove/ignore as authority                                     | They must not gate or redirect current mail                                              |
-| Daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                         | No resident process, retry service or second state engine                                |
-| Unused related capture-registration ledger                            | Remove dormant code                                            | Deferred state-machine work must not masquerade as current authority                     |
-| Pure compaction-marker helper                                         | Keep isolated, without automatic observation or action         | Preserve reusable parsing without coupling mail/notification to a model                  |
-| `nix run .#notification-smoke` and Python smoke options               | Keep development-only                                          | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing |
-| Nix update-toolchain, skill-check/publish and release helpers         | Keep explicit development/release tools                        | They do not add Postman operational commands; publishing remains user/release-owned      |
+| Surface                                                                      | Decision and purpose                                           | Callers and rationale                                                                         |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `get-status`                                                                 | Saved server snapshot; explicit refresh-status owns collection | Agents/operators need one saved-file view; no global workspace scan                           |
+| `pop [id]`                                                                   | Simplify to argument-free `pop`                                | Receivers claim their actual next mail                                                        |
+| `send-heredoc --to node`                                                     | Keep; new requests require replies                             | Senders need explicit configured routes and literal stdin                                     |
+| `--to session:interface`                                                     | Keep direct parent/child routes                                | Interface nodes need exact per-hop identity without foreign capture access                    |
+| `--reply-to`, `--fills-input-request-id`                                     | Remove from public input; derive from `--to <POP'd-id>`        | Agents should not transcribe correlation metadata                                             |
+| Comma-separated `--to` IDs                                                   | Add bounded combined replies, maximum 16                       | One answer can resolve several claimed requests with one sender/route                         |
+| `--reply-required`, `--no-reply`                                             | Remove; request/reply semantics determine policy               | Avoid contradictory reply flags and endless reply obligations                                 |
+| `execute-bash --command`                                                     | Replace with `execute-heredoc --reason` and stdin              | Exact multiline source, cwd and initialized shell form one reviewable request                 |
+| `approve-execution`, `decline-execution`                                     | Add fixed actions with `--to` and `--reason`                   | Approvers choose one action without JSON/code copies or boolean ambiguity                     |
+| Decision/helper stdin                                                        | Reject nonempty stdin                                          | Reasons and target are explicit flags; source is never copied by the approver                 |
+| `--config`                                                                   | Keep one absolute override, before or after the command        | Operators/fixtures need explicit topology; defaults are cwd-independent                       |
+| `--postman-md`                                                               | Remove product alias                                           | One spelling for one input; the smoke driver's fixture-copy flag is separate                  |
+| `--capture-related-panes`                                                    | Remove; valid send/POP always trigger bounded session capture  | Visibility should not depend on each agent remembering a flag                                 |
+| `help [topic [reference]]`, `<command> --help`, top-level `--help`           | Keep without runtime state; reject extra help arguments        | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics              |
+| `version`, top-level `--version`                                             | Keep compact name/version/commit JSON                          | Operators need the actual installed revision                                                  |
+| Bare executable                                                              | Keep usage display, no mutation                                | No implicit startup operation                                                                 |
+| Duplicate/unknown flags and extra positionals                                | Reject before mail publication/execution                       | No last-value-wins decisions or hidden compatibility branches                                 |
+| HOME and XDG_CONFIG_HOME                                                     | Keep absolute, canonical ownership/config sources              | Agents/operators use normal XDG layout; relative values fail                                  |
+| XDG_STATE_HOME                                                               | Keep absolute private state selection                          | Tests and operators isolate mail; no new root flag                                            |
+| TMUX, TMUX_PANE and tmux native evidence                                     | Keep verified identity inputs                                  | Mutable names, cwd alone and PID liveness alone are insufficient                              |
+| tmux default-shell, cwd and exported caller environment                      | Keep explicit execution environment                            | Fresh shell configuration and first-prompt hooks run after authorization                      |
+| Legacy TOML, POSTMAN_HOME, context/root/daemon overrides                     | Remove/ignore as authority                                     | They must not gate or redirect current mail                                                   |
+| Legacy daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                         | The optional foreground daemon is a scheduler, without a retry service or second state engine |
+| Unused related capture-registration ledger                                   | Remove dormant code                                            | Deferred state-machine work must not masquerade as current authority                          |
+| Pure compaction-marker helper                                                | Keep isolated, without automatic observation or action         | Preserve reusable parsing without coupling mail/notification to a model                       |
+| `nix run .#notification-smoke` and Python smoke options                      | Keep development-only                                          | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing      |
+| Nix update-toolchain, skill-check/publish and release helpers                | Keep explicit development/release tools                        | They do not add Postman operational commands; publishing remains user/release-owned           |
 
 ### 10.2. Outputs
 
@@ -635,7 +650,7 @@ node fields in §2 and configuration attribution defined in the server contract.
     "last_screen_change_at": null
   },
   "markdown_absolute_path": "/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md",
-  "instruction": "Read the entire Markdown file at markdown_absolute_path through EOF before processing, replying, or deciding no action is needed. Do not substitute a truncated view, summary, notification, metadata, or reply guidance for the full file."
+  "instruction": "Read the complete file by running `cat '/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md'` directly through EOF. Do not use `execute-heredoc` for this read."
 }
 ```
 

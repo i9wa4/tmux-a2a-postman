@@ -114,7 +114,8 @@ func RunWorkspacePop(args []string) (retErr error) {
 		out.facts.Mail = "claimed"
 		noteMessage(trace, claim.Message, c.caller.Caller.Role)
 		path = &claim.Path
-		out.Instruction = "Read the entire Markdown file at markdown_absolute_path through EOF before processing, replying, or deciding no action is needed. Do not substitute a truncated view, summary, notification, metadata, or reply guidance for the full file."
+		quotedPath := "'" + strings.ReplaceAll(claim.Path, "'", "'\\''") + "'"
+		out.Instruction = "Read the complete file by running `cat " + quotedPath + "` directly through EOF. Do not use `execute-heredoc` for this read."
 	}
 	return err
 }

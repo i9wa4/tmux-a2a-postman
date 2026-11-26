@@ -407,7 +407,7 @@ def run_case(case, terminal):
                 if any(item.get("notification", {}).get("status") != "unknown" for item in sends):
                     raise RuntimeError("absorbed Enter or pending input was incorrectly accepted")
                 observed = json.loads((evidence / "worker.absorbed.json").read_text())
-                if observed["enter_count"] != 6 or any(observed["draft"].count(item["mail_evidence"]["id"]) != 1 for item in sends):
+                if observed["enter_count"] != 6 or observed["draft"].count("Hello, worker! You've got mail.") != len(sends):
                     raise RuntimeError("Enter retry bound or paste-once invariant failed")
                 if list(evidence.glob("*.claim.*.json")):
                     raise RuntimeError("absorbed Enter triggered recipient action")
@@ -464,9 +464,8 @@ def run_case(case, terminal):
                 report["claims"] = proofs
                 if case == "concurrent" and not codex:
                     inputs = [json.loads(line)["text"] for line in (evidence / "worker.input.jsonl").read_text().splitlines()]
-                    for sent in sends:
-                        if sum(text.count(sent["mail_evidence"]["id"]) for text in inputs) != 1:
-                            raise RuntimeError("concurrent hint was incomplete, missing or pasted twice")
+                    if sum(text.count("You've got mail. Run `tmux-a2a-postman pop`") for text in inputs) != len(sends):
+                        raise RuntimeError("concurrent hints were incomplete, missing or pasted twice")
                     absorbed = json.loads((evidence / "worker.absorbed.json").read_text())
                     if absorbed["enter_count"] < 1:
                         raise RuntimeError("concurrent case did not exercise newline absorption")
