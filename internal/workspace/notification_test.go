@@ -35,7 +35,7 @@ func committedNotice(t *testing.T) (Mail, noticeRuntime, Message) {
 func TestNoticeFreshBudgetAndNoMailLock(t *testing.T) {
 	m, rt, msg := committedNotice(t)
 	rt.notify = func(ctx context.Context, b Binding, text string) error {
-		if ctx.Err() != nil || b.Role != "peer" || !strings.Contains(text, "You've got mail: "+msg.ID+".md") || strings.Contains(text, msg.Body) {
+		if ctx.Err() != nil || b.Role != "peer" || !strings.Contains(text, "You've got mail.") || strings.Contains(text, msg.ID) || strings.Contains(text, msg.Body) {
 			t.Fatal(ctx.Err(), b, text)
 		}
 		d, ok := ctx.Deadline()
@@ -167,7 +167,7 @@ func TestConcurrentDuplicateNoticeSubmitsOnce(t *testing.T) {
 
 func TestNotificationTextRetainsOriginalProtocol(t *testing.T) {
 	text := noticePrompt(Message{ID: "m-0123456789abcdef0123456789abcdef", To: "peer", Body: "NEVER IN HINT"})
-	if !strings.HasPrefix(text, "<!-- message start --> Hello, peer! You've got mail: ") || !strings.HasSuffix(text, "<!-- end of message -->") || strings.ContainsAny(text, "\r\n\x1b") || strings.Contains(text, "NEVER IN HINT") {
+	if text != "<!-- message start --> Hello, peer! You've got mail. Run `tmux-a2a-postman pop` to claim your next unread message and print its archived file path. <!-- end of message -->" || strings.Contains(text, "NEVER IN HINT") {
 		t.Fatal(text)
 	}
 }
@@ -176,19 +176,17 @@ func TestNotificationTextDefersResponseToClaimedArchive(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		message Message
-		want    string
-		absent  string
 	}{
-		{"ordinary request", Message{NeedsReply: true}, "substantive evidence or a concrete blocker", "approve or decline"},
-		{"no reply", Message{}, "POP's archive", "ACK is insufficient"},
-		{"execution request", Message{NeedsReply: true, Kind: "execution-request"}, "approve or decline guidance", "substantive evidence"},
-		{"external input", Message{External: &ExternalMessage{Direction: "in"}}, "channel report or decision procedure", "substantive evidence"},
+		{"ordinary request", Message{NeedsReply: true}},
+		{"no reply", Message{}},
+		{"execution request", Message{NeedsReply: true, Kind: "execution-request"}},
+		{"external input", Message{External: &ExternalMessage{Direction: "in"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			msg := tc.message
 			msg.ID, msg.To = "m-0123456789abcdef0123456789abcdef", "worker"
 			got := noticePrompt(msg)
-			if !strings.Contains(got, tc.want) || strings.Contains(got, tc.absent) || !strings.Contains(got, "not this hint") || strings.ContainsAny(got, "\r\n") {
+			if got != "<!-- message start --> Hello, worker! You've got mail. Run `tmux-a2a-postman pop` to claim your next unread message and print its archived file path. <!-- end of message -->" {
 				t.Fatal(got)
 			}
 		})

@@ -11,8 +11,6 @@ import threading
 import tty
 import time
 
-from mail_fixture import MESSAGE_ID_PATTERN
-
 nonce, mode = sys.argv[1:3]
 helper = (sys.argv[3] if len(sys.argv) == 4 else
           str(pathlib.Path(__file__).with_name("notification_recipient.py")))
@@ -64,23 +62,20 @@ def process():
             if line is None:
                 return
             # Two independent senders may paste complete hints before either
-            # Enter. Accept a sequence of whole notifications, never fragments,
-            # interleaved text or duplicate IDs. This is a terminal test actor,
+            # Enter. Accept a sequence of whole notifications, never fragments or
+            # interleaved text. This is a terminal test actor,
             # not a production notification parser or task runtime.
             notices = re.findall(r"<!-- message start -->.*?<!-- end of message -->", line, re.S)
             remaining = re.sub(r"<!-- message start -->.*?<!-- end of message -->", "", line, flags=re.S)
             if not notices or remaining.strip():
                 raise RuntimeError("notification split, interleaved or corrupted: " + line)
-            identifiers = []
+            notices_seen = 0
             for notice in notices:
-                matches = re.findall(r"You've got mail: (" + MESSAGE_ID_PATTERN + r")\.md", notice)
-                if len(matches) != 1:
+                if notice.count("You've got mail. Run `tmux-a2a-postman pop` to claim your next unread message and print its archived file path.") != 1:
                     raise RuntimeError("corrupted notification: " + notice)
-                identifiers.extend(matches)
-            if len(set(identifiers)) != len(identifiers):
-                raise RuntimeError("duplicate notification body pasted")
-            for identifier in identifiers:
-                action(identifier)
+                notices_seen += 1
+            for _ in range(notices_seen):
+                action("notice")
             with lock:
                 completed_buffers += 1
                 save_progress()

@@ -23,6 +23,8 @@ type WorkspaceTopology struct {
 	Edges             map[string][]string
 	Reviewer          string
 	InterfaceNode     string
+	HeartbeatEvery    string
+	HeartbeatBody     string
 	ExternalRoot      string
 	ExternalWorkspace string
 	ExternalSession   string
@@ -75,6 +77,10 @@ func parseWorkspaceTopology(ctx context.Context, content string) (WorkspaceTopol
 		return result, err
 	}
 	fm, err := workspaceFrontmatter(content)
+	if err != nil {
+		return result, err
+	}
+	result.HeartbeatEvery, result.HeartbeatBody, err = parseHeartbeatDefaults(content)
 	if err != nil {
 		return result, err
 	}

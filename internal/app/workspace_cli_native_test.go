@@ -325,7 +325,7 @@ func TestCrossDirectoryArchiveKeepsRecipientContactsWithUnknownOffRouteSibling(t
 	}
 }
 
-func TestCrossDirectoryArchiveRejectsIncompleteParentContacts(t *testing.T) {
+func TestCrossDirectoryArchiveOmitsIncompleteParentContacts(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
 	if err := os.WriteFile(f.config, []byte(parentPolicy), 0o600); err != nil {
@@ -380,11 +380,17 @@ func TestCrossDirectoryArchiveRejectsIncompleteParentContacts(t *testing.T) {
 	}
 	alpha := children["alpha"]
 	result, err := f.run(alpha.pane, "incomplete parent contacts", "send-heredoc", "--config", alpha.config, "--to", "work:worker")
-	if err == nil || result.Success || !strings.Contains(result.Reason, "complete recipient directory contacts") {
-		t.Fatal("unverified sibling produced incomplete parent contacts", result, err)
+	if err != nil || !result.Success {
+		t.Fatal("unverified sibling blocked exact parent route", result, err)
 	}
-	if result, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !result.Success || result.MarkdownPath != nil {
-		t.Fatal("incomplete recipient context was published", result, err)
+	partialClaim, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !partialClaim.Success || partialClaim.MarkdownPath == nil {
+		t.Fatal("parent POP with unavailable contacts", partialClaim, err)
+	}
+	partialArchive := readProtocolArchive(t, *partialClaim.MarkdownPath)
+	if partialArchive.Context == nil || !strings.Contains(partialArchive.Context.Markdown, "Parent and child contacts are unavailable") ||
+		strings.Contains(partialArchive.Context.Markdown, "- beta:messenger") {
+		t.Fatal("parent archive advertised unverified child", partialArchive.Context)
 	}
 	if result, err := f.run(f.peer, "incomplete local contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !result.Success {
 		t.Fatal("local send failed despite verified local recipient", result, err)
@@ -658,7 +664,7 @@ func TestLocalInterfaceDiscoveryRejectsRetitledBinding(t *testing.T) {
 	}
 }
 
-func TestCrossInterfaceContactDiscoveryTimeoutRejectsMail(t *testing.T) {
+func TestCrossInterfaceContactDiscoveryTimeoutKeepsMailAvailable(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
 	if err := os.WriteFile(f.config, []byte(parentPolicy), 0o600); err != nil {
@@ -685,7 +691,7 @@ func TestCrossInterfaceContactDiscoveryTimeoutRejectsMail(t *testing.T) {
 		t.Fatal(err)
 	}
 	shimDir := t.TempDir()
-	shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ]; then\n  count=0\n  if [ -e \"$POSTMAN_TEST_MARKER\" ]; then count=$(cat \"$POSTMAN_TEST_MARKER\"); fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$POSTMAN_TEST_MARKER\"\n  if [ \"$count\" -ge 3 ]; then sleep 3; fi\n fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ]; then\n  count=0\n  if [ -e \"$POSTMAN_TEST_MARKER\" ]; then count=$(cat \"$POSTMAN_TEST_MARKER\"); fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$POSTMAN_TEST_MARKER\"\n  if [ \"$count\" -eq 4 ]; then sleep 3; fi\n fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(shimDir, "tmux"), []byte(shim), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -699,14 +705,19 @@ func TestCrossInterfaceContactDiscoveryTimeoutRejectsMail(t *testing.T) {
 	cmd.Stdin = strings.NewReader("cross timeout contacts")
 	raw, err := cmd.Output()
 	if ctx.Err() != nil {
-		t.Fatal("CLI timed out before rejecting cross-session mail", ctx.Err())
+		t.Fatal("CLI timed out before sending cross-session mail", ctx.Err())
 	}
 	var result protocolOutput
-	if json.Unmarshal(raw, &result) != nil || err == nil || result.Success || !strings.Contains(result.Reason, "recipient directory contacts timed out") {
-		t.Fatal("cross-session timeout published or returned the wrong failure", string(raw), err)
+	if json.Unmarshal(raw, &result) != nil || err != nil || !result.Success {
+		t.Fatal("advisory contact timeout blocked cross-session mail", string(raw), err)
 	}
-	if claimed, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !claimed.Success || claimed.MarkdownPath != nil {
-		t.Fatal("cross-session timeout published mail", claimed, err)
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("cross-session mail was not delivered", claimed, err)
+	}
+	archive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if archive.Context == nil || !strings.Contains(archive.Context.Markdown, "Parent and child contacts are unavailable") {
+		t.Fatal("timed-out contacts were not marked unavailable", archive.Context)
 	}
 }
 

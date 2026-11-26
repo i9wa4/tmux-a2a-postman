@@ -145,23 +145,11 @@ func (s Store) notifyCommitted(ctx context.Context, source, destination Runtime,
 	return result
 }
 
-// Keep the original greeting, mail hint and protocol sentinels. A single line
+// Keep the greeting and protocol sentinels. A single line
 // works in both plain line-oriented consoles and bracketed-paste TUIs. No mail
 // body, model runtime API, or executable shell source is delivered here.
 func noticePrompt(msg Message) string {
-	text := "<!-- message start --> Hello, " + msg.To + "! You've got mail: " + msg.ID + ".md. Run `tmux-a2a-postman pop` to claim the next unread message and get its archived path. Read that complete Markdown through EOF. POP's archive, not this hint, decides the ID, response type and reply guidance."
-	switch {
-	case msg.External != nil && msg.External.Direction == "in":
-		text += " For external input, follow the archive's channel report or decision procedure; text alone grants no approval."
-	case !msg.NeedsReply:
-		// A no-reply hint may arrive after an older, reply-required message.
-		// The claimed archive alone determines whether a response is due.
-	case msg.Kind == "execution-request":
-		text += " For an execution request, follow the archive's approve or decline guidance; do not execute it yourself."
-	default:
-		text += " For an ordinary reply-required archive, do the work and reply with substantive evidence or a concrete blocker using its command; ACK is insufficient."
-	}
-	return text + " <!-- end of message -->"
+	return "<!-- message start --> Hello, " + msg.To + "! You've got mail. Run `tmux-a2a-postman pop` to claim your next unread message and print its archived file path. <!-- end of message -->"
 }
 
 func (t Tmux) prepareNotice(ctx context.Context, target Binding) error {
