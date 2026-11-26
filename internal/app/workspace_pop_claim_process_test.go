@@ -56,6 +56,66 @@ func TestWorkspacePopProcessReportsRemainingBatchAndContinuation(t *testing.T) {
 	}
 }
 
+func TestWorkspacePopProcessUsesClaimedArchiveWhenNewerHintNeedsNoReply(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	const olderBody = "older work request"
+	if sent, err := f.run(f.peer, olderBody, "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	older := f.sent("peer", olderBody)
+	const requestBody = "request that receives a no-reply answer"
+	if sent, err := f.run(f.worker, requestBody, "send-heredoc", "--config", f.config, "--to", "peer"); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	request := f.sent("worker", requestBody)
+	peerPop, err := f.run(f.peer, "", "pop", "--config", f.config)
+	if err != nil || !peerPop.Success || peerPop.MarkdownPath == nil || readProtocolArchive(t, *peerPop.MarkdownPath).ID != request.ID {
+		t.Fatal(peerPop, err)
+	}
+	const answerBody = "answer to worker request"
+	if sent, err := f.run(f.peer, answerBody, "send-heredoc", "--config", f.config, "--to", request.ID); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	answer := f.sent("peer", answerBody)
+	if answer.NeedsReply || answer.ID <= older.ID {
+		t.Fatal("expected newer no-reply mail", older, answer)
+	}
+
+	// The latest hint concerns answer, but POP must claim older first.
+	first, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !first.Success || first.MarkdownPath == nil || first.Self.UnreadCount == nil || *first.Self.UnreadCount != 1 {
+		t.Fatal(first, err)
+	}
+	claimed := readProtocolArchive(t, *first.MarkdownPath)
+	if claimed.ID != older.ID || !claimed.NeedsReply || claimed.Body != olderBody {
+		t.Fatal(claimed)
+	}
+	const workResult = "older request completed with evidence"
+	if sent, err := f.run(f.worker, workResult, "send-heredoc", "--config", f.config, "--to", claimed.ID); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	reply := f.sent("worker", workResult)
+	if reply.NeedsReply || len(reply.Replies) != 1 || reply.Replies[0].MessageID != older.ID {
+		t.Fatal(reply)
+	}
+	second, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !second.Success || second.MarkdownPath == nil || second.Self.UnreadCount == nil || *second.Self.UnreadCount != 0 {
+		t.Fatal(second, err)
+	}
+	claimed = readProtocolArchive(t, *second.MarkdownPath)
+	if claimed.ID != answer.ID || claimed.NeedsReply || claimed.Body != answerBody {
+		t.Fatal(claimed)
+	}
+	empty, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !empty.Success || empty.MarkdownPath != nil || empty.Instruction != "" {
+		t.Fatal(empty, err)
+	}
+	entries, err := os.ReadDir(f.box("worker", "sent"))
+	if err != nil || len(entries) != 2 {
+		t.Fatal("unexpected worker send after no-reply archive", len(entries), err)
+	}
+}
+
 func TestWorkspacePopProcessUnknownUnreadDoesNotRequestContinuation(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	if sent, err := f.run(f.peer, "claim despite unavailable supplemental counts", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !sent.Success {
@@ -105,8 +165,7 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	if *got.MarkdownPath != expected || !filepath.IsAbs(expected) {
 		t.Fatal(got.MarkdownPath, expected)
 	}
-	if !strings.Contains(got.Instruction, "markdown_absolute_path through EOF") ||
-		!strings.Contains(got.Instruction, "deciding no action") || !strings.Contains(got.Instruction, "truncated view") {
+	if got.Instruction != "Read the complete file by running `cat '"+expected+"'` directly through EOF. Do not use `execute-heredoc` for this read." {
 		t.Fatal("POP must require a complete archive read before any handling decision", got.Instruction)
 	}
 	archived := readProtocolArchive(t, expected)
@@ -124,5 +183,36 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	second, err := f.run(f.worker, "", "pop", "--config", f.config)
 	if err != nil || !second.Success || second.MarkdownPath != nil || second.Instruction != "" || second.Self.LastPopAt == nil || *second.Self.LastPopAt != receipt.ClaimedAt {
 		t.Fatal("empty POP changed receipt/time", second, err)
+	}
+}
+
+func TestWorkspacePopProcessReadCommandPreservesShellSpecialPath(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	f.stateHome = filepath.Join(f.stateHome, "space ! ' $ ` ; \\ end")
+	const body = "special path archive through EOF\n"
+	if sent, err := f.run(f.peer, body, "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !sent.Success {
+		t.Fatal(sent, err)
+	}
+	got, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !got.Success || got.MarkdownPath == nil {
+		t.Fatal(got, err)
+	}
+	const prefix = "Read the complete file by running `"
+	const suffix = "` directly through EOF. Do not use `execute-heredoc` for this read."
+	if !strings.HasPrefix(got.Instruction, prefix) || !strings.HasSuffix(got.Instruction, suffix) {
+		t.Fatal("missing direct command", got.Instruction)
+	}
+	command := strings.TrimSuffix(strings.TrimPrefix(got.Instruction, prefix), suffix)
+	shell, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh unavailable")
+	}
+	output, err := exec.Command(shell, "-ic", command).Output()
+	if err != nil {
+		t.Fatal("emitted command failed in an interactive shell", command, err)
+	}
+	want, err := os.ReadFile(*got.MarkdownPath)
+	if err != nil || string(output) != string(want) {
+		t.Fatal("emitted command did not read the claimed archive through EOF", err)
 	}
 }

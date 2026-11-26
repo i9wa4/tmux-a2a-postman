@@ -18,7 +18,7 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "messenger" {
+	if len(topology.Nodes) != 8 || topology.Reviewer != "approver" || topology.InterfaceNode != "orchestrator" {
 		t.Fatal(topology)
 	}
 	policy, err := topology.RecipientPolicy(ctx, path)
@@ -33,7 +33,13 @@ func TestBuiltinSourceIsPortableAndExplicitFileIsComplete(t *testing.T) {
 			t.Fatal("missing established role", name)
 		}
 	}
-	for _, text := range []string{"postman-records", "postman-review", "postman-plan", "postman-orchestrate", "no installed Skill tree"} {
+	if !strings.Contains(policy.Common, "Use English unless your role specifies otherwise") ||
+		!strings.Contains(policy.Nodes["orchestrator"].Instructions, "Own completion of this session") ||
+		!strings.Contains(policy.Nodes["messenger"].Instructions, "Relay requests and follow-ups") ||
+		!strings.Contains(policy.Nodes["approver"].Instructions, "Apply human authorization supplied with the request") {
+		t.Fatal("builtin direct interface or optional messenger guidance missing")
+	}
+	for _, text := range []string{"postman-records", "subagent-review", "development-workflow", "git-github-operations", "stay-lazy", "postman-send-message"} {
 		if !strings.Contains(policy.Catalog, text) {
 			t.Fatal("unreachable builtin procedure", text)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/binding"
@@ -43,8 +44,11 @@ func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 	if err != nil {
 		return nil, err
 	}
-	var interfaces []DirectoryInterface
-	seenNames, seenRoots := map[string]bool{}, map[string]bool{}
+	type nativeGroup struct {
+		sessionID, root string
+		bindings        []Binding
+	}
+	var groupsToVerify []nativeGroup
 	for _, sessionID := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		if !nativeID(sessionID, '$') {
 			return nil, ErrUnknown
@@ -85,59 +89,152 @@ func (s Store) verifiedDirectoryInterfaces(ctx context.Context, t Tmux, sourceRo
 					continue
 				}
 			}
-			role := sourceRole
-			peer := t
-			var saved runtimeRecord
-			if sessionID != origin.Caller.Owner.Session || root != origin.Root {
-				var scope *StatusScope
-				var roles []string
-				saved, scope, roles, err = s.readStatusAttribution(ctx, root,
-					Owner{Server: origin.Caller.Owner.Server, Incarnation: origin.Caller.Owner.Incarnation, Session: sessionID}, native)
-				if errors.Is(err, errUnregisteredWorkspace) {
-					if root == targetRoot {
-						return nil, ErrUnknown // An addressed interface must be registered.
-					}
-					continue // An ordinary pane without registration is not an interface.
+			groupsToVerify = append(groupsToVerify, nativeGroup{sessionID, root, native})
+		}
+	}
+	if targetRoot == "" {
+		// Visit the immediate ancestor first and descendants from shallow to
+		// deep. A confirmed or unavailable intermediate owns its subtree, so
+		// deeper registrations cannot become direct contacts or veto this view.
+		sort.Slice(groupsToVerify, func(i, j int) bool {
+			a, b := groupsToVerify[i], groupsToVerify[j]
+			class := func(root string) int {
+				switch {
+				case root == origin.Root:
+					return 0
+				case directoryContains(root, origin.Root):
+					return 1
+				default:
+					return 2
 				}
-				if err != nil || scope == nil || !binding.ValidateNodeName(scope.Interface) {
-					return nil, ErrUnknown
-				}
-				role = scope.Interface
-				peer.Roles, peer.ConfigPath, peer.BuiltinConfig, peer.ConfigFingerprint = roles, scope.Config, scope.Builtin, scope.Fingerprint
 			}
-			var selected Binding
-			for _, candidate := range native {
-				if candidate.Role != role {
-					continue
-				}
-				if selected.Owner.valid() {
-					return nil, errors.New("ambiguous interface role binding")
-				}
-				selected = candidate
+			ca, cb := class(a.root), class(b.root)
+			if ca != cb {
+				return ca < cb
 			}
-			if !selected.Owner.valid() {
+			if len(a.root) != len(b.root) {
+				if ca == 1 {
+					return len(a.root) > len(b.root)
+				}
+				return len(a.root) < len(b.root)
+			}
+			return a.sessionID < b.sessionID
+		})
+	}
+	var interfaces []DirectoryInterface
+	seenNames, seenRoots := map[string]bool{}, map[string]bool{}
+	var childFrontier []string
+	parentFrontier := ""
+	for _, group := range groupsToVerify {
+		sessionID, root, native := group.sessionID, group.root, group.bindings
+		if targetRoot == "" {
+			if directoryContains(root, origin.Root) && parentFrontier != "" && root != parentFrontier {
 				continue
 			}
-			if sessionID != origin.Caller.Owner.Session || root != origin.Root {
-				if !slices.Contains(saved.Bindings, selected) {
-					return nil, ErrUnknown
+			blocked := false
+			for _, frontier := range childFrontier {
+				if directoryContains(frontier, root) {
+					blocked = true
+					break
 				}
 			}
-			name, err := nativeSessionName(ctx, t.Socket, sessionID)
-			if err != nil || seenNames[name] || seenRoots[root] {
+			if blocked {
+				continue
+			}
+		}
+		role := sourceRole
+		peer := t
+		var saved runtimeRecord
+		if sessionID != origin.Caller.Owner.Session || root != origin.Root {
+			var scope *StatusScope
+			var roles []string
+			saved, scope, roles, err = s.readStatusAttribution(ctx, root,
+				Owner{Server: origin.Caller.Owner.Server, Incarnation: origin.Caller.Owner.Incarnation, Session: sessionID}, native)
+			if errors.Is(err, errUnregisteredWorkspace) {
+				if root == targetRoot {
+					return nil, ErrUnknown // An addressed interface must be registered.
+				}
+				continue // An ordinary pane without registration is not an interface.
+			}
+			if targetRoot == "" && errors.Is(err, errMissingConfigProvenance) {
+				if directoryContains(origin.Root, root) {
+					childFrontier = append(childFrontier, root)
+				} else if directoryContains(root, origin.Root) {
+					parentFrontier = root
+				}
+				continue // No current configuration means this sibling is not a verified contact.
+			}
+			if targetRoot == "" && root == "~" && err != nil && directoryContains(root, origin.Root) &&
+				formerAncestorWithoutLiveRole(saved, native) {
+				continue // An old registration cannot turn ordinary ancestor panes into an interface.
+			}
+			if err != nil || scope == nil || !binding.ValidateNodeName(scope.Interface) {
 				return nil, ErrUnknown
 			}
-			peer.Pane = selected.Owner.Pane
-			runtime := NamedRuntime{peer, name, role, selected.Owner.Server, selected.Owner.Incarnation, sessionID, selected.PanePID, false}
-			fresh, err := runtime.Snapshot(ctx)
-			if err != nil || fresh.Root != root {
+			role = scope.Interface
+			peer.Roles, peer.ConfigPath, peer.BuiltinConfig, peer.ConfigFingerprint = roles, scope.Config, scope.Builtin, scope.Fingerprint
+		}
+		var selected Binding
+		for _, candidate := range native {
+			if candidate.Role != role {
+				continue
+			}
+			if selected.Owner.valid() {
+				return nil, errors.New("ambiguous interface role binding")
+			}
+			selected = candidate
+		}
+		if !selected.Owner.valid() {
+			continue
+		}
+		if sessionID != origin.Caller.Owner.Session || root != origin.Root {
+			if !slices.Contains(saved.Bindings, selected) {
 				return nil, ErrUnknown
 			}
-			seenNames[name], seenRoots[root] = true, true
-			interfaces = append(interfaces, DirectoryInterface{Session: name, Root: root, Runtime: runtime, InterfaceRole: role})
+		}
+		name, err := nativeSessionName(ctx, t.Socket, sessionID)
+		if err != nil || seenNames[name] || seenRoots[root] {
+			return nil, ErrUnknown
+		}
+		peer.Pane = selected.Owner.Pane
+		runtime := NamedRuntime{peer, name, role, selected.Owner.Server, selected.Owner.Incarnation, sessionID, selected.PanePID, false}
+		fresh, err := runtime.Snapshot(ctx)
+		if err != nil || fresh.Root != root {
+			return nil, ErrUnknown
+		}
+		seenNames[name], seenRoots[root] = true, true
+		interfaces = append(interfaces, DirectoryInterface{Session: name, Root: root, Runtime: runtime, InterfaceRole: role})
+		if targetRoot == "" {
+			if directoryContains(origin.Root, root) {
+				childFrontier = append(childFrontier, root)
+			} else if directoryContains(root, origin.Root) {
+				parentFrontier = root
+			}
 		}
 	}
 	return interfaces, nil
+}
+
+// A former runtime can leave private records at HOME after its team exits.
+// Only an ancestor with no native pane bearing any of its registered roles is
+// ordinary now; a plausible live interface still fails closed on stale state.
+func formerAncestorWithoutLiveRole(saved runtimeRecord, native []Binding) bool {
+	if saved.Version != 1 || !saved.Owner.valid() || len(saved.Bindings) == 0 ||
+		len(native) == 0 || sameRuntime(saved.Owner, native[0].Owner) ||
+		ValidateBindings(saved.Bindings) != nil {
+		return false
+	}
+	for _, former := range saved.Bindings {
+		if !sameRuntime(saved.Owner, former.Owner) {
+			return false
+		}
+		for _, current := range native {
+			if current.Role == former.Role {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // VerifiedDirectoryInterfacesFrom enumerates direct-route candidates from a

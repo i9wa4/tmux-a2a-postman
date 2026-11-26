@@ -34,7 +34,7 @@ func TestDocumentedConfigurations(t *testing.T) {
 				if policy.Nodes["builder"].Role != "Implement scoped changes and supply test evidence." || !strings.Contains(policy.Nodes["builder"].Instructions, "assigned worktree") {
 					t.Fatal(policy.Nodes["builder"])
 				}
-				for _, skill := range []string{"postman-usage", "postman-send-message", "postman-recall", "postman-team-manager"} {
+				for _, skill := range []string{"stay-lazy", "postman-send-message", "postman-records", "development-workflow"} {
 					if !strings.Contains(policy.Catalog, "`"+skill+"`") {
 						t.Fatal("selected installed metadata missing", skill)
 					}

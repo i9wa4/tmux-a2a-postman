@@ -44,7 +44,7 @@ append_skill_for_path() {
 
   path=${path#./}
   case "$path" in
-  skills/*/* | help/postman-*/*)
+  skills/*/* | dist/skills/*/*)
     skill_root=${path%%/*}
     rest=${path#*/}
     skill_name=${rest%%/*}

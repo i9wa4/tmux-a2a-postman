@@ -93,7 +93,7 @@ func (m Mail) DecideExecution(ctx context.Context, rt Runtime, id, reason string
 		if err != nil {
 			return err
 		}
-		result = Message{Kind: "execution-decision", ID: identity.ID, From: s.Caller.Role, To: original.From, Replies: replyReferences(sources), CreatedAt: identity.CreatedAt, Body: string(raw), GuidanceVersion: 1}
+		result = Message{Kind: "execution-decision", ID: identity.ID, From: s.Caller.Role, To: original.From, Replies: replyReferences(sources), CreatedAt: identity.CreatedAt, Body: string(raw), GuidanceVersion: 2}
 		if err := m.addMessageContext(ctx, s, &result); err != nil {
 			return err
 		}

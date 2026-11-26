@@ -5,10 +5,14 @@ get-status         Read the saved whole-server JSON snapshot
 get-status-oneline Read a compact human overview of the selected tmux server
 pop                Claim one own unread message; return its archive path
 send-heredoc       Send a new request or reply to claimed message IDs
+heartbeat          Send one reply-required request to the verified interface
+schedule-next      Query the current CLI heartbeat schedule as JSON
+daemon             Opt-in foreground wrapper for repeated fresh CLI calls
 execute-heredoc    Run source in an initialized shell after needed approval
 approve-execution  Approve one own POP'd execution request, with a reason
 decline-execution  Decline one own POP'd execution request, with a reason
 help [topic [ref]] Read embedded Markdown commands and workflows
+skill <name> [ref] Read a complete embedded Skill or reference
 resources          Explicitly materialize the offline helper bundle
 version            Print build version JSON
 ```
@@ -16,12 +20,13 @@ version            Print build version JSON
 Each workspace command accepts one absolute --config override. Default:
 $XDG_CONFIG_HOME/tmux-a2a-postman/postman.md, or $HOME/.config/tmux-a2a-postman/postman.md.
 If that automatic path is absent, the embedded standard team is used. Custom
-configuration is a complete override. Read help config and skills
-postman-orchestrate for setup and workflow. No daemon startup is needed. Send
-and execute accept quoted heredoc stdin. POP takes no message ID. Generic tmux
-paste and bounded, spaced C-m retries notify existing agent consoles. No model
-API, registration or provider-specific parser is used. Notification uncertainty
-never reverses durable mail. Read the complete POP archive before acting.
+configuration is a complete override. Read help config and skill
+postman-send-message for setup and first contact. No daemon startup is needed.
+Send and execute accept quoted heredoc stdin. POP takes no message ID. Generic
+tmux paste and bounded, spaced C-m retries notify existing agent consoles. No
+model API, registration or provider-specific parser is used. Notification
+uncertainty never reverses durable mail. Read the complete POP archive before
+acting.
 
 Use help <command> or <command> --help for details. Help/version need no tmux.
 

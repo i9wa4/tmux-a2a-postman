@@ -50,7 +50,7 @@ func TestWorkspaceMailRetainsRecipientPolicyCatalogContactsAndLiteralBody(t *tes
 		"\n### Common contract\n", "\n### worker instructions\n", "\n### Available Skills\n", "- `alpha`: First description line and its continuation.", "- `zeta`:",
 		"You can talk to:\n\n- guardian: Final review owner.\n- peer: Command reviewer and sender.",
 		"send-heredoc --config '", " --to " + sent.ID, "Configured note for " + sent.ID,
-		"\n## Sender Message\n", "Read this complete archived Markdown through EOF",
+		"\n## Sender Message\n", "Read this complete archived Markdown through EOF", "You may run `cat` directly only for the exact archive path returned by your own successful `pop`",
 	} {
 		if !strings.Contains(context, wanted) {
 			t.Fatalf("generated recipient context lacks %q:\n%s", wanted, context)

@@ -32,6 +32,10 @@ func TestStatusFingerprintSeparatesAuthoredPolicyFromRoutingTopology(t *testing.
 		return topology
 	}
 	first := load(base)
+	heartbeatChange := load(strings.Replace(base, "interface_node: worker", "interface_node: worker\ndaemon:\n  defaults:\n    heartbeat:\n      every: 2m\n      body: Check work.\n", 1))
+	if StatusConfigFingerprint(first) != StatusConfigFingerprint(heartbeatChange) || first.PolicyIdentity() == heartbeatChange.PolicyIdentity() {
+		t.Fatal("heartbeat defaults changed routing registration or did not change authored policy")
+	}
 	authoredChange := load(strings.Replace(base, "Worker instructions", "Updated worker instructions", 1))
 	if StatusConfigFingerprint(first) != StatusConfigFingerprint(authoredChange) || first.PolicyIdentity() == authoredChange.PolicyIdentity() {
 		t.Fatal("authored-only change altered routing identity or kept policy identity")
@@ -102,12 +106,12 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
 	for _, pane := range []string{f.pane, childPane} {
-		f.run(t, "select-pane", "-t", pane, "-T", "messenger")
+		f.run(t, "select-pane", "-t", pane, "-T", "orchestrator")
 	}
 	ctx := context.Background()
 	configPath := filepath.Join(f.home, "absent-postman.md")
 	topology, err := (config.Source{Path: configPath, Builtin: true}).Load(ctx)
-	if err != nil || topology.InterfaceNode != "messenger" {
+	if err != nil || topology.InterfaceNode != "orchestrator" {
 		t.Fatalf("built-in directory interface: %q %v", topology.InterfaceNode, err)
 	}
 	adapter := f.adapter()
@@ -148,17 +152,17 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	record.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
 	write()
 	adapter.Pane = childPane
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("prior v2 built-in registration was accepted without normal re-registration")
 	}
 	record.Fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	write()
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("foreign v2 built-in registration was accepted")
 	}
 	record.Fingerprint = legacyBuiltinStatusFingerprint(topology)
 	write()
-	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo")
+	interfaces, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +182,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	adapter.Pane = childPane
 	record.Fingerprint = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 	write()
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("tampered v3 built-in registration was accepted")
 	}
 	record.Fingerprint = StatusConfigFingerprint(topology)
@@ -198,7 +202,7 @@ func TestDirectoryRouteAcceptsPinnedBuiltinParentAndRejectsStalePane(t *testing.
 	}
 	record.Binding.PanePID = "999999"
 	write()
-	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "messenger", "~/repo"); err == nil {
+	if _, err := store.VerifiedDirectoryInterfacesOnRoute(ctx, adapter, "orchestrator", "~/repo"); err == nil {
 		t.Fatal("stale parent pane provenance admitted")
 	}
 }
@@ -226,6 +230,39 @@ func registerDirectoryPane(t *testing.T, store Store, adapter Tmux, pane string)
 	if err := store.WithVerified(context.Background(), adapter, func(*os.Root, Snapshot) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func markFormerDirectoryRuntime(t *testing.T, store Store, home, root string) (string, []byte) {
+	t.Helper()
+	canonical, err := CanonicalRoot(root, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := Name(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.StateRoot, name, "runtime", "binding.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var former runtimeRecord
+	if err := json.Unmarshal(data, &former); err != nil {
+		t.Fatal(err)
+	}
+	former.Owner.Session = "$999"
+	for i := range former.Bindings {
+		former.Bindings[i].Owner.Session = "$999"
+	}
+	data, err = json.Marshal(former)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, data
 }
 
 func removeDirectoryProvenance(t *testing.T, store Store, home, root, pane string) {
@@ -393,6 +430,104 @@ func TestDirectoryRouteIgnoresOrdinaryUnregisteredIntermediatePane(t *testing.T)
 	}
 	if after := directoryTestFiles(t, m.Store.StateRoot); !slices.Equal(before, after) {
 		t.Fatal("stale intermediate changed durable files", before, after)
+	}
+}
+
+func TestRecipientDirectoryIgnoresDormantFormerHomeAncestor(t *testing.T) {
+	f := newTmuxFixture(t)
+	childRoot := filepath.Join(f.repo, "child")
+	if err := os.Mkdir(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	homePane := f.run(t, "new-session", "-d", "-s", "home-shell", "-c", f.home,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	childPane := f.run(t, "new-session", "-d", "-s", "child", "-c", childRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.run(t, "select-pane", "-t", homePane, "-T", "worker")
+	f.run(t, "select-pane", "-t", childPane, "-T", "worker")
+	ctx := context.Background()
+	adapter := directoryConfiguredAdapter(t, f)
+	store := Store{StateRoot: filepath.Join(f.home, "state")}
+	for _, pane := range []string{f.pane, childPane, homePane} {
+		registerDirectoryPane(t, store, adapter, pane)
+	}
+	path, data := markFormerDirectoryRuntime(t, store, f.home, f.home)
+	f.run(t, "select-pane", "-t", homePane, "-T", "shell")
+	parent, err := adapter.NamedCaller(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interfaces, err := store.VerifiedDirectoryInterfacesFrom(ctx, parent)
+	if err != nil {
+		t.Fatal("dormant HOME registration vetoed parent contacts", err)
+	}
+	if len(interfaces) != 2 {
+		t.Fatalf("want parent and child, got %+v", interfaces)
+	}
+	if _, err := DirectDirectoryPeer(interfaces, "one", "child"); err != nil {
+		t.Fatal("direct child contact missing", err)
+	}
+	child, err := adapter.FindNamedPeer(ctx, "child", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mail := Mail{Store: store}
+	request, err := mail.SendCrossWithReply(ctx, child, parent.WithDirectoryRoute(), "question", "", "", true)
+	if err != nil || request.ID == "" {
+		t.Fatal("dormant HOME registration blocked child request", request, err)
+	}
+	if _, err := mail.Claim(ctx, parent, request.ID); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := mail.SendCrossReply(ctx, parent, child.WithDirectoryRoute(), []string{request.ID}, "answer")
+	if err != nil || len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
+		t.Fatal("dormant HOME registration blocked exact reply", answer, err)
+	}
+	if _, err := mail.Claim(ctx, child, answer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(append([]byte{}, data...), []byte("{}")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.VerifiedDirectoryInterfacesFrom(ctx, parent); err == nil {
+		t.Fatal("trailing JSON entered former-runtime exception")
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.run(t, "select-pane", "-t", homePane, "-T", "worker")
+	if _, err := store.VerifiedDirectoryInterfacesFrom(ctx, parent); err == nil {
+		t.Fatal("plausible stale HOME interface was accepted")
+	}
+}
+
+func TestRecipientDirectoryRejectsDormantNestedAncestorBeforeFartherParent(t *testing.T) {
+	f := newTmuxFixture(t)
+	middleRoot := filepath.Join(f.repo, "middle")
+	leafRoot := filepath.Join(middleRoot, "leaf")
+	if err := os.MkdirAll(leafRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	middlePane := f.run(t, "new-session", "-d", "-s", "middle", "-c", middleRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	leafPane := f.run(t, "new-session", "-d", "-s", "leaf", "-c", leafRoot,
+		"-P", "-F", "#{pane_id}", "exec sleep 120")
+	for _, pane := range []string{middlePane, leafPane} {
+		f.run(t, "select-pane", "-t", pane, "-T", "worker")
+	}
+	adapter := directoryConfiguredAdapter(t, f)
+	store := Store{StateRoot: filepath.Join(f.home, "state")}
+	for _, pane := range []string{f.pane, middlePane, leafPane} {
+		registerDirectoryPane(t, store, adapter, pane)
+	}
+	markFormerDirectoryRuntime(t, store, f.home, middleRoot)
+	f.run(t, "select-pane", "-t", middlePane, "-T", "shell")
+	leaf, err := adapter.FindNamedPeer(context.Background(), "leaf", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contacts, err := store.VerifiedDirectoryInterfacesFrom(context.Background(), leaf); err == nil {
+		t.Fatalf("nested former ancestor hid farther live parent: %+v", contacts)
 	}
 }
 

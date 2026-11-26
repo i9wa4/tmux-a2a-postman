@@ -69,42 +69,25 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if _, diagnostic, err := run("help", "missing-installed-topic"); err == nil || !bytes.Contains(diagnostic, []byte("unknown help topic")) {
 		t.Fatal("missing topic lacked an actionable error", string(diagnostic), err)
 	}
-	for _, ref := range []string{"mailbox", "sending", "status", "session-flow", "external", "quickstart"} {
-		want, err := helpdocs.Read("postman-usage", ref)
+	for _, name := range helpdocs.SkillNames() {
+		want, err := helpdocs.ReadSkill(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		out, diagnostic, err := run("help", "postman-usage", ref)
+		out, diagnostic, err := run("skill", name)
 		if err != nil || !bytes.Equal(out, want) {
-			t.Fatal("reference display did not return complete Markdown", ref, string(diagnostic), err)
+			t.Fatalf("embedded Skill %s: %s (%v)", name, diagnostic, err)
 		}
 	}
-	intake, err := helpdocs.Read("postman-orchestrate", "intake")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, diagnostic, err := run("help", "postman-orchestrate", "intake")
-	if err != nil || !bytes.Equal(out, intake) {
-		t.Fatal("orchestration intake did not ship as complete embedded HelpDoc", string(diagnostic), err)
-	}
-	for _, scenario := range []struct {
-		name  string
-		steps []string
-	}{
-		{"unknown canonical path", []string{"path is unknown", "orchestrator delegates bounded", "one worker", "candidate paths and", "orchestrator reads them and validates", "help postman-records selection", "before deciding which record is canonical"}},
-		{"known path missing", []string{"previously known path", "missing or unreadable", "remains a recovery case", "not permission to adopt"}},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			text := string(out)
-			last := -1
-			for _, step := range scenario.steps {
-				at := strings.Index(text, step)
-				if at <= last {
-					t.Fatalf("embedded intake lost or reordered %q in %s", step, scenario.name)
-				}
-				last = at
-			}
-		})
+	for _, item := range []struct{ name, ref string }{{"postman-records", "records"}, {"subagent-review", "reviewer-code"}, {"postman-send-message", "sending"}} {
+		want, err := helpdocs.ReadSkill(item.name, item.ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, diagnostic, err := run("skill", item.name, item.ref)
+		if err != nil || !bytes.Equal(out, want) {
+			t.Fatalf("embedded reference %s/%s: %s (%v)", item.name, item.ref, diagnostic, err)
+		}
 	}
 	wantConfig, err := fs.ReadFile(helpdocs.Assets(), "config/postman.md")
 	if err != nil {
@@ -115,16 +98,16 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 		t.Fatal("default reference did not return the complete builtin Markdown", string(diagnostic), err)
 	}
 	for _, args := range [][]string{
-		{"help", "postman-usage", "default"},
-		{"help", "postman-config-auditor", "default"},
+		{"skill", "postman-usage"},
+		{"skill", "postman-config-auditor"},
 		{"skills", "install", "--client", "codex", "--scope", "project", "--project", project, "postman-usage"},
 		{"skills", "export", "--to", filepath.Join(home, "export"), "postman-usage"},
 		{"skills"},
 		{"skills", "--help"},
 		{"help", "../topics/overview"},
-		{"help", "postman-usage", "../mailbox"},
-		{"help", "postman-usage", "missing-reference"},
-		{"help", "postman-usage", "mailbox", "extra"},
+		{"skill", "postman-records", "../records"},
+		{"skill", "postman-records", "missing-reference"},
+		{"skill", "postman-records", "records", "extra"},
 	} {
 		if _, _, err := run(args...); err == nil {
 			t.Fatal("unsupported installation or invalid Skill was accepted", args)
@@ -133,7 +116,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if !reflect.DeepEqual(before, statusTree(t, home)) {
 		t.Fatal("help/Skill reads or rejected operations created files")
 	}
-	out, diagnostic, err = run("resources")
+	out, diagnostic, err := run("resources")
 	if err != nil {
 		t.Fatal(string(out), string(diagnostic), err)
 	}
@@ -141,7 +124,7 @@ func TestInstalledHelpAndSelectiveOfflineResourcesNeedNoRuntime(t *testing.T) {
 	if !filepath.IsAbs(resource) || filepath.Base(resource) != helpdocs.BundleID() {
 		t.Fatal("resource path is not a content-identified absolute generation", resource)
 	}
-	for _, name := range []string{"help/postman-recall/scripts/select_day.py", "help/postman-team-manager/scripts/next_step.py", "help/postman-usage/scripts/analyze-invocations.py", "docs/licenses/postman.txt"} {
+	for _, name := range []string{"skills/postman-records/scripts/select_day.py", "skills/postman-records/scripts/mkmd", "help/invocation-diagnostics/scripts/analyze-invocations.py", "docs/licenses/postman.txt"} {
 		if info, err := os.Stat(filepath.Join(resource, filepath.FromSlash(name))); err != nil || !info.Mode().IsRegular() {
 			t.Fatal("bundled resource missing", name, err)
 		}

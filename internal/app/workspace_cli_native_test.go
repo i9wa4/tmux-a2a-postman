@@ -131,6 +131,84 @@ func TestDirectoryRouteUsesEachPeersRegisteredInterface(t *testing.T) {
 	}
 }
 
+func TestLocalInterfaceReplySurvivesStaleParentRegistration(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parent := f.tmux("new-session", "-d", "-s", "parent", "-c", f.home, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", parent, "-T", "worker")
+	reviewer := f.tmux("new-window", "-d", "-t", "work", "-c", filepath.Join(f.home, "work"), "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", reviewer, "-T", "reviewer")
+	oldPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\nworker --- reviewer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n## `reviewer`\nReviewer\n"
+	if err := os.WriteFile(f.config, []byte(oldPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(reviewer, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("old reviewer registration", result, err)
+	}
+	if result, err := f.run(parent, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("old parent registration", result, err)
+	}
+	currentPolicy := strings.Replace(oldPolicy, "interface_node: worker", "interface_node: peer", 1)
+	if err := os.WriteFile(f.config, []byte(currentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(f.peer, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("current interface registration", result, err)
+	}
+	name, err := workspace.Name("~/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readFingerprint := func(pane string) string {
+		t.Helper()
+		path := filepath.Join(f.stateRoot(), name, "runtime", "status-config-p"+strings.TrimPrefix(pane, "%")+".json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record struct{ Fingerprint string }
+		if err := json.Unmarshal(raw, &record); err != nil {
+			t.Fatal(err)
+		}
+		return record.Fingerprint
+	}
+	if readFingerprint(reviewer) == readFingerprint(f.peer) {
+		t.Fatal("reviewer was not left on the prior topology")
+	}
+	requestBody := "local reply across interface upgrade"
+	if result, err := f.run(f.worker, requestBody, "send-heredoc", "--config", f.config, "--to", "peer"); err != nil || !result.Success {
+		t.Fatal("stale parent registration vetoed local mail", result, err)
+	}
+	claimed, err := f.run(f.peer, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("current interface POP", claimed, err)
+	}
+	complete, err := os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), requestBody) {
+		t.Fatal("complete interface archive", err)
+	}
+	request := readProtocolArchive(t, *claimed.MarkdownPath)
+	if request.Context == nil || request.To != "peer" || request.From != "worker" ||
+		!strings.Contains(request.Context.Markdown, "Parent and child contacts are unavailable") ||
+		strings.Contains(request.Context.Markdown, "- parent:worker") {
+		t.Fatal("local recipient context", request)
+	}
+	if result, err := f.run(f.peer, "answer", "send-heredoc", "--config", f.config, "--to", request.ID); err != nil || !result.Success {
+		t.Fatal("exact interface reply", result, err)
+	}
+	claimed, err = f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("worker POP", claimed, err)
+	}
+	complete, err = os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "answer") {
+		t.Fatal("complete worker archive", err)
+	}
+	answer := readProtocolArchive(t, *claimed.MarkdownPath)
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
+		t.Fatal("exact reply correlation", answer)
+	}
+}
+
 func TestCrossDirectoryArchiveListsRecipientParentOtherChild(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	parentConfig := f.config
@@ -247,6 +325,402 @@ func TestCrossDirectoryArchiveKeepsRecipientContactsWithUnknownOffRouteSibling(t
 	}
 }
 
+func TestCrossDirectoryArchiveOmitsIncompleteParentContacts(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(parentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	type child struct{ pane, config string }
+	children := map[string]child{}
+	for _, name := range []string{"alpha", "beta"} {
+		root := filepath.Join(f.home, "work", name)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pane := f.tmux("new-session", "-d", "-s", name, "-c", root, "-P", "-F", "#{pane_id}", "exec sleep 120")
+		f.tmux("select-pane", "-t", pane, "-T", "messenger")
+		configPath := filepath.Join(f.home, name+"-postman.md")
+		policy := "---\ninterface_node: messenger\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+		if err := os.WriteFile(configPath, []byte(policy), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		children[name] = child{pane, configPath}
+	}
+	for _, item := range []child{{f.worker, f.config}, children["alpha"], children["beta"]} {
+		if result, err := f.run(item.pane, "", "pop", "--config", item.config); err != nil || !result.Success {
+			t.Fatal("interface registration", result, err)
+		}
+	}
+	beta := children["beta"]
+	betaRoot, err := workspace.CanonicalRoot(filepath.Join(f.home, "work", "beta"), f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaName, err := workspace.Name(betaRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusConfig := filepath.Join(f.stateRoot(), betaName, "runtime", "status-config-p"+strings.TrimPrefix(beta.pane, "%")+".json")
+	raw, err := os.ReadFile(statusConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["fingerprint"] = "sha256:stale"
+	raw, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statusConfig, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alpha := children["alpha"]
+	result, err := f.run(alpha.pane, "incomplete parent contacts", "send-heredoc", "--config", alpha.config, "--to", "work:worker")
+	if err != nil || !result.Success {
+		t.Fatal("unverified sibling blocked exact parent route", result, err)
+	}
+	partialClaim, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !partialClaim.Success || partialClaim.MarkdownPath == nil {
+		t.Fatal("parent POP with unavailable contacts", partialClaim, err)
+	}
+	partialArchive := readProtocolArchive(t, *partialClaim.MarkdownPath)
+	if partialArchive.Context == nil || !strings.Contains(partialArchive.Context.Markdown, "Parent and child contacts are unavailable") ||
+		strings.Contains(partialArchive.Context.Markdown, "- beta:messenger") {
+		t.Fatal("parent archive advertised unverified child", partialArchive.Context)
+	}
+	if result, err := f.run(f.peer, "incomplete local contacts", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !result.Success {
+		t.Fatal("local send failed despite verified local recipient", result, err)
+	}
+	localClaim, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !localClaim.Success || localClaim.MarkdownPath == nil {
+		t.Fatal("local recipient POP", localClaim, err)
+	}
+	localArchive := readProtocolArchive(t, *localClaim.MarkdownPath)
+	if localArchive.Context == nil || !strings.Contains(localArchive.Context.Markdown, "Parent and child contacts are unavailable") ||
+		strings.Contains(localArchive.Context.Markdown, "- beta:messenger") {
+		t.Fatal("local archive advertised unverified child", localArchive.Context)
+	}
+	if result, err := f.run(beta.pane, "", "pop", "--config", beta.config); err != nil || !result.Success {
+		t.Fatal("beta re-registration", result, err)
+	}
+	if result, err := f.run(alpha.pane, "complete parent contacts", "send-heredoc", "--config", alpha.config, "--to", "work:worker"); err != nil || !result.Success {
+		t.Fatal("alpha to re-registered parent", result, err)
+	}
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("parent POP", claimed, err)
+	}
+	complete, err := os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "complete parent contacts") {
+		t.Fatal("complete parent archive", err)
+	}
+	request := readProtocolArchive(t, *claimed.MarkdownPath)
+	if request.Context == nil || !strings.Contains(request.Context.Markdown, "- alpha:messenger") || !strings.Contains(request.Context.Markdown, "- beta:messenger") {
+		t.Fatal("parent archive omitted a verified child", request.Context)
+	}
+	if result, err := f.run(f.worker, "complete answer", "send-heredoc", "--config", f.config, "--to", request.ID); err != nil || !result.Success {
+		t.Fatal("parent exact reply", result, err)
+	}
+	claimed, err = f.run(alpha.pane, "", "pop", "--config", alpha.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("alpha reply POP", claimed, err)
+	}
+	complete, err = os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "complete answer") {
+		t.Fatal("complete alpha reply archive", err)
+	}
+	answer := readProtocolArchive(t, *claimed.MarkdownPath)
+	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID || answer.Context == nil || !strings.Contains(answer.Context.Markdown, "- work:worker") || strings.Contains(answer.Context.Markdown, "beta:messenger") {
+		t.Fatal("child lost its single parent or reply correlation", answer)
+	}
+	grandRoot := filepath.Join(f.home, "work", "beta", "gamma")
+	if err := os.MkdirAll(grandRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	grandPane := f.tmux("new-session", "-d", "-s", "gamma", "-c", grandRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", grandPane, "-T", "messenger")
+	grandConfig := filepath.Join(f.home, "gamma-postman.md")
+	grandPolicy := "---\ninterface_node: messenger\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+	if err := os.WriteFile(grandConfig, []byte(grandPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(grandPane, "", "pop", "--config", grandConfig); err != nil || !result.Success {
+		t.Fatal("grandchild registration", result, err)
+	}
+	if err := os.Remove(statusConfig); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(alpha.pane, "missing intermediate", "send-heredoc", "--config", alpha.config, "--to", "work:worker"); err != nil || !result.Success {
+		t.Fatal("alpha to parent with missing beta provenance", result, err)
+	}
+	claimed, err = f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("parent POP with missing intermediate", claimed, err)
+	}
+	frontier := readProtocolArchive(t, *claimed.MarkdownPath)
+	if frontier.Context == nil || !strings.Contains(frontier.Context.Markdown, "- alpha:messenger") || strings.Contains(frontier.Context.Markdown, "- beta:messenger") || strings.Contains(frontier.Context.Markdown, "- gamma:messenger") {
+		t.Fatal("missing intermediate exposed a grandchild as direct contact", frontier.Context)
+	}
+	if result, err := f.run(f.worker, "blocked shortcut", "send-heredoc", "--config", f.config, "--to", "gamma:messenger"); err == nil || result.Success {
+		t.Fatal("missing intermediate admitted grandchild shortcut", result, err)
+	}
+	grandHelper := f.tmux("new-window", "-d", "-t", "gamma", "-c", grandRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", grandHelper, "-T", "helper")
+	if result, err := f.run(grandHelper, "missing immediate parent", "send-heredoc", "--config", grandConfig, "--to", "messenger"); err != nil || !result.Success {
+		t.Fatal("grandchild local send with unavailable parent", result, err)
+	}
+	claimed, err = f.run(grandPane, "", "pop", "--config", grandConfig)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("grandchild POP with unavailable parent", claimed, err)
+	}
+	grandArchive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if grandArchive.Context == nil || strings.Contains(grandArchive.Context.Markdown, "- work:worker") || strings.Contains(grandArchive.Context.Markdown, "- beta:messenger") {
+		t.Fatal("missing immediate parent promoted a grandparent contact", grandArchive.Context)
+	}
+	if result, err := f.run(beta.pane, "", "pop", "--config", beta.config); err != nil || !result.Success {
+		t.Fatal("beta re-registration before stale grandchild", result, err)
+	}
+	if result, err := f.run(f.worker, "recovered beta task", "send-heredoc", "--config", f.config, "--to", "beta:messenger"); err != nil || !result.Success {
+		t.Fatal("parent to recovered direct child beta", result, err)
+	}
+	claimed, err = f.run(beta.pane, "", "pop", "--config", beta.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("beta task POP", claimed, err)
+	}
+	complete, err = os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "recovered beta task") {
+		t.Fatal("complete beta task archive", err)
+	}
+	betaRequest := readProtocolArchive(t, *claimed.MarkdownPath)
+	if betaRequest.Context == nil || !strings.Contains(betaRequest.Context.Markdown, "- work:worker") || !strings.Contains(betaRequest.Context.Markdown, "- gamma:messenger") || strings.Contains(betaRequest.Context.Markdown, "- alpha:messenger") {
+		t.Fatal("beta did not see its immediate parent and direct child", betaRequest.Context)
+	}
+	if result, err := f.run(beta.pane, "recovered beta answer", "send-heredoc", "--config", beta.config, "--to", betaRequest.ID); err != nil || !result.Success {
+		t.Fatal("beta exact reply", result, err)
+	}
+	claimed, err = f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("parent beta-answer POP", claimed, err)
+	}
+	complete, err = os.ReadFile(*claimed.MarkdownPath)
+	if err != nil || !strings.Contains(string(complete), "recovered beta answer") {
+		t.Fatal("complete parent beta-answer archive", err)
+	}
+	betaAnswer := readProtocolArchive(t, *claimed.MarkdownPath)
+	if len(betaAnswer.Replies) != 1 || betaAnswer.Replies[0].MessageID != betaRequest.ID || betaAnswer.Context == nil || !strings.Contains(betaAnswer.Context.Markdown, "- alpha:messenger") || !strings.Contains(betaAnswer.Context.Markdown, "- beta:messenger") || strings.Contains(betaAnswer.Context.Markdown, "- gamma:messenger") {
+		t.Fatal("beta reply lost correlation or parent direct-child frontier", betaAnswer)
+	}
+	grandCanonical, err := workspace.CanonicalRoot(grandRoot, f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandName, err := workspace.Name(grandCanonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grandStatus := filepath.Join(f.stateRoot(), grandName, "runtime", "status-config-p"+strings.TrimPrefix(grandPane, "%")+".json")
+	raw, err = os.ReadFile(grandStatus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["fingerprint"] = "sha256:stale"
+	raw, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grandStatus, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(f.peer, "stale grandchild is not direct", "send-heredoc", "--config", f.config, "--to", "worker"); err != nil || !result.Success {
+		t.Fatal("parent local send was vetoed by stale grandchild", result, err)
+	}
+	claimed, err = f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("parent POP with stale grandchild", claimed, err)
+	}
+	frontier = readProtocolArchive(t, *claimed.MarkdownPath)
+	if frontier.Context == nil || !strings.Contains(frontier.Context.Markdown, "- alpha:messenger") || !strings.Contains(frontier.Context.Markdown, "- beta:messenger") || strings.Contains(frontier.Context.Markdown, "- gamma:messenger") {
+		t.Fatal("stale grandchild vetoed or entered parent direct contacts", frontier.Context)
+	}
+}
+
+func TestLocalInterfaceContactDiscoveryTimeoutKeepsMailAvailable(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	policy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(policy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !result.Success {
+		t.Fatal("parent registration", result, err)
+	}
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ] && [ ! -e \"$POSTMAN_TEST_MARKER\" ]; then\n  : > \"$POSTMAN_TEST_MARKER\"\n  sleep 3\n fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shimDir, "tmux"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := f.child(ctx, f.peer, "send-heredoc", "--config", f.config, "--to", "worker")
+	cmd.Env = append(cmd.Env,
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"POSTMAN_TEST_MARKER="+filepath.Join(shimDir, "delayed"),
+		"POSTMAN_REAL_TMUX="+realTmux)
+	cmd.Stdin = strings.NewReader("timeout contacts")
+	raw, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatal("CLI timed out before local mail delivery", ctx.Err())
+	}
+	var result protocolOutput
+	if json.Unmarshal(raw, &result) != nil || err != nil || !result.Success {
+		t.Fatal("directory timeout blocked local mail", string(raw), err)
+	}
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("local recipient POP after directory timeout", claimed, err)
+	}
+	archive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if archive.Context == nil || !strings.Contains(archive.Context.Markdown, "Parent and child contacts are unavailable") ||
+		!strings.Contains(archive.Context.Markdown, "Verify those contacts before using parent or child routes") ||
+		strings.Contains(archive.Context.Markdown, "- child:messenger") {
+		t.Fatal("local timeout context advertised unverified directory contacts", archive.Context)
+	}
+}
+
+func TestLocalInterfaceDiscoveryRejectsRetitledBinding(t *testing.T) {
+	for _, mode := range []struct {
+		name  string
+		delay bool
+	}{{"discovery-error", true}, {"discovery-success", false}} {
+		for _, target := range []string{"sender", "recipient"} {
+			t.Run(mode.name+"/"+target, func(t *testing.T) {
+				f := newPublicApprovalFixture(t)
+				policy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+				if err := os.WriteFile(f.config, []byte(policy), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if result, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !result.Success {
+					t.Fatal("interface registration", result, err)
+				}
+				pane, role := f.peer, "peer"
+				if target == "recipient" {
+					pane, role = f.worker, "worker"
+				}
+				realTmux, err := exec.LookPath("tmux")
+				if err != nil {
+					t.Fatal(err)
+				}
+				shimDir := t.TempDir()
+				delay := ""
+				if mode.delay {
+					delay = "  sleep 3\n"
+				}
+				shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ] && [ ! -e \"$POSTMAN_TEST_MARKER\" ]; then\n  : > \"$POSTMAN_TEST_MARKER\"\n  \"$POSTMAN_REAL_TMUX\" -S \"$POSTMAN_TEST_SOCKET\" select-pane -t \"$POSTMAN_TEST_RETITLE\" -T unbound || exit 1\n" + delay + " fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+				if err := os.WriteFile(filepath.Join(shimDir, "tmux"), []byte(shim), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				marker := filepath.Join(shimDir, "retitled")
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				cmd := f.child(ctx, f.peer, "send-heredoc", "--config", f.config, "--to", "worker")
+				cmd.Env = append(cmd.Env,
+					"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+					"POSTMAN_TEST_MARKER="+marker,
+					"POSTMAN_TEST_SOCKET="+f.socket,
+					"POSTMAN_TEST_RETITLE="+pane,
+					"POSTMAN_REAL_TMUX="+realTmux)
+				cmd.Stdin = strings.NewReader("must not publish after retitle")
+				raw, err := cmd.Output()
+				f.tmux("select-pane", "-t", pane, "-T", role)
+				if ctx.Err() != nil {
+					t.Fatal("CLI timed out before rejecting changed binding", ctx.Err())
+				}
+				if _, markerErr := os.Stat(marker); markerErr != nil {
+					t.Fatal("directory enumeration did not retitle target", markerErr)
+				}
+				var result protocolOutput
+				if json.Unmarshal(raw, &result) != nil || err == nil || result.Success ||
+					!strings.Contains(result.Reason, "verify local recipient after directory discovery") {
+					t.Fatal("changed binding was downgraded to directory guidance", string(raw), err)
+				}
+				if claimed, err := f.run(f.worker, "", "pop", "--config", f.config); err != nil || !claimed.Success || claimed.MarkdownPath != nil {
+					t.Fatal("changed binding published local mail", claimed, err)
+				}
+				if claimed, err := f.run(f.peer, "", "pop", "--config", f.config); err != nil || !claimed.Success || claimed.MarkdownPath != nil {
+					t.Fatal("changed binding published sent mail", claimed, err)
+				}
+			})
+		}
+	}
+}
+
+func TestCrossInterfaceContactDiscoveryTimeoutKeepsMailAvailable(t *testing.T) {
+	f := newPublicApprovalFixture(t)
+	parentPolicy := "---\ninterface_node: worker\n---\n## `edges`\n```mermaid\ngraph LR\nworker --- peer\n```\n## `worker`\nWorker\n## `peer`\nPeer\n"
+	if err := os.WriteFile(f.config, []byte(parentPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	childRoot := filepath.Join(f.home, "work", "child")
+	if err := os.MkdirAll(childRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	childPane := f.tmux("new-session", "-d", "-s", "child", "-c", childRoot, "-P", "-F", "#{pane_id}", "exec sleep 120")
+	f.tmux("select-pane", "-t", childPane, "-T", "messenger")
+	childConfig := filepath.Join(f.home, "child-postman.md")
+	childPolicy := "---\ninterface_node: messenger\n---\n## `edges`\n```mermaid\ngraph LR\nmessenger --- helper\n```\n## `messenger`\nMessenger\n## `helper`\nHelper\n"
+	if err := os.WriteFile(childConfig, []byte(childPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ pane, config string }{{f.worker, f.config}, {childPane, childConfig}} {
+		if result, err := f.run(item.pane, "", "pop", "--config", item.config); err != nil || !result.Success {
+			t.Fatal("interface registration", result, err)
+		}
+	}
+	realTmux, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimDir := t.TempDir()
+	shim := "#!/bin/sh\nfor arg do\n if [ \"$arg\" = list-sessions ]; then\n  count=0\n  if [ -e \"$POSTMAN_TEST_MARKER\" ]; then count=$(cat \"$POSTMAN_TEST_MARKER\"); fi\n  count=$((count + 1))\n  printf '%s' \"$count\" > \"$POSTMAN_TEST_MARKER\"\n  if [ \"$count\" -eq 4 ]; then sleep 3; fi\n fi\ndone\nexec \"$POSTMAN_REAL_TMUX\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(shimDir, "tmux"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := f.child(ctx, childPane, "send-heredoc", "--config", childConfig, "--to", "work:worker")
+	cmd.Env = append(cmd.Env,
+		"PATH="+shimDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"POSTMAN_TEST_MARKER="+filepath.Join(shimDir, "list-sessions-count"),
+		"POSTMAN_REAL_TMUX="+realTmux)
+	cmd.Stdin = strings.NewReader("cross timeout contacts")
+	raw, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatal("CLI timed out before sending cross-session mail", ctx.Err())
+	}
+	var result protocolOutput
+	if json.Unmarshal(raw, &result) != nil || err != nil || !result.Success {
+		t.Fatal("advisory contact timeout blocked cross-session mail", string(raw), err)
+	}
+	claimed, err := f.run(f.worker, "", "pop", "--config", f.config)
+	if err != nil || !claimed.Success || claimed.MarkdownPath == nil {
+		t.Fatal("cross-session mail was not delivered", claimed, err)
+	}
+	archive := readProtocolArchive(t, *claimed.MarkdownPath)
+	if archive.Context == nil || !strings.Contains(archive.Context.Markdown, "Parent and child contacts are unavailable") {
+		t.Fatal("timed-out contacts were not marked unavailable", archive.Context)
+	}
+}
+
 func TestExternalChannelIsBoundToExactChildInterface(t *testing.T) {
 	f := newPublicApprovalFixture(t)
 	childRoot := filepath.Join(f.home, "work", "child")
@@ -320,7 +794,7 @@ func TestWorkspaceCLILocalArchiveListsNearestDirectoryContacts(t *testing.T) {
 		t.Fatal("missing contact section", archive.Context.Markdown)
 	}
 	contacts, _, ok := strings.Cut(after, "\n\nThese are configured routes")
-	if !ok || !strings.Contains(contacts, "work:worker") || !strings.Contains(contacts, "grandchild:worker") || !strings.Contains(contacts, "- peer") || strings.Contains(contacts, "sibling:worker") || strings.Contains(contacts, "prefix:worker") {
+	if !ok || !strings.Contains(contacts, "- work:worker (parent)") || !strings.Contains(contacts, "- grandchild:worker (child)") || !strings.Contains(contacts, "- peer") || strings.Contains(contacts, "sibling:worker") || strings.Contains(contacts, "prefix:worker") {
 		t.Fatal("local archive contacts did not match nearest live routes", contacts)
 	}
 }

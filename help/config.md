@@ -35,10 +35,11 @@ graph LR
 ```
 ````
 
-Only this Markdown topology configures the commands. TOML overlays, daemon
-policy settings, startup and daemon RPC are removed. State uses the absolute
-XDG_STATE_HOME or HOME/.local/state. Receiving agents need no notifier
-registration.
+Only this Markdown topology configures the commands. The optional foreground
+`daemon -- heartbeat` uses `daemon.defaults.heartbeat.every` and `.body` from
+the selected file through fresh CLI child invocations. TOML overlays, legacy
+daemon policy settings, legacy daemon startup/RPC and notifier registration are
+removed. State uses the absolute XDG_STATE_HOME or HOME/.local/state.
 
 Optional external filesystem binding (frontmatter scalar strings):
 
@@ -99,7 +100,7 @@ content-identified cache bundle. Its default, licenses, optional record helper
 and review prompts are portable and require no dotfiles checkout.
 
 A complete custom file may explicitly direct a role/common section to read an
-installed Skill such as `tmux-a2a-postman help postman-review`, or explicitly
+embedded Skill such as `tmux-a2a-postman skill subagent-review`, or explicitly
 select consumer-owned thin Skill metadata with the existing `skill_path` syntax.
 The binary never silently adds builtin workflow policy/catalogs to a custom
 file.

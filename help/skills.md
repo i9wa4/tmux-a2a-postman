@@ -1,43 +1,34 @@
-# Skills — thin workflow discovery
+# Skills — embedded source and thin distribution
 
-Install a thin Skill with GitHub CLI:
-
-```sh
-gh skill install i9wa4/tmux-a2a-postman postman-usage --agent codex --scope user
-```
-
-Use `--agent claude-code` for Claude Code. Nix consumers can install the same
-`skills/<name>/` directories declaratively. Installation belongs to the
-consumer.
-
-Each installed Skill contains shared YAML metadata and one instruction to read
-`tmux-a2a-postman help <name>`. Detailed procedures, references, helpers and
-evaluations stay in the canonical `help/<name>/` package. Updating the binary
-updates the detailed procedures without updating installed entry text.
+Six canonical packages live under `skills/<name>/`: `stay-lazy`,
+`development-workflow`, `git-github-operations`, `postman-send-message`,
+`subagent-review`, and `postman-records`. Each package contains a complete
+`SKILL.md` and any needed references or helper scripts. Read a full entry or
+one Markdown reference from the matching binary:
 
 ```sh
-tmux-a2a-postman help postman-usage
-tmux-a2a-postman help postman-usage mailbox
+tmux-a2a-postman skill postman-send-message
+tmux-a2a-postman skill postman-records records
 ```
 
-The first command returns the complete `help/postman-usage/SKILL.md`, including
-its uniform `Read when | ref` table. Read matching references completely in
-table order; a row marked Always is required. The second command returns that
-complete reference. Names omit directory paths and file extensions. `help` lists
-the installed topics, including workflow names.
+The binary embeds these packages. Reading them needs no tmux, configuration,
+installed Skill tree, network, or extraction. Optional helper scripts use the
+explicit `resources` bundle; see `help resources`.
 
-All reads work offline without configuration, tmux, extraction or file changes.
-A missing topic or reference is an explicit version incompatibility; do not
-download procedures from a different version. Optional helpers use the explicit
-`resources` bundle at their canonical `help/<name>/scripts/` paths.
+`dist/skills/<name>/SKILL.md` contains the source frontmatter and the fixed
+one-line instruction to read the binary's matching entry. These Git-tracked
+files are the installable discovery entries for client Skill mechanisms. A
+consumer may install them with its supported client or declarative package
+method, alongside the **same revision** of the Postman binary. An installed
+entry has no independent procedure body.
 
-Contributors edit `help/<name>/SKILL.md`. Its `metadata.postman-skill-body`
-supplies the one-line installable body. `nix run .#generate-skills` copies the
-YAML header exactly and uses that value as the body of `skills/<name>/SKILL.md`.
-Generated entries are tracked for normal GitHub CLI installation. See the
-[maintenance guide](../docs/development/contributing.md#3-agent-skills) for
-generation, validation and release procedures.
+Contributors edit `skills/<name>/SKILL.md` and its needed resources, then run
+`nix run .#generate-skills` and stage changed `dist/skills` files. The generator
+copies frontmatter without rewriting it and checks the exact generated set with
+`--check`. See
+[CONTRIBUTING](../docs/development/contributing.md#3-agent-skills).
 
-To inspect the complete builtin configuration directly, run
-`tmux-a2a-postman help config default`. This reads the canonical
-`config/postman.md`, independently of user configuration and without extraction.
+CLI contracts, configuration and communication specifications use
+`tmux-a2a-postman help <topic>`. The complete built-in configuration is
+`tmux-a2a-postman help config default`; a custom `postman.md` replaces that
+configuration as one complete source.

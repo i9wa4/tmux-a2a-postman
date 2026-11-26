@@ -75,8 +75,8 @@
           triggerSource = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
-              ./help
               ./skills
+              ./dist
               ./scripts/validation/validate-skill-triggers.py
               ./scripts/validation/test-skill-triggers.py
               ./scripts/generate-skills.py
@@ -196,7 +196,7 @@
             generate-skills = {
               type = "app";
               program = "${generateSkills}/bin/generate-skills";
-              meta.description = "Generate thin installable Skills from HelpDoc metadata.";
+              meta.description = "Generate thin installable Skills from canonical Skill metadata.";
             };
             recursive-smoke = {
               type = "app";
@@ -251,10 +251,10 @@
               program = "${pkgs.writeShellScriptBin "skill-check" ''
                 set -euo pipefail
                 ${generateSkills}/bin/generate-skills --check
-                ${skillMetadataCheck} help
                 ${skillMetadataCheck} skills
-                ${skillWazaCheck} help/*/SKILL.md skills/*/SKILL.md
-                exec ${pkgs.gh}/bin/gh skill publish --dry-run "$@"
+                ${skillMetadataCheck} dist/skills
+                ${skillWazaCheck} skills/*/SKILL.md dist/skills/*/SKILL.md
+                exec ${pkgs.gh}/bin/gh skill publish dist/skills --dry-run "$@"
               ''}/bin/skill-check";
               meta.description = "Validate agent skill metadata and publish packaging without publishing.";
             };
@@ -263,7 +263,7 @@
               type = "app";
               program = "${pkgs.writeShellScriptBin "skill-publish" ''
                 set -euo pipefail
-                exec ${pkgs.gh}/bin/gh skill publish "$@"
+                exec ${pkgs.gh}/bin/gh skill publish dist/skills "$@"
               ''}/bin/skill-publish";
               meta.description = "Publish agent skills with GitHub CLI.";
             };
@@ -285,6 +285,12 @@
                 pkgs.direnv
                 pkgs.python3
               ];
+              # The app package includes bounded real-tmux matrices that can
+              # approach Go's default ten-minute test deadline on macOS.
+              checkFlags = [
+                "-timeout=15m"
+                "-v"
+              ];
               ldflags = [
                 "-s"
                 "-w"
@@ -301,6 +307,7 @@
               export HOME="$TMPDIR/home"
               mkdir -p "$HOME"
               python3 ${recursiveSource}/scripts/validation/test-recursive-configuration.py
+              python3 ${recursiveSource}/scripts/validation/test-recursive-failure-evidence.py ${recursiveSmoke}/bin/recursive-smoke ${pkgs.tmux}/bin/tmux
               ${recursiveSmoke}/bin/recursive-smoke --output "$TMPDIR/results.json"
               ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --output "$TMPDIR/builtin.json"
               ${recursiveSmoke}/bin/recursive-smoke --builtin --case root --launch preset-p --output "$TMPDIR/builtin-preset-p.json"
@@ -343,19 +350,12 @@
             invocation-analysis =
               pkgs.runCommand "invocation-analysis" { nativeBuildInputs = [ pkgs.python3 ]; }
                 ''
-                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./help/postman-usage/scripts/analyze-invocations.py}
+                  export POSTMAN_DIAGNOSTIC_ANALYZER=${./help/invocation-diagnostics/scripts/analyze-invocations.py}
                   python3 ${./scripts/validation/test-invocation-analysis.py}
                   touch "$out"
                 '';
-            skill-team-manager =
-              pkgs.runCommand "skill-team-manager" { nativeBuildInputs = [ pkgs.python3 ]; }
-                ''
-                  export POSTMAN_SKILLS_ROOT=${./help}
-                  python3 ${./scripts/validation/test-skill-team-manager.py}
-                  touch "$out"
-                '';
             skill-recall = pkgs.runCommand "skill-recall" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-              export POSTMAN_SKILLS_ROOT=${./help}
+              export POSTMAN_SKILLS_ROOT=${./skills}
               python3 ${./scripts/validation/test-skill-recall.py}
               touch "$out"
             '';
@@ -520,31 +520,31 @@
               # === Agent skills ===
               skill-generated = {
                 enable = true;
-                name = "generate thin Skills from HelpDoc metadata";
+                name = "generate thin Skills from canonical Skill metadata";
                 entry = "${generateSkills}/bin/generate-skills";
-                files = "^(help/[^/]+/SKILL\\.md|skills/|scripts/generate-skills\\.py$)";
+                files = "^(skills/|dist/skills/|scripts/generate-skills\\.py$)";
                 pass_filenames = false;
                 require_serial = true;
               };
               skill-metadata = {
                 enable = true;
                 name = "validate agent skill metadata";
-                entry = "${pkgs.bash}/bin/bash -c '${skillMetadataCheck} help && ${skillMetadataCheck} skills'";
-                files = "^(help|skills)/[^/]+/SKILL\\.md$";
+                entry = "${pkgs.bash}/bin/bash -c '${skillMetadataCheck} skills && ${skillMetadataCheck} dist/skills'";
+                files = "^(skills|dist/skills)/[^/]+/SKILL\\.md$";
                 pass_filenames = false;
               };
               skill-waza = {
                 enable = true;
                 name = "Waza skill readiness";
                 entry = "${skillWazaCheck}";
-                files = "^(help/postman-|skills/)";
+                files = "^(skills/|dist/skills/)";
                 require_serial = true;
               };
               skill-triggers = {
                 enable = true;
                 name = "deterministic skill triggers";
                 entry = "${skillTriggerCheck}/bin/skill-trigger-check";
-                files = "^(help/postman-|skills/|scripts/validation/(validate|test)-skill-triggers\\.py$)";
+                files = "^(skills/|dist/skills/|scripts/validation/(validate|test)-skill-triggers\\.py$)";
                 pass_filenames = false;
                 require_serial = true;
               };

@@ -24,21 +24,41 @@ type statusConfigRecord struct {
 	Builtin     bool    `json:"builtin,omitempty"`
 }
 
-var errUnregisteredWorkspace = errors.New("workspace has no registration")
+var (
+	errUnregisteredWorkspace   = errors.New("workspace has no registration")
+	errMissingConfigProvenance = errors.New("workspace configuration provenance unavailable; run a normal configured operation")
+)
 
 // StatusConfigFingerprint identifies routing structure without authored role
 // text or bundled HelpDocs. PolicyIdentity retains that full authored identity.
 func StatusConfigFingerprint(topology config.WorkspaceTopology) string {
-	raw, _ := json.Marshal(topology)
+	raw, _ := json.Marshal(statusFingerprintTopology(topology))
 	sum := sha256.Sum256(raw)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// Preserve the pre-heartbeat routing fingerprint's JSON field order and shape.
+// Schedule and body edits must not invalidate a registered tmux binding.
+func statusFingerprintTopology(topology config.WorkspaceTopology) any {
+	return struct {
+		Nodes             []string
+		Edges             map[string][]string
+		Reviewer          string
+		InterfaceNode     string
+		ExternalRoot      string
+		ExternalWorkspace string
+		ExternalSession   string
+	}{
+		topology.Nodes, topology.Edges, topology.Reviewer, topology.InterfaceNode,
+		topology.ExternalRoot, topology.ExternalWorkspace, topology.ExternalSession,
+	}
 }
 
 // legacyBuiltinStatusFingerprint recognizes only a v2 registration made by
 // this binary's current bundle. Older bundles must re-register in a normal
 // operation; passive status collection never upgrades their provenance.
 func legacyBuiltinStatusFingerprint(topology config.WorkspaceTopology) string {
-	raw, _ := json.Marshal(topology)
+	raw, _ := json.Marshal(statusFingerprintTopology(topology))
 	if id := topology.BuiltinBundleID(); id != "" {
 		raw = append(raw, []byte("\x00builtin:"+id)...)
 	}
@@ -122,7 +142,7 @@ func readStatusScope(ctx context.Context, ws *os.Root, bindings []Binding) (*Sta
 		}
 	}
 	if chosen == nil {
-		return nil, nil, errors.New("workspace configuration provenance unavailable; run a normal configured operation")
+		return nil, nil, errMissingConfigProvenance
 	}
 	return chosen, nodes, nil
 }

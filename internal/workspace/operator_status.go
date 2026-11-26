@@ -15,7 +15,10 @@ func readOperatorRuntime(ws *os.Root, owner Owner) (runtimeRecord, error) {
 		return saved, err
 	}
 	defer func() { _ = dir.Close() }()
-	if readJSON(dir, "binding.json", &saved) != nil || saved.Version != 1 || !saved.Owner.valid() ||
+	if readJSON(dir, "binding.json", &saved) != nil {
+		return runtimeRecord{}, ErrUnknown // A partially decoded record cannot establish former ownership.
+	}
+	if saved.Version != 1 || !saved.Owner.valid() ||
 		ValidateBindings(saved.Bindings) != nil || !sameRuntime(saved.Owner, owner) {
 		return saved, ErrUnknown
 	}

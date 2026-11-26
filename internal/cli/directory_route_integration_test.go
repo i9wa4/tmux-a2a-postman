@@ -55,10 +55,10 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	}
 	parentPane := runTmux("-f", "/dev/null", "new-session", "-d", "-s", "parent", "-c", parentRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", parentPane, "-T", "messenger")
+	runTmux("select-pane", "-t", parentPane, "-T", "orchestrator")
 	childPane := runTmux("new-session", "-d", "-s", "child", "-c", childRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", childPane, "-T", "messenger")
+	runTmux("select-pane", "-t", childPane, "-T", "orchestrator")
 	serverPID := runTmux("display-message", "-p", "-t", parentPane, "#{pid}")
 	t.Setenv("TMUX", socket+","+serverPID+",0")
 
@@ -104,6 +104,11 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		if err != nil || !strings.Contains(string(archive), body) {
 			t.Fatalf("complete claimed archive: %v", err)
 		}
+		if body == "exact alpha reply with beta unknown\n" &&
+			(!strings.Contains(string(archive), "Parent and child contacts are unavailable because the directory could not be verified.") ||
+				strings.Contains(string(archive), "beta:orchestrator (child)")) {
+			t.Fatal("uncertain directory contacts were presented as verified", string(archive))
+		}
 		firstLine, _, ok := strings.Cut(string(archive), "\n")
 		if !ok || !strings.HasPrefix(firstLine, "<!-- postman ") || !strings.HasSuffix(firstLine, " -->") {
 			t.Fatal("claimed archive lacks metadata")
@@ -117,9 +122,9 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	// A local interface send must not wait for advisory whole-server discovery.
 	// Slow any pre-stage enumeration in an owned server with many sessions and
 	// record whether the CLI attempted it before a durable draft existed.
-	orchestratorPane := runTmux("split-window", "-d", "-t", parentPane, "-c", parentRoot,
+	messengerPane := runTmux("split-window", "-d", "-t", parentPane, "-c", parentRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", orchestratorPane, "-T", "orchestrator")
+	runTmux("select-pane", "-t", messengerPane, "-T", "messenger")
 	for i := 0; i < 16; i++ {
 		runTmux("new-session", "-d", "-s", "unrelated-"+strconv.Itoa(i), "-c", home,
 			"-P", "-F", "#{pane_id}", "exec sleep 120")
@@ -140,7 +145,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	t.Setenv("POSTMAN_TEST_LOG", logPath)
 	t.Setenv("POSTMAN_REAL_TMUX", realTmux)
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+oldPath)
-	local, localErr := invoke(orchestratorPane, "local interface task\n", RunWorkspaceSendHeredoc, "--to", "messenger")
+	local, localErr := invoke(messengerPane, "local interface task\n", RunWorkspaceSendHeredoc, "--to", "orchestrator")
 	if err := os.Setenv("PATH", oldPath); err != nil {
 		t.Fatal(err)
 	}
@@ -222,16 +227,16 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if result, err := invoke(childPane, "prior builtin parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+	if result, err := invoke(childPane, "prior builtin parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:orchestrator"); err == nil || result.Success || result.RecoveryMessageID != "" {
 		t.Fatalf("CLI prior-built-in parent admitted mail: %+v %v", result, err)
 	}
 	if result, err := invoke(parentPane, "", RunWorkspacePop); err != nil || !result.Success {
 		t.Fatalf("normal parent operation failed to re-register: %+v %v", result, err)
 	}
-	if result, err := invoke(orchestratorPane, "", RunWorkspacePop); err != nil || !result.Success {
-		t.Fatalf("normal orchestrator operation failed to re-register: %+v %v", result, err)
+	if result, err := invoke(messengerPane, "", RunWorkspacePop); err != nil || !result.Success {
+		t.Fatalf("normal messenger operation failed to re-register: %+v %v", result, err)
 	}
-	if result, err := invoke(childPane, "re-registered builtin parent\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
+	if result, err := invoke(childPane, "re-registered builtin parent\n", RunWorkspaceSendHeredoc, "--to", "parent:orchestrator"); err != nil || !result.Success {
 		t.Fatalf("CLI re-registered parent send: %+v %v", result, err)
 	}
 	archiveResult, err := invoke(parentPane, "", RunWorkspacePop)
@@ -241,7 +246,8 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	archive, err := os.ReadFile(**archiveResult.MarkdownPath)
 	if err != nil || !strings.Contains(string(archive), "re-registered builtin parent\n") ||
 		!strings.Contains(string(archive), "<!-- postman recipient context v1 -->") ||
-		!strings.Contains(string(archive), "### messenger instructions") {
+		!strings.Contains(string(archive), "### orchestrator instructions") ||
+		!strings.Contains(string(archive), "Team task coordinator; receives requests through the configured interface") {
 		t.Fatalf("CLI prior-built-in parent archive context: %v", err)
 	}
 	var refreshed statusConfig
@@ -249,14 +255,14 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if err != nil || json.Unmarshal(data, &refreshed) != nil || refreshed.Version != 3 || refreshed.Fingerprint != currentFingerprint {
 		t.Fatalf("normal parent operation did not write structural v3 registration: %v %+v", err, refreshed)
 	}
-	orchestratorConfig := filepath.Join(filepath.Dir(parentConfig),
-		"status-config-p"+strings.TrimPrefix(orchestratorPane, "%")+".json")
+	messengerConfig := filepath.Join(filepath.Dir(parentConfig),
+		"status-config-p"+strings.TrimPrefix(messengerPane, "%")+".json")
 	var reRegistered statusConfig
-	data, err = os.ReadFile(orchestratorConfig)
+	data, err = os.ReadFile(messengerConfig)
 	if err != nil || json.Unmarshal(data, &reRegistered) != nil || reRegistered.Version != 3 || reRegistered.Fingerprint != currentFingerprint {
 		t.Fatalf("other parent registration did not refresh through normal operation: %v %+v", err, reRegistered)
 	}
-	if result, err := invoke(childPane, "mixed builtin parent second\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err != nil || !result.Success {
+	if result, err := invoke(childPane, "mixed builtin parent second\n", RunWorkspaceSendHeredoc, "--to", "parent:orchestrator"); err != nil || !result.Success {
 		t.Fatalf("CLI mixed-built-in parent second send: %+v %v", result, err)
 	}
 	secondResult, err := invoke(parentPane, "", RunWorkspacePop)
@@ -266,7 +272,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	secondArchive, err := os.ReadFile(**secondResult.MarkdownPath)
 	if err != nil || !strings.Contains(string(secondArchive), "mixed builtin parent second\n") ||
 		!strings.Contains(string(secondArchive), "<!-- postman recipient context v1 -->") ||
-		!strings.Contains(string(secondArchive), "### messenger instructions") {
+		!strings.Contains(string(secondArchive), "### orchestrator instructions") {
 		t.Fatalf("CLI mixed-built-in parent second archive context: %v", err)
 	}
 	bindingPath := filepath.Join(filepath.Dir(parentConfig), "binding.json")
@@ -290,7 +296,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		}
 	}
 	if !changed {
-		t.Fatal("parent messenger binding absent")
+		t.Fatal("parent orchestrator binding absent")
 	}
 	bindingData, err = json.Marshal(saved)
 	if err != nil {
@@ -299,7 +305,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	if err := os.WriteFile(bindingPath, bindingData, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := invoke(childPane, "stale parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+	if result, err := invoke(childPane, "stale parent must reject\n", RunWorkspaceSendHeredoc, "--to", "parent:orchestrator"); err == nil || result.Success || result.RecoveryMessageID != "" {
 		t.Fatalf("CLI stale parent pane admitted mail: %+v %v", result, err)
 	}
 	for _, entry := range entries {
@@ -327,8 +333,8 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	for _, direction := range []struct {
 		name, target, sourcePane, targetPane string
 	}{
-		{"parent to child", "child:messenger", parentPane, childPane},
-		{"child to parent", "parent:messenger", childPane, parentPane},
+		{"parent to child", "child:orchestrator", parentPane, childPane},
+		{"child to parent", "parent:orchestrator", childPane, parentPane},
 	} {
 		t.Run(direction.name, func(t *testing.T) {
 			body := "directory task: " + direction.name + "\n"
@@ -336,8 +342,8 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 				t.Fatalf("CLI task send: %+v %v", result, err)
 			}
 			request := claim(direction.targetPane, body)
-			if !request.NeedsReply || request.FromSession+":messenger" == direction.target ||
-				request.ToSession+":messenger" != direction.target {
+			if !request.NeedsReply || request.FromSession+":orchestrator" == direction.target ||
+				request.ToSession+":orchestrator" != direction.target {
 				t.Fatalf("task owner/route: %+v", request)
 			}
 			answerBody := "directory answer: " + direction.name + "\n"
@@ -352,7 +358,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 			}
 		})
 	}
-	removeProvenance := func(root, pane string) {
+	removeProvenance := func(root, pane string) string {
 		t.Helper()
 		canonical, err := workspace.CanonicalRoot(root, home)
 		if err != nil {
@@ -367,6 +373,7 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
 		}
+		return path
 	}
 	betaRoot := filepath.Join(parentRoot, "beta")
 	if err := os.MkdirAll(betaRoot, 0o700); err != nil {
@@ -374,43 +381,74 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 	}
 	betaPane := runTmux("new-session", "-d", "-s", "beta", "-c", betaRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", betaPane, "-T", "messenger")
+	runTmux("select-pane", "-t", betaPane, "-T", "orchestrator")
 	if result, err := invoke(betaPane, "", RunWorkspacePop); err != nil || !result.Success {
 		t.Fatalf("register beta: %+v %v", result, err)
 	}
-	removeProvenance(betaRoot, betaPane)
-	if result, err := invoke(parentPane, "off-route beta must not veto alpha\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err != nil || !result.Success {
+	betaCanonical, err := workspace.CanonicalRoot(betaRoot, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaName, err := workspace.Name(betaCanonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaStatusPath := filepath.Join(home, "state", "tmux-a2a-postman", betaName, "runtime",
+		"status-config-p"+strings.TrimPrefix(betaPane, "%")+".json")
+	betaRegistered, err := os.ReadFile(betaStatusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaConfig := removeProvenance(betaRoot, betaPane)
+	if result, err := invoke(parentPane, "off-route beta must not veto alpha\n", RunWorkspaceSendHeredoc, "--to", "child:orchestrator"); err != nil || !result.Success {
 		t.Fatalf("valid child send blocked by beta: %+v %v", result, err)
 	}
 	request := claim(childPane, "off-route beta must not veto alpha\n")
+	// The native return route is healthy, but the recipient's unrelated
+	// child has an invalid registration. Its contact list is unavailable.
+	var staleBeta statusConfig
+	if err := json.Unmarshal(betaRegistered, &staleBeta); err != nil {
+		t.Fatal(err)
+	}
+	staleBeta.Fingerprint = "sha256:819dd379f45c6df17bc9a2129648c769e68449804a73ff16a51f3f59052aa3e4"
+	staleData, err := json.Marshal(staleBeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(betaConfig, staleData, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if result, err := invoke(childPane, "exact alpha reply with beta unknown\n", RunWorkspaceSendHeredoc, "--to", request.ID); err != nil || !result.Success {
 		t.Fatalf("valid exact reply blocked by beta: %+v %v", result, err)
 	}
 	answer := claim(parentPane, "exact alpha reply with beta unknown\n")
+	if err := os.Remove(betaConfig); err != nil {
+		t.Fatal(err)
+	}
 	if len(answer.Replies) != 1 || answer.Replies[0].MessageID != request.ID {
 		t.Fatalf("off-route beta changed exact reply correlation: %+v", answer)
 	}
-	if result, err := invoke(parentPane, "unknown beta reject\n", RunWorkspaceSendHeredoc, "--to", "beta:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+	if result, err := invoke(parentPane, "unknown beta reject\n", RunWorkspaceSendHeredoc, "--to", "beta:orchestrator"); err == nil || result.Success || result.RecoveryMessageID != "" {
 		t.Fatalf("unknown beta became a route or durable draft: %+v %v", result, err)
 	}
 
 	siblingPane := runTmux("new-session", "-d", "-s", "sibling", "-c", siblingRoot,
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", siblingPane, "-T", "messenger")
-	if result, err := invoke(parentPane, "sibling reject\n", RunWorkspaceSendHeredoc, "--to", "sibling:messenger"); err == nil || result.Success {
+	runTmux("select-pane", "-t", siblingPane, "-T", "orchestrator")
+	if result, err := invoke(parentPane, "sibling reject\n", RunWorkspaceSendHeredoc, "--to", "sibling:orchestrator"); err == nil || result.Success {
 		t.Fatalf("CLI accepted sibling route: %+v %v", result, err)
 	}
 	middlePane := runTmux("new-session", "-d", "-s", "middle", "-c", filepath.Join(parentRoot, "branch"),
 		"-P", "-F", "#{pane_id}", "exec sleep 120")
-	runTmux("select-pane", "-t", middlePane, "-T", "messenger")
+	runTmux("select-pane", "-t", middlePane, "-T", "orchestrator")
 	if result, err := invoke(middlePane, "", RunWorkspacePop); err != nil || !result.Success {
 		t.Fatalf("register intermediate configuration: %+v %v", result, err)
 	}
-	if result, err := invoke(parentPane, "skipped-level reject\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err == nil || result.Success {
+	if result, err := invoke(parentPane, "skipped-level reject\n", RunWorkspaceSendHeredoc, "--to", "child:orchestrator"); err == nil || result.Success {
 		t.Fatalf("CLI accepted intermediate shortcut: %+v %v", result, err)
 	}
 	removeProvenance(filepath.Join(parentRoot, "branch"), middlePane)
-	if result, err := invoke(parentPane, "unknown intermediate reject\n", RunWorkspaceSendHeredoc, "--to", "child:messenger"); err == nil || result.Success || result.RecoveryMessageID != "" {
+	if result, err := invoke(parentPane, "unknown intermediate reject\n", RunWorkspaceSendHeredoc, "--to", "child:orchestrator"); err == nil || result.Success || result.RecoveryMessageID != "" {
 		t.Fatalf("unknown intermediate admitted mail before durable stage: %+v %v", result, err)
 	}
 }

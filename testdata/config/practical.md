@@ -2,10 +2,10 @@
 skill_path:
   - path: ../../skills
     skills:
-      - postman-usage
+      - stay-lazy
       - postman-send-message
-      - postman-recall
-      - postman-team-manager
+      - postman-records
+      - development-workflow
 ---
 
 # Practical team
