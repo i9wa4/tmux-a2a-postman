@@ -175,6 +175,17 @@ worker-alt independent read-only work or a separately owned primary scope.
 Keep editing scopes separate. Use the configured interface and immediate
 parent/child routes; preserve the correlated return route.
 
+For each delegation, keep the expected substantive result and an agreed
+checkpoint or resumption condition in `tasks.md`. If no completion report
+arrives by that point, keep the work incomplete and name the next owner and
+action: one bounded progress request, an authorized redirect or reassignment,
+or escalation of a concrete blocker. Assignment acceptance, pane activity,
+process liveness, POP/claim, or an ACK alone does not establish task progress
+or completion. Treat saved `get-status` as an as-of observation; explicit
+`refresh-status` may reuse captures or return partial rows (see
+`help get-status` and `help refresh-status`). Seek fresher evidence only when
+it changes the next decision.
+
 Send reviews to the local guardian when present in the active team.
 Otherwise request review through the verified immediate parent interface,
 whose orchestrator applies the same rule. Preserve the correlated return
