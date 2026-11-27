@@ -76,11 +76,12 @@ sequenceDiagram
     B->>P: pop
     P-->>B: Archive path
     Note over B: Read whole file<br/>through EOF
-    B->>P: send-heredoc<br/>--to claimed-id
+    B->>P: send-heredoc<br/>--to claimed request ID
     P-->>A: Exact reply<br/>+ input hint
 ```
 
-Messages carry the recipient's instructions, contacts and exact reply command.
+Messages carry the recipient's instructions and contacts. Requests carry an
+exact reply command; replies guide a fresh named request if more work is needed.
 Notification uncertainty leaves committed mail intact. Logs remain until you
 delete them.
 

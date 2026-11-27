@@ -78,7 +78,7 @@ Review exact command requests and return the supplied approval or decline.
 
 ## 6. `message_footer`
 
-Reply using `{reply_command} {reply_arguments}` and a quoted heredoc body.
+Continue with `{reply_command} {reply_arguments}` and a quoted heredoc body.
 Allowed contacts: {can_talk_to}.
 ````
 
@@ -151,21 +151,23 @@ For a message to worker, the example becomes this sequence of regions:
    commands.
 4. Applicable configured footer, then the sender's literal Markdown through EOF.
 
-For example `{can_talk_to}` becomes worker's configured contacts and
-`{reply_command} {reply_arguments}` becomes the exact config-aware command and
-claimed message ID. These are single-brace substitutions, not shell expansion.
+For example `{can_talk_to}` becomes worker's configured contacts. For a request,
+`{reply_command} {reply_arguments}` becomes the config-aware command and claimed
+request ID. For an ordinary reply, it instead shows `--to <configured-role>`
+for a fresh request; the reply's ID is not a valid target. These are
+single-brace substitutions, not shell expansion.
 Supported placeholders are:
 
-| Placeholder                               | Meaning                                                             |
-| ----------------------------------------- | ------------------------------------------------------------------- |
-| `{contacts_section}`, `{can_talk_to}`     | Recipient contact descriptions / comma-separated allowed addresses. |
-| `{reply_command}`, `{reply_arguments}`    | Config-aware send command / exact reply arguments.                  |
-| `{message_id}`, `{input_request_id}`      | Current message / its input request ID, if any.                     |
-| `{reply_to}`, `{fills_input_request_id}`  | Referenced original message / input-request IDs for replies.        |
-| `{sender}`, `{recipient}`                 | Exact current addresses, including sessions for cross-session mail. |
-| `{node}`, `{session_name}`, `{timestamp}` | Recipient role, recipient session and message creation time.        |
-| `{reply_policy}`                          | Current reply obligation description.                               |
-| `{required_reply_completion_gate}`        | Task-evidence reminder for reply-required mail.                     |
+| Placeholder                               | Meaning                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `{contacts_section}`, `{can_talk_to}`     | Recipient contact descriptions / comma-separated allowed addresses.                               |
+| `{reply_command}`, `{reply_arguments}`    | Config-aware send command / exact request ID, or a fresh configured role after an ordinary reply. |
+| `{message_id}`, `{input_request_id}`      | Current message / its input request ID, if any.                                                   |
+| `{reply_to}`, `{fills_input_request_id}`  | Referenced original message / input-request IDs for replies.                                      |
+| `{sender}`, `{recipient}`                 | Exact current addresses, including sessions for cross-session mail.                               |
+| `{node}`, `{session_name}`, `{timestamp}` | Recipient role, recipient session and message creation time.                                      |
+| `{reply_policy}`                          | Current reply obligation description.                                                             |
+| `{required_reply_completion_gate}`        | Task-evidence reminder for reply-required mail.                                                   |
 
 Typed execution/external requests use their fixed decision/report guidance
 rather than a generic configured reply footer. An archived sent copy still

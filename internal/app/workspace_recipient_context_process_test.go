@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestWorkspaceMailRetainsRecipientPolicyCatalogContactsAndLiteralBody(t *tes
 		"## `peer`\n### `role`\nCommand reviewer and sender.\n### Contract\nPEER_POLICY\n" +
 		"## `worker`\n### `role`\nPrimary executor.\n### Contract\nWORKER_POLICY through final worker instruction.\n" +
 		"## `guardian`\n### `role`\nFinal review owner.\n### Contract\nGUARDIAN_POLICY\n" +
-		"## `message_footer`\nConfigured note for {message_id}. Contacts: {can_talk_to}.\n"
+		"## `message_footer`\nConfigured note for {message_id}. Contacts: {can_talk_to}. Continue with {reply_command} {reply_arguments}.\n"
 	if err := os.WriteFile(f.config, []byte(configuration), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,10 @@ func TestWorkspaceMailRetainsRecipientPolicyCatalogContactsAndLiteralBody(t *tes
 	reply := f.sent("worker", replyBody)
 	if reply.NeedsReply || reply.Context == nil || len(reply.Replies) != 1 || reply.Replies[0].MessageID != sent.ID ||
 		!strings.Contains(reply.Context.Markdown, "PEER_POLICY") || strings.Contains(reply.Context.Markdown, "WORKER_POLICY") ||
-		!strings.Contains(reply.Context.Markdown, "No reply is required") {
+		!strings.Contains(reply.Context.Markdown, "No reply is required") ||
+		!strings.Contains(reply.Context.Markdown, "send-heredoc --config '") ||
+		!strings.Contains(reply.Context.Markdown, " --to <configured-role>") ||
+		regexp.MustCompile(`--to\s+`+regexp.QuoteMeta(reply.ID)+`\b`).MatchString(reply.Context.Markdown) {
 		t.Fatal("exact reply lost recipient policy or created a new obligation", reply)
 	}
 }

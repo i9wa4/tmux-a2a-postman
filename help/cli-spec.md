@@ -27,7 +27,7 @@ interface; ordinary send/POP shapes remain unchanged. Status follows §3.
 | `get-status`               | Read the saved explicit-server JSON snapshot                    |
 | `get-status-oneline`       | Render the same saved server snapshot as one human line         |
 | `pop`                      | Claim one own unread mail and return its final archive path     |
-| `send-heredoc`             | Send a request or reply to claimed message IDs                  |
+| `send-heredoc`             | Send a new request or answer a claimed original request         |
 | `heartbeat`                | Send one reply-required request to the local verified interface |
 | `schedule-next heartbeat`  | Query the selected interval for a foreground daemon             |
 | `daemon -- heartbeat`      | Optional foreground loop invoking fresh CLI subprocesses        |
@@ -279,10 +279,12 @@ line; see `help send-heredoc`.
 
 `--to` is the only dedicated option. A configured local node or authorized
 direct `session:interface-node` route creates a new reply-required request.
-A claimed message ID replies to that message's exact sender and return route;
-the CLI recovers correlation from its read archive and receipt. A reply does
-not create another reply obligation. Mid-task questions are new node-addressed
-requests and leave the original obligation open.
+A claimed original reply-required request ID replies to that request's exact
+sender and return route; the CLI recovers correlation from its read archive and
+receipt. An ordinary reply's message ID is rejected as a reply target. To
+continue after an ordinary reply, send a fresh request to a configured node.
+An exact reply creates no new obligation. Mid-task questions are new
+node-addressed requests and leave the original obligation open.
 
 ```sh
 tmux-a2a-postman send-heredoc --to m-0123456789abcdef0123456789abcdef <<'POSTMAN_BODY_a9d2e806'
@@ -290,17 +292,19 @@ The check is complete.
 POSTMAN_BODY_a9d2e806
 ```
 
-Comma-separated claimed IDs create one combined reply, currently bounded to
-16 IDs. All must belong to this caller and have one identical sender and
-workspace/session return route. Validate every ID before delivery; invalid or
-duplicate IDs do not cause a partial reply. Different recipients require
-separate sends. Old stored mail's reply policy is never reinterpreted.
+Comma-separated claimed original reply-required request IDs create one combined
+reply, currently bounded to 16 IDs. All must belong to this caller and have one
+identical sender and workspace/session return route. Validate every ID before
+delivery; invalid IDs, ordinary reply IDs or duplicate IDs do not cause a
+partial reply. Different recipients require separate sends. Old stored mail's
+reply policy is never reinterpreted.
 
 The body is literal non-terminal stdin from a quoted heredoc; bounds are
 1–61440 input bytes, subject to the durable record's JSON-escaped size limit.
 There is no body argv, --reply-to, --fills-input-request-id, --reply-required,
 --no-reply or capture toggle. Generated guidance is versioned separately from
-the exact user body. It shows the actual reply ID and says when no reply is due.
+the exact user body. It shows the original request ID when a reply is due and
+distinguishes ordinary replies from requests.
 
 Normal JSON contains workspace/as_of/success/self. Durable delivery and sender
 archival define mail success. A failed or ambiguous notification is additional
@@ -474,35 +478,35 @@ main interface before this change; removed syntax is intentionally rejected.
 
 ### 10.1. Inputs and entry points
 
-| Surface                                                                      | Decision and purpose                                           | Callers and rationale                                                                         |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `get-status`                                                                 | Saved server snapshot; explicit refresh-status owns collection | Agents/operators need one saved-file view; no global workspace scan                           |
-| `pop [id]`                                                                   | Simplify to argument-free `pop`                                | Receivers claim their actual next mail                                                        |
-| `send-heredoc --to node`                                                     | Keep; new requests require replies                             | Senders need explicit configured routes and literal stdin                                     |
-| `--to session:interface`                                                     | Keep direct parent/child routes                                | Interface nodes need exact per-hop identity without foreign capture access                    |
-| `--reply-to`, `--fills-input-request-id`                                     | Remove from public input; derive from `--to <POP'd-id>`        | Agents should not transcribe correlation metadata                                             |
-| Comma-separated `--to` IDs                                                   | Add bounded combined replies, maximum 16                       | One answer can resolve several claimed requests with one sender/route                         |
-| `--reply-required`, `--no-reply`                                             | Remove; request/reply semantics determine policy               | Avoid contradictory reply flags and endless reply obligations                                 |
-| `execute-bash --command`                                                     | Replace with `execute-heredoc --reason` and stdin              | Exact multiline source, cwd and initialized shell form one reviewable request                 |
-| `approve-execution`, `decline-execution`                                     | Add fixed actions with `--to` and `--reason`                   | Approvers choose one action without JSON/code copies or boolean ambiguity                     |
-| Decision/helper stdin                                                        | Reject nonempty stdin                                          | Reasons and target are explicit flags; source is never copied by the approver                 |
-| `--config`                                                                   | Keep one absolute override, before or after the command        | Operators/fixtures need explicit topology; defaults are cwd-independent                       |
-| `--postman-md`                                                               | Remove product alias                                           | One spelling for one input; the smoke driver's fixture-copy flag is separate                  |
-| `--capture-related-panes`                                                    | Remove; valid send/POP always trigger bounded session capture  | Visibility should not depend on each agent remembering a flag                                 |
-| `help [topic [reference]]`, `<command> --help`, top-level `--help`           | Keep without runtime state; reject extra help arguments        | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics              |
-| `version`, top-level `--version`                                             | Keep compact name/version/commit JSON                          | Operators need the actual installed revision                                                  |
-| Bare executable                                                              | Keep usage display, no mutation                                | No implicit startup operation                                                                 |
-| Duplicate/unknown flags and extra positionals                                | Reject before mail publication/execution                       | No last-value-wins decisions or hidden compatibility branches                                 |
-| HOME and XDG_CONFIG_HOME                                                     | Keep absolute, canonical ownership/config sources              | Agents/operators use normal XDG layout; relative values fail                                  |
-| XDG_STATE_HOME                                                               | Keep absolute private state selection                          | Tests and operators isolate mail; no new root flag                                            |
-| TMUX, TMUX_PANE and tmux native evidence                                     | Keep verified identity inputs                                  | Mutable names, cwd alone and PID liveness alone are insufficient                              |
-| tmux default-shell, cwd and exported caller environment                      | Keep explicit execution environment                            | Fresh shell configuration and first-prompt hooks run after authorization                      |
-| Legacy TOML, POSTMAN_HOME, context/root/daemon overrides                     | Remove/ignore as authority                                     | They must not gate or redirect current mail                                                   |
-| Legacy daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                         | The optional foreground daemon is a scheduler, without a retry service or second state engine |
-| Unused related capture-registration ledger                                   | Remove dormant code                                            | Deferred state-machine work must not masquerade as current authority                          |
-| Pure compaction-marker helper                                                | Keep isolated, without automatic observation or action         | Preserve reusable parsing without coupling mail/notification to a model                       |
-| `nix run .#notification-smoke` and Python smoke options                      | Keep development-only                                          | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing      |
-| Nix update-toolchain, skill-check/publish and release helpers                | Keep explicit development/release tools                        | They do not add Postman operational commands; publishing remains user/release-owned           |
+| Surface                                                                      | Decision and purpose                                            | Callers and rationale                                                                         |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `get-status`                                                                 | Saved server snapshot; explicit refresh-status owns collection  | Agents/operators need one saved-file view; no global workspace scan                           |
+| `pop [id]`                                                                   | Simplify to argument-free `pop`                                 | Receivers claim their actual next mail                                                        |
+| `send-heredoc --to node`                                                     | Keep; new requests require replies                              | Senders need explicit configured routes and literal stdin                                     |
+| `--to session:interface`                                                     | Keep direct parent/child routes                                 | Interface nodes need exact per-hop identity without foreign capture access                    |
+| `--reply-to`, `--fills-input-request-id`                                     | Remove from public input; derive from `--to <POP'd-request-id>` | Agents should not transcribe correlation metadata                                             |
+| Comma-separated `--to` request IDs                                           | Add bounded combined replies, maximum 16                        | One answer can resolve several claimed original requests with one sender/route                |
+| `--reply-required`, `--no-reply`                                             | Remove; request/reply semantics determine policy                | Avoid contradictory reply flags and endless reply obligations                                 |
+| `execute-bash --command`                                                     | Replace with `execute-heredoc --reason` and stdin               | Exact multiline source, cwd and initialized shell form one reviewable request                 |
+| `approve-execution`, `decline-execution`                                     | Add fixed actions with `--to` and `--reason`                    | Approvers choose one action without JSON/code copies or boolean ambiguity                     |
+| Decision/helper stdin                                                        | Reject nonempty stdin                                           | Reasons and target are explicit flags; source is never copied by the approver                 |
+| `--config`                                                                   | Keep one absolute override, before or after the command         | Operators/fixtures need explicit topology; defaults are cwd-independent                       |
+| `--postman-md`                                                               | Remove product alias                                            | One spelling for one input; the smoke driver's fixture-copy flag is separate                  |
+| `--capture-related-panes`                                                    | Remove; valid send/POP always trigger bounded session capture   | Visibility should not depend on each agent remembering a flag                                 |
+| `help [topic [reference]]`, `<command> --help`, top-level `--help`           | Keep without runtime state; reject extra help arguments         | Markdown HelpDocs own syntax and procedures; thin Skills select installed topics              |
+| `version`, top-level `--version`                                             | Keep compact name/version/commit JSON                           | Operators need the actual installed revision                                                  |
+| Bare executable                                                              | Keep usage display, no mutation                                 | No implicit startup operation                                                                 |
+| Duplicate/unknown flags and extra positionals                                | Reject before mail publication/execution                        | No last-value-wins decisions or hidden compatibility branches                                 |
+| HOME and XDG_CONFIG_HOME                                                     | Keep absolute, canonical ownership/config sources               | Agents/operators use normal XDG layout; relative values fail                                  |
+| XDG_STATE_HOME                                                               | Keep absolute private state selection                           | Tests and operators isolate mail; no new root flag                                            |
+| TMUX, TMUX_PANE and tmux native evidence                                     | Keep verified identity inputs                                   | Mutable names, cwd alone and PID liveness alone are insufficient                              |
+| tmux default-shell, cwd and exported caller environment                      | Keep explicit execution environment                             | Fresh shell configuration and first-prompt hooks run after authorization                      |
+| Legacy TOML, POSTMAN_HOME, context/root/daemon overrides                     | Remove/ignore as authority                                      | They must not gate or redirect current mail                                                   |
+| Legacy daemon start/stop/RPC, observer, model adapters, grants/resume policy | Remove                                                          | The optional foreground daemon is a scheduler, without a retry service or second state engine |
+| Unused related capture-registration ledger                                   | Remove dormant code                                             | Deferred state-machine work must not masquerade as current authority                          |
+| Pure compaction-marker helper                                                | Keep isolated, without automatic observation or action          | Preserve reusable parsing without coupling mail/notification to a model                       |
+| `nix run .#notification-smoke` and Python smoke options                      | Keep development-only                                           | Fixture/local-model/live modes, case/terminal selection, reports and config-copy testing      |
+| Nix update-toolchain, skill-check/publish and release helpers                | Keep explicit development/release tools                         | They do not add Postman operational commands; publishing remains user/release-owned           |
 
 ### 10.2. Outputs
 
