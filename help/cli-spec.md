@@ -565,9 +565,12 @@ boundaries, privacy, limits and measured cost.
 An existing application state root may remain 0755; it must be an owned real
 directory without group/other write access. Postman preserves its permissions.
 Workspace/lock directories are 0700 and records 0600, with bounded private-file
-readers and symlink refusal. Mail scans admit at most 2048 entries per mailbox;
-sidecars consume scan entries but are not message counts. Oversized/damaged
-boxes are unknown with a reason, without deleting history to satisfy the bound.
+readers and symlink refusal. Transport operations scan at most 2048 entries per
+mailbox; sidecars consume scan entries but are not message counts. Status
+aggregation scans beyond that cap in directory batches under its deadline.
+When a scan or record validation cannot finish, affected counts are unknown
+with a reason; independently completed counts may remain known. No history is
+deleted to satisfy the transport bound.
 Per-record JSON is at most 64 KiB; mail/recovery encoding has a tighter 60-KiB
 bound. Execution audit/request encoding may reject a large escaped source before
 delivery or execution. Decision reasons are 1–4096 bytes. There is no automatic
