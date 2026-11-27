@@ -243,6 +243,9 @@ func renderRecipientContextDirectoryWithNotice(policy config.RecipientPolicy, to
 	}
 	if policy.Footer != "" && msg.Kind != "execution-request" && msg.External == nil {
 		replyArguments := " --to " + msg.ID
+		if workspace.IsOrdinaryReply(msg) {
+			replyArguments = " --to <configured-role>"
+		}
 		replyPolicy, replyTo, fills := "none", msg.ReplyTo, msg.FillsInputRequestID
 		if msg.NeedsReply {
 			replyPolicy = "required"
