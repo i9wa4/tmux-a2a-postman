@@ -4,10 +4,12 @@
 
 After durable mail commits, the foreground sender verifies its sent copy and
 recipient binding, then pastes a short hint into the existing agent console.
-The greeting, `You've got mail:` filename hint and HTML sentinels remain. The
-hint asks for argument-free POP and a complete archive read; the actual POP
-result selects the mail. No body, executable source, model API, client
-registration or shell hook is involved.
+The greeting, ID-free `You've got mail.` hint and HTML sentinels remain. The
+hint asks for argument-free POP. When POP claims a message, it returns that
+message's archived file path and instructions to read it through EOF. An empty
+POP returns a null path and no read instruction. The POP result selects the
+mail; the notification contains no message ID or archive path. No body,
+executable source, model API, client registration or shell hook is involved.
 
 Unique tmux buffers are deleted after consumption. Native server/session/pane
 and process evidence is checked around captures and before every key. Ordinary
