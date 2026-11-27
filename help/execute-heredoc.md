@@ -43,8 +43,10 @@ Postman saves minimal execution audit, not complete stdout/stderr logs.
 
 All configured roles use this entry for shell commands within their assigned
 scope, including authorized read-only checks and role-owned record/report
-writes. Postman transport, decision and discovery operations described by their
-own help remain direct control operations. Approval does not expand a role's
+writes. The narrow filesystem-read exception is direct `cat` of the exact
+archive path returned by the caller's own successful `pop`; see [pop](pop.md).
+Postman transport, decision and discovery operations described by their own
+help remain direct control operations. Approval does not expand a role's
 assignment or bypass human and runtime permission limits.
 
 If a decision needs missing human authority, route the concrete question
