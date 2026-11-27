@@ -26,8 +26,10 @@ receive one combined reply. Validate the whole set before delivery. Archives
 append a versioned reply-instruction section without altering the literal user
 body.
 
-JSON: workspace, as_of, success, self; optional reason, recovery_message_id,
-notification. A normal accepted notification is omitted. success means durable
+JSON: workspace, as_of, success, self; optional instruction, reason,
+recovery_message_id, notification. Instruction uses known own unread/inbound
+and outbound facts without authorizing a retry of uncertain delivery.
+A normal accepted notification is omitted. success means durable
 receiver-inbox and sender-sent copies; it does not mean POP or task completion.
 Confirmed non-delivery retains full failed mail; uncertainty retains a draft
 and recovery identity. Do not blindly resend an uncertain operation.

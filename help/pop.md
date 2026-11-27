@@ -9,11 +9,13 @@ JSON: workspace, as_of, success, markdown_absolute_path, self; optional reason.
 A non-null archive path also includes this instruction with the actual path:
 
 > Read the complete file by running `cat '<markdown_absolute_path>'` directly
-> through EOF. Do not use `execute-heredoc` for this read.
-A successful empty POP omits instruction because there is no file to read.
-A successful empty POP has markdown_absolute_path=null. A claimed message has
-an existing absolute read path and a durable matching .pop.json receipt.
-The path remains valid after claim; failed stdout cannot resurrect delivery.
+through EOF. Do not use `execute-heredoc` for this read. A successful empty
+POP omits instruction because there is no file to read or immediate POP to
+repeat. A failed POP also gives no immediate repeat advice; if it returned a
+committed archive path, that archive still requires full reading. A successful
+empty POP has markdown_absolute_path=null. A claimed message has an existing
+absolute read path and a durable matching .pop.json receipt. The path remains
+valid after claim; failed stdout cannot resurrect delivery.
 
 Read that complete Markdown through EOF, including its generated reply
 instructions. The notification does not select the POP result.

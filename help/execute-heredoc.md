@@ -33,7 +33,9 @@ and original approval deadline, without holding a workspace lock while waiting.
 
 Command stdout and stderr stream unchanged. The final stderr line is JSON:
 workspace, as_of, success, executed (true/false/null), exit_code (number/null),
-approval (approver, decision, reason; or null), self, and optional reason.
+approval (approver, decision, reason; or null), self, and optional instruction
+and reason. Instruction concerns known own mail and response obligations; it
+does not authorize repeating a possibly started command.
 A separating newline is added if child stderr has no final newline. Waiting
 progress also goes to stderr. A nonzero command exit is forwarded. An uncertain
 possibly started command has executed=null and must not be blindly repeated.

@@ -2,7 +2,9 @@
 
 ## 1. After sending
 
-Wait passively for a genuine notification or exact reply. Do not use repeated
+First follow the operation result's `instruction` for known own unread mail or
+outstanding required responses. When only sent requests await replies, wait
+passively for a genuine notification or exact reply. Do not use repeated
 POP, sleep/POP, or status loops as a wait mechanism. Use
 `tmux-a2a-postman help pop`, `help get-status`, and
 `help messaging` for bounded status,

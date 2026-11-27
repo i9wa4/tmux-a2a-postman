@@ -9,7 +9,9 @@ decision flags or command copy. Read the complete archived request first.
 Only the configured approver can decide its own POP'd execution request.
 Exact source and correlation come from that archive. A duplicate/conflicting
 decision fails before publication. Returns delivery success and common self
-JSON; delivery does not imply that the requester executed successfully.
+JSON with optional post-operation instruction; delivery does not imply that the
+requester executed successfully. Other claimed requests retain their own typed
+decision procedure.
 
 ## 1. Decision procedure
 

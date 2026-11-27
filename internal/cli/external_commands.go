@@ -24,8 +24,17 @@ func (c workspaceCommand) externalBinding(ctx context.Context) (workspace.NamedR
 
 func RunWorkspaceChannelSync(args []string) (retErr error) {
 	result := workspace.ExternalSync{Accepted: []workspace.ExternalIntake{}, Published: []string{}, Pending: []workspace.ExternalPending{}}
+	var c *workspaceCommand
+	verified := false
 	defer func() {
 		out := map[string]any{"success": retErr == nil, "as_of": time.Now().UTC().Format(time.RFC3339Nano), "channel": result}
+		if verified {
+			root, at, self := collectPostOperationSelf(c, nil)
+			out["workspace"], out["as_of"], out["self"] = root, at, self
+			if instruction := resultGuidance(self, "channel-sync", retErr == nil, false, "", len(result.Pending) > 0, result.More); instruction != "" {
+				out["instruction"] = instruction
+			}
+		}
 		if retErr != nil {
 			out["reason"] = retErr.Error()
 		}
@@ -45,15 +54,17 @@ func RunWorkspaceChannelSync(args []string) (retErr error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	c, err := openWorkspaceCommand(ctx, path)
+	opened, err := openWorkspaceCommand(ctx, path)
 	if err != nil {
 		return err
 	}
+	c = &opened
 	defer c.refreshStatusAfterOperation()
 	rt, b, err := c.externalBinding(ctx)
 	if err != nil {
 		return err
 	}
+	verified = true
 	if err := c.prepareRecipientContext(ctx, c.topology.InterfaceNode, false); err != nil {
 		return err
 	}
@@ -66,9 +77,23 @@ func RunWorkspaceChannelSync(args []string) (retErr error) {
 
 func RunWorkspaceChannelReport(args []string) (retErr error) {
 	out := map[string]any{}
+	var c *workspaceCommand
+	verified := false
+	pendingReport := false
 	defer func() {
 		out["success"] = retErr == nil
 		out["as_of"] = time.Now().UTC().Format(time.RFC3339Nano)
+		if verified {
+			root, at, self := collectPostOperationSelf(c, nil)
+			out["workspace"], out["as_of"], out["self"] = root, at, self
+			existing := ""
+			if pendingReport {
+				existing = "This pending external report requests an exact external decision; retain its scope and follow the channel decision procedure. It does not grant execution approval."
+			}
+			if instruction := resultGuidance(self, "channel-report-heredoc", retErr == nil, false, existing, false, false); instruction != "" {
+				out["instruction"] = instruction
+			}
+		}
 		if retErr != nil {
 			out["reason"] = retErr.Error()
 		}
@@ -95,15 +120,17 @@ func RunWorkspaceChannelReport(args []string) (retErr error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := openWorkspaceCommand(ctx, path)
+	opened, err := openWorkspaceCommand(ctx, path)
 	if err != nil {
 		return err
 	}
+	c = &opened
 	defer c.refreshStatusAfterOperation()
 	rt, b, err := c.externalBinding(ctx)
 	if err != nil {
 		return err
 	}
+	verified = true
 	var msg workspace.Message
 	err = retryWorkspaceAdmission(ctx, func() (bool, error) {
 		msg, err = c.mail.ReportExternal(ctx, rt, b, *to, *state, *scope, body)
@@ -112,6 +139,7 @@ func RunWorkspaceChannelReport(args []string) (retErr error) {
 	if msg.ID != "" {
 		out["message_id"] = msg.ID
 		out["exchange_id"] = msg.External.ExchangeID
+		pendingReport = *state == "pending"
 	}
 	out["publication"] = "local outbox availability; human receipt is unknown"
 	return err

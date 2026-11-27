@@ -28,6 +28,7 @@ type executionOutput struct {
 	ExitCode            *int                    `json:"exit_code"`
 	Approval            *approvalOutput         `json:"approval"`
 	Self                workspace.NodeStatus    `json:"self"`
+	Instruction         string                  `json:"instruction,omitempty"`
 	Reason              string                  `json:"reason,omitempty"`
 	Notification        *workspace.NoticeResult `json:"notification,omitempty"`
 	RecoveryMessageID   string                  `json:"recovery_message_id,omitempty"`
@@ -62,19 +63,9 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 		if c != nil {
 			result := c.refreshStatusAfterOperation()
 			facts.Capture = result.Status
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			summarySpan := trace.Start("self_summary")
-			out.Workspace, out.AsOf, out.Self = c.mail.Summary(diagnostic.With(ctx, trace), c.boundRuntime(), c.caller.Caller.Role)
-			summaryOutcome := "ok"
-			if out.Self.Reason != "" {
-				summaryOutcome = "unknown"
-			}
-			summarySpan.End(summaryOutcome)
-			if out.Workspace == "" {
-				out.Workspace = c.caller.Root
-			}
+			out.Workspace, out.AsOf, out.Self = collectPostOperationSelf(c, trace)
 		}
+		out.Instruction = resultGuidance(out.Self, "execute", out.Success, false, "", false, false)
 		if retErr != nil && out.Reason == "" {
 			out.Reason = retErr.Error()
 		}

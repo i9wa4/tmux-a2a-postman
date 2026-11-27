@@ -165,7 +165,8 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	if *got.MarkdownPath != expected || !filepath.IsAbs(expected) {
 		t.Fatal(got.MarkdownPath, expected)
 	}
-	if got.Instruction != "Read the complete file by running `cat '"+expected+"'` directly through EOF. Do not use `execute-heredoc` for this read." {
+	if !strings.HasPrefix(got.Instruction, "Read the complete file by running `cat '"+expected+"'` directly through EOF. Do not use `execute-heredoc` for this read.") ||
+		!strings.Contains(got.Instruction, "Own required responses remain (self.inbound_count)") {
 		t.Fatal("POP must require a complete archive read before any handling decision", got.Instruction)
 	}
 	archived := readProtocolArchive(t, expected)
@@ -199,10 +200,13 @@ func TestWorkspacePopProcessReadCommandPreservesShellSpecialPath(t *testing.T) {
 	}
 	const prefix = "Read the complete file by running `"
 	const suffix = "` directly through EOF. Do not use `execute-heredoc` for this read."
-	if !strings.HasPrefix(got.Instruction, prefix) || !strings.HasSuffix(got.Instruction, suffix) {
+	if !strings.HasPrefix(got.Instruction, prefix) {
 		t.Fatal("missing direct command", got.Instruction)
 	}
-	command := strings.TrimSuffix(strings.TrimPrefix(got.Instruction, prefix), suffix)
+	command, trailing, found := strings.Cut(strings.TrimPrefix(got.Instruction, prefix), suffix)
+	if !found || (trailing != "" && !strings.HasPrefix(trailing, " ")) {
+		t.Fatal("missing direct command boundary", got.Instruction)
+	}
 	shell, err := exec.LookPath("zsh")
 	if err != nil {
 		t.Skip("zsh unavailable")
