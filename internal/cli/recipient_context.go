@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/displaytime"
+
 	"github.com/i9wa4/tmux-a2a-postman/internal/config"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
@@ -160,11 +162,14 @@ func contextShellWord(value string) string {
 }
 
 func localTimestamp(created string, location *time.Location) string {
-	at, err := time.Parse(time.RFC3339Nano, created)
-	if err != nil {
-		return created
+	if created == "" {
+		return "unavailable"
 	}
-	return at.In(location).Format("2006-01-02T15:04:05.999999999-07:00")
+	display, err := displaytime.FromRFC3339(created, location)
+	if err != nil {
+		return "invalid timestamp"
+	}
+	return display
 }
 
 func renderRecipientContext(policy config.RecipientPolicy, topology config.WorkspaceTopology, path, localSession string, msg workspace.Message) string {
@@ -176,7 +181,11 @@ func renderRecipientContextDirectory(policy config.RecipientPolicy, topology con
 }
 
 func renderRecipientContextDirectoryWithNotice(policy config.RecipientPolicy, topology config.WorkspaceTopology, path, localSession string, msg workspace.Message, interfaces []workspace.DirectoryInterface, directoryNotice string) string {
-	displayTime := localTimestamp(msg.CreatedAt, time.Local)
+	return renderRecipientContextDirectoryWithNoticeAtLocation(policy, topology, path, localSession, msg, interfaces, directoryNotice, time.Local)
+}
+
+func renderRecipientContextDirectoryWithNoticeAtLocation(policy config.RecipientPolicy, topology config.WorkspaceTopology, path, localSession string, msg workspace.Message, interfaces []workspace.DirectoryInterface, directoryNotice string, location *time.Location) string {
+	displayTime := localTimestamp(msg.CreatedAt, location)
 	session, from, to := localSession, msg.From, msg.To
 	if msg.ToSession != "" {
 		session = msg.ToSession

@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/displaytime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
 
@@ -25,7 +26,8 @@ func (c workspaceCommand) externalBinding(ctx context.Context) (workspace.NamedR
 func RunWorkspaceChannelSync(args []string) (retErr error) {
 	result := workspace.ExternalSync{Accepted: []workspace.ExternalIntake{}, Published: []string{}, Pending: []workspace.ExternalPending{}}
 	defer func() {
-		out := map[string]any{"success": retErr == nil, "as_of": time.Now().UTC().Format(time.RFC3339Nano), "channel": result}
+		now := time.Now()
+		out := map[string]any{"success": retErr == nil, "as_of": now.UTC().Format(time.RFC3339Nano), "display_as_of": displaytime.Format(now, time.Local), "channel": result}
 		if retErr != nil {
 			out["reason"] = retErr.Error()
 		}
@@ -68,7 +70,9 @@ func RunWorkspaceChannelReport(args []string) (retErr error) {
 	out := map[string]any{}
 	defer func() {
 		out["success"] = retErr == nil
-		out["as_of"] = time.Now().UTC().Format(time.RFC3339Nano)
+		now := time.Now()
+		out["as_of"] = now.UTC().Format(time.RFC3339Nano)
+		out["display_as_of"] = displaytime.Format(now, time.Local)
 		if retErr != nil {
 			out["reason"] = retErr.Error()
 		}

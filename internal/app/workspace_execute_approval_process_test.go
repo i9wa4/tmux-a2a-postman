@@ -23,6 +23,8 @@ type publicApprovalFixture struct {
 type protocolOutput struct {
 	Workspace           string                    `json:"workspace"`
 	AsOf                string                    `json:"as_of"`
+	DisplayAsOf         string                    `json:"display_as_of"`
+	DisplayCreatedAt    string                    `json:"display_created_at"`
 	Success             bool                      `json:"success"`
 	MarkdownPath        *string                   `json:"markdown_absolute_path"`
 	Instruction         string                    `json:"instruction"`

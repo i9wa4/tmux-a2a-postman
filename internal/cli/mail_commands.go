@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+	"github.com/i9wa4/tmux-a2a-postman/internal/displaytime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
@@ -22,6 +23,8 @@ type mailOutput struct {
 	RefreshEligible   bool                    `json:"-"`
 	Workspace         string                  `json:"workspace"`
 	AsOf              string                  `json:"as_of"`
+	DisplayAsOf       string                  `json:"display_as_of,omitempty"`
+	DisplayCreatedAt  string                  `json:"display_created_at,omitempty"`
 	Success           bool                    `json:"success"`
 	Self              workspace.NodeStatus    `json:"self"`
 	MarkdownPath      **string                `json:"markdown_absolute_path,omitempty"`
@@ -56,6 +59,9 @@ func finishMail(c *workspaceCommand, out *mailOutput, operationErr error) (retEr
 		}
 	} else if operationErr != nil {
 		out.Self.Reason = operationErr.Error()
+	}
+	if display, err := displaytime.FromRFC3339(out.AsOf, time.Local); err == nil {
+		out.DisplayAsOf = display
 	}
 	if operationErr != nil {
 		out.Reason = operationErr.Error()
@@ -114,6 +120,9 @@ func RunWorkspacePop(args []string) (retErr error) {
 		out.facts.Mail = "claimed"
 		noteMessage(trace, claim.Message, c.caller.Caller.Role)
 		path = &claim.Path
+		if display, err := displaytime.FromRFC3339(claim.Message.CreatedAt, time.Local); err == nil {
+			out.DisplayCreatedAt = display
+		}
 		quotedPath := "'" + strings.ReplaceAll(claim.Path, "'", "'\\''") + "'"
 		out.Instruction = "Read the complete file by running `cat " + quotedPath + "` directly through EOF. Do not use `execute-heredoc` for this read."
 	}

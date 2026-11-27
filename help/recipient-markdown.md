@@ -26,6 +26,15 @@ The reference is the shipped v0.9.5 behavior, especially:
 | Sender Message and visible separator                        | Keep the sender-authored UTF-8 bytes exactly, including headings, fences, dollar signs, comments and trailing newlines                                                                   |
 | POP read-body instruction                                   | Put an explicit full-file instruction in POP JSON whenever it returns an archive path                                                                                                    |
 
+The visible `Timestamp` and a configured `{timestamp}` footer are local-time
+presentations of the mail's validated `created_at`, with a numeric UTC offset.
+They can accompany a UTC message ID such as
+`m-20261101T053000.000000000Z-Ab12Cd` without changing that ID or its archive
+path. During a repeated wall hour, `2026-11-01T01:30:00-04:00` and
+`2026-11-01T01:30:00-05:00` are distinct instants. The immutable metadata,
+reply target and path remain canonical; readers must not derive ordering or
+identity from the displayed local date.
+
 Old context IDs and removed flags are represented by current native workspace,
 session and exact reply references. A typed execution request presents the
 fixed approve-execution/decline-execution actions; it does not invite a
@@ -154,10 +163,13 @@ A claimed path includes this additional JSON field:
 }
 ```
 
-The existing workspace/as_of/success/path/self fields remain. An empty POP has
-a null path and no instruction. The notification does not choose which mail
-POP claims. The receiver reads the returned file fully,
-including the actual sender body and generated guidance, before acting.
+The existing workspace/as_of/success/path/self fields remain. POP also returns
+`display_as_of`; a claimed archive has `display_created_at` from its validated
+creation instant. Both display fields use local time with a numeric offset. An
+empty POP has a null path, no message display time and no instruction. The
+notification does not choose which mail POP claims. The receiver reads the
+returned file fully, including the actual sender body and generated guidance,
+before acting.
 
 ## 4. Persistence and validation
 

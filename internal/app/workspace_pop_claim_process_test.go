@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
@@ -53,6 +54,9 @@ func TestWorkspacePopProcessReportsRemainingBatchAndContinuation(t *testing.T) {
 	empty, err := f.run(f.worker, "", "pop", "--config", f.config)
 	if err != nil || !empty.Success || empty.MarkdownPath != nil || empty.Instruction != "" || empty.Self.UnreadCount == nil || *empty.Self.UnreadCount != 0 {
 		t.Fatal("empty POP must end the batch", empty, err)
+	}
+	if empty.DisplayAsOf == "" || empty.DisplayCreatedAt != "" {
+		t.Fatal("empty POP needs an operation time but no invented message time", empty)
 	}
 }
 
@@ -171,6 +175,16 @@ func TestWorkspacePopProcessFirstClaimIsDurable(t *testing.T) {
 	archived := readProtocolArchive(t, expected)
 	if archived.ID != sent.ID || archived.Body != body || archived.CreatedAt != sent.CreatedAt {
 		t.Fatal(archived)
+	}
+	for _, pair := range [][2]string{{got.AsOf, got.DisplayAsOf}, {archived.CreatedAt, got.DisplayCreatedAt}} {
+		canonical, err := time.Parse(time.RFC3339Nano, pair[0])
+		if err != nil {
+			t.Fatal("invalid canonical timestamp", pair[0], err)
+		}
+		displayed, err := time.Parse(time.RFC3339Nano, pair[1])
+		if err != nil || !displayed.Equal(canonical) || !strings.ContainsAny(pair[1][len(pair[1])-6:], "+-") {
+			t.Fatal("display time must preserve the instant with a numeric offset", pair, err)
+		}
 	}
 	raw, err := os.ReadFile(strings.TrimSuffix(expected, ".md") + ".pop.json")
 	var receipt workspace.ClaimReceipt
