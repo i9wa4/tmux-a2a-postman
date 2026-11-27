@@ -8,7 +8,40 @@ validation, Waza readiness, or review follow-up. In those cases, stop at normal
 branch publication plus validation commands such as `nix run '.#skill-check'`
 or `gh skill publish dist/skills --dry-run`.
 
-1. Commit all changes to main branch
+### 1.1. Pre-merge review and enforcement
+
+Before merging a release candidate PR, its orchestrator sends the exact head and
+base SHAs, acceptance criteria, checks, and open findings through the verified
+parent route for upper-session Guardian and independent Critic review. Hold the
+merge if either review is missing or has an unresolved material finding. Their
+reports are evidence for the human decision; they are not GitHub approving
+reviews. The candidate also needs an eligible independent GitHub approval and
+the required `ci` check on the exact PR head before merge. Recheck both after a
+new push. A passing check or a review of an earlier head does not carry forward.
+
+This repository's current `main` ruleset does **not** yet enforce that approval:
+its required approving review count is zero, code-owner review has no
+`CODEOWNERS` coverage, and a repository-role actor has an always-bypass entry.
+An authorized administrator must first identify an eligible independent human
+reviewer, require at least one approving review, dismiss stale approvals on new
+pushes, require approval of the most recent push and resolution of review
+threads, then remove or narrowly constrain the always-bypass role. If code-owner
+review is retained, add valid `CODEOWNERS` coverage and an eligible owner. Read
+back the effective ruleset and test both an unapproved PR that cannot merge and
+an approved PR that can, without using a live release. The documentation PR
+does not change those settings or establish enforcement by itself.
+
+**Hold release publication until the remaining gates in
+[#1112](https://github.com/i9wa4/tmux-a2a-postman/issues/1112) are installed and
+verified.** A future workflow must prove the tag target is the exact merged PR
+commit on `main` and that required `ci` succeeded for that same SHA. The current
+tag workflow lacks this check, and a new workflow cannot guard older tagged
+commits that still contain the old publisher. Tag creation or publishing
+credentials need an effective separately approved control for those historical
+refs. Do not infer safety from branch currency, an earlier PR-head check, or a
+documentation change.
+
+1. Merge the reviewed PR into main after the safeguards above are effective.
 2. Run local pre-release checks:
 
    ```bash
@@ -61,8 +94,13 @@ tag ruleset for `v*` with:
 
 The release workflow can be run manually from the
 [Actions tab](https://github.com/i9wa4/tmux-a2a-postman/actions/workflows/release.yml).
-Manual runs validate skills and run GoReleaser, but they do not publish skills
-because no tag ref is present.
+The current manual run validates skills and invokes GoReleaser even when no
+tag ref is present; it does not publish skills. This path is **not** exempt from
+the release hold above and must not be used for publication while the gate is
+missing. The planned correction keeps branch dispatch for validation only and
+permits GoReleaser publication only for a tag that passes the same exact-commit,
+merged-PR, and `ci` checks as a tag push. Document and verify that change before
+using manual dispatch for a release.
 
 ## 5. Verify Release
 
