@@ -225,7 +225,9 @@ func renderRecipientContextDirectoryWithNotice(policy config.RecipientPolicy, to
 	if msg.Kind == "execution-request" {
 		guidance = strings.Replace(guidance, "exact command, reason, cwd and shell above", "exact command, reason, cwd and shell in Sender Message below", 1)
 	}
-	if !msg.NeedsReply && msg.Kind == "" {
+	if workspace.IsOrdinaryReply(msg) {
+		guidance += "\nTo continue the conversation, start a fresh request with `tmux-a2a-postman send-heredoc --to <configured-role>`; this reply's message ID cannot be a reply target.\n"
+	} else if !msg.NeedsReply && msg.Kind == "" {
 		guidance += workspace.OptionalReplyGuidance(msg)
 	}
 	configArguments := ""
@@ -241,6 +243,9 @@ func renderRecipientContextDirectoryWithNotice(policy config.RecipientPolicy, to
 	}
 	if policy.Footer != "" && msg.Kind != "execution-request" && msg.External == nil {
 		replyArguments := " --to " + msg.ID
+		if workspace.IsOrdinaryReply(msg) {
+			replyArguments = " --to <configured-role>"
+		}
 		replyPolicy, replyTo, fills := "none", msg.ReplyTo, msg.FillsInputRequestID
 		if msg.NeedsReply {
 			replyPolicy = "required"

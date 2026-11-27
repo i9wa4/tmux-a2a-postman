@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -110,6 +111,46 @@ func TestExecutionContextShowsFixedDecisionActionsAndNoOrdinaryReply(t *testing.
 	}
 	if strings.Contains(text, "send-heredoc") || !strings.Contains(text, "'\"'\"'") {
 		t.Fatal("typed approval used ordinary reply guidance or lost shell quoting", text)
+	}
+}
+
+func TestConfiguredFooterUsesFreshRequestTargetAfterOrdinaryReply(t *testing.T) {
+	const id = "m-0123456789abcdef0123456789abcdef"
+	path := "/tmp/postman config 'quoted'.md"
+	policy := config.RecipientPolicy{Footer: "Continue with {reply_command} {reply_arguments}."}
+	base := workspace.Message{ID: id, From: "peer", To: "worker", CreatedAt: "2026-01-01T00:00:00Z", GuidanceVersion: 2}
+	for _, tc := range []struct {
+		name string
+		msg  workspace.Message
+	}{
+		{"combined reply", func() workspace.Message {
+			msg := base
+			msg.Replies = []workspace.ReplyReference{{MessageID: "m-abcdef0123456789abcdef0123456789"}}
+			return msg
+		}()},
+		{"legacy reply", func() workspace.Message {
+			msg := base
+			msg.ReplyTo = "m-abcdef0123456789abcdef0123456789"
+			return msg
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := renderRecipientContext(policy, config.WorkspaceTopology{}, path, "session", tc.msg)
+			footer := strings.Split(rendered, "### Configured guidance\n\n")[1]
+			normalized := strings.Join(strings.Fields(footer), " ")
+			if !strings.Contains(normalized, "send-heredoc --config "+contextShellWord(path)+" --to <configured-role>") ||
+				regexp.MustCompile(`--to\s+`+regexp.QuoteMeta(id)+`\b`).MatchString(footer) {
+				t.Fatal("configured footer invites reply to reply", footer)
+			}
+		})
+	}
+	request := base
+	request.NeedsReply = true
+	request.InputRequestID = "ireq_0123456789abcdef0123456789abcdef"
+	rendered := renderRecipientContext(policy, config.WorkspaceTopology{}, path, "session", request)
+	footer := strings.Split(rendered, "### Configured guidance\n\n")[1]
+	if !strings.Contains(strings.Join(strings.Fields(footer), " "), "Continue with tmux-a2a-postman send-heredoc --config "+contextShellWord(path)+" --to "+id) {
+		t.Fatal("configured footer lost original request exact reply", rendered)
 	}
 }
 

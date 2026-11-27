@@ -39,6 +39,12 @@ func OptionalReplyGuidance(msg Message) string {
 	return "\nIf a material response is needed, reply to this message ID; an exact reply creates no new reply obligation:\n\n" + replyHeredocCheck + "```sh\ntmux-a2a-postman send-heredoc --to " + msg.ID + " <<'" + marker + "'\n<your material response>\n" + marker + "\n```\n"
 }
 
+// IsOrdinaryReply distinguishes an answer from a fresh request and from
+// external or typed protocol messages with their own response procedures.
+func IsOrdinaryReply(msg Message) bool {
+	return !msg.NeedsReply && msg.Kind == "" && msg.External == nil && (len(msg.Replies) > 0 || msg.ReplyTo != "")
+}
+
 func messageGuidanceV1(msg Message) string {
 	start := "\n\n---\n<!-- postman reply guidance v1 -->\n"
 	end := "\n<!-- end postman reply guidance v1 -->\n"
@@ -80,6 +86,9 @@ func claimedReplySources(ws *os.Root, role string, ids []string) ([]Message, err
 		}
 		if _, err := time.Parse(time.RFC3339Nano, receipt.ClaimedAt); err != nil {
 			return nil, errors.New("invalid reply source receipt time")
+		}
+		if IsOrdinaryReply(msg) {
+			return nil, errors.New("cannot reply to an ordinary reply message ID; start a fresh request with send-heredoc --to <configured-role>")
 		}
 		if len(sources) > 0 {
 			first := sources[0]

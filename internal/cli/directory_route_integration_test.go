@@ -117,6 +117,11 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(firstLine, "<!-- postman "), " -->")), &msg); err != nil {
 			t.Fatal(err)
 		}
+		if workspace.IsOrdinaryReply(msg) &&
+			(!strings.Contains(string(archive), "start a fresh request") ||
+				strings.Contains(string(archive), "send-heredoc --to "+msg.ID)) {
+			t.Fatal("ordinary reply archive offers an invalid exact reply", string(archive))
+		}
 		return msg
 	}
 	// A local interface send must not wait for advisory whole-server discovery.
@@ -158,7 +163,18 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("local interface send with 18 native sessions: pre-stage full-server enumerations: 0")
-	_ = claim(parentPane, "local interface task\n")
+	localRequest := claim(parentPane, "local interface task\n")
+	if result, err := invoke(parentPane, "local answer\n", RunWorkspaceSendHeredoc, "--to", localRequest.ID); err != nil || !result.Success {
+		t.Fatalf("local exact reply: %+v %v", result, err)
+	}
+	localAnswer := claim(messengerPane, "local answer\n")
+	if result, err := invoke(messengerPane, "invalid reply to reply\n", RunWorkspaceSendHeredoc, "--to", localAnswer.ID); err == nil || !strings.Contains(err.Error(), "start a fresh request") || result.Success || result.RecoveryMessageID != "" {
+		t.Fatalf("local reply-to-reply was not rejected before publication: %+v %v", result, err)
+	}
+	if result, err := invoke(messengerPane, "fresh local request\n", RunWorkspaceSendHeredoc, "--to", "orchestrator"); err != nil || !result.Success {
+		t.Fatalf("fresh local named request: %+v %v", result, err)
+	}
+	_ = claim(parentPane, "fresh local request\n")
 	if result, err := invoke(childPane, "", RunWorkspacePop); err != nil || !result.Success {
 		t.Fatalf("register child configuration: %+v %v", result, err)
 	}
@@ -355,6 +371,9 @@ func TestDirectoryRouteCLIWithoutTree(t *testing.T) {
 				answer.Replies[0].InputRequestID != request.InputRequestID || answer.NeedsReply ||
 				answer.ToSession != request.FromSession || answer.FromSession != request.ToSession {
 				t.Fatalf("claimed exact reply correlation: request=%+v answer=%+v", request, answer)
+			}
+			if result, err := invoke(direction.sourcePane, "invalid cross reply to reply\n", RunWorkspaceSendHeredoc, "--to", answer.ID); err == nil || !strings.Contains(err.Error(), "start a fresh request") || result.Success || result.RecoveryMessageID != "" {
+				t.Fatalf("cross-session reply-to-reply was not rejected before publication: %+v %v", result, err)
 			}
 		})
 	}

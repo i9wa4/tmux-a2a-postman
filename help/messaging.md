@@ -11,13 +11,15 @@ Literal Markdown body.
 POSTMAN_BODY_7f4c39b2
 ```
 
-Reply after POP and a full archive read:
+Reply to an original reply-required request after POP and a full archive read:
 
 ```sh
-tmux-a2a-postman send-heredoc --to <actual-POP-message-id> <<'POSTMAN_BODY_a9d2e806'
+tmux-a2a-postman send-heredoc --to <actual-POP-request-id> <<'POSTMAN_BODY_a9d2e806'
 Response.
 POSTMAN_BODY_a9d2e806
 ```
 
-A reply derives its exact return route and creates no new obligation. See
-help send-heredoc for combined replies, output and notification semantics.
+An exact reply derives its return route and creates no new obligation. An
+ordinary reply's ID cannot be a reply target; continue with a fresh request to
+a configured role. See help send-heredoc for combined replies, output and
+notification semantics.

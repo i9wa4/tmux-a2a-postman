@@ -17,11 +17,14 @@ Optional: `--config <absolute-path>`. No positional arguments or reply flags.
 The nonterminal stdin body is 1–61440 bytes; JSON escaping and recovery metadata
 must also fit the durable-record limit, so some bodies have a smaller limit.
 
-Node addresses create requests requiring a reply. A POP'd ID automatically
-selects its sender and exact return route; a reply creates no new obligation.
-At most 16 different POP'd IDs with one sender/return route can receive one
-combined reply. Validate the whole set before delivery. Archives append a
-versioned reply-instruction section without altering the literal user body.
+Node addresses create requests requiring a reply. A POP'd request ID
+automatically selects its sender and exact return route; a reply creates no new
+obligation. An ordinary reply's message ID cannot be used as a reply target. To
+continue after receiving a reply, start a fresh request addressed to a
+configured role. At most 16 different POP'd IDs with one sender/return route can
+receive one combined reply. Validate the whole set before delivery. Archives
+append a versioned reply-instruction section without altering the literal user
+body.
 
 JSON: workspace, as_of, success, self; optional reason, recovery_message_id,
 notification. A normal accepted notification is omitted. success means durable

@@ -52,6 +52,37 @@ func TestCombinedReplyClosesOnlyReferencedRequestsOnce(t *testing.T) {
 	}
 }
 
+func TestOrdinaryReplyCannotBeUsedAsReplySource(t *testing.T) {
+	m := mailFixture(t)
+	request := sendStateMessage(t, m, "worker", "peer", "question\n", "", "", true)
+	claimStateMessage(t, m, "peer", request.ID)
+	answer, err := m.SendReply(context.Background(), mailRuntime("peer"), []string{request.ID}, "answer\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimStateMessage(t, m, "worker", answer.ID)
+	before := treeFacts(t, m.Store.StateRoot)
+	if _, err := m.ReplySources(context.Background(), mailRuntime("worker"), []string{answer.ID}); err == nil || !strings.Contains(err.Error(), "start a fresh request") {
+		t.Fatal("ordinary reply source was accepted or gave no remedy", err)
+	}
+	if _, err := m.SendReply(context.Background(), mailRuntime("worker"), []string{answer.ID}, "reply to reply\n"); err == nil || !strings.Contains(err.Error(), "start a fresh request") {
+		t.Fatal("reply to reply was accepted or gave no remedy", err)
+	}
+	if after := treeFacts(t, m.Store.StateRoot); !reflect.DeepEqual(before, after) {
+		t.Fatal("rejected reply changed saved state")
+	}
+	fresh := sendStateMessage(t, m, "worker", "peer", "follow-up\n", "", "", true)
+	if !fresh.NeedsReply || len(fresh.Replies) != 0 {
+		t.Fatal("fresh named request lost its reply obligation", fresh)
+	}
+	claimStateMessage(t, m, "peer", fresh.ID)
+	legacy := sendStateMessage(t, m, "peer", "worker", "legacy answer\n", fresh.ID, fresh.InputRequestID, false)
+	claimStateMessage(t, m, "worker", legacy.ID)
+	if _, err := m.ReplySources(context.Background(), mailRuntime("worker"), []string{legacy.ID}); err == nil || !strings.Contains(err.Error(), "start a fresh request") {
+		t.Fatal("legacy ordinary reply ID was accepted", err)
+	}
+}
+
 func TestNodeSummaryReadsFactsWithoutMutationAndEmptyPopKeepsTime(t *testing.T) {
 	m := mailFixture(t)
 	msg := sendStateMessage(t, m, "worker", "peer", "literal body\n", "", "", true)
