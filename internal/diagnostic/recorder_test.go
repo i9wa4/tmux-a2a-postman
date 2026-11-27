@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
+	_ "time/tzdata"
 )
 
 func TestTimestampedFactsRetainValidIDsAndRedactMalformedDates(t *testing.T) {
@@ -78,6 +79,30 @@ func TestMonotonicNestedSpansAndStartDateAcrossMidnight(t *testing.T) {
 	}
 	if got[len(got)-1].Time >= got[0].Time {
 		t.Fatal("test did not jump wall clock backwards")
+	}
+}
+
+func TestDiagnosticDisplayTimePreservesUTCAndByteBudget(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ instant, want string }{
+		{instant: "2026-11-01T05:30:00Z", want: "2026-11-01T01:30:00-04:00"},
+		{instant: "2026-11-01T06:30:00Z", want: "2026-11-01T01:30:00-05:00"},
+	} {
+		instant, _ := time.Parse(time.RFC3339Nano, tc.instant)
+		r := newRecorderAt("pop", "test", "test", &fakeClock{wall: instant}, location)
+		s := &memorySink{}
+		r.Attach(s, Identity{})
+		for range 1000 {
+			r.Start("mail_operation").End("ok")
+		}
+		r.End("ok", Facts{})
+		got := events(t, s)
+		if got[0].Time != tc.instant || got[0].DisplayTime != tc.want || len(got) != MaxEvents || got[len(got)-1].OmittedEvents == 0 || s.Len() > MaxBytes || r.Failed() {
+			t.Fatal("display field changed canonical log data or exceeded diagnostic budget", tc, len(got), s.Len(), r.Failed())
+		}
 	}
 }
 

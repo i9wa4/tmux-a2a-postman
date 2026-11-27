@@ -23,6 +23,9 @@ func TestLocalTimestampShowsOffsetAcrossDateAndDSTBoundaries(t *testing.T) {
 		{"2026-01-01T01:30:00Z", "2025-12-31T20:30:00-05:00"},
 		{"2026-03-08T06:59:59Z", "2026-03-08T01:59:59-05:00"},
 		{"2026-03-08T07:00:00Z", "2026-03-08T03:00:00-04:00"},
+		{"2026-11-01T05:30:00Z", "2026-11-01T01:30:00-04:00"},
+		{"2026-11-01T06:30:00Z", "2026-11-01T01:30:00-05:00"},
+		{"2026-11-01T06:30:00.123456789Z", "2026-11-01T01:30:00.123456789-05:00"},
 	} {
 		if got := localTimestamp(tc.recorded, newYork); got != tc.want {
 			t.Fatalf("local timestamp for %s: got %s, want %s", tc.recorded, got, tc.want)
@@ -31,20 +34,31 @@ func TestLocalTimestampShowsOffsetAcrossDateAndDSTBoundaries(t *testing.T) {
 	if got := localTimestamp("2026-01-01T00:00:00Z", time.UTC); got != "2026-01-01T00:00:00+00:00" {
 		t.Fatal("UTC display requires an explicit numeric offset", got)
 	}
+	if got := localTimestamp("", newYork); got != "unavailable" {
+		t.Fatal("empty legacy timestamp was not identified", got)
+	}
+	if got := localTimestamp("not-a-time", newYork); got != "invalid timestamp" {
+		t.Fatal("malformed timestamp was not identified", got)
+	}
 }
 
 func TestRecipientContextUsesLocalDisplayOnlyForHumanFields(t *testing.T) {
-	previous := time.Local
-	time.Local = time.FixedZone("JST", 9*60*60)
-	t.Cleanup(func() { time.Local = previous })
+	location := time.FixedZone("JST", 9*60*60)
 	msg := workspace.Message{ID: "m-20260101T000000.000000000Z-aA09Zz", From: "worker", To: "peer", CreatedAt: "2026-01-01T00:00:00Z"}
 	policy := config.RecipientPolicy{Footer: "Sent {timestamp}"}
-	rendered := renderRecipientContext(policy, config.WorkspaceTopology{}, "", "session", msg)
+	rendered := renderRecipientContextDirectoryWithNoticeAtLocation(policy, config.WorkspaceTopology{}, "", "session", msg, nil, "", location)
 	if !strings.Contains(rendered, "Timestamp: `2026-01-01T09:00:00+09:00`") || !strings.Contains(rendered, "Sent 2026-01-01T09:00:00+09:00") {
 		t.Fatal("recipient context did not localize both human-facing fields", rendered)
 	}
 	if msg.CreatedAt != "2026-01-01T00:00:00Z" {
 		t.Fatal("rendering changed canonical UTC metadata")
+	}
+	for _, tc := range []struct{ recorded, want string }{{"", "unavailable"}, {"bad <timestamp>", "invalid timestamp"}} {
+		msg.CreatedAt = tc.recorded
+		rendered = renderRecipientContextDirectoryWithNoticeAtLocation(policy, config.WorkspaceTopology{}, "", "session", msg, nil, "", location)
+		if !strings.Contains(rendered, "Timestamp: `"+tc.want+"`") || !strings.Contains(rendered, "Sent "+tc.want) || strings.Contains(rendered, tc.recorded+"`") && tc.recorded != "" {
+			t.Fatalf("recipient context mishandled %q: %s", tc.recorded, rendered)
+		}
 	}
 }
 

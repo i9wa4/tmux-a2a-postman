@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/diagnostic"
+	"github.com/i9wa4/tmux-a2a-postman/internal/displaytime"
 
 	"github.com/i9wa4/tmux-a2a-postman/internal/workspace"
 )
@@ -23,6 +24,7 @@ type approvalOutput struct {
 type executionOutput struct {
 	Workspace           string                  `json:"workspace"`
 	AsOf                string                  `json:"as_of"`
+	DisplayAsOf         string                  `json:"display_as_of,omitempty"`
 	Success             bool                    `json:"success"`
 	Executed            *bool                   `json:"executed"`
 	ExitCode            *int                    `json:"exit_code"`
@@ -74,6 +76,9 @@ func RunWorkspaceExecuteHeredoc(args []string) (retErr error) {
 			if out.Workspace == "" {
 				out.Workspace = c.caller.Root
 			}
+		}
+		if display, err := displaytime.FromRFC3339(out.AsOf, time.Local); err == nil {
+			out.DisplayAsOf = display
 		}
 		if retErr != nil && out.Reason == "" {
 			out.Reason = retErr.Error()

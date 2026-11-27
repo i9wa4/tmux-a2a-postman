@@ -4,9 +4,12 @@
 tmux-a2a-postman pop [--config <absolute-path>]
 ```
 
-No message ID, capture toggle or other positional argument is accepted.
-JSON: workspace, as_of, success, markdown_absolute_path, self; optional reason.
-A non-null archive path also includes this instruction with the actual path:
+No message ID, capture toggle or other positional argument is accepted. JSON:
+workspace, as_of, display_as_of, success, markdown_absolute_path, self; optional
+reason. A claimed message also has display_created_at from its validated
+archived created_at. Display fields use the machine-local timezone with a
+numeric offset; canonical as_of, message ID and path remain UTC/unchanged. A
+non-null archive path also includes this instruction with the actual path:
 
 > Read the complete file by running `cat '<markdown_absolute_path>'` directly
 > through EOF. Do not use `execute-heredoc` for this read.

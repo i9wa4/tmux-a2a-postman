@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/i9wa4/tmux-a2a-postman/internal/displaytime"
 	"github.com/i9wa4/tmux-a2a-postman/internal/messageid"
 )
 
@@ -77,6 +78,7 @@ type Event struct {
 	InvocationID  string            `json:"invocation_id"`
 	Seq           int               `json:"seq"`
 	Time          string            `json:"time"`
+	DisplayTime   string            `json:"display_time"`
 	Event         string            `json:"event"`
 	Identity      *Identity         `json:"identity,omitempty"`
 	Phase         string            `json:"phase,omitempty"`
@@ -165,6 +167,7 @@ func clean(f Facts) Facts {
 type Recorder struct {
 	mu                                 sync.Mutex
 	clock                              Clock
+	location                           *time.Location
 	started                            time.Time
 	origin                             time.Duration
 	id                                 string
@@ -182,10 +185,14 @@ func New(command, version, commit string) *Recorder {
 }
 
 func newRecorder(command, version, commit string, clock Clock) *Recorder {
+	return newRecorderAt(command, version, commit, clock, time.Local)
+}
+
+func newRecorderAt(command, version, commit string, clock Clock, location *time.Location) *Recorder {
 	started, origin := clock.Wall().UTC(), clock.Mono()
 	var b [16]byte
 	_, err := rand.Read(b[:])
-	r := &Recorder{clock: clock, started: started, origin: origin, id: "inv-" + hex.EncodeToString(b[:]), counts: map[string]Metric{}, failed: err != nil}
+	r := &Recorder{clock: clock, location: location, started: started, origin: origin, id: "inv-" + hex.EncodeToString(b[:]), counts: map[string]Metric{}, failed: err != nil}
 	r.identity = Identity{Command: command, BuildVersion: version, BuildCommit: commit}
 	r.emitLocked(Event{Event: "start"})
 	return r
@@ -237,10 +244,12 @@ func (r *Recorder) emitLocked(e Event) {
 	e.InvocationID = r.id
 	e.Seq = r.seq
 	r.seq++
-	e.Time = r.clock.Wall().UTC().Format(time.RFC3339Nano)
+	at := r.clock.Wall()
 	if e.Event == "start" {
-		e.Time = r.started.Format(time.RFC3339Nano)
+		at = r.started
 	}
+	e.Time = at.UTC().Format(time.RFC3339Nano)
+	e.DisplayTime = displaytime.Format(at, r.location)
 	r.queue = append(r.queue, e)
 	r.flushLocked()
 }

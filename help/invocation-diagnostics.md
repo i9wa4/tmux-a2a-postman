@@ -48,8 +48,11 @@ agent diagnostic destination.
 ## 2. JSONL envelope
 
 Every complete newline-terminated object contains `schema_version: 1`,
-`invocation_id`, zero-based increasing `seq`, UTC RFC3339Nano `time`, and
-`event`. Events are:
+`invocation_id`, zero-based increasing `seq`, UTC RFC3339Nano `time`,
+`display_time` for the same instant in the machine-local timezone with a
+numeric UTC offset, and `event`. The UTC `time` and log-directory date remain
+canonical; `display_time` is for people and must not be used for correlation or
+partitioning. Events are:
 
 | Event         | Additional fields                                                                                                                                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |

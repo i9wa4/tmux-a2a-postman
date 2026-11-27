@@ -98,8 +98,15 @@ required.
 
 Except for Markdown help, the `resources` path, execution's child streams and
 the human `get-status-oneline` view,
-outputs are JSON. Times are UTC RFC3339.
-`as_of` is when mail facts were aggregated; it is not a capture timestamp.
+outputs are JSON. Canonical timestamp fields (`as_of`, saved status, IDs and
+archive paths) remain UTC RFC3339 and timezone-independent. Operational mail,
+execution and external-channel JSON also carries `display_as_of` in the
+machine-local timezone with a numeric UTC offset; it represents the same
+instant as `as_of`. A claimed POP additionally carries `display_created_at`
+for the claimed archive’s validated creation instant. An empty POP has no
+message display time. Display fields are for people, never sorting, correlation
+or durable identity. `as_of` is when mail facts were aggregated; it is not a
+capture timestamp.
 Missing or unverifiable values are `null` with a useful reason, never invented
 zero counts. A failed supplemental observation does not undo a committed send,
 claim, decision or completed command.
@@ -228,7 +235,10 @@ No command-specific options or positional arguments are accepted. One eligible
 own inbox message is exclusively moved to read and receives a durable receipt.
 The existing filename selection order is preserved; timestamped IDs do not
 establish cross-process FIFO or order mixed legacy history. Output fields are
-`workspace`, `as_of`, `success`, `markdown_absolute_path` and common `self`.
+`workspace`, `as_of`, `display_as_of`, `success`,
+`markdown_absolute_path` and common `self`. A claimed message also has
+`display_created_at`, derived from its archived `created_at`, not from its
+filename or the claim time.
 
 A non-null path also returns `instruction` with the exact claimed path and the
 direct `cat` command for reading through EOF. Empty POP omits this field.
@@ -306,11 +316,12 @@ There is no body argv, --reply-to, --fills-input-request-id, --reply-required,
 the exact user body. It shows the original request ID when a reply is due and
 distinguishes ordinary replies from requests.
 
-Normal JSON contains workspace/as_of/success/self. Durable delivery and sender
-archival define mail success. A failed or ambiguous notification is additional
-`notification` evidence and never undoes delivery. Operation failure includes
-reason and a recovery message ID when available. Do not automatically send the
-body again because capture/notification/output was unsuccessful.
+Normal JSON contains workspace/as_of/display_as_of/success/self. Durable
+delivery and sender archival define mail success. A failed or ambiguous
+notification is additional `notification` evidence and never undoes delivery.
+Operation failure includes reason and a recovery message ID when available. Do
+not automatically send the body again because capture/notification/output was
+unsuccessful.
 
 Complete messages are staged in draft before publication. Confirmed undelivered
 messages go to failed with their original ID, full body and a reason. An
@@ -405,7 +416,8 @@ POP/capture mutations must not discard an otherwise approved invocation after
 only two seconds. Admission failure still prevents execution.
 
 Stdout/stderr are streamed, not permanently logged by Postman. The final JSON is
-a distinct last stderr line with common workspace/as_of/self, success, executed,
+a distinct last stderr line with common workspace/as_of/display_as_of/self,
+success, executed,
 exit_code and approval facts. executed=false means confirmed not run;
 executed=null means possibly started with unknown outcome. Preserve a known
 command exit code; wrapper failures are nonzero and structurally
@@ -621,7 +633,9 @@ introduced. Historical examples below intentionally include accepted legacy IDs.
 
 The values below are illustrative; paths, IDs and timestamps depend on the
 invocation. Each block is a complete JSON object. Node/self fields have the
-same meaning in every command; no field is a working/idle classification.
+same meaning in every command; no field is a working/idle classification. The
+operation examples assume a machine configured for UTC+09:00; saved status
+remains canonical UTC.
 
 ### 11.1. Saved whole-server status
 
@@ -641,6 +655,8 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
+  "display_created_at": "2026-11-01T19:00:00+09:00",
   "success": true,
   "self": {
     "node": "worker",
@@ -664,6 +680,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": true,
   "self": {
     "node": "worker",
@@ -686,6 +703,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": true,
   "self": {
     "node": "worker",
@@ -712,6 +730,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": false,
   "self": {
     "node": "worker",
@@ -735,6 +754,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": false,
   "self": {
     "node": "worker",
@@ -760,6 +780,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": false,
   "self": {
     "node": "worker",
@@ -789,6 +810,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": false,
   "self": {
     "node": "worker",
@@ -815,6 +837,7 @@ node fields in §2 and configuration attribution defined in the server contract.
 {
   "workspace": "~/work",
   "as_of": "2026-11-01T10:00:00Z",
+  "display_as_of": "2026-11-01T19:00:00+09:00",
   "success": true,
   "self": {
     "node": "worker",
