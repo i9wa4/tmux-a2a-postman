@@ -1,0 +1,12 @@
+id: postman-friction-triage-queue
+name: ordinary issue queue management is not intake
+inputs:
+  prompt: List the open GitHub issues and work through the queue in priority order.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/postman-friction-triage/SKILL.md
+    mode: negative

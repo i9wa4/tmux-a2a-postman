@@ -103,7 +103,7 @@ tmux-a2a-postman version
 
 Client installation, authentication and sandbox settings remain yours.
 
-The binary includes complete CLI help and six complete portable Skills. Read
+The binary includes complete CLI help and seven complete portable Skills. Read
 `tmux-a2a-postman help setup` for setup, `tmux-a2a-postman skill <name>` for a
 full Skill, and `tmux-a2a-postman skill <name> <ref>` for a Markdown reference.
 These reads need no checkout, tmux, configuration, or extraction. Tracked
@@ -164,7 +164,7 @@ testdata/                test-only fixtures
   [server status](help/server-status.md), and
   [external file integration](help/external-filesystem-channel.md).
 - [Canonical Skills](skills/) and [tracked distribution](dist/skills/):
-  six complete embedded workflows and matching thin discovery entries.
+  seven complete embedded workflows and matching thin discovery entries.
 - [Skill use](help/skills.md),
   [records](skills/postman-records/references/records.md), and
   [review](skills/subagent-review/references/report.md): current binary reading

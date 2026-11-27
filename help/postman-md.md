@@ -268,5 +268,5 @@ An absent automatic XDG/HOME path selects the embedded complete standard team. A
 custom file replaces it completely; there is no implicit role/catalog merge. Use
 `tmux-a2a-postman help config` for precedence, error handling and explicit
 read-only inspection/export of the installed default.
-The six complete portable Skills are read with `tmux-a2a-postman skill`;
+The seven complete portable Skills are read with `tmux-a2a-postman skill`;
 `help skills` describes source and distribution ownership.

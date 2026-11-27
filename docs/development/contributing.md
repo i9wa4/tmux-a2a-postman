@@ -326,8 +326,8 @@ Vale and Harper remain advisory.
 
 ### 3.2. Distribution
 
-A binary build embeds all six complete canonical Skill packages. The same
-revision tracks six thin `dist/skills` entries for installation by a client or
+A binary build embeds all seven complete canonical Skill packages. The same
+revision tracks seven thin `dist/skills` entries for installation by a client or
 declarative consumer. Pin the binary and distribution to one immutable revision.
 Optional helper scripts are materialized only with `tmux-a2a-postman resources`.
 Builds and validation do not modify live client directories or user config.
