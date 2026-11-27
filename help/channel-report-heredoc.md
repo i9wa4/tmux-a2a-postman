@@ -11,7 +11,8 @@ decision. Scope is forbidden for terminal reports. An exact rerun is idempotent.
 Changed terminal results and stale/conflicting decisions fail without a second
 action.
 
-JSON includes success/as_of/message_id/exchange_id/reason. Durable mail precedes
-atomic outbox publication; channel-sync recovers the publication gap.
+JSON includes success/as_of/message_id/exchange_id/reason; after verified caller
+binding it also includes workspace/self and optional instruction. Durable mail
+precedes atomic outbox publication; channel-sync recovers the publication gap.
 Publication never proves external/human receipt. This command grants no
 execution approval.

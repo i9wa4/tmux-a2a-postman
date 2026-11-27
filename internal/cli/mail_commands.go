@@ -42,27 +42,20 @@ func finishMail(c *workspaceCommand, out *mailOutput, operationErr error) (retEr
 			out.facts.Capture = result.Status
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		summarySpan := trace.Start("self_summary")
-		out.Workspace, out.AsOf, out.Self = c.mail.Summary(diagnostic.With(ctx, trace), c.boundRuntime(), c.caller.Caller.Role)
-		summaryOutcome := "ok"
-		if out.Self.Reason != "" {
-			summaryOutcome = "unknown"
-		}
-		summarySpan.End(summaryOutcome)
-		if out.Workspace == "" {
-			out.Workspace = c.caller.Root
-		}
+		out.Workspace, out.AsOf, out.Self = collectPostOperationSelf(c, trace)
 	} else if operationErr != nil {
 		out.Self.Reason = operationErr.Error()
 	}
 	if operationErr != nil {
 		out.Reason = operationErr.Error()
 	}
-	if out.Success && out.MarkdownPath != nil && *out.MarkdownPath != nil && out.Self.UnreadCount != nil && *out.Self.UnreadCount > 0 {
-		out.Instruction += fmt.Sprintf(" Remaining unread messages after this POP: %d (self.unread_count). After fully reading and handling this archive, run `tmux-a2a-postman pop` again without waiting for another notification. Continue only while the latest operation reports a positive self.unread_count; stop on zero, unknown, or an empty POP. Do not poll an empty inbox.", *out.Self.UnreadCount)
+	operation := "mail"
+	claimed := false
+	if out.MarkdownPath != nil {
+		operation = "pop"
+		claimed = *out.MarkdownPath != nil
 	}
+	out.Instruction = resultGuidance(out.Self, operation, out.Success, claimed, out.Instruction, false, false)
 	outputSpan := trace.Start("result_output")
 	writeErr := json.NewEncoder(os.Stdout).Encode(out)
 	outputSpan.Error(writeErr)

@@ -16,7 +16,8 @@ foreground activation, idempotency and catch-up. JSON returns success/as_of and
 reason on failure; sync includes accepted/published/pending/more, while report
 includes message_id/exchange_id and the local-publication boundary. Partial
 durable results survive errors. These commands require the configured top-level
-interface; ordinary send/POP shapes remain unchanged. Status follows §3.
+interface. Ordinary send/POP retain their required fields and stream contracts;
+applicable results gain only additive optional `instruction`. Status follows §3.
 
 ## 1. Commands and common rules
 
@@ -231,13 +232,25 @@ establish cross-process FIFO or order mixed legacy history. Output fields are
 `workspace`, `as_of`, `success`, `markdown_absolute_path` and common `self`.
 
 A non-null path also returns `instruction` with the exact claimed path and the
-direct `cat` command for reading through EOF. Empty POP omits this field.
+direct `cat` command for reading through EOF. Empty POP and failed POP without
+an archive omit this field even if a concurrent summary observes unread mail.
 
 `self.unread_count` counts messages remaining after this POP, excluding the
 claimed message. A known positive count is also named in `instruction`: fully
 read and handle this archive, then POP the next mail without waiting for another
 notification. Continue only while the latest operation reports a positive
 count. Zero, unknown or an empty POP ends the batch; never poll an empty inbox.
+
+Mail, execution and verified external-channel results use the same optional
+`instruction` field for applicable post-operation guidance from `self`.
+Known positive unread mail prompts the next own POP; known positive inbound
+obligations prompt resolving the actual claimed archives under their ordinary,
+typed-execution or external response contracts. These counts may overlap.
+Outbound-only waiting appears only when unread and inbound are both known zero;
+it does not request a resend or status poll. Null counts produce no action based
+on an unknown fact. A pending external decision retains its channel-specific
+procedure and takes precedence over generic waiting. These instructions do not
+claim that the underlying human task is complete.
 
 A successful claim returns the absolute existing final Markdown path. Empty
 POP succeeds with a null path and unchanged last_pop_at. Read the complete
@@ -516,20 +529,21 @@ peer guidance, next-action and activity labels. These are replaced with the
 common counts/timestamps documented above. The full immutable mail remains in
 its archive. A notification never exposes the body.
 
-| Output                                                              | Decision and reason                                                                                     |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `workspace`, `as_of`, operation `success`, common `self`            | Keep compact context and operation result on every mail outcome                                         |
-| `nodes`, interface `parent`/`children`                              | Removed projection; saved pane status/scope and declared relations replace it                           |
-| `markdown_absolute_path`                                            | Keep only POP's final archive path; empty is null                                                       |
-| Metadata/body/receipt echo, old status labels, next-action/activity | Remove redundant or inferred fields; archives and file facts are authoritative                          |
-| `notification`                                                      | Show only unavailable/unknown; never reverse delivery success                                           |
-| `reason`, `recovery_message_id`                                     | Keep failure diagnosis and stable recovery identity without a resend instruction                        |
-| `recovery_operation_id`                                             | Show for unknown execution outcomes to locate the exact audit without authorizing a retry               |
-| Null counts/times                                                   | Keep unknown distinct from zero; diagnostics cannot change operation success                            |
-| Child stdout/stderr and exit                                        | Keep distinct streams; only final execution JSON/progress uses stderr                                   |
-| `executed`, `exit_code`, `approval`                                 | Separate run/no-run/uncertain outcome and reviewer's reason from system failure                         |
-| Emoji error prefix and repeated command error text                  | Remove after structured errors; retain a single diagnostic for global/unknown commands or broken output |
-| Help/error workflow dumps                                           | Keep scoped command and workflow topics in embedded canonical Markdown; thin Skills point to them       |
+| Output                                                              | Decision and reason                                                                                                         |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `workspace`, `as_of`, operation `success`, common `self`            | Keep compact context and operation result on every mail outcome                                                             |
+| Optional `instruction`                                              | Derive applicable own mail/response guidance from the same post-operation `self` snapshot; retain POP archive reading first |
+| `nodes`, interface `parent`/`children`                              | Removed projection; saved pane status/scope and declared relations replace it                                               |
+| `markdown_absolute_path`                                            | Keep only POP's final archive path; empty is null                                                                           |
+| Metadata/body/receipt echo, old status labels, next-action/activity | Remove redundant or inferred fields; archives and file facts are authoritative                                              |
+| `notification`                                                      | Show only unavailable/unknown; never reverse delivery success                                                               |
+| `reason`, `recovery_message_id`                                     | Keep failure diagnosis and stable recovery identity without a resend instruction                                            |
+| `recovery_operation_id`                                             | Show for unknown execution outcomes to locate the exact audit without authorizing a retry                                   |
+| Null counts/times                                                   | Keep unknown distinct from zero; diagnostics cannot change operation success                                                |
+| Child stdout/stderr and exit                                        | Keep distinct streams; only final execution JSON/progress uses stderr                                                       |
+| `executed`, `exit_code`, `approval`                                 | Separate run/no-run/uncertain outcome and reviewer's reason from system failure                                             |
+| Emoji error prefix and repeated command error text                  | Remove after structured errors; retain a single diagnostic for global/unknown commands or broken output                     |
+| Help/error workflow dumps                                           | Keep scoped command and workflow topics in embedded canonical Markdown; thin Skills point to them                           |
 
 ### 10.3. Every log and persisted record destination
 
@@ -654,7 +668,7 @@ node fields in §2 and configuration attribution defined in the server contract.
     "last_screen_change_at": null
   },
   "markdown_absolute_path": "/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md",
-  "instruction": "Read the complete file by running `cat '/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md'` directly through EOF. Do not use `execute-heredoc` for this read."
+  "instruction": "Read the complete file by running `cat '/home/example/.local/state/tmux-a2a-postman/work/agents/worker/read/m-0123456789abcdef0123456789abcdef.md'` directly through EOF. Do not use `execute-heredoc` for this read. Own required responses remain (self.inbound_count), including unread requests. Follow each claimed archive's response contract: a substantive exact reply or concrete blocker for ordinary requests; approve-execution or decline-execution for typed requests; the report or decision procedure for external requests. Keep long-running work pending until evidence is ready; do not send an ACK or invent completion to clear the count."
 }
 ```
 
@@ -698,6 +712,7 @@ node fields in §2 and configuration attribution defined in the server contract.
     "last_capture_at": null,
     "last_screen_change_at": null
   },
+  "instruction": "Sent requests await responses (self.outbound_count). Wait for a genuine reply while continuing any other work; do not resend, request status, or poll merely to clear this count.",
   "notification": {
     "status": "unknown",
     "pane": "%2",

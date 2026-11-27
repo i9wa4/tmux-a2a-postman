@@ -9,6 +9,8 @@ decision flags or command copy. Read the complete archived request first.
 The same ownership, exact-correlation and one-decision rules as
 approve-execution apply. A successful rejection delivery has success=true;
 the waiting requester reports executed=false with the approver's reason.
+The result may include the same self-derived instruction as approval; it does
+not turn another typed request into an ordinary reply.
 
 State the exact missing authorization, provenance, context or role/scope
 mismatch and the intended owner or question. The requester routes it through
