@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -29,6 +30,34 @@ type NodeStatus struct {
 func countPointer(n int) *int { return &n }
 
 func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Message, error) {
+	return readBoxEntries(ctx, ws, role, box, boundedEntries, nil)
+}
+
+// Status may need to count a mailbox larger than the transport's bounded
+// operation scan. Check its deadline between directory batches.
+func statusEntries(ctx context.Context, root *os.Root) ([]os.DirEntry, error) {
+	f, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	var entries []os.DirEntry
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		batch, err := f.ReadDir(128)
+		entries = append(entries, batch...)
+		if errors.Is(err, io.EOF) {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func readBoxEntries(ctx context.Context, ws *os.Root, role, box string, entriesFor func(*os.Root) ([]os.DirEntry, error), onReceipt func(ClaimReceipt) error) ([]Message, error) {
 	root, err := openOwnBox(ws, role, box)
 	if errors.Is(err, os.ErrNotExist) {
 		return []Message{}, nil
@@ -37,7 +66,7 @@ func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Messa
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	entries, err := boundedEntries(root)
+	entries, err := entriesFor(root)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +96,11 @@ func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Messa
 			}
 			if _, err := readMessage(root, id+".md"); err != nil {
 				return nil, errors.New("POP receipt has no valid archive")
+			}
+			if onReceipt != nil {
+				if err := onReceipt(receipt); err != nil {
+					return nil, err
+				}
 			}
 			continue
 		}
@@ -105,11 +139,58 @@ func readSummaryBox(ctx context.Context, ws *os.Root, role, box string) ([]Messa
 	return messages, nil
 }
 
+// Match by referenced request ID first, then retain exactAnswer's sender,
+// session and input-request checks for legacy and combined replies alike.
+func indexAnswers(ctx context.Context, answers []Message) (map[string][]*Message, error) {
+	byRequest := make(map[string][]*Message, len(answers))
+	for i := range answers {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		answer := &answers[i]
+		if answer.ReplyTo != "" {
+			byRequest[answer.ReplyTo] = append(byRequest[answer.ReplyTo], answer)
+		}
+		for _, ref := range answer.Replies {
+			byRequest[ref.MessageID] = append(byRequest[ref.MessageID], answer)
+		}
+	}
+	return byRequest, nil
+}
+
+func hasExactAnswer(ctx context.Context, request Message, byRequest map[string][]*Message) (bool, error) {
+	for _, answer := range byRequest[request.ID] {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if exactAnswer(request, *answer) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func nodeSummary(ctx context.Context, ws *os.Root, role string) NodeStatus {
 	node := NodeStatus{Node: role}
 	boxes := map[string][]Message{}
+	statusScan := func(root *os.Root) ([]os.DirEntry, error) { return statusEntries(ctx, root) }
+	var latestPop time.Time
+	onReceipt := func(receipt ClaimReceipt) error {
+		when, err := time.Parse(time.RFC3339Nano, receipt.ClaimedAt)
+		if err != nil || when.After(time.Now().UTC()) {
+			return errors.New("invalid POP receipt time")
+		}
+		if when.After(latestPop) {
+			latestPop = when
+		}
+		return nil
+	}
 	for _, box := range []string{"inbox", "read", "sent", "draft", "failed"} {
-		messages, err := readSummaryBox(ctx, ws, role, box)
+		var receiptCheck func(ClaimReceipt) error
+		if box == "read" {
+			receiptCheck = onReceipt
+		}
+		messages, err := readBoxEntries(ctx, ws, role, box, statusScan, receiptCheck)
 		if err != nil {
 			node.Reason = err.Error()
 			continue
@@ -118,6 +199,11 @@ func nodeSummary(ctx context.Context, ws *os.Root, role string) NodeStatus {
 		switch box {
 		case "inbox":
 			node.UnreadCount = countPointer(len(messages))
+		case "read":
+			if !latestPop.IsZero() {
+				value := latestPop.UTC().Format(time.RFC3339Nano)
+				node.LastPopAt = &value
+			}
 		case "draft":
 			node.DraftCount = countPointer(len(messages))
 		case "failed":
@@ -130,21 +216,37 @@ func nodeSummary(ctx context.Context, ws *os.Root, role string) NodeStatus {
 				incoming := append(append([]Message{}, inbox...), read...)
 				seen := map[string]bool{}
 				for _, msg := range incoming {
+					if err := ctx.Err(); err != nil {
+						node.Reason = err.Error()
+						return node
+					}
 					if seen[msg.ID] {
 						node.Reason = "delivery exists in inbox and read"
 						return node
 					}
 					seen[msg.ID] = true
 				}
+				sentAnswers, err := indexAnswers(ctx, sent)
+				if err != nil {
+					node.Reason = err.Error()
+					return node
+				}
+				incomingAnswers, err := indexAnswers(ctx, incoming)
+				if err != nil {
+					node.Reason = err.Error()
+					return node
+				}
 				inbound, outbound := 0, 0
 				for _, req := range incoming {
+					if err := ctx.Err(); err != nil {
+						node.Reason = err.Error()
+						return node
+					}
 					if req.NeedsReply {
-						answered := false
-						for _, answer := range sent {
-							if exactAnswer(req, answer) {
-								answered = true
-								break
-							}
+						answered, err := hasExactAnswer(ctx, req, sentAnswers)
+						if err != nil {
+							node.Reason = err.Error()
+							return node
 						}
 						if !answered {
 							inbound++
@@ -152,13 +254,15 @@ func nodeSummary(ctx context.Context, ws *os.Root, role string) NodeStatus {
 					}
 				}
 				for _, req := range sent {
+					if err := ctx.Err(); err != nil {
+						node.Reason = err.Error()
+						return node
+					}
 					if req.NeedsReply {
-						answered := false
-						for _, answer := range incoming {
-							if exactAnswer(req, answer) {
-								answered = true
-								break
-							}
+						answered, err := hasExactAnswer(ctx, req, incomingAnswers)
+						if err != nil {
+							node.Reason = err.Error()
+							return node
 						}
 						if !answered {
 							outbound++
@@ -166,45 +270,6 @@ func nodeSummary(ctx context.Context, ws *os.Root, role string) NodeStatus {
 					}
 				}
 				node.InboundCount, node.OutboundCount = countPointer(inbound), countPointer(outbound)
-			}
-		}
-	}
-	read, err := openOwnBox(ws, role, "read")
-	if err == nil {
-		defer func() { _ = read.Close() }()
-		entries, err := boundedEntries(read)
-		if err == nil {
-			var latest time.Time
-			for _, entry := range entries {
-				if err := ctx.Err(); err != nil {
-					node.Reason = err.Error()
-					break
-				}
-				if !strings.HasSuffix(entry.Name(), ".pop.json") {
-					continue
-				}
-				id := strings.TrimSuffix(entry.Name(), ".pop.json")
-				var receipt ClaimReceipt
-				if !messageID(id) || readJSON(read, entry.Name(), &receipt) != nil || receipt.Version != 1 || receipt.ID != id || receipt.Role != role {
-					node.Reason = "invalid POP receipt"
-					continue
-				}
-				if _, err := readMessage(read, id+".md"); err != nil {
-					node.Reason = "receipt archive unavailable"
-					continue
-				}
-				when, err := time.Parse(time.RFC3339Nano, receipt.ClaimedAt)
-				if err != nil || when.After(time.Now().UTC()) {
-					node.Reason = "invalid POP receipt time"
-					continue
-				}
-				if when.After(latest) {
-					latest = when
-				}
-			}
-			if !latest.IsZero() {
-				value := latest.UTC().Format(time.RFC3339Nano)
-				node.LastPopAt = &value
 			}
 		}
 	}
