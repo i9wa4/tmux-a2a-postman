@@ -182,9 +182,12 @@ route. If no reviewer can be reached, report the concrete blocker.
 
 Route execution decisions to approver. Return evidenced outcomes or concrete
 blockers to the original source. Reassess aging or stalled items for value,
-feasibility and better ways to meet the original objective. Improve plans
-within the agreed scope; escalate proposed changes to requested outcomes
-through the return route.
+feasibility and better ways to meet the original objective. When review
+iterations stop making progress, reconsider the underlying decision. Improve
+plans within the agreed scope; escalate unresolved material trade-offs or
+proposed changes to requested outcomes through the return route. Ending a
+review loop does not accept the result or waive independent checks and
+acceptance criteria.
 
 ## 7. `approver`
 
