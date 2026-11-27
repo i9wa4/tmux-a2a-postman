@@ -1,0 +1,12 @@
+id: postman-friction-triage-anecdote
+name: triage an anecdotal report
+inputs:
+  prompt: "Use postman-friction-triage for this explicit human request to triage one identified Postman operational friction report into an evidence-backed next action: POP sometimes feels slow to me, but I have no command trace or reproducible example yet."
+expected:
+  should_trigger: true
+graders:
+- type: trigger
+  name: positive
+  config:
+    skill_path: skills/postman-friction-triage/SKILL.md
+    mode: positive

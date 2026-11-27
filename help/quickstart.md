@@ -166,7 +166,7 @@ rejection or timeout never turns into advisory permission. This is coordination,
 not sandbox enforcement. See command review (`tmux-a2a-postman help execution`)
 for environment, stream, timeout and uncertain-execution contracts.
 
-The six complete Skills are available through `tmux-a2a-postman skill`.
+The seven complete Skills are available through `tmux-a2a-postman skill`.
 Client-installed thin entries under `dist/skills/` provide discovery and read
 the same-revision binary. `postman-records` supports work continuity and
 read-only recall when needed; `subagent-review` owns coordinated artifact

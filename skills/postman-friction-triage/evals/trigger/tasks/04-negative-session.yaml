@@ -1,0 +1,12 @@
+id: postman-friction-triage-session
+name: whole-session evaluation is separately owned
+inputs:
+  prompt: Run the existing #1005 retrospective for every task and outcome in session alpha.
+expected:
+  should_trigger: false
+graders:
+- type: trigger
+  name: negative
+  config:
+    skill_path: skills/postman-friction-triage/SKILL.md
+    mode: negative

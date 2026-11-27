@@ -1,8 +1,9 @@
 # Skills — embedded source and thin distribution
 
-Six canonical packages live under `skills/<name>/`: `stay-lazy`,
+Seven canonical packages live under `skills/<name>/`: `stay-lazy`,
 `development-workflow`, `git-github-operations`, `postman-send-message`,
-`subagent-review`, and `postman-records`. Each package contains a complete
+`subagent-review`, `postman-records`, and `postman-friction-triage`. Each
+package contains a complete
 `SKILL.md` and any needed references or helper scripts. Read a full entry or
 one Markdown reference from the matching binary:
 
