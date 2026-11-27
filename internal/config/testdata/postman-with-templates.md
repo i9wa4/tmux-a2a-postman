@@ -19,7 +19,7 @@ graph LR
     orchestrator --- guardian
     orchestrator --- approver
     orchestrator --- diplomat
-    guardian --- critic
+    guardian --- reviewer
     class messenger interface_node
     class approver command_approver_node
     classDef interface_node fill:#e0f2fe
@@ -32,7 +32,7 @@ graph LR
 
 Shared agent instructions are prose, not a communication node.
 
-## 3. `critic`
+## 3. `reviewer`
 
 ### 3.1. `role`
 
